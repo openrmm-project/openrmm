@@ -89,6 +89,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [09-roadmap](docs/09-roadmap.md) | Phased plan toward a complete RMM |
 | [10-monitoring-policies](docs/10-monitoring-policies.md) | Org hierarchy, RBAC, scripts, checks, tasks, policies, alerts |
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |
+| [12-native-remote-fork](docs/12-native-remote-fork.md) | Plan: native desktop remote via a RustDesk fork on the relay |
 
 To build the frontend: [`FRONTEND_DESIGN_BRIEF.md`](FRONTEND_DESIGN_BRIEF.md).
 

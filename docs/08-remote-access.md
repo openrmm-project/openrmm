@@ -18,13 +18,34 @@ with a `connect_url` the UI acts on.
 ## Providers
 
 ### `meshcentral`
-- Builds a deep link into a configured MeshCentral server for the agent's node.
-- **Turnkey embed (TODO):** generate a MeshCentral *login token* server-side and
-  wrap its UI in an iframe — exactly how Tactical RMM does it. The deep link is
-  in place; the token exchange is the remaining work.
+- Builds a connect URL into a configured MeshCentral server for the agent's node.
+- **Seamless login-token embed** (like Tactical RMM): when a token key is
+  configured, the server mints a MeshCentral login token (AES-256-GCM,
+  `internal/remote/meshtoken.go`) so the iframe opens without a second login.
+  Without the key it falls back to a deep link that works once you're logged into
+  MeshCentral.
 - License: MeshCentral is **Apache-2.0** — no constraints on bundling.
-- Best for: instant in-browser sessions and reusing native RDP/VNC via
-  MeshCentral Router, with zero extra client install.
+
+#### Setup (to test MeshCentral)
+1. Run a MeshCentral server. In its `config.json`, enable:
+   `"AllowLoginToken": true` and `"AllowFraming": true`.
+2. Grab the server's **login token key** (the `loginTokenKey`, hex). Configure
+   the RMM:
+   ```
+   RMM_MESHCENTRAL_URL=https://your-mesh-server
+   RMM_MESHCENTRAL_TOKEN_KEY=<loginTokenKey hex>   # omit for deep-link mode
+   RMM_MESHCENTRAL_USER=admin                       # userid becomes user//admin
+   ```
+3. Install the MeshCentral agent on the endpoint and find its **node id**.
+4. Map the device to its node:
+   `PATCH /api/devices/{id}/remote-ids {"mesh_id":"node//..."}`.
+5. Start a session: `POST /api/devices/{id}/remote {"provider":"meshcentral"}`
+   → returns a `connect_url` (open it / embed it in an iframe).
+
+> Note: the login-token crypto matches MeshCentral's `encodeCookie`
+> (`iv||tag||ciphertext`, base64 with `+/`→`@$`) and passes a round-trip test,
+> but the exact payload acceptance can only be confirmed against a live server —
+> validate on your instance; the deep-link mode works regardless.
 
 ### `rustdesk`
 - Returns a `rustdesk://connect/<id>` URI that launches the technician's local

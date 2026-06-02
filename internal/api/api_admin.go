@@ -106,6 +106,24 @@ func (s *Server) setDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// setDeviceRemoteIDs maps a device to its remote-provider identifiers
+// (MeshCentral node id / RustDesk id) so the remote providers can target it.
+func (s *Server) setDeviceRemoteIDs(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		MeshID     *string `json:"mesh_id"`
+		RustDeskID *string `json:"rustdesk_id"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.store.SetRemoteIDs(r.Context(), chi.URLParam(r, "id"), in.RustDeskID, in.MeshID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // deleteDevice removes an agent. Destructive → admin-only, human action in the
 // tool; never exposed to the AI/MCP surface.
 func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {

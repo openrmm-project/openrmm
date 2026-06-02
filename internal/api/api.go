@@ -149,6 +149,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/users/{id}", s.deleteUser)
 			r.Delete("/devices/{id}", s.deleteDevice)
 			r.Patch("/devices/{id}/group", s.setDeviceGroup)
+			r.Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)
 			r.Post("/groups", s.createGroup)
 			r.Delete("/groups/{id}", s.deleteGroup)
 			r.Post("/clients", s.createClient)

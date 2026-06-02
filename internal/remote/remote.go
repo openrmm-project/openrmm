@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,16 +36,19 @@ type Provider interface {
 
 // Manager holds the configured providers and shared dependencies.
 type Manager struct {
-	store     *store.Store
-	hub       *hub.Hub
-	publicURL string
-	meshURL   string
-	providers map[string]Provider
+	store        *store.Store
+	hub          *hub.Hub
+	publicURL    string
+	meshURL      string
+	meshTokenKey string
+	meshUser     string
+	providers    map[string]Provider
 }
 
 // NewManager wires up all providers.
-func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL string) *Manager {
-	m := &Manager{store: s, hub: h, publicURL: publicURL, meshURL: meshURL, providers: map[string]Provider{}}
+func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, meshUser string) *Manager {
+	m := &Manager{store: s, hub: h, publicURL: publicURL, meshURL: meshURL,
+		meshTokenKey: meshTokenKey, meshUser: meshUser, providers: map[string]Provider{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
 	register(&meshProvider{m: m})
@@ -125,20 +129,27 @@ type meshProvider struct{ m *Manager }
 
 func (p *meshProvider) Name() string { return "meshcentral" }
 
-// StartSession builds a deep link into MeshCentral for the agent's node.
-//
-// NOTE: a seamless embedded session requires generating a MeshCentral login
-// token (server-side) and wrapping its UI in an iframe — exactly how Tactical
-// RMM does it. That token exchange is documented in docs/08-remote-access.md and
-// is the remaining work to make this fully turnkey.
+// StartSession builds a connect URL into MeshCentral for the agent's node. When
+// a login token key is configured it mints a login token so the session embeds
+// without a second login (like Tactical RMM); otherwise it returns a deep link
+// that works once the technician is logged into MeshCentral.
 func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
 	if p.m.meshURL == "" {
 		return nil, fmt.Errorf("MeshCentral URL not configured (RMM_MESHCENTRAL_URL)")
 	}
 	if agent.MeshID == nil || *agent.MeshID == "" {
-		return nil, fmt.Errorf("agent has no MeshCentral node id")
+		return nil, fmt.Errorf("agent has no MeshCentral node id (set it via PATCH /api/devices/{id}/remote-ids)")
 	}
-	connect := fmt.Sprintf("%s/?viewmode=11&node=%s", strings.TrimRight(p.m.meshURL, "/"), *agent.MeshID)
+	base := strings.TrimRight(p.m.meshURL, "/")
+	// viewmode=11 = desktop; hide=31 hides the MeshCentral chrome for embedding.
+	connect := fmt.Sprintf("%s/?viewmode=11&hide=31&node=%s", base, *agent.MeshID)
+	if p.m.meshTokenKey != "" {
+		tok, err := meshLoginToken(p.m.meshTokenKey, p.m.meshUser)
+		if err != nil {
+			return nil, fmt.Errorf("mesh login token: %w", err)
+		}
+		connect = fmt.Sprintf("%s/?login=%s&viewmode=11&hide=31&node=%s", base, url.QueryEscape(tok), *agent.MeshID)
+	}
 	rs := &models.RemoteSession{
 		AgentID:    agent.ID,
 		Provider:   "meshcentral",

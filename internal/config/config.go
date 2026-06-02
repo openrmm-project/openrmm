@@ -25,6 +25,13 @@ type Config struct {
 	// Remote access defaults.
 	DefaultRemoteProvider string // native | meshcentral | rustdesk
 	MeshCentralURL        string
+	// MeshCentralTokenKey is the server's loginTokenKey (hex). When set, the
+	// meshcentral provider mints a login token for seamless iframe embedding
+	// (no second login). When empty, it falls back to a deep link.
+	MeshCentralTokenKey string
+	// MeshCentralUser is the MeshCentral username the login token authenticates
+	// as (default "admin"); the userid becomes "user//<user>".
+	MeshCentralUser string
 
 	// Security.
 	// MCPAllowedIPs is an optional allowlist (comma-separated IPs/CIDRs) for the
@@ -60,6 +67,8 @@ func Load() (*Config, error) {
 		AIModel:               env("RMM_AI_MODEL", "gpt-4o-mini"),
 		DefaultRemoteProvider: env("RMM_REMOTE_PROVIDER", "native"),
 		MeshCentralURL:        os.Getenv("RMM_MESHCENTRAL_URL"),
+		MeshCentralTokenKey:   os.Getenv("RMM_MESHCENTRAL_TOKEN_KEY"),
+		MeshCentralUser:       env("RMM_MESHCENTRAL_USER", "admin"),
 		MCPAllowedIPs:         splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:   os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:     os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",

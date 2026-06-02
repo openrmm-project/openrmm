@@ -363,23 +363,67 @@ function ConfigItem({ label, value, mono }) {
   return <div className="flex items-center justify-between py-2.5 border-b border-line/60 last:border-0"><span className="text-[12.5px] text-muted">{label}</span><span className={cx('text-[12.5px] text-ink font-medium', mono && 'mono')}>{value}</span></div>;
 }
 function ConfigPanel() {
+  const { can } = useAuth();
+  const toast = useToast();
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
   const c = cfgQ.data;
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!c) return;
+    setForm({
+      ai_provider: c.ai.provider || 'openai-compatible',
+      ai_base_url: c.ai.base_url || '',
+      ai_model: c.ai.model || '',
+      ai_api_key: '',
+      remote_default: c.remote.default || 'native',
+      meshcentral_url: c.remote.meshcentral_url || '',
+      meshcentral_user: c.remote.meshcentral_user || 'admin',
+      meshcentral_token_key: '',
+    });
+  }, [c]);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.updateConfig({
+        ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key },
+        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key },
+      });
+      set('ai_api_key', ''); set('meshcentral_token_key', '');
+      toast.success('Configuration saved', 'Runtime settings updated without exposing secrets.');
+    } catch (e) { toast.error('Failed to save configuration', e.message); }
+    finally { setSaving(false); }
+  };
   if (!c) return <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 w-full rounded-2xl" />)}</div>;
+  if (!form) return null;
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Card className="p-4">
-        <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="sparkle" size={15} /></div><div className="text-[13px] font-semibold text-ink">AI provider</div><span className="ml-auto"><StatusPill status="online" label="Configured" size="sm" /></span></div>
-        <ConfigItem label="Provider" value={c.ai.provider} /><ConfigItem label="Model" value={c.ai.model} mono /><ConfigItem label="Base URL" value={c.ai.base_url} mono />
+        <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="sparkle" size={15} /></div><div className="text-[13px] font-semibold text-ink">AI provider</div><span className="ml-auto"><StatusPill status={c.ai.configured ? 'online' : 'warning'} label={c.ai.configured ? 'Configured' : 'Missing key'} size="sm" /></span></div>
+        <div className="space-y-3">
+          <Field label="Provider"><Input value={form.ai_provider} disabled={!can('admin')} onChange={(e) => set('ai_provider', e.target.value)} placeholder="openai-compatible" /></Field>
+          <Field label="Base URL"><Input className="mono" value={form.ai_base_url} disabled={!can('admin')} onChange={(e) => set('ai_base_url', e.target.value)} placeholder="https://api.openai.com/v1" /></Field>
+          <Field label="Model"><Input className="mono" value={form.ai_model} disabled={!can('admin')} onChange={(e) => set('ai_model', e.target.value)} placeholder="gpt-4o-mini" /></Field>
+          <Field label="API key" hint={c.ai.api_key_set ? 'Already set. Leave blank to keep the current key.' : 'Write-only. It will never be displayed again.'}><Input type="password" value={form.ai_api_key} disabled={!can('admin')} onChange={(e) => set('ai_api_key', e.target.value)} placeholder={c.ai.api_key_set ? '••••••••••••••••' : 'sk-...'} autoComplete="new-password" /></Field>
+        </div>
       </Card>
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="remote" size={15} /></div><div className="text-[13px] font-semibold text-ink">Remote access</div></div>
-        <ConfigItem label="Default provider" value={c.remote.default} /><ConfigItem label="Available" value={c.remote.providers.join(', ')} mono />
+        <div className="space-y-3">
+          <Field label="Default provider"><Select value={form.remote_default} disabled={!can('admin')} onChange={(e) => set('remote_default', e.target.value)}>{c.remote.providers.map((p) => <option key={p} value={p}>{p}</option>)}</Select></Field>
+          <Field label="MeshCentral URL"><Input className="mono" value={form.meshcentral_url} disabled={!can('admin')} onChange={(e) => set('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
+          <Field label="MeshCentral user"><Input value={form.meshcentral_user} disabled={!can('admin')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>
+          <Field label="MeshCentral token key" hint={c.remote.meshcentral_token_set ? 'Already set. Leave blank to keep it.' : 'Optional write-only secret for login-token embedding.'}><Input type="password" value={form.meshcentral_token_key} disabled={!can('admin')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>
+        </div>
       </Card>
       <Card className="p-4 md:col-span-2">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="shield" size={15} /></div><div className="text-[13px] font-semibold text-ink">Server</div></div>
         <ConfigItem label="Version" value={c.server.version} mono /><ConfigItem label="API base URL" value={c.server.base_url} mono />
-        <div className="text-[11.5px] text-faint mt-3 flex items-center gap-1.5"><Icon name="info" size={13} />Configuration is read-only here — it's set in your server's environment.</div>
+        <div className="flex items-center justify-between gap-3 mt-4">
+          <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Secrets are write-only and encrypted in the database; blank secret fields preserve current values.</div>
+          {can('admin') ? <Button variant="primary" icon="check" loading={saving} onClick={save}>Save configuration</Button> : <div className="text-[12px] text-faint">Admin role required to edit.</div>}
+        </div>
       </Card>
     </div>
   );

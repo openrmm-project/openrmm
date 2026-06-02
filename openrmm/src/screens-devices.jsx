@@ -111,6 +111,12 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
+  const linkRemote = async (field, label) => {
+    const v = window.prompt('Enter the ' + label + ' for this device:');
+    if (!v || !v.trim()) return;
+    try { await api.setRemoteIds(id, { [field]: v.trim() }); toast.success(label + ' linked'); }
+    catch (e) { toast.error('Failed', e.message); }
+  };
 
   const setSite = async (siteId) => { await api.setDeviceSite(id, siteId); toast.success('Site updated'); };
 
@@ -142,8 +148,13 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
               }>
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="built-in">Native</MenuItem>
-                <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no agent'}>MeshCentral</MenuItem>
+                <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 <MenuItem icon="link" onClick={() => startRemote('rustdesk')} disabled={!d.rustdesk_id} hint={d.rustdesk_id || 'no id'}>RustDesk</MenuItem>
+                {can('admin') && <>
+                  <div className="my-1 border-t border-line" />
+                  <MenuItem icon="external" onClick={() => linkRemote('mesh_id', 'MeshCentral node id')}>Link MeshCentral node…</MenuItem>
+                  <MenuItem icon="link" onClick={() => linkRemote('rustdesk_id', 'RustDesk id')}>Link RustDesk id…</MenuItem>
+                </>}
               </Dropdown>
               {can('tech') && <Button variant="secondary" icon="terminal" onClick={() => setTab('run')}>Run script</Button>}
               <div className="flex-1" />

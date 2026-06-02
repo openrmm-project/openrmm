@@ -2,7 +2,7 @@
 // the rest of the system never depends on a single tool. Three providers ship:
 //
 //   - native      : a built-in session broker + relay (the future "own" remote
-//                   tool / RustDesk fork connects its media engine to this relay).
+//     tool / RustDesk fork connects its media engine to this relay).
 //   - meshcentral : deep-link / token login into a MeshCentral server.
 //   - rustdesk    : launches the native RustDesk client via the rustdesk:// URI.
 //
@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/p1ngu/rmm/internal/auth"
@@ -36,6 +37,7 @@ type Provider interface {
 
 // Manager holds the configured providers and shared dependencies.
 type Manager struct {
+	mu           sync.RWMutex
 	store        *store.Store
 	hub          *hub.Hub
 	publicURL    string
@@ -43,6 +45,15 @@ type Manager struct {
 	meshTokenKey string
 	meshUser     string
 	providers    map[string]Provider
+}
+
+// UpdateMeshConfig swaps MeshCentral settings without rebuilding the server.
+func (m *Manager) UpdateMeshConfig(meshURL, meshTokenKey, meshUser string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meshURL = meshURL
+	m.meshTokenKey = meshTokenKey
+	m.meshUser = meshUser
 }
 
 // NewManager wires up all providers.
@@ -134,17 +145,20 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 // without a second login (like Tactical RMM); otherwise it returns a deep link
 // that works once the technician is logged into MeshCentral.
 func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
-	if p.m.meshURL == "" {
+	p.m.mu.RLock()
+	meshURL, meshTokenKey, meshUser := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser
+	p.m.mu.RUnlock()
+	if meshURL == "" {
 		return nil, fmt.Errorf("MeshCentral URL not configured (RMM_MESHCENTRAL_URL)")
 	}
 	if agent.MeshID == nil || *agent.MeshID == "" {
 		return nil, fmt.Errorf("agent has no MeshCentral node id (set it via PATCH /api/devices/{id}/remote-ids)")
 	}
-	base := strings.TrimRight(p.m.meshURL, "/")
+	base := strings.TrimRight(meshURL, "/")
 	// viewmode=11 = desktop; hide=31 hides the MeshCentral chrome for embedding.
 	connect := fmt.Sprintf("%s/?viewmode=11&hide=31&node=%s", base, *agent.MeshID)
-	if p.m.meshTokenKey != "" {
-		tok, err := meshLoginToken(p.m.meshTokenKey, p.m.meshUser)
+	if meshTokenKey != "" {
+		tok, err := meshLoginToken(meshTokenKey, meshUser)
 		if err != nil {
 			return nil, fmt.Errorf("mesh login token: %w", err)
 		}

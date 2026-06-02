@@ -44,6 +44,9 @@ tamper-evidence in production.
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random
   secret; rotate it by issuing scoped `api_tokens` and retiring the bootstrap.
+- Editable runtime secrets (AI API key, MeshCentral token key) are admin-only,
+  write-only API fields. They are encrypted before storage in `app_settings` and
+  `/api/config` returns only boolean `*_set` flags.
 - Agents: a random 32-byte token minted at enrollment, stored **hashed**
   (SHA-256) server-side; compared in constant time. Enroll tokens are
   single/limited-use and can expire.

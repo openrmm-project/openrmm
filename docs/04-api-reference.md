@@ -99,6 +99,37 @@ approval in the UI.
 | POST | `/api/users` | admin | `{username,password,role}` |
 | DELETE | `/api/users/{id}` | admin | Remove a user |
 
+## Runtime configuration
+
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| GET | `/api/config` | readonly | Effective non-secret config for UI display |
+| PUT | `/api/config` | admin | Update editable runtime settings |
+
+`PUT /api/config` body:
+
+```json
+{
+  "ai": {
+    "provider": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "api_key": "sk-..."
+  },
+  "remote": {
+    "default": "native",
+    "meshcentral_url": "https://mesh.example.com",
+    "meshcentral_user": "admin",
+    "meshcentral_token_key": "hex-login-token-key"
+  }
+}
+```
+
+Secret fields (`ai.api_key`, `remote.meshcentral_token_key`) are write-only:
+omit them or send `""` to keep the existing value. They are encrypted in
+`app_settings` and never returned by the API; `GET /api/config` only returns
+boolean `*_set` flags.
+
 ## Org hierarchy
 
 | Method | Path | Role | Description |

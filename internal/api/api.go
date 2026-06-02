@@ -27,6 +27,7 @@ import (
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
+	"github.com/p1ngu/rmm/internal/settings"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -141,6 +142,7 @@ func (s *Server) Router() http.Handler {
 		// ---- admin (manage config) ----
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleAdmin))
+			r.Put("/config", s.updateConfig)
 			r.Post("/enroll-tokens", s.createEnrollToken)
 			r.Get("/api-tokens", s.listAPITokens)
 			r.Post("/api-tokens", s.createAPIToken)
@@ -282,19 +284,86 @@ func (s *Server) cors(next http.Handler) http.Handler {
 }
 
 // getConfig returns non-secret runtime config for the UI's settings screen.
-func (s *Server) getConfig(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	eff, err := settings.Effective(r.Context(), s.store, s.cfg)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ai": map[string]any{
-			"base_url":   s.cfg.AIBaseURL,
-			"model":      s.cfg.AIModel,
-			"configured": s.cfg.AIAPIKey != "",
+			"provider":    eff.AIProvider,
+			"base_url":    eff.AIBaseURL,
+			"model":       eff.AIModel,
+			"configured":  eff.AIAPIKey != "",
+			"api_key_set": eff.AIAPIKey != "",
 		},
 		"remote": map[string]any{
-			"providers": []string{"native", "meshcentral", "rustdesk"},
-			"default":   s.cfg.DefaultRemoteProvider,
+			"providers":             []string{"native", "meshcentral", "rustdesk"},
+			"default":               eff.RemoteDefaultProvider,
+			"meshcentral_url":       eff.MeshCentralURL,
+			"meshcentral_user":      eff.MeshCentralUser,
+			"meshcentral_token_set": eff.MeshCentralTokenKey != "",
 		},
 		"server": map[string]any{"version": "0.2.0", "base_url": s.cfg.PublicURL},
 	})
+}
+
+// updateConfig persists editable runtime config. Secret inputs are write-only:
+// an empty secret field preserves the existing value, and responses only expose
+// boolean "*_set" flags.
+func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
+	var in settings.SaveRequest
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, "native", "meshcentral", "rustdesk") {
+		writeErr(w, http.StatusBadRequest, "invalid remote provider")
+		return
+	}
+	before, _ := settings.Effective(r.Context(), s.store, s.cfg)
+	eff, err := settings.Save(r.Context(), s.store, s.cfg, in)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Apply live to the components that need it (each guards its own state).
+	// We intentionally do NOT mutate the shared *config.Config: settings.Effective
+	// already overlays DB values on top of it, so reads stay race-free.
+	s.chat.UpdateProvider(eff.AIBaseURL, eff.AIAPIKey, eff.AIModel)
+	s.remote.UpdateMeshConfig(eff.MeshCentralURL, eff.MeshCentralTokenKey, eff.MeshCentralUser)
+
+	changed := changedSettings(before, eff, in)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.update", "app_settings", settings.AuditDetail(changed))
+	s.getConfig(w, r)
+}
+
+func oneOf(v string, allowed ...string) bool {
+	for _, a := range allowed {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
+
+func changedSettings(before, after settings.Editable, in settings.SaveRequest) []string {
+	var out []string
+	add := func(name string, changed bool) {
+		if changed {
+			out = append(out, name)
+		}
+	}
+	add("ai.provider", before.AIProvider != after.AIProvider)
+	add("ai.base_url", before.AIBaseURL != after.AIBaseURL)
+	add("ai.model", before.AIModel != after.AIModel)
+	add("ai.api_key", strings.TrimSpace(in.AI.APIKey) != "")
+	add("remote.default", before.RemoteDefaultProvider != after.RemoteDefaultProvider)
+	add("remote.meshcentral_url", before.MeshCentralURL != after.MeshCentralURL)
+	add("remote.meshcentral_user", before.MeshCentralUser != after.MeshCentralUser)
+	add("remote.meshcentral_token_key", strings.TrimSpace(in.Remote.MeshTokenKey) != "")
+	return out
 }
 
 // mcpIPAllowlist restricts the MCP endpoint to configured IPs/CIDRs (defense in
@@ -475,7 +544,12 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decode(r, &in)
 	if in.Provider == "" {
-		in.Provider = s.cfg.DefaultRemoteProvider
+		// Resolve the live default (DB-overlaid) without reading the shared cfg.
+		if eff, err := settings.Effective(r.Context(), s.store, s.cfg); err == nil && eff.RemoteDefaultProvider != "" {
+			in.Provider = eff.RemoteDefaultProvider
+		} else {
+			in.Provider = s.cfg.DefaultRemoteProvider
+		}
 	}
 	agent, err := s.store.GetAgent(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

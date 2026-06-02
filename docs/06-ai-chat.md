@@ -7,7 +7,7 @@ The differentiator. Implemented in `internal/ai`.
 `internal/ai/client.go` is a thin **OpenAI-compatible** client
 (`POST {base}/chat/completions` with `tools`). This means BYO-model:
 
-| Provider | `RMM_AI_BASE_URL` | `RMM_AI_MODEL` |
+| Provider | `RMM_AI_BASE_URL` / UI Base URL | `RMM_AI_MODEL` / UI Model |
 |----------|-------------------|----------------|
 | OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` (etc.) |
 | Ollama (local) | `http://localhost:11434/v1` | `llama3.1` (etc.) |
@@ -15,6 +15,11 @@ The differentiator. Implemented in `internal/ai`.
 
 A local model keeps all command/inventory data on your own infrastructure —
 the privacy-first posture this project targets.
+
+AI settings can be bootstrapped from `.env` and then edited by an admin in the
+Configuration screen (`PUT /api/config`). The API key is write-only: the backend
+encrypts it in `app_settings`, updates the in-memory AI client immediately, and
+only exposes an `api_key_set` boolean to the UI.
 
 ## The loop
 

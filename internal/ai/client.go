@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -68,10 +69,20 @@ type chatResponse struct {
 
 // Client talks to an OpenAI-compatible /chat/completions endpoint.
 type Client struct {
+	mu      sync.RWMutex
 	baseURL string
 	apiKey  string
 	model   string
 	http    *http.Client
+}
+
+// Update swaps provider settings without rebuilding the server.
+func (c *Client) Update(baseURL, apiKey, model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.baseURL = strings.TrimRight(baseURL, "/")
+	c.apiKey = apiKey
+	c.model = model
 }
 
 // NewClient builds an AI client. baseURL should include the API version path,
@@ -87,8 +98,11 @@ func NewClient(baseURL, apiKey, model string) *Client {
 
 // Chat performs one completion request.
 func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (*Message, error) {
+	c.mu.RLock()
+	baseURL, apiKey, model := c.baseURL, c.apiKey, c.model
+	c.mu.RUnlock()
 	reqBody, err := json.Marshal(chatRequest{
-		Model:       c.model,
+		Model:       model,
 		Messages:    messages,
 		Tools:       tools,
 		Temperature: 0.2,
@@ -96,13 +110,13 @@ func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (*M
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

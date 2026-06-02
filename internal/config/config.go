@@ -18,9 +18,10 @@ type Config struct {
 
 	// AI / LLM provider (OpenAI-compatible). Works with OpenAI, Anthropic via a
 	// proxy, or local models served by Ollama / vLLM (BYO-model).
-	AIBaseURL string // e.g. https://api.openai.com/v1 or http://localhost:11434/v1
-	AIAPIKey  string
-	AIModel   string
+	AIProvider string
+	AIBaseURL  string // e.g. https://api.openai.com/v1 or http://localhost:11434/v1
+	AIAPIKey   string
+	AIModel    string
 
 	// Remote access defaults.
 	DefaultRemoteProvider string // native | meshcentral | rustdesk
@@ -46,6 +47,10 @@ type Config struct {
 	// CORSOrigins is the allowed browser origins for the API (comma-separated).
 	// Default ["*"] (fine for bearer-token auth, which doesn't use cookies).
 	CORSOrigins []string
+
+	// Encryption key for secrets stored in app_settings. If empty, runtime
+	// settings fall back to deriving a key from AdminToken.
+	SettingsEncryptionKey string
 }
 
 func env(key, def string) string {
@@ -62,6 +67,7 @@ func Load() (*Config, error) {
 		PublicURL:             env("RMM_PUBLIC_URL", "http://localhost:8080"),
 		DatabaseURL:           env("RMM_DATABASE_URL", "postgres://rmm:rmm@localhost:5432/rmm?sslmode=disable"),
 		AdminToken:            os.Getenv("RMM_ADMIN_TOKEN"),
+		AIProvider:            env("RMM_AI_PROVIDER", "openai-compatible"),
 		AIBaseURL:             env("RMM_AI_BASE_URL", "https://api.openai.com/v1"),
 		AIAPIKey:              os.Getenv("RMM_AI_API_KEY"),
 		AIModel:               env("RMM_AI_MODEL", "gpt-4o-mini"),
@@ -73,6 +79,7 @@ func Load() (*Config, error) {
 		AllowUnapprovedJobs:   os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:     os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",
 		CORSOrigins:           splitCSV(env("RMM_CORS_ORIGINS", "*")),
+		SettingsEncryptionKey: os.Getenv("RMM_SETTINGS_ENCRYPTION_KEY"),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")

@@ -18,6 +18,7 @@ import (
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
+	"github.com/p1ngu/rmm/internal/settings"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -36,6 +37,11 @@ func main() {
 
 	if err := st.Migrate(ctx, store.Schema); err != nil {
 		log.Fatalf("migrate: %v", err)
+	}
+	if eff, err := settings.Effective(ctx, st, cfg); err != nil {
+		log.Fatalf("settings: %v", err)
+	} else {
+		eff.ApplyToConfig(cfg)
 	}
 	log.Println("database schema is up to date")
 

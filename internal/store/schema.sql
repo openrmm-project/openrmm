@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Editable instance configuration. Secret values are encrypted by the server
+-- before storage and are never returned by the API.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    is_secret  BOOLEAN NOT NULL DEFAULT false,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ===================== Org hierarchy (Client -> Site -> Agent) =====================
 
 CREATE TABLE IF NOT EXISTS clients (

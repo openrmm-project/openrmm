@@ -122,6 +122,7 @@ const api = {
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
+  setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
 
   /* ---- jobs ---- */
   listJobs(params) { return GET('/api/jobs' + qs(params)); },
@@ -207,6 +208,7 @@ const api = {
 
   /* ---- config ---- */
   getConfig() { return GET('/api/config'); },
+  updateConfig(body) { return PUT('/api/config', body); },
 };
 
 window.api = api;

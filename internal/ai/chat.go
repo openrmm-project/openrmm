@@ -48,6 +48,11 @@ func NewEngine(c *Client, s *store.Store, j *jobs.Service) *Engine {
 	return &Engine{client: c, store: s, jobs: j}
 }
 
+// UpdateProvider swaps model provider settings for future chat requests.
+func (e *Engine) UpdateProvider(baseURL, apiKey, model string) {
+	e.client.Update(baseURL, apiKey, model)
+}
+
 // Reply is the outcome of one user turn.
 type Reply struct {
 	Content       string   `json:"content"`

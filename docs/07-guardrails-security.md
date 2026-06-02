@@ -90,6 +90,9 @@ exposes no secrets).
 - `RMM_ADMIN_TOKEN` must be ≥ 32 chars (rejected at startup otherwise).
 - Login runs a dummy bcrypt compare for unknown users (mitigates enumeration).
 - Agent caps job stdout/stderr at 1 MiB each (DoS / DB-bloat guard).
+- **Per-IP rate limiting** (`httprate`): 10/min on `/api/auth/*` (anti
+  brute-force), 60/min on `/mcp`, 120/min across the authenticated API (anti
+  token-guessing). Returns `429`. The key respects `RMM_TRUST_PROXY_HEADERS`.
 
 **Remaining (tracked):**
 - **Relay auth** (`/ws/remote`): authenticated only by a short-lived (2 min)
@@ -98,8 +101,6 @@ exposes no secrets).
   leak via logs/history. Mitigated by the short TTL; a full fix (bind to the
   technician principal + agent identity) lands with the native media engine,
   which is not built yet, so no real sessions traverse the relay today.
-- **Rate limiting** on `/api/auth/*` and the bearer path — not yet implemented;
-  put a rate limiter at the proxy or add `httprate` middleware.
 - **TLS** must be terminated by a reverse proxy / tunnel (see docs/11-mcp.md).
 - **Script sandboxing**, **agent token rotation/revocation**, and per-group RBAC
   remain roadmap items.

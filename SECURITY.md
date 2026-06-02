@@ -18,6 +18,8 @@ designed defense-first. This summarizes the posture; details live in
 - **Secrets**: tokens are 256-bit random and stored hashed (SHA-256); passwords
   use bcrypt; the admin/agent token comparisons are constant-time; no secret is
   logged or returned by the API.
+- **Per-IP rate limiting** on auth (10/min), MCP (60/min) and the API (120/min)
+  to blunt brute-force and token-guessing.
 - **Immutable audit log** of every sensitive action.
 
 ## Deploying securely
@@ -34,7 +36,6 @@ designed defense-first. This summarizes the posture; details live in
 
 ## Known limitations (tracked, not yet hardened)
 
-- No built-in rate limiting (add at the proxy or via middleware).
 - Native remote relay authenticates by a short-lived URL token without principal
   binding; the full fix ships with the (not-yet-built) media engine.
 - Scripts run with the agent's privileges; no sandbox yet.

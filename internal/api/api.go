@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
 
 	"github.com/p1ngu/rmm/internal/ai"
 	"github.com/p1ngu/rmm/internal/auth"
@@ -26,6 +27,13 @@ import (
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
 	"github.com/p1ngu/rmm/internal/store"
+)
+
+// Per-IP rate limits (requests per minute).
+const (
+	authRateLimit = 10  // login / bootstrap — strict (anti brute-force)
+	mcpRateLimit  = 60  // external AI clients
+	apiRateLimit  = 120 // safety net across the authenticated API (anti token-guessing)
 )
 
 type ctxKey string
@@ -65,15 +73,17 @@ func (s *Server) Router() http.Handler {
 	r.Get("/ws/agent", s.handleAgentWS)
 	r.Get("/ws/remote", s.handleRelayWS)
 
-	// Unauthenticated auth endpoints.
-	r.Post("/api/auth/login", s.login)
-	r.Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin creation (only when no users exist)
+	// Unauthenticated auth endpoints — strictly rate-limited (anti brute-force).
+	authLimiter := s.rateLimit(authRateLimit)
+	r.With(authLimiter).Post("/api/auth/login", s.login)
+	r.With(authLimiter).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
 
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; tech role minimum since it
 	// can propose jobs (which still require human approval).
 	mcpHandler := mcpserver.Handler(s.store, s.jobs, actorOf)
 	r.Group(func(r chi.Router) {
+		r.Use(s.rateLimit(mcpRateLimit))
 		r.Use(s.mcpIPAllowlist)
 		r.Use(s.authMiddleware)
 		r.Use(s.requireRole(models.RoleTech))
@@ -82,6 +92,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api", func(r chi.Router) {
+		r.Use(s.rateLimit(apiRateLimit)) // per-IP safety net (anti token-guessing)
 		r.Use(s.authMiddleware)
 
 		// ---- read-only (any authenticated role) ----
@@ -220,6 +231,20 @@ func (s *Server) requireRole(minRole string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// rateLimit returns a per-IP rate-limiting middleware. The key respects the
+// trusted-proxy setting so it works both directly and behind a reverse proxy.
+func (s *Server) rateLimit(perMinute int) func(http.Handler) http.Handler {
+	return httprate.Limit(
+		perMinute, time.Minute,
+		httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
+			return clientIP(r, s.cfg.TrustProxyHeaders), nil
+		}),
+		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
+			writeErr(w, http.StatusTooManyRequests, "rate limit exceeded; slow down")
+		}),
+	)
 }
 
 // cors adds CORS headers so a browser frontend (served from another origin) can

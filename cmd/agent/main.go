@@ -61,11 +61,17 @@ func main() {
 	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{})}
 	a.loadState()
 
+	svcArgs := []string{"-server", *wsURL, "-state", *statePath}
+	if *enroll != "" {
+		// Baked into the service definition so the first boot can enroll; once
+		// state.json exists the agent re-auths with its token and ignores this.
+		svcArgs = append(svcArgs, "-enroll-token", *enroll)
+	}
 	svcConfig := &service.Config{
 		Name:        "rmm-agent",
 		DisplayName: "RMM-AI Agent",
 		Description: "RMM-AI endpoint agent: telemetry, jobs and monitoring checks.",
-		Arguments:   []string{"-server", *wsURL, "-state", *statePath},
+		Arguments:   svcArgs,
 	}
 	prg := &program{a: a}
 	svc, err := service.New(prg, svcConfig)

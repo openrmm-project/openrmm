@@ -43,9 +43,16 @@ async function request(method, path, body) {
     try { const j = await res.json(); msg = j.error || j.message || msg; } catch (e) {}
     throw apiError(res.status, msg);
   }
-  if (res.status === 204) return undefined;
-  const text = await res.text();
-  return text ? JSON.parse(text) : undefined;
+  let out;
+  if (res.status === 204) {
+    out = undefined;
+  } else {
+    const text = await res.text();
+    out = text ? JSON.parse(text) : undefined;
+  }
+  // Any mutation invalidates all live queries so the UI refreshes immediately.
+  if (method !== 'GET') bus.emit('*');
+  return out;
 }
 const GET = (p) => request('GET', p);
 const POST = (p, b) => request('POST', p, b);

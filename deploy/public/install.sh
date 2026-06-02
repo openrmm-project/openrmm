@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# RMM-AI agent installer (Linux/macOS).
+# Usage:
+#   curl -fsSL http://SERVER/install.sh | sudo bash -s -- --server http://SERVER --token <ENROLL> [--site "Name"]
+set -euo pipefail
+
+SERVER=""; TOKEN=""; SITE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --server) SERVER="$2"; shift 2;;
+    --token)  TOKEN="$2";  shift 2;;
+    --site)   SITE="$2";   shift 2;;
+    *) echo "unknown arg: $1"; shift;;
+  esac
+done
+[ -z "$SERVER" ] && { echo "error: --server is required"; exit 1; }
+[ -z "$TOKEN" ]  && { echo "error: --token is required";  exit 1; }
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"      # linux | darwin
+ARCH="$(uname -m)"
+case "$ARCH" in x86_64|amd64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) echo "unsupported arch: $ARCH"; exit 1;; esac
+BIN="rmm-agent-${OS}-${ARCH}"
+WS="$(printf '%s' "$SERVER" | sed -e 's#^https#wss#' -e 's#^http#ws#')"
+DEST="/usr/local/bin/rmm-agent"
+STATE_DIR="/etc/rmm-agent"; STATE="${STATE_DIR}/state.json"
+
+echo "RMM-AI agent installer"
+echo "  server : $SERVER"
+echo "  binary : $BIN"
+mkdir -p "$STATE_DIR"
+
+echo "Downloading agent..."
+curl -fsSL "${SERVER}/dl/${BIN}" -o "$DEST"
+chmod +x "$DEST"
+
+echo "Installing as a system service..."
+if "$DEST" -server "${WS}/ws/agent" -state "$STATE" -enroll-token "$TOKEN" -action install 2>/dev/null; then
+  "$DEST" -action start 2>/dev/null || true
+  echo "Service installed and started."
+else
+  echo "Service manager unavailable; starting agent in the background instead."
+  nohup "$DEST" -server "${WS}/ws/agent" -state "$STATE" -enroll-token "$TOKEN" >/var/log/rmm-agent.log 2>&1 &
+  echo "Agent started (logs: /var/log/rmm-agent.log)."
+fi
+echo "Done. The device should appear under Devices shortly."

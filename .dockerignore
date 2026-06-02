@@ -1,0 +1,13 @@
+# Keep the server build context small — it only needs Go sources + modules.
+.git
+.claude
+bin
+openrmm
+docs
+deploy
+*.md
+.env
+.gitignore
+Makefile
+docker-compose.yml
+Dockerfile

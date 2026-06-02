@@ -29,7 +29,7 @@ type ToolResult struct {
 // executes anything — it creates a job in 'awaiting_approval'. A human approves
 // in the UI before it ever reaches an endpoint. This is the core guardrail.
 func Tools() []Tool {
-	return []Tool{
+	base := []Tool{
 		{Type: "function", Function: FunctionDef{
 			Name:        "list_devices",
 			Description: "List managed devices (agents) with id, hostname, OS, arch and online status. Use this to find the target device id for an action.",
@@ -61,10 +61,14 @@ func Tools() []Tool {
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
 	}
+	return append(base, highLevelTools()...)
 }
 
 // Execute dispatches a single tool call and returns its JSON output.
 func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMessage) ToolResult {
+	if res, ok := executeHighLevel(ctx, tc, name, args); ok {
+		return res
+	}
 	switch name {
 	case "list_devices":
 		return jsonResult(listDevices(ctx, tc))
@@ -135,10 +139,16 @@ func proposeScript(ctx context.Context, tc ToolContext, args json.RawMessage) To
 	if err := json.Unmarshal(args, &in); err != nil {
 		return ToolResult{Output: fmt.Sprintf(`{"error":%q}`, err.Error())}
 	}
-	// Always require approval for AI-proposed actions.
-	job, err := tc.Jobs.Propose(ctx, in.AgentID, in.Shell, in.Script, in.Description, "ai:"+tc.Actor, true)
+	return proposeJob(ctx, tc, in.AgentID, in.Shell, in.Script, in.Description)
+}
+
+// proposeJob creates an approval-gated job from a tool and returns the standard
+// "awaiting approval" tool result. Shared by propose_script and every
+// high-level tool so the guardrail is identical across all of them.
+func proposeJob(ctx context.Context, tc ToolContext, agentID, shell, script, desc string) ToolResult {
+	job, err := tc.Jobs.Propose(ctx, agentID, shell, script, desc, "ai:"+tc.Actor, true)
 	if err != nil {
-		return ToolResult{Output: fmt.Sprintf(`{"error":%q}`, err.Error())}
+		return errResult(err.Error())
 	}
 	out, _ := json.Marshal(map[string]any{
 		"job_id":  job.ID,

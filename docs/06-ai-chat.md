@@ -51,6 +51,30 @@ human approves it via `POST /api/jobs/{id}/approve`. The tool's return value
 explicitly tells the model the job is pending approval, so it won't claim
 success. This is the guardrail, enforced in code.
 
+## High-level tools (OS-aware actions)
+
+On top of the generic `propose_script`, the catalog includes **semantic,
+OS-aware** tools (in `internal/ai/highlevel.go`). The model supplies the
+*intent*; the backend builds the correct, vetted command for the target
+device's OS (Windows/Linux/macOS):
+
+| Tool | Action |
+|------|--------|
+| `install_software` / `uninstall_software` | winget / apt / brew per OS |
+| `restart_service` | Restart-Service / systemctl |
+| `install_printer` | Add-Printer (TCP/IP port) / lpadmin |
+| `flush_dns` | ipconfig / resolvectl / dscacheutil |
+| `reboot_device` | shutdown /r / shutdown -r |
+
+These create the **same approval-gated job** as `propose_script` (the AI can't
+execute them). Parameters are validated server-side (shell-metacharacter
+rejection, IP parsing) as defense in depth on top of the human approval gate.
+They're code-defined (no per-deployment maintenance) and, because the MCP server
+reuses the same catalog, they're available to external AI clients too. The
+generic `propose_script` remains the fallback for anything without a dedicated
+tool. Verified end-to-end via MCP `tools/call` (correct per-OS command, injection
+rejected, job left awaiting approval).
+
 ## Report generation
 
 Reports are just the model summarizing data it fetched via `fleet_summary` /

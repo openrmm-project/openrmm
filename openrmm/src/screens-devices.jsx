@@ -296,7 +296,7 @@ function RunScriptForm({ device, onCreated }) {
           <Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option></Select>
         </Field>
         <Field label="From library" className="flex-1">
-          <Select defaultValue="" onChange={(e) => { const s = scriptsQ.data?.scripts.find((x) => x.id === e.target.value); if (s) { setScript(s.body); setShell(s.shell); setDesc(s.name); } }}>
+          <Select defaultValue="" onChange={(e) => { const s = (scriptsQ.data?.scripts || []).find((x) => x.id === e.target.value); if (s) { setScript(s.body); setShell(s.shell); setDesc(s.name); } }}>
             <option value="">Start from a saved script…</option>
             {(scriptsQ.data?.scripts || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>

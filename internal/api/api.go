@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -369,9 +370,26 @@ func roleOf(r *http.Request) string {
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	denilSlices(v)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// denilSlices replaces nil slice values in a top-level response map with empty
+// slices, so list endpoints always emit `[]` instead of `null` (Go marshals a
+// nil slice as null, which crashes naive clients doing `.map`/`.length`).
+func denilSlices(v any) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return
+	}
+	for k, val := range m {
+		rv := reflect.ValueOf(val)
+		if rv.Kind() == reflect.Slice && rv.IsNil() {
+			m[k] = []any{}
+		}
+	}
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {

@@ -190,6 +190,7 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
 
 function CheckEditor({ check, onClose, devMap, policies }) {
   const toast = useToast();
+  const { can } = useAuth();
   const [type, setType] = useState(check?.type || 'diskspace');
   const [name, setName] = useState(check?.name || '');
   const [target, setTarget] = useState(check?.policy_id ? 'pol:' + check.policy_id : check?.agent_id ? 'dev:' + check.agent_id : '');
@@ -210,6 +211,7 @@ function CheckEditor({ check, onClose, devMap, policies }) {
     try { if (check) await api.updateCheck(check.id, body); else await api.createCheck(body); toast.success(check ? 'Check updated' : 'Check created'); onClose(); }
     catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
   };
+  const del = async () => { if (!window.confirm('Delete this check?')) return; try { await api.deleteCheck(check.id); toast.info('Check deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
     <Modal open onClose={onClose} width="max-w-lg">
@@ -235,7 +237,7 @@ function CheckEditor({ check, onClose, devMap, policies }) {
         {(t.dir === 'state' || t.dir === 'script') && <Field label="Interval (s)" className="w-40"><Input type="number" value={interval} onChange={(e) => setInterval(e.target.value)} /></Field>}
         <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{t.dir === 'low' ? 'Alerts when the value drops below the threshold (e.g. low disk/memory).' : t.dir === 'high' ? 'Alerts when the value rises above the threshold (e.g. high CPU/latency).' : t.dir === 'state' ? 'Alerts when the service is not running.' : 'Alerts on a non-zero exit code.'}</div>
       </div>
-      <div className="px-5 py-3.5 border-t border-line flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? 'Save check' : 'Create check'}</Button></div>
+      <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('admin') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? 'Save check' : 'Create check'}</Button></div>
     </Modal>
   );
 }
@@ -292,6 +294,7 @@ function TasksScreen() {
 
 function TaskEditor({ task, onClose, devMap, policies, scripts }) {
   const toast = useToast();
+  const { can } = useAuth();
   const [name, setName] = useState(task?.name || '');
   const [target, setTarget] = useState(task?.policy_id ? 'pol:' + task.policy_id : task?.agent_id ? 'dev:' + task.agent_id : '');
   const [scriptId, setScriptId] = useState(task?.script_id || '');
@@ -310,6 +313,7 @@ function TaskEditor({ task, onClose, devMap, policies, scripts }) {
     try { if (task) await api.updateTask(task.id, body); else await api.createTask(body); toast.success(task ? 'Task updated' : 'Task created'); onClose(); }
     catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
   };
+  const del = async () => { if (!window.confirm('Delete this scheduled task?')) return; try { await api.deleteTask(task.id); toast.info('Task deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
     <Modal open onClose={onClose} width="max-w-lg">
@@ -332,7 +336,7 @@ function TaskEditor({ task, onClose, devMap, policies, scripts }) {
         </Field>
         <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={setEnabled} /><span className="text-[13px] text-ink">Enabled</span></label>
       </div>
-      <div className="px-5 py-3.5 border-t border-line flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{task ? 'Save task' : 'Create task'}</Button></div>
+      <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{task && can('admin') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{task ? 'Save task' : 'Create task'}</Button></div>
     </Modal>
   );
 }

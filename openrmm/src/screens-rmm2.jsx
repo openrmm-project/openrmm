@@ -162,6 +162,7 @@ function PolicyDetail({ policy, onClose }) {
 
   const addAssignment = async () => { if (!addScope) return; const [type, id] = addScope.split(':'); await api.createAssignment(policy.id, { scope_type: type, scope_id: id }); setAddScope(''); toast.success('Assigned', 'Checks & tasks now apply to that scope.'); };
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info('Assignment removed'); };
+  const del = async () => { if (!window.confirm('Delete this policy? Its checks, tasks and assignments will be removed.')) return; try { await api.deletePolicy(policy.id); toast.info('Policy deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
     <Drawer open onClose={onClose} width="max-w-[720px]">
@@ -196,6 +197,11 @@ function PolicyDetail({ policy, onClose }) {
           </div>
         )}
       </div>
+      {can('admin') && (
+        <div className="px-5 py-3.5 border-t border-line flex justify-end">
+          <Button variant="danger" icon="trash" onClick={del}>Delete policy</Button>
+        </div>
+      )}
     </Drawer>
   );
 }

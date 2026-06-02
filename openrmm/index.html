@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RMM-AI · Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          app: 'var(--app)',
+          panel: 'var(--panel)',
+          card: 'var(--card)',
+          elevated: 'var(--elevated)',
+          line: 'var(--line)',
+          line2: 'var(--line2)',
+          ink: 'var(--ink)',
+          muted: 'var(--muted)',
+          faint: 'var(--faint)',
+          brand: 'var(--brand)',
+          brandhi: 'var(--brandhi)',
+          brandsoft: 'var(--brandsoft)',
+          ok: 'var(--ok)',
+          oksoft: 'var(--oksoft)',
+          warn: 'var(--warn)',
+          warnsoft: 'var(--warnsoft)',
+          run: 'var(--run)',
+          runsoft: 'var(--runsoft)',
+          bad: 'var(--bad)',
+          badsoft: 'var(--badsoft)',
+        },
+        fontFamily: {
+          sans: ['Inter', 'system-ui', 'sans-serif'],
+          mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        },
+        borderRadius: { xl: '10px', '2xl': '14px' },
+        keyframes: {
+          'fade-in': { '0%': { transform: 'translateY(5px)' }, '100%': { transform: 'none' } },
+          'slide-in': { '0%': { transform: 'translateX(40px)' }, '100%': { transform: 'none' } },
+          'scale-in': { '0%': { transform: 'scale(.97)' }, '100%': { transform: 'none' } },
+          'pulse-ring': { '0%': { boxShadow: '0 0 0 0 var(--ringcolor)' }, '70%': { boxShadow: '0 0 0 6px transparent' }, '100%': { boxShadow: '0 0 0 0 transparent' } },
+          'shimmer': { '100%': { transform: 'translateX(100%)' } },
+        },
+        animation: {
+          'fade-in': 'fade-in .22s ease both',
+          'slide-in': 'slide-in .28s cubic-bezier(.32,.72,0,1)',
+          'scale-in': 'scale-in .16s ease both',
+          'pulse-ring': 'pulse-ring 1.8s ease-out infinite',
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root {
+    --app: #0a0b0d;
+    --panel: #0e1014;
+    --card: #15161b;
+    --elevated: #1c1e25;
+    --line: #24262f;
+    --line2: #323542;
+    --ink: #e7e8ec;
+    --muted: #9396a1;
+    --faint: #62656f;
+    --brand: #6366f1;
+    --brandhi: #818cf8;
+    --brandsoft: rgba(99,102,241,.14);
+    --ok: #34d399;
+    --oksoft: rgba(52,211,153,.13);
+    --warn: #fbbf24;
+    --warnsoft: rgba(251,191,36,.13);
+    --run: #60a5fa;
+    --runsoft: rgba(96,165,250,.13);
+    --bad: #f87171;
+    --badsoft: rgba(248,113,113,.13);
+    --ringcolor: rgba(99,102,241,.35);
+  }
+  html.light {
+    --app: #f6f7f9;
+    --panel: #ffffff;
+    --card: #ffffff;
+    --elevated: #ffffff;
+    --line: #e6e8ec;
+    --line2: #d3d6dd;
+    --ink: #14161a;
+    --muted: #5b606b;
+    --faint: #8b909b;
+    --brandsoft: rgba(99,102,241,.10);
+    --oksoft: rgba(16,150,110,.12);
+    --warnsoft: rgba(202,138,4,.13);
+    --runsoft: rgba(37,99,235,.12);
+    --badsoft: rgba(220,38,38,.10);
+    --ok: #0f9d6e;
+    --warn: #ca8a04;
+    --run: #2563eb;
+    --bad: #dc2626;
+  }
+  * { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  html, body, #root { height: 100%; }
+  body { margin: 0; background: var(--app); color: var(--ink); font-family: 'Inter', sans-serif; font-feature-settings: 'cv11','ss01'; overflow: hidden; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3e49; background-clip: padding-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .scroll-area { scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+  textarea, input { font-family: inherit; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .grain { background-image: radial-gradient(circle at 50% 0%, rgba(99,102,241,.05), transparent 60%); }
+  [data-tip] { position: relative; }
+  .tabular { font-variant-numeric: tabular-nums; }
+  ::selection { background: rgba(99,102,241,.32); }
+  input:-webkit-autofill, input:-webkit-autofill:focus { -webkit-text-fill-color: var(--ink); -webkit-box-shadow: 0 0 0 1000px var(--app) inset; caret-color: var(--ink); transition: background-color 9999s; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="src/icons.jsx"></script>
+<script type="text/babel" src="src/mockapi.jsx"></script>
+<script type="text/babel" src="src/ui.jsx"></script>
+<script type="text/babel" src="src/screens-core.jsx"></script>
+<script type="text/babel" src="src/screens-devices.jsx"></script>
+<script type="text/babel" src="src/screens-jobs.jsx"></script>
+<script type="text/babel" src="src/screens-chat.jsx"></script>
+<script type="text/babel" src="src/screens-rmm.jsx"></script>
+<script type="text/babel" src="src/screens-rmm2.jsx"></script>
+<script type="text/babel" src="src/app.jsx"></script>
+</body>
+</html>

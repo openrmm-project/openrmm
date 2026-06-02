@@ -1,0 +1,31 @@
+# Build artifacts
+/bin/
+*.exe
+dist/
+
+# Secrets / environment (never commit)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+id_*
+agent-state.json
+
+# Local editor / tool state
+.claude/settings.local.json
+.idea/
+.vscode/
+*.swp
+
+# Claude Design prototype artifacts (not source)
+openrmm/.thumbnail
+openrmm/uploads/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out

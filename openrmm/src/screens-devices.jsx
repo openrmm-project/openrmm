@@ -285,25 +285,39 @@ function RunScriptForm({ device, onCreated }) {
   const [desc, setDesc] = useState('');
   const [script, setScript] = useState(defShell === 'powershell' ? 'Get-Service | Where-Object Status -eq "Running" | Select-Object -First 10' : 'uptime\ndf -h /');
   const [busy, setBusy] = useState(false);
+  const [runNow, setRunNow] = useState(false);
   const scriptsQ = useQuery(['scripts-pick'], () => api.listScripts(), { invalidateOn: ['scripts'] });
+  const cfgQ = useQuery(['config'], () => api.getConfig(), {});
+  const canDirect = can('admin') && cfgQ.data?.server?.allow_unapproved_jobs;
+  const direct = canDirect && runNow;
 
   if (!can('tech')) return <EmptyState icon="shield" title="Read-only access" msg="Running scripts requires the tech or admin role." />;
 
   const submit = async () => {
     setBusy(true);
     try {
-      await api.createJob({ agent_id: device.id, shell, script, description: desc || 'Manual script run', require_approval: true });
-      toast.success('Job created', 'Queued for approval — nothing has run yet.');
+      await api.createJob({ agent_id: device.id, shell, script, description: desc || 'Manual script run', require_approval: !direct });
+      if (direct) toast.success('Job dispatched', 'Running on ' + device.hostname + ' now.');
+      else toast.success('Job created', 'Queued for approval — nothing has run yet.');
       onCreated();
     } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
   };
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <div className="flex items-start gap-2.5 rounded-xl border border-warn/25 bg-warnsoft px-3.5 py-3">
-        <Icon name="info" size={16} className="text-warn mt-0.5 shrink-0" />
-        <div className="text-[12.5px] text-ink leading-relaxed">This creates an <b>approval-gated job</b>. It is a dry-run preview until a tech or admin approves it — nothing executes on {device.hostname} yet.</div>
+      <div className={cx('flex items-start gap-2.5 rounded-xl border px-3.5 py-3', direct ? 'border-bad/25 bg-badsoft' : 'border-warn/25 bg-warnsoft')}>
+        <Icon name="info" size={16} className={cx('mt-0.5 shrink-0', direct ? 'text-bad' : 'text-warn')} />
+        <div className="text-[12.5px] text-ink leading-relaxed">{direct
+          ? <>Direct execution is <b>on</b>: this runs on {device.hostname} <b>immediately</b>, with no approval step.</>
+          : <>This creates an <b>approval-gated job</b>. It is a dry-run preview until a tech or admin approves it — nothing executes on {device.hostname} yet.</>}</div>
       </div>
+      {canDirect && (
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input type="checkbox" checked={runNow} onChange={(e) => setRunNow(e.target.checked)} className="h-4 w-4 accent-bad" />
+          <span className="text-[12.5px] text-ink">Run immediately (skip approval)</span>
+          <span className="text-[11.5px] text-faint">— admin only; enabled on this instance</span>
+        </label>
+      )}
       <div className="flex gap-3">
         <Field label="Shell" className="w-44">
           <Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option></Select>
@@ -318,7 +332,7 @@ function RunScriptForm({ device, onCreated }) {
       <Field label="Description"><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="What does this do?" /></Field>
       <Field label="Script"><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={220} /></Field>
       <div className="flex justify-end gap-2">
-        <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim()}>Create approval-gated job</Button>
+        <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim()}>{direct ? 'Run now on ' + device.hostname : 'Create approval-gated job'}</Button>
       </div>
     </div>
   );

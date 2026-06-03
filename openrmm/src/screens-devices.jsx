@@ -251,7 +251,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
-        <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'crosshair' }} />
+        <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'none' }} />
       </div>
     </div>
   );

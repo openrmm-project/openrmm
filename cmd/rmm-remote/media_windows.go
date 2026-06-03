@@ -20,38 +20,47 @@ import (
 var (
 	user32             = syscall.NewLazyDLL("user32.dll")
 	gdi32              = syscall.NewLazyDLL("gdi32.dll")
-	procGetDC          = user32.NewProc("GetDC")
-	procReleaseDC      = user32.NewProc("ReleaseDC")
+	procGetDC            = user32.NewProc("GetDC")
+	procReleaseDC        = user32.NewProc("ReleaseDC")
 	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
-	procSendInput      = user32.NewProc("SendInput")
-	procSetDPIAware    = user32.NewProc("SetProcessDPIAware")
-	procCreateDC       = gdi32.NewProc("CreateCompatibleDC")
-	procCreateDIB      = gdi32.NewProc("CreateDIBSection")
-	procSelectObject   = gdi32.NewProc("SelectObject")
-	procBitBlt         = gdi32.NewProc("BitBlt")
-	procDeleteObject   = gdi32.NewProc("DeleteObject")
-	procDeleteDC       = gdi32.NewProc("DeleteDC")
+	procSendInput        = user32.NewProc("SendInput")
+	procSetDPIAware      = user32.NewProc("SetProcessDPIAware")
+	procGetCursorInfo    = user32.NewProc("GetCursorInfo")
+	procGetIconInfo      = user32.NewProc("GetIconInfo")
+	procDrawIconEx       = user32.NewProc("DrawIconEx")
+	procCreateDC         = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIB        = gdi32.NewProc("CreateDIBSection")
+	procSelectObject     = gdi32.NewProc("SelectObject")
+	procBitBlt           = gdi32.NewProc("BitBlt")
+	procDeleteObject     = gdi32.NewProc("DeleteObject")
+	procDeleteDC         = gdi32.NewProc("DeleteDC")
 )
 
 const (
-	smCXScreen = 0
-	smCYScreen = 1
-	srcCopy    = 0x00CC0020
-	captureBlt = 0x40000000
-	dibRGB     = 0
+	smXVirtualScreen  = 76
+	smYVirtualScreen  = 77
+	smCXVirtualScreen = 78
+	smCYVirtualScreen = 79
+	srcCopy           = 0x00CC0020
+	captureBlt        = 0x40000000
+	dibRGB            = 0
+
+	cursorShowing = 0x0001
+	diNormal      = 0x0003
 
 	inputMouse    = 0
 	inputKeyboard = 1
 
-	mvMove     = 0x0001
-	mvLeftDown = 0x0002
-	mvLeftUp   = 0x0004
+	mvMove      = 0x0001
+	mvLeftDown  = 0x0002
+	mvLeftUp    = 0x0004
 	mvRightDown = 0x0008
-	mvRightUp  = 0x0010
-	mvMidDown  = 0x0020
-	mvMidUp    = 0x0040
-	mvWheel    = 0x0800
-	mvAbsolute = 0x8000
+	mvRightUp   = 0x0010
+	mvMidDown   = 0x0020
+	mvMidUp     = 0x0040
+	mvWheel     = 0x0800
+	mvAbsolute  = 0x8000
+	mvVirtualDesk = 0x4000
 
 	keyUp = 0x0002
 )
@@ -73,6 +82,24 @@ type bitmapInfoHeader struct {
 type bitmapInfo struct {
 	Header bitmapInfoHeader
 	Colors [1]uint32
+}
+
+type point struct{ X, Y int32 }
+
+type cursorInfo struct {
+	cbSize      uint32
+	flags       uint32
+	hCursor     uintptr
+	ptScreenPos point
+}
+
+type iconInfo struct {
+	fIcon    int32
+	xHotspot uint32
+	yHotspot uint32
+	_        uint32 // pad so the handles are 8-byte aligned (amd64)
+	hbmMask  uintptr
+	hbmColor uintptr
 }
 
 // input mirrors the Win32 INPUT struct on amd64 (4-byte type + 4-byte pad +
@@ -102,18 +129,22 @@ type keybdInput struct {
 // ---- screen capture ----
 
 type capturer struct {
-	w, h    int
-	screen  uintptr
-	mem     uintptr
-	bitmap  uintptr
-	pixels  []byte
-	img     *image.RGBA
+	w, h   int
+	vx, vy int32 // virtual-desktop origin (top-left can be negative on multi-monitor)
+	screen uintptr
+	mem    uintptr
+	bitmap uintptr
+	pixels []byte
+	img    *image.RGBA
 }
 
 func newCapturer() (*capturer, error) {
 	procSetDPIAware.Call()
-	w, _, _ := procGetSystemMetrics.Call(smCXScreen)
-	h, _, _ := procGetSystemMetrics.Call(smCYScreen)
+	// Capture the whole virtual desktop (all monitors stitched into one image).
+	vx, _, _ := procGetSystemMetrics.Call(smXVirtualScreen)
+	vy, _, _ := procGetSystemMetrics.Call(smYVirtualScreen)
+	w, _, _ := procGetSystemMetrics.Call(smCXVirtualScreen)
+	h, _, _ := procGetSystemMetrics.Call(smCYVirtualScreen)
 	if w == 0 || h == 0 {
 		return nil, fmt.Errorf("could not read screen size (running in session 0?)")
 	}
@@ -140,11 +171,35 @@ func newCapturer() (*capturer, error) {
 	procSelectObject.Call(mem, bitmap)
 
 	c := &capturer{
-		w: int(w), h: int(h), screen: screen, mem: mem, bitmap: bitmap,
+		w: int(w), h: int(h), vx: int32(vx), vy: int32(vy),
+		screen: screen, mem: mem, bitmap: bitmap,
 		pixels: unsafe.Slice(bits, int(w)*int(h)*4),
 		img:    image.NewRGBA(image.Rect(0, 0, int(w), int(h))),
 	}
 	return c, nil
+}
+
+// drawCursor composites the live mouse cursor onto the memory DC (BitBlt does
+// not capture it), so the viewer sees the real remote pointer.
+func (c *capturer) drawCursor() {
+	ci := cursorInfo{cbSize: uint32(unsafe.Sizeof(cursorInfo{}))}
+	r, _, _ := procGetCursorInfo.Call(uintptr(unsafe.Pointer(&ci)))
+	if r == 0 || ci.flags != cursorShowing || ci.hCursor == 0 {
+		return
+	}
+	var ii iconInfo
+	if r2, _, _ := procGetIconInfo.Call(ci.hCursor, uintptr(unsafe.Pointer(&ii))); r2 == 0 {
+		return
+	}
+	if ii.hbmMask != 0 {
+		defer procDeleteObject.Call(ii.hbmMask)
+	}
+	if ii.hbmColor != 0 {
+		defer procDeleteObject.Call(ii.hbmColor)
+	}
+	x := ci.ptScreenPos.X - c.vx - int32(ii.xHotspot)
+	y := ci.ptScreenPos.Y - c.vy - int32(ii.yHotspot)
+	procDrawIconEx.Call(c.mem, uintptr(x), uintptr(y), ci.hCursor, 0, 0, 0, 0, diNormal)
 }
 
 func (c *capturer) close() {
@@ -161,10 +216,11 @@ func (c *capturer) close() {
 
 // frameJPEG grabs the screen and returns it JPEG-encoded.
 func (c *capturer) frameJPEG(buf *bytes.Buffer) ([]byte, error) {
-	r, _, _ := procBitBlt.Call(c.mem, 0, 0, uintptr(c.w), uintptr(c.h), c.screen, 0, 0, srcCopy|captureBlt)
+	r, _, _ := procBitBlt.Call(c.mem, 0, 0, uintptr(c.w), uintptr(c.h), c.screen, uintptr(c.vx), uintptr(c.vy), srcCopy|captureBlt)
 	if r == 0 {
 		return nil, fmt.Errorf("BitBlt failed")
 	}
+	c.drawCursor()
 	// DIB is BGRX top-down; convert to RGBA.
 	src, dst := c.pixels, c.img.Pix
 	for i := 0; i+3 < len(src); i += 4 {
@@ -185,12 +241,15 @@ func (c *capturer) frameJPEG(buf *bytes.Buffer) ([]byte, error) {
 func sendMouse(flags uint32, x, y float64, data int32) {
 	in := input{typ: inputMouse}
 	mi := (*mouseInput)(unsafe.Pointer(&in.u[0]))
-	mi.dwFlags = flags
-	mi.mouseData = uint32(data)
 	if flags&mvAbsolute != 0 {
+		// Absolute coords are normalized 0..65535 across the whole virtual
+		// desktop (matches the stitched multi-monitor frame we stream).
+		flags |= mvVirtualDesk
 		mi.dx = int32(x * 65535)
 		mi.dy = int32(y * 65535)
 	}
+	mi.dwFlags = flags
+	mi.mouseData = uint32(data)
 	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
 }
 

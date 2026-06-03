@@ -29,9 +29,23 @@ var (
 	procSendMessage   = user32.NewProc("SendMessageW")
 	procPostMessage   = user32.NewProc("PostMessageW")
 	procGetWindowText = user32.NewProc("GetWindowTextW")
-	procMoveWindow    = user32.NewProc("MoveWindow")
-	procCreateFont    = gdi32.NewProc("CreateFontW")
+	procMoveWindow      = user32.NewProc("MoveWindow")
+	procCreateFont      = gdi32.NewProc("CreateFontW")
+	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
+	procSetBkColor      = gdi32.NewProc("SetBkColor")
+	procSetTextColor    = gdi32.NewProc("SetTextColor")
 )
+
+// Dark theme (COLORREF 0x00BBGGRR) to match a modern remote-tool look.
+const (
+	clrWinBg  = 0x00181818
+	clrCtlBg  = 0x00282828
+	clrText   = 0x00EBEBEB
+	wmCtlEdit = 0x0133
+	wmCtlStatic = 0x0138
+)
+
+var bgBrush, ctlBrush uintptr
 
 const (
 	wsOverlapped   = 0x00CF0000
@@ -121,12 +135,14 @@ func newChatWindow(title string, onSend func(string)) *chatWindow {
 
 func (cw *chatWindow) create(title string) {
 	hInst, _, _ := procGetModuleH.Call(0)
+	bgBrush, _, _ = procCreateSolidBrush.Call(clrWinBg)
+	ctlBrush, _, _ = procCreateSolidBrush.Call(clrCtlBg)
 	className := u16("RMMChatWindow")
 	wc := wndClassExW{
 		style:         0,
 		lpfnWndProc:   syscall.NewCallback(wndProc),
 		hInstance:     hInst,
-		hbrBackground: 6, // COLOR_WINDOW+1
+		hbrBackground: bgBrush,
 		lpszClassName: className,
 	}
 	wc.cbSize = uint32(unsafe.Sizeof(wc))
@@ -195,6 +211,11 @@ func (cw *chatWindow) close() {
 func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	cw := activeChat
 	switch msg {
+	case wmCtlEdit, wmCtlStatic:
+		// Dark-theme the child controls (wparam = HDC).
+		procSetBkColor.Call(wparam, clrCtlBg)
+		procSetTextColor.Call(wparam, clrText)
+		return ctlBrush
 	case wmCommand:
 		if cw != nil && (wparam&0xffff) == idSend {
 			text := getWindowText(cw.input)

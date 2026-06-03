@@ -367,6 +367,8 @@ func runMedia(conn *websocket.Conn) error {
 			}
 		}
 	}()
+	// announce the running sidecar version so the viewer can surface staleness
+	s.sendJSON(map[string]any{"t": "hello", "v": remoteVersion})
 	// reader / dispatcher
 	go func() {
 		for {

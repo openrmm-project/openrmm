@@ -47,4 +47,4 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.1.0"
+const remoteVersion = "0.2.0"

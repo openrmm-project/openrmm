@@ -125,6 +125,16 @@ func (s *Store) TouchAgent(ctx context.Context, id string) error {
 	return err
 }
 
+// RefreshAgentInfo updates the metadata an agent reports at (re-)registration,
+// so a binary upgrade is reflected (version/hostname/os/arch otherwise stay
+// frozen at first enrollment).
+func (s *Store) RefreshAgentInfo(ctx context.Context, id, hostname, os, arch, version string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE agents SET hostname=$2, os=$3, arch=$4, version=$5, last_seen=now(), status='online' WHERE id=$1`,
+		id, hostname, os, arch, version)
+	return err
+}
+
 // SetRemoteIDs records the RustDesk / MeshCentral IDs reported by an agent.
 func (s *Store) SetRemoteIDs(ctx context.Context, id string, rustdesk, mesh *string) error {
 	_, err := s.pool.Exec(ctx,

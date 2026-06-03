@@ -113,6 +113,29 @@ func (s *Service) Reject(ctx context.Context, jobID, actor string) (*models.Job,
 	return s.store.GetJob(ctx, jobID)
 }
 
+// Cancel stops a job. Proposals (not yet dispatched) are rejected; in-flight
+// jobs get a job_cancel pushed to the agent, which kills the process and reports
+// the result. If the agent is offline the job is finalized as failed here.
+func (s *Service) Cancel(ctx context.Context, jobID, actor string) (*models.Job, error) {
+	j, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	switch j.Status {
+	case models.JobCompleted, models.JobFailed, models.JobRejected:
+		return nil, fmt.Errorf("job is %s, cannot cancel", j.Status)
+	case models.JobAwaitingApproval:
+		return s.Reject(ctx, jobID, actor)
+	}
+	frame, _ := encode(protocol.MsgJobCancel, protocol.JobCancelMsg{JobID: jobID})
+	delivered := s.hub.Send(j.AgentID, frame)
+	s.audit(ctx, actor, "job.cancel", jobID, map[string]any{"delivered": delivered})
+	if !delivered {
+		_ = s.store.SetJobResult(ctx, jobID, models.JobFailed, -1, "", "canceled (agent offline)")
+	}
+	return s.store.GetJob(ctx, jobID)
+}
+
 // dispatch attempts to push a pending job to a connected agent.
 func (s *Service) dispatch(ctx context.Context, j *models.Job) {
 	msg := protocol.JobMsg{JobID: j.ID, Type: j.Type, Shell: j.Shell, Script: j.Script}

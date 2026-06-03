@@ -61,6 +61,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
   const isAwaiting = job.status === 'awaiting_approval';
   const destructive = DESTRUCTIVE.test(job.script);
   const done = job.status === 'completed' || job.status === 'failed';
+  const inFlight = job.status === 'pending' || job.status === 'sent' || job.status === 'running';
 
   const approve = async () => {
     setBusy(true);
@@ -71,6 +72,11 @@ function JobCard({ job, device, defaultOpen, focused }) {
     setBusy(true);
     try { await api.rejectJob(job.id); toast.info('Rejected', 'The job was discarded.'); }
     catch (e) { toast.error('Could not reject', e.message); } finally { setBusy(false); }
+  };
+  const cancel = async () => {
+    setBusy(true);
+    try { await api.cancelJob(job.id); toast.info('Canceling', 'Stopping the job on ' + (device?.hostname || job.agent_id) + '…'); }
+    catch (e) { toast.error('Could not cancel', e.message); } finally { setBusy(false); }
   };
 
   return (
@@ -119,7 +125,14 @@ function JobCard({ job, device, defaultOpen, focused }) {
               </div>
             </div>
           )}
-          {job.status === 'running' && <div className="flex items-center gap-2 text-[12.5px] text-run"><Spinner size={14} className="text-run" />Executing on {device?.hostname}…</div>}
+          {inFlight && (
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <div className="flex items-center gap-2 text-[12.5px] text-run">
+                {job.status === 'running' ? <><Spinner size={14} className="text-run" />Executing on {device?.hostname}…</> : <><Icon name="clock" size={13} />{job.status === 'sent' ? 'Sent — starting…' : 'Queued (waiting for agent)'}</>}
+              </div>
+              {can('tech') && <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>Cancel</Button>}
+            </div>
+          )}
         </div>
       )}
 

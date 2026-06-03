@@ -12,6 +12,7 @@ const (
 	MsgHeartbeat    = "heartbeat"     // agent -> server
 	MsgInventory    = "inventory"     // agent -> server
 	MsgJob          = "job"           // server -> agent
+	MsgJobCancel    = "job_cancel"    // server -> agent: kill a running job
 	MsgJobResult    = "job_result"    // agent -> server
 	MsgRemoteStart  = "remote_start"  // server -> agent: open a remote session
 	MsgRemoteStatus = "remote_status" // agent -> server: remote session state
@@ -49,6 +50,11 @@ type JobMsg struct {
 	Type   string `json:"type"`
 	Shell  string `json:"shell"`
 	Script string `json:"script"`
+}
+
+// JobCancelMsg asks the agent to kill a running job's process.
+type JobCancelMsg struct {
+	JobID string `json:"job_id"`
 }
 
 // JobResultMsg is returned by the agent after running a job.

@@ -60,6 +60,11 @@ func Tools() []Tool {
 			Description: "Get an aggregate summary of the fleet (device counts by OS/status and recent jobs). Use this to generate reports.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "cancel_job",
+			Description: "Cancel a job: rejects it if still awaiting approval, or kills the running process on the device if it is in progress (e.g. a stuck script/download). This stops execution; it never runs anything.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"],"additionalProperties":false}`),
+		}},
 	}
 	return append(base, highLevelTools()...)
 }
@@ -78,6 +83,8 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return proposeScript(ctx, tc, args)
 	case "get_job_status":
 		return jsonResult(getJobStatus(ctx, tc, args))
+	case "cancel_job":
+		return jsonResult(cancelJobTool(ctx, tc, args))
 	case "fleet_summary":
 		return jsonResult(fleetSummary(ctx, tc))
 	default:
@@ -166,6 +173,16 @@ func getJobStatus(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 		return nil, err
 	}
 	return tc.Store.GetJob(ctx, in.JobID)
+}
+
+func cancelJobTool(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
+	var in struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	return tc.Jobs.Cancel(ctx, in.JobID, "ai:"+tc.Actor)
 }
 
 func fleetSummary(ctx context.Context, tc ToolContext) (any, error) {

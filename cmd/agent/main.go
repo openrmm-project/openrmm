@@ -16,7 +16,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -30,7 +32,7 @@ import (
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-const agentVersion = "0.2.1"
+const agentVersion = "0.3.0"
 
 type state struct {
 	AgentID    string `json:"agent_id"`
@@ -44,6 +46,8 @@ type agent struct {
 	st          state
 	send        chan []byte
 	quit        chan struct{}
+	mu          sync.Mutex
+	running     map[string]context.CancelFunc // job_id -> cancel, for in-flight jobs
 }
 
 // program adapts the agent to the service interface.
@@ -59,7 +63,7 @@ func main() {
 	action := flag.String("action", "", "service action: install | uninstall | start | stop (empty = run)")
 	flag.Parse()
 
-	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{})}
+	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}}
 	a.loadState()
 
 	svcArgs := []string{"-server", *wsURL, "-state", *statePath}
@@ -194,6 +198,11 @@ func (a *agent) handleFrame(raw []byte) {
 		if json.Unmarshal(env.Data, &job) == nil {
 			go a.runJob(job)
 		}
+	case protocol.MsgJobCancel:
+		var c protocol.JobCancelMsg
+		if json.Unmarshal(env.Data, &c) == nil {
+			a.cancelJob(c.JobID)
+		}
 	case protocol.MsgRunCheck:
 		var chk protocol.RunCheckMsg
 		if json.Unmarshal(env.Data, &chk) == nil {
@@ -207,13 +216,42 @@ func (a *agent) handleFrame(raw []byte) {
 	}
 }
 
-// runJob executes a script and reports the result.
+// runJob executes a script and reports the result. The job is registered so a
+// job_cancel from the server can kill the still-running process.
 func (a *agent) runJob(job protocol.JobMsg) {
 	log.Printf("running job %s (%s)", job.JobID, job.Shell)
-	exitCode, stdout, stderr := runScript(job.Shell, job.Script)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	a.mu.Lock()
+	a.running[job.JobID] = cancel
+	a.mu.Unlock()
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		delete(a.running, job.JobID)
+		a.mu.Unlock()
+	}()
+
+	exitCode, stdout, stderr := runScriptCtx(ctx, job.Shell, job.Script)
+	if ctx.Err() == context.Canceled {
+		stderr = strings.TrimSpace(stderr + "\n[canceled by operator]")
+		if exitCode == 0 {
+			exitCode = -1
+		}
+	}
 	a.queue(protocol.MsgJobResult, protocol.JobResultMsg{
 		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0,
 	})
+}
+
+// cancelJob kills the process of an in-flight job, if any.
+func (a *agent) cancelJob(jobID string) {
+	a.mu.Lock()
+	cancel := a.running[jobID]
+	a.mu.Unlock()
+	if cancel != nil {
+		log.Printf("canceling job %s", jobID)
+		cancel()
+	}
 }
 
 // telemetryLoop sends periodic heartbeats and inventory snapshots.
@@ -301,9 +339,10 @@ func envOr(key, def string) string {
 
 // ---------- script execution ----------
 
-func runScript(shell, script string) (int, string, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
+// runScriptCtx runs a script under the given context; canceling the context
+// (timeout or operator cancel) kills the process — and on Windows its whole
+// child tree (taskkill /T), so a stuck downloader/installer dies too.
+func runScriptCtx(ctx context.Context, shell, script string) (int, string, string) {
 	var cmd *exec.Cmd
 	switch shell {
 	case "powershell":
@@ -314,6 +353,15 @@ func runScript(shell, script string) (int, string, string) {
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	default: // bash
 		cmd = exec.CommandContext(ctx, "bash", "-c", script)
+	}
+	if runtime.GOOS == "windows" {
+		// Default ctx-cancel only kills the direct child; kill the tree instead.
+		cmd.Cancel = func() error {
+			if cmd.Process != nil {
+				_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+			}
+			return nil
+		}
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -391,7 +439,9 @@ func (a *agent) runCheck(chk protocol.RunCheckMsg) {
 			Script string `json:"script"`
 		}
 		_ = json.Unmarshal(chk.Config, &cfg)
-		code, out, errOut := runScript(cfg.Shell, cfg.Script)
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		code, out, errOut := runScriptCtx(cctx, cfg.Shell, cfg.Script)
+		ccancel()
 		fc := float64(code)
 		value, output, success = &fc, out+errOut, code == 0
 	default:

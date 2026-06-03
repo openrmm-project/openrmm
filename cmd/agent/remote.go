@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -29,17 +28,12 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 		return
 	}
 	log.Printf("remote: launching media sidecar for session %s", rs.SessionID)
-	cmd := exec.Command(bin, "-relay", relay)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
+	// launchSidecar is per-OS: on Windows it spawns into the interactive user
+	// session (CreateProcessAsUser) so a session-0 service can still capture the
+	// desktop, falling back to a direct launch; elsewhere it's a plain exec.
+	if err := launchSidecar(bin, relay); err != nil {
 		log.Printf("remote: failed to start sidecar: %v", err)
-		return
 	}
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			log.Printf("remote: sidecar exited: %v", err)
-		}
-	}()
 }
 
 // relayURL points the sidecar at the relay on the SAME host the agent dials for

@@ -380,6 +380,10 @@ func runMedia(conn *websocket.Conn) error {
 	}()
 	// announce the running sidecar version so the viewer can surface staleness
 	s.sendJSON(map[string]any{"t": "hello", "v": remoteVersion})
+	// Auto-enable UAC control so elevation prompts are visible/clickable without
+	// a manual click; restored to the secure default on disconnect. The viewer
+	// toggle can still turn it back off mid-session.
+	go s.setUAC(true)
 	// reader / dispatcher
 	go func() {
 		for {

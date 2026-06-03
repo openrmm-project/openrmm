@@ -25,11 +25,12 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
+	gnet "github.com/shirou/gopsutil/v3/net"
 
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-const agentVersion = "0.2.0"
+const agentVersion = "0.2.1"
 
 type state struct {
 	AgentID    string `json:"agent_id"`
@@ -201,7 +202,7 @@ func (a *agent) handleFrame(raw []byte) {
 	case protocol.MsgRemoteStart:
 		var rs protocol.RemoteStartMsg
 		if json.Unmarshal(env.Data, &rs) == nil {
-			log.Printf("remote session requested: %s (relay %s) — media module not bundled in MVP", rs.SessionID, rs.RelayURL)
+			go a.startRemoteSession(rs)
 		}
 	}
 }
@@ -217,7 +218,10 @@ func (a *agent) runJob(job protocol.JobMsg) {
 
 // telemetryLoop sends periodic heartbeats and inventory snapshots.
 func (a *agent) telemetryLoop(done <-chan struct{}) {
-	a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: collectInventory()})
+	// Collect inventory off the loop so software/network probing (which can take
+	// seconds) never delays heartbeats.
+	sendInventory := func() { go func() { a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: collectInventory()}) }() }
+	sendInventory()
 	hb := time.NewTicker(20 * time.Second)
 	inv := time.NewTicker(5 * time.Minute)
 	defer hb.Stop()
@@ -229,7 +233,7 @@ func (a *agent) telemetryLoop(done <-chan struct{}) {
 		case <-hb.C:
 			a.queue(protocol.MsgHeartbeat, struct{}{})
 		case <-inv.C:
-			a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: collectInventory()})
+			sendInventory()
 		}
 	}
 }
@@ -483,6 +487,146 @@ func collectInventory() json.RawMessage {
 		}
 		data["disks"] = disks
 	}
+	data["network_interfaces"] = collectNetwork()
+	data["software"] = collectSoftware()
 	raw, _ := json.Marshal(data)
 	return raw
+}
+
+// collectNetwork returns the up, non-loopback interfaces that have an IPv4.
+func collectNetwork() []map[string]string {
+	ifaces, err := gnet.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var nics []map[string]string
+	for _, ifc := range ifaces {
+		up, loop := false, false
+		for _, f := range ifc.Flags {
+			switch f {
+			case "up":
+				up = true
+			case "loopback":
+				loop = true
+			}
+		}
+		if !up || loop {
+			continue
+		}
+		var ipv4 string
+		for _, a := range ifc.Addrs {
+			ip := a.Addr
+			if i := strings.IndexByte(ip, '/'); i >= 0 {
+				ip = ip[:i]
+			}
+			if strings.Contains(ip, ".") && !strings.HasPrefix(ip, "169.254") {
+				ipv4 = ip
+				break
+			}
+		}
+		if ipv4 == "" {
+			continue
+		}
+		nics = append(nics, map[string]string{"name": ifc.Name, "ipv4": ipv4, "mac": ifc.HardwareAddr})
+	}
+	return nics
+}
+
+// collectSoftware returns installed software (name + version), per OS. Bounded
+// by a timeout so a slow query never stalls telemetry; capped in size.
+func collectSoftware() []map[string]string {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	switch runtime.GOOS {
+	case "windows":
+		return softwareWindows(ctx)
+	case "linux":
+		return softwareLinux(ctx)
+	case "darwin":
+		return softwareDarwin(ctx)
+	}
+	return nil
+}
+
+func capSoftware(sw []map[string]string) []map[string]string {
+	const max = 600
+	if len(sw) > max {
+		return sw[:max]
+	}
+	return sw
+}
+
+func softwareWindows(ctx context.Context) []map[string]string {
+	const ps = `Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion | Sort-Object DisplayName -Unique | ConvertTo-Json -Compress`
+	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	if err != nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if strings.HasPrefix(trimmed, "{") { // single entry -> wrap as array
+		trimmed = "[" + trimmed + "]"
+	}
+	var arr []struct{ DisplayName, DisplayVersion string }
+	if json.Unmarshal([]byte(trimmed), &arr) != nil {
+		return nil
+	}
+	var sw []map[string]string
+	for _, a := range arr {
+		if a.DisplayName == "" {
+			continue
+		}
+		sw = append(sw, map[string]string{"name": a.DisplayName, "version": a.DisplayVersion})
+	}
+	return capSoftware(sw)
+}
+
+func softwareLinux(ctx context.Context) []map[string]string {
+	if out, err := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}\t${Version}\n").Output(); err == nil {
+		return parseTabbed(out)
+	}
+	if out, err := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}\t%{VERSION}\n").Output(); err == nil {
+		return parseTabbed(out)
+	}
+	return nil
+}
+
+func parseTabbed(out []byte) []map[string]string {
+	var sw []map[string]string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		v := ""
+		if len(parts) == 2 {
+			v = parts[1]
+		}
+		sw = append(sw, map[string]string{"name": parts[0], "version": v})
+	}
+	return capSoftware(sw)
+}
+
+func softwareDarwin(ctx context.Context) []map[string]string {
+	out, err := exec.CommandContext(ctx, "system_profiler", "-json", "SPApplicationsDataType").Output()
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Apps []struct {
+			Name    string `json:"_name"`
+			Version string `json:"version"`
+		} `json:"SPApplicationsDataType"`
+	}
+	if json.Unmarshal(out, &doc) != nil {
+		return nil
+	}
+	var sw []map[string]string
+	for _, a := range doc.Apps {
+		if a.Name == "" {
+			continue
+		}
+		sw = append(sw, map[string]string{"name": a.Name, "version": a.Version})
+	}
+	return capSoftware(sw)
 }

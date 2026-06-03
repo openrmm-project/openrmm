@@ -1,0 +1,50 @@
+// Command rmm-remote is the native remote-desktop media sidecar.
+//
+// The RMM agent launches it on a remote_start: it dials the server relay
+// (/ws/remote?role=agent), streams the screen as JPEG frames (binary WS
+// messages), and injects the input events it receives from the viewer (text
+// WS messages, JSON). It is a SEPARATE process from the agent on purpose —
+// this is the exact integration point the RustDesk fork plugs into (docs/12):
+// swap this Go reference engine for the forked Rust binary and the agent /
+// relay / viewer are unchanged. Keeping it separate also lets it run in the
+// interactive user session (the agent runs as a session-0 service, which
+// cannot capture the user's desktop) and keeps the agent CGO-free.
+//
+// Relay wire format (both directions ride the existing relay, which just
+// pipes frames between the two peers):
+//   agent  -> viewer : binary message = a full-screen JPEG frame
+//   viewer -> agent  : text message   = a JSON input event, one of
+//       {"t":"m","x":0.5,"y":0.5}                 mouse move (normalized 0..1)
+//       {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
+//       {"t":"w","dy":120}                        wheel (browser deltaY)
+//       {"t":"k","code":65,"down":true}           key (browser keyCode ~= VK)
+package main
+
+import (
+	"flag"
+	"log"
+	"os"
+
+	"github.com/gorilla/websocket"
+)
+
+func main() {
+	relay := flag.String("relay", os.Getenv("RMM_RELAY_URL"), "relay WebSocket URL (role=agent)")
+	flag.Parse()
+	if *relay == "" {
+		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
+	}
+	log.Printf("rmm-remote %s starting; relay=%s", remoteVersion, *relay)
+
+	conn, _, err := websocket.DefaultDialer.Dial(*relay, nil)
+	if err != nil {
+		log.Fatalf("rmm-remote: dial relay: %v", err)
+	}
+	defer conn.Close()
+
+	if err := runMedia(conn); err != nil {
+		log.Printf("rmm-remote: media session ended: %v", err)
+	}
+}
+
+const remoteVersion = "0.1.0"

@@ -239,6 +239,15 @@ function Shell() {
 
 /* --------------------------------- Root ----------------------------------- */
 function App() {
+  // Standalone native-remote tab: ?remote=<token>&host=<name> renders just the
+  // viewer (the relay authenticates by the URL token; no app login needed).
+  const remoteTok = new URLSearchParams(location.search).get('remote');
+  if (remoteTok) {
+    const RV = window.RemoteViewer;
+    const wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(remoteTok) + '&role=viewer';
+    return <ToastProvider><RV wsUrl={wsUrl} hostname={new URLSearchParams(location.search).get('host') || 'remote'} onClose={() => window.close()} /></ToastProvider>;
+  }
+
   const [auth, setAuth] = useState(undefined); // undefined=loading, null=logged out
 
   uE(() => {

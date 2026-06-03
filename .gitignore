@@ -22,8 +22,9 @@ agent-state.json
 openrmm/.thumbnail
 openrmm/uploads/
 
-# Built agent binaries served for download (rebuild with `make agent-all`)
+# Built agent + remote-sidecar binaries served for download (rebuild with `make agent-all`)
 deploy/public/rmm-agent-*
+deploy/public/rmm-remote-*
 
 # OS noise
 .DS_Store

@@ -41,9 +41,11 @@ tighten in production).
 
 ## Notes / known polish items (real backend vs prototype)
 - **Inventory tab**: the real agent reports a flatter inventory than the
-  prototype's mock. `getInventory` adapts it (CPU, memory, disks, platform);
-  live CPU load, network interfaces and software list are not collected yet, so
-  those sub-sections render empty. (Backend roadmap: osquery-grade inventory.)
+  prototype's mock. `getInventory` adapts it (CPU, memory, disks, platform,
+  **network interfaces** and **installed software** — agent ≥ 0.2.1). Live CPU
+  load is still not collected. Software is gathered per-OS (registry on Windows,
+  dpkg/rpm on Linux, system_profiler on macOS), capped at 600 entries.
+  (Backend roadmap: osquery-grade inventory.)
 - **Checks status pill**: `listChecks` fetches each check's latest result
   (one extra request per check) to show the pill, since the list endpoint
   doesn't embed it. Fine for typical fleets; revisit if you have hundreds.

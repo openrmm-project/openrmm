@@ -14,6 +14,13 @@ agent-all:
 	GOOS=linux   GOARCH=amd64 go build -buildvcs=false -o bin/rmm-agent-linux-amd64       ./cmd/agent
 	GOOS=darwin  GOARCH=arm64 go build -buildvcs=false -o bin/rmm-agent-darwin-arm64      ./cmd/agent
 
+# Cross-compile the native remote media sidecar (cmd/rmm-remote). Windows has a
+# working GDI/SendInput engine; other OSes build a stub for now.
+remote-all:
+	GOOS=windows GOARCH=amd64 go build -buildvcs=false -o bin/rmm-remote-windows-amd64.exe ./cmd/rmm-remote
+	GOOS=linux   GOARCH=amd64 go build -buildvcs=false -o bin/rmm-remote-linux-amd64        ./cmd/rmm-remote
+	GOOS=darwin  GOARCH=arm64 go build -buildvcs=false -o bin/rmm-remote-darwin-arm64       ./cmd/rmm-remote
+
 run: server
 	./bin/rmm-server
 

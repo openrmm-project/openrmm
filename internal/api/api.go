@@ -305,7 +305,11 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"meshcentral_user":      eff.MeshCentralUser,
 			"meshcentral_token_set": eff.MeshCentralTokenKey != "",
 		},
-		"server": map[string]any{"version": "0.2.0", "base_url": s.cfg.PublicURL},
+		"server": map[string]any{
+			"version":               "0.2.1",
+			"base_url":              s.cfg.PublicURL,
+			"allow_unapproved_jobs": s.cfg.AllowUnapprovedJobs,
+		},
 	})
 }
 

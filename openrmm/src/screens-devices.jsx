@@ -103,12 +103,29 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const d = devQ.data;
 
   const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remote, setRemote] = useState(null); // { wsUrl, hostname } for the native viewer
   const startRemote = async (provider) => {
     setRemoteBusy(true);
     try {
       const s = await api.startRemote(id, provider);
-      if (provider === 'rustdesk') { toast.info('RustDesk session', 'Triggering ' + s.connect_url); }
+      if (provider === 'native') {
+        // Build the viewer WS from the browser origin (not the server's public
+        // URL, which may be localhost) and the session token.
+        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+        const wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+        setRemote({ wsUrl, hostname: d.hostname });
+      } else if (provider === 'rustdesk') { toast.info('RustDesk session', 'Triggering ' + s.connect_url); }
       else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
+    } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
+  };
+  // Native remote in a standalone browser tab (auth is shared via localStorage;
+  // the relay authenticates by the session token in the URL).
+  const startRemoteNewTab = async () => {
+    setRemoteBusy(true);
+    try {
+      const s = await api.startRemote(id, 'native');
+      const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+      window.open(`${location.origin}/?remote=${encodeURIComponent(tok)}&host=${encodeURIComponent(d.hostname)}`, '_blank');
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
   const linkRemote = async (field, label) => {
@@ -147,7 +164,8 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <Button variant="primary" icon="remote" iconRight="chevdown" loading={remoteBusy} disabled={d.status !== 'online'}>Remote</Button>
               }>
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
-                <MenuItem icon="remote" onClick={() => startRemote('native')} hint="built-in">Native</MenuItem>
+                <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
+                <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 <MenuItem icon="link" onClick={() => startRemote('rustdesk')} disabled={!d.rustdesk_id} hint={d.rustdesk_id || 'no id'}>RustDesk</MenuItem>
                 {can('admin') && <>
@@ -179,8 +197,200 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
         </>
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
+      {remote && <RemoteViewer wsUrl={remote.wsUrl} hostname={remote.hostname} onClose={() => setRemote(null)} />}
     </Drawer>
   );
+}
+
+// RemoteViewer is the native remote-desktop viewer: it connects to the relay as
+// the viewer peer and multiplexes video (JPEG frames), input, chat and file
+// transfer over the one socket. Pairs with cmd/rmm-remote.
+//   binary [0x01][JPEG]      screen frame   (agent -> viewer)
+//   binary [0x02][id][bytes] file chunk     (both directions)
+//   text   {"t":...}         input / chat / file control
+const CH_VIDEO = 0x01, CH_FILE = 0x02;
+function RemoteViewer({ wsUrl, hostname, onClose }) {
+  const toast = useToast();
+  const canvasRef = useRef(null);
+  const wsRef = useRef(null);
+  const dlRef = useRef({});   // active downloads: id -> { name, chunks: [] }
+  const tidRef = useRef(0);
+  const fileInputRef = useRef(null);
+  const [status, setStatus] = useState('connecting');
+  const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
+  const [draft, setDraft] = useState('');
+  const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
+
+  const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
+  const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+    ws.binaryType = 'arraybuffer';
+    let closed = false;
+    ws.onopen = () => setStatus('streaming');
+    ws.onclose = () => { if (!closed) setStatus('closed'); };
+    ws.onerror = () => setStatus('error');
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        const m = JSON.parse(ev.data);
+        if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
+        else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
+        else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
+        else if (m.t === 'fend') {
+          const d = dlRef.current[m.id];
+          if (d && d.chunks) { saveBlob(new Blob(d.chunks), d.name); toast.success('Downloaded', d.name); delete dlRef.current[m.id]; }
+        } else if (m.t === 'ferr') toast.error('Transfer failed', m.err || '');
+        return;
+      }
+      const bytes = new Uint8Array(ev.data);
+      if (bytes[0] === CH_VIDEO) {
+        const url = URL.createObjectURL(new Blob([ev.data.slice(1)], { type: 'image/jpeg' }));
+        const img = new Image();
+        img.onload = () => {
+          if (canvasRef.current) {
+            if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
+            cv.getContext('2d').drawImage(img, 0, 0);
+          }
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      } else if (bytes[0] === CH_FILE) {
+        const d = dlRef.current[bytes[1]];
+        if (d) d.chunks.push(ev.data.slice(2));
+      }
+    };
+    const send = (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
+    const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
+    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
+    let lastMove = 0;
+    const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
+    const onDown = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: true }); };
+    const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
+    const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
+    const onCtx = (e) => e.preventDefault();
+    const kd = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
+    const ku = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
+    cv.addEventListener('mousemove', onMove);
+    cv.addEventListener('mousedown', onDown);
+    cv.addEventListener('mouseup', onUp);
+    cv.addEventListener('wheel', onWheel, { passive: false });
+    cv.addEventListener('contextmenu', onCtx);
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => {
+      closed = true; ws.close();
+      window.removeEventListener('keydown', kd);
+      window.removeEventListener('keyup', ku);
+    };
+  }, [wsUrl]);
+
+  const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
+  // Remote file browser (RustDesk-style): navigate folders, download a file, or
+  // upload into the current folder — no path typing.
+  const winJoin = (base, name) => (!base ? name : base.endsWith('\\') ? base + name : base + '\\' + name);
+  const parentPath = (p) => {
+    if (!p) return null;            // already at "This PC" (drive list)
+    const t = p.replace(/\\+$/, '');
+    if (/^[A-Za-z]:$/.test(t)) return '';        // drive root -> drive list
+    const i = t.lastIndexOf('\\');
+    return i <= 2 ? t.slice(0, 2) + '\\' : t.slice(0, i);
+  };
+  const browse = (path) => { const p = path == null ? '' : path; setFb({ path: p, entries: null }); sendJSON({ t: 'fls', id: nextId(), path: p }); };
+  const downloadEntry = (name) => sendJSON({ t: 'fget', id: nextId(), path: winJoin(fb.path, name) });
+  const uploadFile = async (file) => {
+    if (!file || !fb) return;
+    const ws = wsRef.current; if (!ws || ws.readyState !== 1) return;
+    const dest = winJoin(fb.path, file.name);
+    const id = nextId();
+    sendJSON({ t: 'fput', id, path: dest, size: file.size });
+    const u8 = new Uint8Array(await file.arrayBuffer());
+    const CHUNK = 64 * 1024;
+    for (let off = 0; off < u8.length; off += CHUNK) {
+      const slice = u8.subarray(off, Math.min(off + CHUNK, u8.length));
+      const frame = new Uint8Array(slice.length + 2); frame[0] = CH_FILE; frame[1] = id; frame.set(slice, 2);
+      ws.send(frame);
+    }
+    sendJSON({ t: 'fend', id });
+    toast.success('Upload sent', dest);
+  };
+
+  const statusCls = status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
+  return (
+    <div className="fixed inset-0 z-[80] bg-black flex flex-col">
+      <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
+        <Icon name="remote" size={15} className="text-muted" />
+        <span className="text-[13px] font-semibold text-ink">{hostname}</span>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+          <Button variant="ghost" size="sm" icon="link" onClick={() => browse('')}>Files</Button>
+          <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
+        </div>
+      </div>
+      {fb && (
+        <div className="absolute inset-0 z-[5] bg-black/50 flex items-center justify-center" onClick={() => setFb(null)}>
+          <div className="w-[560px] max-h-[72vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
+              <Icon name="devices" size={15} className="text-muted" />
+              <span className="text-[12.5px] font-semibold text-ink">Files on {hostname}</span>
+              <Button variant="ghost" size="sm" icon="external" className="ml-auto" onClick={() => fileInputRef.current?.click()}>Upload here</Button>
+              <button onClick={() => setFb(null)} className="text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
+            </div>
+            <div className="flex items-center gap-2 px-3 h-9 border-b border-line bg-elevated/40">
+              <button disabled={parentPath(fb.path) === null} onClick={() => browse(parentPath(fb.path))} className="text-muted hover:text-ink disabled:opacity-40"><Icon name="chevleft" size={16} /></button>
+              <span className="text-[11.5px] mono text-muted truncate">{fb.path || 'This PC'}</span>
+            </div>
+            <div className="flex-1 overflow-y-auto min-h-[200px]">
+              {fb.entries === null && <div className="p-6 text-center text-faint text-[12px]">Loading…</div>}
+              {fb.entries && fb.entries.length === 0 && <div className="p-6 text-center text-faint text-[12px]">Empty folder.</div>}
+              {fb.entries && fb.entries.map((en, i) => (
+                <button key={i} onClick={() => en.dir ? browse(winJoin(fb.path, en.name)) : downloadEntry(en.name)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-elevated text-left border-b border-line/40">
+                  <Icon name={en.dir ? 'pin' : 'script'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
+                  <span className="text-[12.5px] text-ink flex-1 truncate">{en.name}</span>
+                  {!en.dir && <span className="text-[11px] text-faint">{Math.max(1, (en.size / 1024) | 0).toLocaleString()} KB</span>}
+                  {!en.dir && <Icon name="link" size={13} className="text-faint" />}
+                </button>
+              ))}
+            </div>
+            <div className="px-3 py-2 border-t border-line text-[11px] text-faint">Click a folder to open · a file to download · "Upload here" to send into this folder.</div>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
+          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
+        </div>
+        <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
+          <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat</div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}
+            {chat.map((m, i) => (
+              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand/15 text-ink' : 'bg-elevated text-ink')}>
+                <div className="text-[10px] text-faint mb-0.5">{m.from === 'tech' ? 'You' : hostname}</div>{m.text}
+              </div>
+            ))}
+          </div>
+          <div className="p-2 border-t border-line flex gap-1.5">
+            <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} placeholder="Message…" className="text-[12px]" />
+            <Button variant="primary" size="sm" icon="send" onClick={sendChat} disabled={!draft.trim()} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// saveBlob triggers a browser download of a received remote file.
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name || 'download';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* inventory */
@@ -240,12 +450,14 @@ function InventoryView({ id }) {
           </InventorySection>
           <InventorySection title="Network" icon="network">
             {(net.interfaces || []).map((ifc, i) => <InfoGrid key={i} rows={[['Interface', ifc.name], ['IPv4', ifc.ipv4], ['MAC', ifc.mac]]} />)}
+            {(net.interfaces || []).length === 0 && <div className="text-[12.5px] text-faint">No network interfaces reported yet.</div>}
           </InventorySection>
           <Card className="p-4 md:col-span-2">
             <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink"><Icon name="grid" size={14} className="text-muted" />Installed software <span className="text-faint font-normal">({sw.length})</span></div>
             <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
               {sw.map((s, i) => <div key={i} className="flex items-center justify-between border-b border-line/60 pb-1.5"><span className="text-[12.5px] text-ink">{s.name}</span><span className="text-[11.5px] text-faint mono">{s.version}</span></div>)}
             </div>
+            {sw.length === 0 && <div className="text-[12.5px] text-faint">No software inventory reported yet.</div>}
           </Card>
         </div>
       )}
@@ -283,25 +495,39 @@ function RunScriptForm({ device, onCreated }) {
   const [desc, setDesc] = useState('');
   const [script, setScript] = useState(defShell === 'powershell' ? 'Get-Service | Where-Object Status -eq "Running" | Select-Object -First 10' : 'uptime\ndf -h /');
   const [busy, setBusy] = useState(false);
+  const [runNow, setRunNow] = useState(false);
   const scriptsQ = useQuery(['scripts-pick'], () => api.listScripts(), { invalidateOn: ['scripts'] });
+  const cfgQ = useQuery(['config'], () => api.getConfig(), {});
+  const canDirect = can('admin') && cfgQ.data?.server?.allow_unapproved_jobs;
+  const direct = canDirect && runNow;
 
   if (!can('tech')) return <EmptyState icon="shield" title="Read-only access" msg="Running scripts requires the tech or admin role." />;
 
   const submit = async () => {
     setBusy(true);
     try {
-      await api.createJob({ agent_id: device.id, shell, script, description: desc || 'Manual script run', require_approval: true });
-      toast.success('Job created', 'Queued for approval — nothing has run yet.');
+      await api.createJob({ agent_id: device.id, shell, script, description: desc || 'Manual script run', require_approval: !direct });
+      if (direct) toast.success('Job dispatched', 'Running on ' + device.hostname + ' now.');
+      else toast.success('Job created', 'Queued for approval — nothing has run yet.');
       onCreated();
     } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
   };
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <div className="flex items-start gap-2.5 rounded-xl border border-warn/25 bg-warnsoft px-3.5 py-3">
-        <Icon name="info" size={16} className="text-warn mt-0.5 shrink-0" />
-        <div className="text-[12.5px] text-ink leading-relaxed">This creates an <b>approval-gated job</b>. It is a dry-run preview until a tech or admin approves it — nothing executes on {device.hostname} yet.</div>
+      <div className={cx('flex items-start gap-2.5 rounded-xl border px-3.5 py-3', direct ? 'border-bad/25 bg-badsoft' : 'border-warn/25 bg-warnsoft')}>
+        <Icon name="info" size={16} className={cx('mt-0.5 shrink-0', direct ? 'text-bad' : 'text-warn')} />
+        <div className="text-[12.5px] text-ink leading-relaxed">{direct
+          ? <>Direct execution is <b>on</b>: this runs on {device.hostname} <b>immediately</b>, with no approval step.</>
+          : <>This creates an <b>approval-gated job</b>. It is a dry-run preview until a tech or admin approves it — nothing executes on {device.hostname} yet.</>}</div>
       </div>
+      {canDirect && (
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input type="checkbox" checked={runNow} onChange={(e) => setRunNow(e.target.checked)} className="h-4 w-4 accent-bad" />
+          <span className="text-[12.5px] text-ink">Run immediately (skip approval)</span>
+          <span className="text-[11.5px] text-faint">— admin only; enabled on this instance</span>
+        </label>
+      )}
       <div className="flex gap-3">
         <Field label="Shell" className="w-44">
           <Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option></Select>
@@ -316,7 +542,7 @@ function RunScriptForm({ device, onCreated }) {
       <Field label="Description"><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="What does this do?" /></Field>
       <Field label="Script"><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={220} /></Field>
       <div className="flex justify-end gap-2">
-        <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim()}>Create approval-gated job</Button>
+        <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim()}>{direct ? 'Run now on ' + device.hostname : 'Create approval-gated job'}</Button>
       </div>
     </div>
   );
@@ -324,3 +550,4 @@ function RunScriptForm({ device, onCreated }) {
 
 window.DevicesScreen = DevicesScreen;
 window.DeviceDetail = DeviceDetail;
+window.RemoteViewer = RemoteViewer;

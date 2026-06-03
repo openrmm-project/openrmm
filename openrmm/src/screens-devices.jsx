@@ -240,12 +240,14 @@ function InventoryView({ id }) {
           </InventorySection>
           <InventorySection title="Network" icon="network">
             {(net.interfaces || []).map((ifc, i) => <InfoGrid key={i} rows={[['Interface', ifc.name], ['IPv4', ifc.ipv4], ['MAC', ifc.mac]]} />)}
+            {(net.interfaces || []).length === 0 && <div className="text-[12.5px] text-faint">No network interfaces reported yet.</div>}
           </InventorySection>
           <Card className="p-4 md:col-span-2">
             <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink"><Icon name="grid" size={14} className="text-muted" />Installed software <span className="text-faint font-normal">({sw.length})</span></div>
             <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
               {sw.map((s, i) => <div key={i} className="flex items-center justify-between border-b border-line/60 pb-1.5"><span className="text-[12.5px] text-ink">{s.name}</span><span className="text-[11.5px] text-faint mono">{s.version}</span></div>)}
             </div>
+            {sw.length === 0 && <div className="text-[12.5px] text-faint">No software inventory reported yet.</div>}
           </Card>
         </div>
       )}

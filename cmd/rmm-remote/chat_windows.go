@@ -34,6 +34,9 @@ var (
 	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
 	procSetBkColor      = gdi32.NewProc("SetBkColor")
 	procSetTextColor    = gdi32.NewProc("SetTextColor")
+
+	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
 )
 
 // Dark theme (COLORREF 0x00BBGGRR) to match a modern remote-tool look.
@@ -52,9 +55,19 @@ const (
 	wsVisible      = 0x10000000
 	wsChild        = 0x40000000
 	wsVScroll      = 0x00200000
+	wsCaption      = 0x00C00000
+	wsSysMenu      = 0x00080000
+	wsMinimizeBox  = 0x00020000
 	wsExTopmost    = 0x00000008
 	wsExToolwindow = 0x00000080
 	cwUseDefault   = 0x80000000
+	// Caption + system menu + minimize button (no resize/maximize): a normal,
+	// minimizable window that shows in the taskbar so it can be restored.
+	wsChatStyle = wsCaption | wsSysMenu | wsMinimizeBox
+
+	dwmaCornerPref = 33 // DWMWA_WINDOW_CORNER_PREFERENCE
+	dwmcpRound     = 2  // DWMWCP_ROUND
+	dwmaDarkMode   = 20 // DWMWA_USE_IMMERSIVE_DARK_MODE
 
 	esMultiline   = 0x0004
 	esAutoVScroll = 0x0040
@@ -151,13 +164,18 @@ func (cw *chatWindow) create(title string) {
 		return
 	}
 	hwnd, _, _ := procCreateWindow.Call(
-		wsExTopmost|wsExToolwindow, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(u16(title))),
-		wsOverlapped|wsVisible, cwUseDefault, cwUseDefault, 360, 460, 0, 0, hInst, 0)
+		wsExTopmost, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(u16(title))),
+		wsChatStyle|wsVisible, cwUseDefault, cwUseDefault, 360, 460, 0, 0, hInst, 0)
 	if hwnd == 0 {
 		log.Printf("chat: CreateWindowEx failed; chat display disabled")
 		return
 	}
 	cw.hwnd = hwnd
+	// Rounded corners + dark title bar (Windows 11 / recent Win10; no-op older).
+	pref := int32(dwmcpRound)
+	procDwmSetWindowAttribute.Call(hwnd, dwmaCornerPref, uintptr(unsafe.Pointer(&pref)), 4)
+	dark := int32(1)
+	procDwmSetWindowAttribute.Call(hwnd, dwmaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
 	editClass := u16("EDIT")
 	cw.history, _, _ = procCreateWindow.Call(0, uintptr(unsafe.Pointer(editClass)), 0,
 		wsChild|wsVisible|wsVScroll|esMultiline|esAutoVScroll|esReadonly, 8, 8, 328, 360, hwnd, idHistory, hInst, 0)

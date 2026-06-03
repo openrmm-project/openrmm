@@ -220,6 +220,10 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
   const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
   const [draft, setDraft] = useState('');
   const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
+  const [fbSel, setFbSel] = useState([]); // selected entry names
+  const [fbClip, setFbClip] = useState(null); // { op:'copy'|'cut', base, names }
+  const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
+  const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
   const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -236,8 +240,10 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
     ws.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
-        if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
+        if (m.t === 'hello') setVer(m.v);
+        else if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
+        else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
         else if (m.t === 'fend') {
           const d = dlRef.current[m.id];
@@ -298,8 +304,15 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
     const i = t.lastIndexOf('\\');
     return i <= 2 ? t.slice(0, 2) + '\\' : t.slice(0, i);
   };
-  const browse = (path) => { const p = path == null ? '' : path; setFb({ path: p, entries: null }); sendJSON({ t: 'fls', id: nextId(), path: p }); };
+  const browse = (path) => { const p = path == null ? '' : path; setFb({ path: p, entries: null }); setFbSel([]); sendJSON({ t: 'fls', id: nextId(), path: p }); };
   const downloadEntry = (name) => sendJSON({ t: 'fget', id: nextId(), path: winJoin(fb.path, name) });
+  const toggleSel = (name) => setFbSel((s) => s.includes(name) ? s.filter((x) => x !== name) : [...s, name]);
+  const doMkdir = () => { const n = window.prompt('New folder name:'); if (n) sendJSON({ t: 'fmkdir', id: nextId(), path: winJoin(fb.path, n) }); };
+  const doDelete = () => { if (fbSel.length && window.confirm('Delete ' + fbSel.length + ' item(s) on ' + hostname + '?')) { fbSel.forEach((n) => sendJSON({ t: 'fdel', id: nextId(), path: winJoin(fb.path, n) })); setFbSel([]); } };
+  const doRename = () => { if (fbSel.length !== 1) return; const old = fbSel[0]; const n = window.prompt('Rename to:', old); if (n && n !== old) { sendJSON({ t: 'frename', id: nextId(), src: winJoin(fb.path, old), dst: winJoin(fb.path, n) }); setFbSel([]); } };
+  const doClip = (op) => { if (fbSel.length) setFbClip({ op, base: fb.path, names: [...fbSel] }); };
+  const doPaste = () => { if (!fbClip) return; fbClip.names.forEach((n) => sendJSON({ t: fbClip.op === 'cut' ? 'fmove' : 'fcopy', id: nextId(), src: winJoin(fbClip.base, n), dst: winJoin(fb.path, n) })); if (fbClip.op === 'cut') setFbClip(null); };
+  const doDownloadSel = () => fbSel.forEach((n) => { const en = (fb.entries || []).find((e) => e.name === n); if (en && !en.dir) downloadEntry(n); });
   const uploadFile = async (file) => {
     if (!file || !fb) return;
     const ws = wsRef.current; if (!ws || ws.readyState !== 1) return;
@@ -324,39 +337,56 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         <Icon name="remote" size={15} className="text-muted" />
         <span className="text-[13px] font-semibold text-ink">{hostname}</span>
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
+        {ver && <span className="text-[10px] text-faint">sidecar v{ver}</span>}
         <div className="ml-auto flex items-center gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+          <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
           <Button variant="ghost" size="sm" icon="link" onClick={() => browse('')}>Files</Button>
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
       </div>
       {fb && (
-        <div className="absolute inset-0 z-[5] bg-black/50 flex items-center justify-center" onClick={() => setFb(null)}>
-          <div className="w-[560px] max-h-[72vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="absolute inset-0 z-[5] bg-black/55 flex items-center justify-center" onClick={() => setFb(null)}>
+          <div className="w-[760px] h-[80vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
               <Icon name="devices" size={15} className="text-muted" />
-              <span className="text-[12.5px] font-semibold text-ink">Files on {hostname}</span>
-              <Button variant="ghost" size="sm" icon="external" className="ml-auto" onClick={() => fileInputRef.current?.click()}>Upload here</Button>
-              <button onClick={() => setFb(null)} className="text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
+              <span className="text-[12.5px] font-semibold text-ink">File transfer · {hostname}</span>
+              <button onClick={() => setFb(null)} className="ml-auto text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
             </div>
-            <div className="flex items-center gap-2 px-3 h-9 border-b border-line bg-elevated/40">
-              <button disabled={parentPath(fb.path) === null} onClick={() => browse(parentPath(fb.path))} className="text-muted hover:text-ink disabled:opacity-40"><Icon name="chevleft" size={16} /></button>
-              <span className="text-[11.5px] mono text-muted truncate">{fb.path || 'This PC'}</span>
+            {/* toolbar */}
+            <div className="flex items-center gap-0.5 px-2 h-10 border-b border-line bg-elevated/40 flex-wrap">
+              <Button variant="ghost" size="sm" icon="chevleft" title="Up" disabled={parentPath(fb.path) === null} onClick={() => browse(parentPath(fb.path))} />
+              <Button variant="ghost" size="sm" icon="refresh" title="Refresh" onClick={() => browse(fb.path)} />
+              <Button variant="ghost" size="sm" icon="plus" title="New folder" disabled={!fb.path} onClick={doMkdir} />
+              <div className="w-px h-5 bg-line mx-1" />
+              <Button variant="ghost" size="sm" icon="external" title="Upload here" disabled={!fb.path} onClick={() => fileInputRef.current?.click()} />
+              <Button variant="ghost" size="sm" icon="link" title="Download" disabled={!fbSel.length} onClick={doDownloadSel} />
+              <Button variant="ghost" size="sm" icon="copy" title="Copy" disabled={!fbSel.length} onClick={() => doClip('copy')} />
+              <Button variant="ghost" size="sm" icon="edit" title="Cut" disabled={!fbSel.length} onClick={() => doClip('cut')} />
+              <Button variant="ghost" size="sm" icon="script" title="Rename" disabled={fbSel.length !== 1} onClick={doRename} />
+              <Button variant="ghost" size="sm" icon="trash" title="Delete" disabled={!fbSel.length} onClick={doDelete} />
+              {fbClip && <Button variant="secondary" size="sm" icon="approve" onClick={doPaste}>Paste {fbClip.names.length}</Button>}
+              <span className="ml-auto text-[11px] text-faint pr-1">{fbSel.length ? fbSel.length + ' selected' : (fb.entries ? fb.entries.length + ' items' : '')}</span>
             </div>
-            <div className="flex-1 overflow-y-auto min-h-[200px]">
+            {/* path */}
+            <div className="px-3 h-8 flex items-center text-[11.5px] mono text-muted border-b border-line truncate shrink-0">{fb.path || 'This PC'}</div>
+            {/* list */}
+            <div className="flex-1 overflow-y-auto">
               {fb.entries === null && <div className="p-6 text-center text-faint text-[12px]">Loading…</div>}
               {fb.entries && fb.entries.length === 0 && <div className="p-6 text-center text-faint text-[12px]">Empty folder.</div>}
               {fb.entries && fb.entries.map((en, i) => (
-                <button key={i} onClick={() => en.dir ? browse(winJoin(fb.path, en.name)) : downloadEntry(en.name)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-elevated text-left border-b border-line/40">
-                  <Icon name={en.dir ? 'pin' : 'script'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
-                  <span className="text-[12.5px] text-ink flex-1 truncate">{en.name}</span>
-                  {!en.dir && <span className="text-[11px] text-faint">{Math.max(1, (en.size / 1024) | 0).toLocaleString()} KB</span>}
-                  {!en.dir && <Icon name="link" size={13} className="text-faint" />}
-                </button>
+                <div key={i} className={cx('flex items-center gap-2 px-3 py-1.5 border-b border-line/40', fbSel.includes(en.name) ? 'bg-brand/10' : 'hover:bg-elevated')}>
+                  <input type="checkbox" checked={fbSel.includes(en.name)} onChange={() => toggleSel(en.name)} className="h-3.5 w-3.5 accent-brand shrink-0" />
+                  <button onClick={() => en.dir ? browse(winJoin(fb.path, en.name)) : toggleSel(en.name)} onDoubleClick={() => !en.dir && downloadEntry(en.name)} className="flex items-center gap-2 flex-1 text-left min-w-0">
+                    <Icon name={en.dir ? 'pin' : 'script'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
+                    <span className="text-[12.5px] text-ink truncate">{en.name}</span>
+                  </button>
+                  <span className="text-[11px] text-faint w-32 text-right shrink-0 hidden sm:block">{en.mod || ''}</span>
+                  <span className="text-[11px] text-faint w-20 text-right shrink-0">{en.dir ? '' : fmtSize(en.size)}</span>
+                </div>
               ))}
             </div>
-            <div className="px-3 py-2 border-t border-line text-[11px] text-faint">Click a folder to open · a file to download · "Upload here" to send into this folder.</div>
+            <div className="px-3 py-1.5 border-t border-line text-[11px] text-faint">Folder: click to open · file: double-click to download · checkboxes to select for Download / Copy / Cut / Delete.</div>
           </div>
         </div>
       )}
@@ -382,6 +412,14 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
       </div>
     </div>
   );
+}
+
+// fmtSize renders a byte count compactly (KB/MB/GB).
+function fmtSize(b) {
+  if (!b) return '0 KB';
+  if (b < 1024 * 1024) return Math.max(1, (b / 1024) | 0).toLocaleString() + ' KB';
+  if (b < 1024 * 1024 * 1024) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
 }
 
 // saveBlob triggers a browser download of a received remote file.

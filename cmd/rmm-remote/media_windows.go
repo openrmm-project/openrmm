@@ -324,12 +324,19 @@ type wsMsg struct {
 type session struct {
 	conn    *websocket.Conn
 	out     chan wsMsg
+	done    chan struct{}
 	chat    *chatWindow
 	mu      sync.Mutex
 	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
+	uacOff  bool               // true while we've moved UAC prompts off the secure desktop
 }
 
-func (s *session) send(mt int, data []byte) { s.out <- wsMsg{mt, data} }
+func (s *session) send(mt int, data []byte) {
+	select {
+	case s.out <- wsMsg{mt, data}:
+	case <-s.done:
+	}
+}
 
 func (s *session) sendJSON(v any) {
 	b, _ := json.Marshal(v)
@@ -341,9 +348,9 @@ func runMedia(conn *websocket.Conn) error {
 	if err != nil {
 		return err
 	}
-	defer cap.close()
 
-	s := &session{conn: conn, out: make(chan wsMsg, 32), uploads: map[uint8]*os.File{}}
+	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}), uploads: map[uint8]*os.File{}}
+	defer close(s.done)
 	s.chat = newChatWindow("RMM-AI — Chat with technician", func(text string) {
 		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
 	})
@@ -351,18 +358,32 @@ func runMedia(conn *websocket.Conn) error {
 		if s.chat != nil {
 			s.chat.close()
 		}
+		if s.uacOff {
+			s.setUAC(false) // restore the secure desktop on disconnect
+		}
 	}()
 
 	errc := make(chan error, 3)
 	// single writer
 	go func() {
-		for m := range s.out {
-			if err := conn.WriteMessage(m.mt, m.data); err != nil {
-				errc <- err
+		for {
+			select {
+			case <-s.done:
 				return
+			case m := <-s.out:
+				if err := conn.WriteMessage(m.mt, m.data); err != nil {
+					errc <- err
+					return
+				}
 			}
 		}
 	}()
+	// announce the running sidecar version so the viewer can surface staleness
+	s.sendJSON(map[string]any{"t": "hello", "v": remoteVersion})
+	// Auto-enable UAC control so elevation prompts are visible/clickable without
+	// a manual click; restored to the secure default on disconnect. The viewer
+	// toggle can still turn it back off mid-session.
+	go s.setUAC(true)
 	// reader / dispatcher
 	go func() {
 		for {
@@ -374,18 +395,45 @@ func runMedia(conn *websocket.Conn) error {
 			s.onMessage(mt, data)
 		}
 	}()
-	// screen capture (~12 fps)
+	// screen capture (~12 fps). The capture goroutine owns the capturer and is
+	// resilient: a BitBlt failure (desktop switch — UAC/secure desktop, lock
+	// screen, resolution change, RDP reconnect) invalidates the cached DC, so we
+	// rebuild it and keep the session alive instead of dropping it.
 	go func() {
+		defer func() {
+			if cap != nil {
+				cap.close()
+			}
+		}()
 		var buf bytes.Buffer
 		ticker := time.NewTicker(80 * time.Millisecond)
 		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			select {
+			case <-s.done:
+				return
+			case <-ticker.C:
+			}
+			if cap == nil { // previous rebuild failed (e.g. transient secure desktop)
+				if nc, e := newCapturer(); e == nil {
+					cap = nc
+				}
+				continue
+			}
 			jpg, err := cap.frameJPEG(&buf)
 			if err != nil {
-				errc <- err
+				cap.close()
+				cap = nil
+				if nc, e := newCapturer(); e == nil {
+					cap = nc
+				}
+				continue
+			}
+			select {
+			case s.out <- wsMsg{websocket.BinaryMessage, append([]byte{chVideo}, jpg...)}:
+			case <-s.done:
 				return
 			}
-			s.send(websocket.BinaryMessage, append([]byte{chVideo}, jpg...))
 		}
 	}()
 	return <-errc
@@ -400,9 +448,10 @@ func (s *session) onMessage(mt int, data []byte) {
 		return
 	}
 	var e struct {
-		T    string `json:"t"`
-		Text string `json:"text"`
-		ID   uint8  `json:"id"`
+		T      string `json:"t"`
+		Text   string `json:"text"`
+		ID     uint8  `json:"id"`
+		Enable bool   `json:"enable"`
 	}
 	if json.Unmarshal(data, &e) != nil {
 		return
@@ -414,8 +463,20 @@ func (s *session) onMessage(mt int, data []byte) {
 		if s.chat != nil {
 			s.chat.append("Tech: " + e.Text)
 		}
+	case "uac":
+		go s.setUAC(e.Enable)
 	case "fls":
 		go s.onList(data)
+	case "fmkdir":
+		go s.onMkdir(data)
+	case "fdel":
+		go s.onDelete(data)
+	case "frename":
+		go s.onRename(data)
+	case "fcopy":
+		go s.onCopy(data)
+	case "fmove":
+		go s.onMove(data)
 	case "fput":
 		s.onUploadStart(data)
 	case "fget":

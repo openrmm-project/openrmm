@@ -26,6 +26,10 @@ var (
 	procCloseHandle             = kernel32.NewProc("CloseHandle")
 	procWTSQueryUserToken       = wtsapi32.NewProc("WTSQueryUserToken")
 	procDuplicateTokenEx        = advapi32.NewProc("DuplicateTokenEx")
+	procGetTokenInformation     = advapi32.NewProc("GetTokenInformation")
+	procOpenProcessToken        = advapi32.NewProc("OpenProcessToken")
+	procSetTokenInformation     = advapi32.NewProc("SetTokenInformation")
+	procGetCurrentProcess       = kernel32.NewProc("GetCurrentProcess")
 	procCreateProcessAsUser     = advapi32.NewProc("CreateProcessAsUserW")
 	procCreateEnvironmentBlock  = userenv.NewProc("CreateEnvironmentBlock")
 	procDestroyEnvironmentBlock = userenv.NewProc("DestroyEnvironmentBlock")
@@ -38,6 +42,10 @@ const (
 	createUnicodeEnv       = 0x00000400
 	createNoWindow         = 0x08000000
 	invalidSessionID       = 0xFFFFFFFF
+	tokenLinkedToken       = 19 // TOKEN_INFORMATION_CLASS
+	tokenSessionID         = 12 // TokenSessionId
+	tokenDuplicate         = 0x0002
+	tokenQuery             = 0x0008
 )
 
 type startupInfoW struct {
@@ -87,9 +95,14 @@ func launchInUserSession(bin, relay string) error {
 	if sid == invalidSessionID {
 		return fmt.Errorf("no active console session")
 	}
+	// Run the sidecar as SYSTEM (the agent's own token when installed as a
+	// service) placed into the interactive session. SYSTEM integrity is required
+	// to inject input into the UAC consent dialog (consent.exe runs as SYSTEM);
+	// an elevated *user* is blocked by UIPI. Falls back below if not SYSTEM.
+	hProc, _, _ := procGetCurrentProcess.Call()
 	var hToken uintptr
-	if r, _, e := procWTSQueryUserToken.Call(sid, uintptr(unsafe.Pointer(&hToken))); r == 0 {
-		return fmt.Errorf("WTSQueryUserToken: %v", e)
+	if r, _, e := procOpenProcessToken.Call(hProc, tokenDuplicate|tokenQuery, uintptr(unsafe.Pointer(&hToken))); r == 0 {
+		return fmt.Errorf("OpenProcessToken: %v", e)
 	}
 	defer procCloseHandle.Call(hToken)
 
@@ -98,6 +111,12 @@ func launchInUserSession(bin, relay string) error {
 		return fmt.Errorf("DuplicateTokenEx: %v", e)
 	}
 	defer procCloseHandle.Call(hDup)
+
+	// Move the duplicated token into the active console session.
+	sessID := uint32(sid)
+	if r, _, e := procSetTokenInformation.Call(hDup, tokenSessionID, uintptr(unsafe.Pointer(&sessID)), uintptr(unsafe.Sizeof(sessID))); r == 0 {
+		return fmt.Errorf("SetTokenInformation(session): %v", e)
+	}
 
 	var env uintptr
 	hasEnv := false

@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -36,6 +37,7 @@ type fsEntry struct {
 	Name string `json:"name"`
 	Dir  bool   `json:"dir"`
 	Size int64  `json:"size"`
+	Mod  string `json:"mod"`
 }
 
 // onList answers a remote directory listing (empty path => drive roots), so the
@@ -45,26 +47,115 @@ func (s *session) onList(data []byte) {
 	if json.Unmarshal(data, &r) != nil {
 		return
 	}
+	s.sendListing(r.ID, r.Path)
+}
+
+// sendListing pushes a directory listing (empty path => drive roots) to the
+// viewer. Also used to refresh after a file operation.
+func (s *session) sendListing(id uint8, path string) {
 	entries := []fsEntry{}
-	if r.Path == "" {
+	if path == "" {
 		for _, d := range logicalDrives() {
 			entries = append(entries, fsEntry{Name: d, Dir: true})
 		}
 	} else {
-		items, err := os.ReadDir(r.Path)
+		items, err := os.ReadDir(path)
 		if err != nil {
-			s.sendJSON(map[string]any{"t": "ferr", "id": r.ID, "err": err.Error()})
+			s.sendJSON(map[string]any{"t": "ferr", "id": id, "err": err.Error()})
 			return
 		}
 		for _, it := range items {
-			var sz int64
-			if info, e := it.Info(); e == nil {
-				sz = info.Size()
+			e := fsEntry{Name: it.Name(), Dir: it.IsDir()}
+			if info, ie := it.Info(); ie == nil {
+				e.Size = info.Size()
+				e.Mod = info.ModTime().Format("2006-01-02 15:04")
 			}
-			entries = append(entries, fsEntry{Name: it.Name(), Dir: it.IsDir(), Size: sz})
+			entries = append(entries, e)
 		}
 	}
-	s.sendJSON(map[string]any{"t": "flist", "id": r.ID, "path": r.Path, "entries": entries})
+	s.sendJSON(map[string]any{"t": "flist", "id": id, "path": path, "entries": entries})
+}
+
+type opReq struct {
+	ID   uint8  `json:"id"`
+	Path string `json:"path"`
+	Src  string `json:"src"`
+	Dst  string `json:"dst"`
+}
+
+func (s *session) fileOp(data []byte, do func(opReq) error, refreshDir func(opReq) string) {
+	var r opReq
+	if json.Unmarshal(data, &r) != nil {
+		return
+	}
+	if err := do(r); err != nil {
+		s.sendJSON(map[string]any{"t": "ferr", "id": r.ID, "err": err.Error()})
+		return
+	}
+	s.sendListing(r.ID, refreshDir(r))
+}
+
+func (s *session) onMkdir(data []byte) {
+	s.fileOp(data, func(r opReq) error { return os.MkdirAll(r.Path, 0o755) }, func(r opReq) string { return filepath.Dir(r.Path) })
+}
+func (s *session) onDelete(data []byte) {
+	s.fileOp(data, func(r opReq) error { return os.RemoveAll(r.Path) }, func(r opReq) string { return filepath.Dir(r.Path) })
+}
+func (s *session) onRename(data []byte) {
+	s.fileOp(data, func(r opReq) error { return os.Rename(r.Src, r.Dst) }, func(r opReq) string { return filepath.Dir(r.Dst) })
+}
+func (s *session) onCopy(data []byte) {
+	s.fileOp(data, func(r opReq) error { return copyPath(r.Src, r.Dst) }, func(r opReq) string { return filepath.Dir(r.Dst) })
+}
+func (s *session) onMove(data []byte) {
+	s.fileOp(data, func(r opReq) error {
+		if err := os.Rename(r.Src, r.Dst); err == nil {
+			return nil
+		}
+		if err := copyPath(r.Src, r.Dst); err != nil { // cross-volume fallback
+			return err
+		}
+		return os.RemoveAll(r.Src)
+	}, func(r opReq) string { return filepath.Dir(r.Dst) })
+}
+
+// copyPath copies a file or directory tree from src to dst.
+func copyPath(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return copyFile(src, dst)
+	}
+	if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
+		return err
+	}
+	items, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if err := copyPath(filepath.Join(src, it.Name()), filepath.Join(dst, it.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 type putReq struct {

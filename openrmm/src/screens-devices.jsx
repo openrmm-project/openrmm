@@ -222,6 +222,8 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
   const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
   const [fbSel, setFbSel] = useState([]); // selected entry names
   const [fbClip, setFbClip] = useState(null); // { op:'copy'|'cut', base, names }
+  const [pathEdit, setPathEdit] = useState(''); // editable address bar
+  useEffect(() => { if (fb) setPathEdit(fb.path); }, [fb && fb.path]);
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
@@ -373,8 +375,11 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
               {fbClip && <Button variant="secondary" size="sm" icon="approve" onClick={doPaste}>Paste {fbClip.names.length}</Button>}
               <span className="ml-auto text-[11px] text-faint pr-1">{fbSel.length ? fbSel.length + ' selected' : (fb.entries ? fb.entries.length + ' items' : '')}</span>
             </div>
-            {/* path */}
-            <div className="px-3 h-8 flex items-center text-[11.5px] mono text-muted border-b border-line truncate shrink-0">{fb.path || 'This PC'}</div>
+            {/* editable address bar */}
+            <div className="px-2 h-10 flex items-center gap-2 border-b border-line shrink-0">
+              <Input value={pathEdit} onChange={(e) => setPathEdit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') browse(pathEdit.trim()); }} placeholder="Type a path, e.g. C:\Users\" className="text-[11.5px] mono h-7" />
+              <Button variant="secondary" size="sm" icon="arrowright" onClick={() => browse(pathEdit.trim())} title="Go" />
+            </div>
             {/* list */}
             <div className="flex-1 overflow-y-auto">
               {fb.entries === null && <div className="p-6 text-center text-faint text-[12px]">Loading…</div>}

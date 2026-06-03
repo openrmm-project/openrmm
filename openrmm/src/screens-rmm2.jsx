@@ -273,12 +273,41 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
   );
 }
 
+// Cross-platform install commands for an enrollment token. Linux & macOS share
+// the bash install.sh (it auto-detects via uname); Windows uses install.ps1.
+function EnrollCommands({ token, site }) {
+  const [os, setOs] = useState('linux');
+  const base = api.API_BASE;
+  const siteArg = site ? ` \\\n  --site "${site.name}"` : '';
+  const nixCmd = `curl -fsSL ${base}/install.sh | sudo bash -s -- \\\n  --server ${base} \\\n  --token ${token}${siteArg}`;
+  const winCmd = `# Run PowerShell as Administrator\n& ([scriptblock]::Create((iwr -useb ${base}/install.ps1))) -Server ${base} -Token ${token}`;
+  const isWin = os === 'windows';
+  const cmd = isWin ? winCmd : nixCmd;
+  const OSES = [{ v: 'linux', l: 'Linux' }, { v: 'macos', l: 'macOS' }, { v: 'windows', l: 'Windows' }];
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">
+          {OSES.map((o) => (
+            <button key={o.v} onClick={() => setOs(o.v)}
+              className={cx('px-3 h-7 rounded-md text-[12px] font-medium transition-colors', os === o.v ? 'bg-card text-ink shadow-sm' : 'text-faint hover:text-muted')}>{o.l}</button>
+          ))}
+        </div>
+        <CopyButton value={cmd} label="Copy command" size="sm" variant="ghost" />
+      </div>
+      <CodeBlock code={cmd} shell={isWin ? 'powershell' : 'bash'} label="install agent" showCopy={false} maxHeight={180} />
+      {isWin && <div className="text-[11.5px] text-faint mt-2">Run in an <span className="text-ink font-medium">elevated PowerShell</span> (Run as Administrator).</div>}
+      {os === 'macos' && <div className="text-[11.5px] text-faint mt-2">Same installer as Linux — it auto-detects macOS (Intel &amp; Apple Silicon).</div>}
+    </div>
+  );
+}
+
 function SiteDetail({ site, client, devices }) {
   const { can } = useAuth();
   const toast = useToast();
-  const [enrollCmd, setEnrollCmd] = useState(null);
+  const [enrollToken, setEnrollToken] = useState(null);
   const [busy, setBusy] = useState(false);
-  const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollCmd(`curl -fsSL ${api.API_BASE}/install.sh | sudo bash -s -- \\\n  --server ${api.API_BASE} \\\n  --token ${t.token} \\\n  --site "${site.name}"`); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+  const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
   return (
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
@@ -294,8 +323,8 @@ function SiteDetail({ site, client, devices }) {
       </div>
       {can('admin') && (
         <div>
-          <div className="flex items-center justify-between mb-2"><div className="text-[12px] font-semibold text-muted">Enroll a new agent</div>{enrollCmd && <CopyButton value={enrollCmd} label="Copy command" />}</div>
-          {enrollCmd ? <CodeBlock code={enrollCmd} shell="bash" label="install agent" showCopy={false} maxHeight={160} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
+          <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>
+          {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
         </div>
       )}
     </Card>
@@ -443,8 +472,8 @@ function EnrollPanel({ canAdmin }) {
       {token && (
         <div className="mt-4 space-y-3 animate-fade-in">
           <div className="flex items-center gap-2 rounded-lg border border-warn/25 bg-warnsoft px-3 py-2"><Icon name="key" size={14} className="text-warn" /><span className="text-[12.5px] mono text-ink flex-1 truncate">{token.token}</span><CopyButton value={token.token} /></div>
-          <div><div className="flex items-center justify-between mb-2"><div className="text-[12px] font-semibold text-muted">Install command</div><CopyButton value={`curl -fsSL ${api.API_BASE}/install.sh | sudo bash -s -- --server ${api.API_BASE} --token ${token.token}`} label="Copy" /></div>
-            <CodeBlock code={`curl -fsSL ${api.API_BASE}/install.sh | sudo bash -s -- \\\n  --server ${api.API_BASE} \\\n  --token ${token.token}`} shell="bash" label="install agent" showCopy={false} />
+          <div><div className="text-[12px] font-semibold text-muted mb-2">Install command</div>
+            <EnrollCommands token={token.token} />
           </div>
           <div className="text-[11.5px] text-faint">Valid for {token.ttl_hours}h · up to {token.uses} enrollments.</div>
         </div>

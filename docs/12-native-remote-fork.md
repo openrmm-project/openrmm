@@ -91,3 +91,63 @@ Start with **Phase A** to get a working picture quickly and validate the relay
 end-to-end with real media, then invest in **Phase B** for the unified native
 product. Until then, **MeshCentral** (already integrated) covers real desktop
 sessions.
+
+---
+
+## What is built now: the Go reference sidecar (`cmd/rmm-remote`)
+
+The native provider is no longer a no-op. The agent now launches a **media
+sidecar** — a separate process that does capture + input and rides the existing
+relay. This is the exact integration the RustDesk fork plugs into: **swap the
+sidecar binary and the agent / relay / viewer are unchanged.**
+
+- **`cmd/rmm-remote`** (Go, CGO-free): `media_windows.go` captures the primary
+  screen via GDI (`BitBlt` into a top-down DIB) → JPEG, and injects input via
+  `SendInput`. `media_other.go` is a stub on Linux/macOS (the RustDesk fork, or
+  a later CGO build, fills those in).
+- **Agent** (`cmd/agent/remote.go`): on `remote_start` it derives the relay URL
+  from its own server host (the server's `RelayURL` uses the public URL, which
+  may be `localhost`), downloads the sidecar from `/dl/rmm-remote-<os>-<arch>`
+  if missing, and launches it pointing at the relay.
+- **Viewer** (`openrmm` → `RemoteViewer`): connects to `/ws/remote?role=viewer`,
+  renders the JPEG frames on a `<canvas>`, and forwards mouse/keyboard as JSON.
+
+### Relay wire format (the contract any sidecar must implement)
+The relay just pipes frames between the two peers, so the format is whatever the
+sidecar and viewer agree on:
+
+| Direction | WS message | Payload |
+|---|---|---|
+| agent → viewer | **binary** | a full-screen **JPEG** frame |
+| viewer → agent | **text** | a JSON input event |
+
+Input events: `{"t":"m","x":0..1,"y":0..1}` (move), `{"t":"b",x,y,"button":0/1/2,"down":bool}` (click), `{"t":"w","dy":deltaY}` (wheel), `{"t":"k","code":VK,"down":bool}` (key). Coordinates are normalized 0..1 across the primary screen.
+
+### Known limitations of the reference engine (intentional, fork closes them)
+- **Session-0 isolation:** the agent runs as a service in session 0, which
+  **cannot capture the interactive desktop**. For now run the agent
+  interactively in the user session for native remote, or spawn the sidecar via
+  `WTSQueryUserToken` + `CreateProcessAsUser` (a follow-up). The RustDesk fork
+  handles this natively.
+- Full-frame JPEG (no inter-frame delta, no H.264) → higher bandwidth; fine on a
+  LAN, not a WAN. The fork brings VP8/9/AV1.
+- No end-to-end encryption on the media (the relay sees frames). The fork keeps
+  RustDesk's NaCl E2E crypto, so the relay only ever sees ciphertext.
+- Primary monitor only; `keyCode`→VK mapping is approximate.
+
+## RustDesk fork runbook (Phase B — drop-in replacement for the sidecar)
+1. Fork `rustdesk/rustdesk`. Pin a release tag; track upstream via cherry-pick.
+2. **Controlled (endpoint) side** — replace the hbbs/hbbr rendezvous with a
+   WebSocket dial to our relay: on launch, read `-relay <ws-url>` (the same URL
+   the Go sidecar gets), connect as `role=agent`, and carry RustDesk's existing
+   (already E2E-encrypted) frames over that socket instead of hbbr. Keep `scrap`
+   (capture), libvpx/dav1d (codecs), `enigo` (input), sodiumoxide (crypto).
+3. **Viewer** — prefer the RustDesk **web client (WASM)** embedded in the RMM UI,
+   connecting to `/ws/remote?role=viewer`; or ship the Flutter viewer.
+4. **Build** per OS (Windows/macOS/Linux) + code-sign; publish as
+   `rmm-remote-<os>-<arch>` so the agent downloads it exactly like the Go sidecar.
+5. **Session security:** bind the relay token to the technician principal and the
+   agent identity on connect (closes docs/07 H1), on top of RustDesk's E2E crypto.
+
+No changes to `cmd/agent`, the relay, or the session brokering are needed — the
+fork only has to speak the `-relay` launch contract and connect to `/ws/remote`.

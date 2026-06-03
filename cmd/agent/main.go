@@ -202,7 +202,7 @@ func (a *agent) handleFrame(raw []byte) {
 	case protocol.MsgRemoteStart:
 		var rs protocol.RemoteStartMsg
 		if json.Unmarshal(env.Data, &rs) == nil {
-			log.Printf("remote session requested: %s (relay %s) — media module not bundled in MVP", rs.SessionID, rs.RelayURL)
+			go a.startRemoteSession(rs)
 		}
 	}
 }

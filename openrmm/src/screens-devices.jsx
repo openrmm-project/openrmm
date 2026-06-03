@@ -103,11 +103,18 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const d = devQ.data;
 
   const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remote, setRemote] = useState(null); // { wsUrl, hostname } for the native viewer
   const startRemote = async (provider) => {
     setRemoteBusy(true);
     try {
       const s = await api.startRemote(id, provider);
-      if (provider === 'rustdesk') { toast.info('RustDesk session', 'Triggering ' + s.connect_url); }
+      if (provider === 'native') {
+        // Build the viewer WS from the browser origin (not the server's public
+        // URL, which may be localhost) and the session token.
+        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+        const wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+        setRemote({ wsUrl, hostname: d.hostname });
+      } else if (provider === 'rustdesk') { toast.info('RustDesk session', 'Triggering ' + s.connect_url); }
       else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
@@ -147,7 +154,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <Button variant="primary" icon="remote" iconRight="chevdown" loading={remoteBusy} disabled={d.status !== 'online'}>Remote</Button>
               }>
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
-                <MenuItem icon="remote" onClick={() => startRemote('native')} hint="built-in">Native</MenuItem>
+                <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 <MenuItem icon="link" onClick={() => startRemote('rustdesk')} disabled={!d.rustdesk_id} hint={d.rustdesk_id || 'no id'}>RustDesk</MenuItem>
                 {can('admin') && <>
@@ -179,7 +186,74 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
         </>
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
+      {remote && <RemoteViewer wsUrl={remote.wsUrl} hostname={remote.hostname} onClose={() => setRemote(null)} />}
     </Drawer>
+  );
+}
+
+// RemoteViewer is the native remote-desktop viewer: it connects to the relay as
+// the viewer peer, renders the JPEG frames the agent's media sidecar streams,
+// and forwards mouse/keyboard events as JSON. Pairs with cmd/rmm-remote.
+function RemoteViewer({ wsUrl, hostname, onClose }) {
+  const canvasRef = useRef(null);
+  const [status, setStatus] = useState('connecting');
+  useEffect(() => {
+    const cv = canvasRef.current;
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'blob';
+    let closed = false;
+    ws.onopen = () => setStatus('streaming');
+    ws.onclose = () => { if (!closed) setStatus('closed'); };
+    ws.onerror = () => setStatus('error');
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') return;
+      const url = URL.createObjectURL(ev.data);
+      const img = new Image();
+      img.onload = () => {
+        if (canvasRef.current) {
+          if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
+          cv.getContext('2d').drawImage(img, 0, 0);
+        }
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    };
+    const send = (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
+    const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
+    let lastMove = 0;
+    const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
+    const onDown = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: true }); };
+    const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
+    const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
+    const onCtx = (e) => e.preventDefault();
+    const kd = (e) => { e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
+    const ku = (e) => { e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
+    cv.addEventListener('mousemove', onMove);
+    cv.addEventListener('mousedown', onDown);
+    cv.addEventListener('mouseup', onUp);
+    cv.addEventListener('wheel', onWheel, { passive: false });
+    cv.addEventListener('contextmenu', onCtx);
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    return () => {
+      closed = true; ws.close();
+      window.removeEventListener('keydown', kd);
+      window.removeEventListener('keyup', ku);
+    };
+  }, [wsUrl]);
+  return (
+    <div className="fixed inset-0 z-[80] bg-black flex flex-col">
+      <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
+        <Icon name="remote" size={15} className="text-muted" />
+        <span className="text-[13px] font-semibold text-ink">{hostname}</span>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md', status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn')}>{status}</span>
+        <span className="text-[11px] text-faint ml-auto">Native (beta) · keyboard & mouse forwarded to {hostname}</span>
+        <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
+      </div>
+      <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
+        <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'crosshair' }} />
+      </div>
+    </div>
   );
 }
 

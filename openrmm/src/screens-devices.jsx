@@ -220,6 +220,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
   const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
   const [draft, setDraft] = useState('');
   const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
+  const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
   const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -238,6 +239,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         const m = JSON.parse(ev.data);
         if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
+        else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
         else if (m.t === 'fend') {
           const d = dlRef.current[m.id];
@@ -326,6 +328,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
         <div className="ml-auto flex items-center gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+          <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
           <Button variant="ghost" size="sm" icon="link" onClick={() => browse('')}>Files</Button>
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>

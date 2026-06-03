@@ -327,6 +327,7 @@ type session struct {
 	chat    *chatWindow
 	mu      sync.Mutex
 	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
+	uacOff  bool               // true while we've moved UAC prompts off the secure desktop
 }
 
 func (s *session) send(mt int, data []byte) { s.out <- wsMsg{mt, data} }
@@ -350,6 +351,9 @@ func runMedia(conn *websocket.Conn) error {
 	defer func() {
 		if s.chat != nil {
 			s.chat.close()
+		}
+		if s.uacOff {
+			s.setUAC(false) // restore the secure desktop on disconnect
 		}
 	}()
 
@@ -400,9 +404,10 @@ func (s *session) onMessage(mt int, data []byte) {
 		return
 	}
 	var e struct {
-		T    string `json:"t"`
-		Text string `json:"text"`
-		ID   uint8  `json:"id"`
+		T      string `json:"t"`
+		Text   string `json:"text"`
+		ID     uint8  `json:"id"`
+		Enable bool   `json:"enable"`
 	}
 	if json.Unmarshal(data, &e) != nil {
 		return
@@ -414,6 +419,8 @@ func (s *session) onMessage(mt int, data []byte) {
 		if s.chat != nil {
 			s.chat.append("Tech: " + e.Text)
 		}
+	case "uac":
+		go s.setUAC(e.Enable)
 	case "fls":
 		go s.onList(data)
 	case "fput":

@@ -24,7 +24,7 @@ type Config struct {
 	AIModel    string
 
 	// Remote access defaults.
-	DefaultRemoteProvider string // native | meshcentral | rustdesk
+	DefaultRemoteProvider string // native | meshcentral
 	MeshCentralURL        string
 	// MeshCentralTokenKey is the server's loginTokenKey (hex). When set, the
 	// meshcentral provider mints a login token for seamless iframe embedding

@@ -299,7 +299,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"api_key_set": eff.AIAPIKey != "",
 		},
 		"remote": map[string]any{
-			"providers":             []string{"native", "meshcentral", "rustdesk"},
+			"providers":             []string{"native", "meshcentral"},
 			"default":               eff.RemoteDefaultProvider,
 			"meshcentral_url":       eff.MeshCentralURL,
 			"meshcentral_user":      eff.MeshCentralUser,
@@ -322,7 +322,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, "native", "meshcentral", "rustdesk") {
+	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, "native", "meshcentral") {
 		writeErr(w, http.StatusBadRequest, "invalid remote provider")
 		return
 	}

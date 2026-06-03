@@ -23,8 +23,8 @@ this project fills.
 - **AI chat with tool-calling** — the model reads fleet state and proposes actions.
 - **Guardrails by design** — AI never executes directly; every action is a job that
   a human approves, with dry-run preview and an immutable audit log.
-- **Pluggable remote access** — `native` (built-in relay), `meshcentral`, and
-  `rustdesk` providers behind one interface. Swap freely.
+- **Pluggable remote access** — `native` (built-in relay + media sidecar) and
+  `meshcentral` providers behind one interface. Swap freely.
 - **BYO AI model** — any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, …).
 - **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
   monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
@@ -45,7 +45,7 @@ this project fills.
               (WS)        (Postgres)    (native provider)
                  │
         ┌────────┴─────────┐
-        │   Go agent (endpoint)   │  +  remote client (MeshCentral / RustDesk / native)
+        │   Go agent (endpoint)   │  +  remote client (native / MeshCentral)
         └──────────────────┘
 ```
 
@@ -85,7 +85,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [05-agent-protocol](docs/05-agent-protocol.md) | The agent WebSocket protocol |
 | [06-ai-chat](docs/06-ai-chat.md) | Tool-calling loop, tools, prompts |
 | [07-guardrails-security](docs/07-guardrails-security.md) | Approval, audit, threat model |
-| [08-remote-access](docs/08-remote-access.md) | The three providers + the "own tool" plan |
+| [08-remote-access](docs/08-remote-access.md) | The native + MeshCentral providers + the "own tool" plan |
 | [09-roadmap](docs/09-roadmap.md) | Phased plan toward a complete RMM |
 | [10-monitoring-policies](docs/10-monitoring-policies.md) | Org hierarchy, RBAC, scripts, checks, tasks, policies, alerts |
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |

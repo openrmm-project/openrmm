@@ -114,8 +114,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
         const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
         const wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
         setRemote({ wsUrl, hostname: d.hostname });
-      } else if (provider === 'rustdesk') { toast.info('RustDesk session', 'Triggering ' + s.connect_url); }
-      else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
+      } else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
   // Native remote in a standalone browser tab (auth is shared via localStorage;
@@ -167,11 +166,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
-                <MenuItem icon="link" onClick={() => startRemote('rustdesk')} disabled={!d.rustdesk_id} hint={d.rustdesk_id || 'no id'}>RustDesk</MenuItem>
                 {can('admin') && <>
                   <div className="my-1 border-t border-line" />
                   <MenuItem icon="external" onClick={() => linkRemote('mesh_id', 'MeshCentral node id')}>Link MeshCentral node…</MenuItem>
-                  <MenuItem icon="link" onClick={() => linkRemote('rustdesk_id', 'RustDesk id')}>Link RustDesk id…</MenuItem>
                 </>}
               </Dropdown>
               {can('tech') && <Button variant="secondary" icon="terminal" onClick={() => setTab('run')}>Run script</Button>}

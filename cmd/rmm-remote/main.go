@@ -24,6 +24,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/gorilla/websocket"
 )
@@ -31,6 +32,13 @@ import (
 func main() {
 	relay := flag.String("relay", os.Getenv("RMM_RELAY_URL"), "relay WebSocket URL (role=agent)")
 	flag.Parse()
+	// The sidecar is launched with CREATE_NO_WINDOW, so log to a file next to the
+	// binary for diagnostics (why a session ends, capture errors, ...).
+	if exe, err := os.Executable(); err == nil {
+		if f, e := os.OpenFile(filepath.Join(filepath.Dir(exe), "rmm-remote.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); e == nil {
+			log.SetOutput(f)
+		}
+	}
 	if *relay == "" {
 		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
 	}
@@ -47,4 +55,4 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.2.0"
+const remoteVersion = "0.2.1"

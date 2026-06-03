@@ -222,7 +222,10 @@ func (c *capturer) frameJPEG(buf *bytes.Buffer) ([]byte, error) {
 	if r == 0 {
 		return nil, fmt.Errorf("BitBlt failed")
 	}
-	c.drawCursor()
+	// Note: we intentionally do NOT composite the cursor into the frame — that
+	// pins the pointer to the ~12fps frame rate and feels laggy. The viewer
+	// shows its own (instant) local cursor instead; drawCursor remains for a
+	// future separate high-rate cursor channel.
 	// DIB is BGRX top-down; convert to RGBA.
 	src, dst := c.pixels, c.img.Pix
 	for i := 0; i+3 < len(src); i += 4 {
@@ -411,6 +414,8 @@ func (s *session) onMessage(mt int, data []byte) {
 		if s.chat != nil {
 			s.chat.append("Tech: " + e.Text)
 		}
+	case "fls":
+		go s.onList(data)
 	case "fput":
 		s.onUploadStart(data)
 	case "fget":

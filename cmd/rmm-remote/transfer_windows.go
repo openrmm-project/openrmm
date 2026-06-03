@@ -18,6 +18,55 @@ import (
 
 const maxTransferBytes = 2 << 30 // 2 GiB guard
 
+var procGetLogicalDrives = kernel32.NewProc("GetLogicalDrives")
+
+// logicalDrives returns the available drive roots ("C:\\", ...).
+func logicalDrives() []string {
+	mask, _, _ := procGetLogicalDrives.Call()
+	var out []string
+	for i := 0; i < 26; i++ {
+		if mask&(1<<uint(i)) != 0 {
+			out = append(out, string(rune('A'+i))+":\\")
+		}
+	}
+	return out
+}
+
+type fsEntry struct {
+	Name string `json:"name"`
+	Dir  bool   `json:"dir"`
+	Size int64  `json:"size"`
+}
+
+// onList answers a remote directory listing (empty path => drive roots), so the
+// viewer can offer a RustDesk-style file browser instead of typing paths.
+func (s *session) onList(data []byte) {
+	var r getReq
+	if json.Unmarshal(data, &r) != nil {
+		return
+	}
+	entries := []fsEntry{}
+	if r.Path == "" {
+		for _, d := range logicalDrives() {
+			entries = append(entries, fsEntry{Name: d, Dir: true})
+		}
+	} else {
+		items, err := os.ReadDir(r.Path)
+		if err != nil {
+			s.sendJSON(map[string]any{"t": "ferr", "id": r.ID, "err": err.Error()})
+			return
+		}
+		for _, it := range items {
+			var sz int64
+			if info, e := it.Info(); e == nil {
+				sz = info.Size()
+			}
+			entries = append(entries, fsEntry{Name: it.Name(), Dir: it.IsDir(), Size: sz})
+		}
+	}
+	s.sendJSON(map[string]any{"t": "flist", "id": r.ID, "path": r.Path, "entries": entries})
+}
+
 type putReq struct {
 	ID   uint8  `json:"id"`
 	Path string `json:"path"`

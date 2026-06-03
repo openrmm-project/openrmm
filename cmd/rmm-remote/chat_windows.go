@@ -30,6 +30,7 @@ var (
 	procPostMessage   = user32.NewProc("PostMessageW")
 	procGetWindowText = user32.NewProc("GetWindowTextW")
 	procMoveWindow    = user32.NewProc("MoveWindow")
+	procCreateFont    = gdi32.NewProc("CreateFontW")
 )
 
 const (
@@ -146,8 +147,16 @@ func (cw *chatWindow) create(title string) {
 		wsChild|wsVisible|wsVScroll|esMultiline|esAutoVScroll|esReadonly, 8, 8, 328, 360, hwnd, idHistory, hInst, 0)
 	cw.input, _, _ = procCreateWindow.Call(0, uintptr(unsafe.Pointer(editClass)), 0,
 		wsChild|wsVisible, 8, 376, 252, 28, hwnd, idInput, hInst, 0)
-	procCreateWindow.Call(0, uintptr(unsafe.Pointer(u16("BUTTON"))), uintptr(unsafe.Pointer(u16("Send"))),
+	btn, _, _ := procCreateWindow.Call(0, uintptr(unsafe.Pointer(u16("BUTTON"))), uintptr(unsafe.Pointer(u16("Send"))),
 		wsChild|wsVisible, 268, 376, 68, 28, hwnd, idSend, hInst, 0)
+
+	// Use a modern UI font instead of the dated default (System/MS Sans Serif).
+	font, _, _ := procCreateFont.Call(
+		^uintptr(0)-14, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, // height -15, weight 400, ClearType
+		uintptr(unsafe.Pointer(u16("Segoe UI"))))
+	for _, h := range []uintptr{cw.history, cw.input, btn} {
+		procSendMessage.Call(h, wmSetFont, font, 1)
+	}
 	procShowWindow.Call(hwnd, swShow)
 }
 

@@ -118,6 +118,16 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
+  // Native remote in a standalone browser tab (auth is shared via localStorage;
+  // the relay authenticates by the session token in the URL).
+  const startRemoteNewTab = async () => {
+    setRemoteBusy(true);
+    try {
+      const s = await api.startRemote(id, 'native');
+      const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+      window.open(`${location.origin}/?remote=${encodeURIComponent(tok)}&host=${encodeURIComponent(d.hostname)}`, '_blank');
+    } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
+  };
   const linkRemote = async (field, label) => {
     const v = window.prompt('Enter the ' + label + ' for this device:');
     if (!v || !v.trim()) return;
@@ -155,6 +165,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
               }>
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
+                <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 <MenuItem icon="link" onClick={() => startRemote('rustdesk')} disabled={!d.rustdesk_id} hint={d.rustdesk_id || 'no id'}>RustDesk</MenuItem>
                 {can('admin') && <>
@@ -208,6 +219,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
   const [status, setStatus] = useState('connecting');
   const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
   const [draft, setDraft] = useState('');
+  const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
   const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -225,6 +237,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
+        else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
         else if (m.t === 'fend') {
           const d = dlRef.current[m.id];
@@ -275,11 +288,22 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
   }, [wsUrl]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
+  // Remote file browser (RustDesk-style): navigate folders, download a file, or
+  // upload into the current folder — no path typing.
+  const winJoin = (base, name) => (!base ? name : base.endsWith('\\') ? base + name : base + '\\' + name);
+  const parentPath = (p) => {
+    if (!p) return null;            // already at "This PC" (drive list)
+    const t = p.replace(/\\+$/, '');
+    if (/^[A-Za-z]:$/.test(t)) return '';        // drive root -> drive list
+    const i = t.lastIndexOf('\\');
+    return i <= 2 ? t.slice(0, 2) + '\\' : t.slice(0, i);
+  };
+  const browse = (path) => { const p = path == null ? '' : path; setFb({ path: p, entries: null }); sendJSON({ t: 'fls', id: nextId(), path: p }); };
+  const downloadEntry = (name) => sendJSON({ t: 'fget', id: nextId(), path: winJoin(fb.path, name) });
   const uploadFile = async (file) => {
-    if (!file) return;
-    const dest = window.prompt('Remote destination path:', 'C:\\Users\\Public\\Downloads\\' + file.name);
-    if (!dest) return;
+    if (!file || !fb) return;
     const ws = wsRef.current; if (!ws || ws.readyState !== 1) return;
+    const dest = winJoin(fb.path, file.name);
     const id = nextId();
     sendJSON({ t: 'fput', id, path: dest, size: file.size });
     const u8 = new Uint8Array(await file.arrayBuffer());
@@ -292,11 +316,6 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
     sendJSON({ t: 'fend', id });
     toast.success('Upload sent', dest);
   };
-  const downloadPath = () => {
-    const path = window.prompt('Remote file path to download:', 'C:\\Users\\Public\\Downloads\\');
-    if (!path) return;
-    sendJSON({ t: 'fget', id: nextId(), path });
-  };
 
   const statusCls = status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
   return (
@@ -307,14 +326,43 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
         <div className="ml-auto flex items-center gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
-          <Button variant="ghost" size="sm" icon="external" onClick={() => fileInputRef.current?.click()}>Send file</Button>
-          <Button variant="ghost" size="sm" icon="link" onClick={downloadPath}>Get file</Button>
+          <Button variant="ghost" size="sm" icon="link" onClick={() => browse('')}>Files</Button>
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
       </div>
+      {fb && (
+        <div className="absolute inset-0 z-[5] bg-black/50 flex items-center justify-center" onClick={() => setFb(null)}>
+          <div className="w-[560px] max-h-[72vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
+              <Icon name="devices" size={15} className="text-muted" />
+              <span className="text-[12.5px] font-semibold text-ink">Files on {hostname}</span>
+              <Button variant="ghost" size="sm" icon="external" className="ml-auto" onClick={() => fileInputRef.current?.click()}>Upload here</Button>
+              <button onClick={() => setFb(null)} className="text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
+            </div>
+            <div className="flex items-center gap-2 px-3 h-9 border-b border-line bg-elevated/40">
+              <button disabled={parentPath(fb.path) === null} onClick={() => browse(parentPath(fb.path))} className="text-muted hover:text-ink disabled:opacity-40"><Icon name="chevleft" size={16} /></button>
+              <span className="text-[11.5px] mono text-muted truncate">{fb.path || 'This PC'}</span>
+            </div>
+            <div className="flex-1 overflow-y-auto min-h-[200px]">
+              {fb.entries === null && <div className="p-6 text-center text-faint text-[12px]">Loading…</div>}
+              {fb.entries && fb.entries.length === 0 && <div className="p-6 text-center text-faint text-[12px]">Empty folder.</div>}
+              {fb.entries && fb.entries.map((en, i) => (
+                <button key={i} onClick={() => en.dir ? browse(winJoin(fb.path, en.name)) : downloadEntry(en.name)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-elevated text-left border-b border-line/40">
+                  <Icon name={en.dir ? 'pin' : 'script'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
+                  <span className="text-[12.5px] text-ink flex-1 truncate">{en.name}</span>
+                  {!en.dir && <span className="text-[11px] text-faint">{Math.max(1, (en.size / 1024) | 0).toLocaleString()} KB</span>}
+                  {!en.dir && <Icon name="link" size={13} className="text-faint" />}
+                </button>
+              ))}
+            </div>
+            <div className="px-3 py-2 border-t border-line text-[11px] text-faint">Click a folder to open · a file to download · "Upload here" to send into this folder.</div>
+          </div>
+        </div>
+      )}
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
-          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'none' }} />
+          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
         </div>
         <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat</div>
@@ -502,3 +550,4 @@ function RunScriptForm({ device, onCreated }) {
 
 window.DevicesScreen = DevicesScreen;
 window.DeviceDetail = DeviceDetail;
+window.RemoteViewer = RemoteViewer;

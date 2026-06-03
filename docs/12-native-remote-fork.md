@@ -113,15 +113,34 @@ sidecar binary and the agent / relay / viewer are unchanged.**
   renders the JPEG frames on a `<canvas>`, and forwards mouse/keyboard as JSON.
 
 ### Relay wire format (the contract any sidecar must implement)
-The relay just pipes frames between the two peers, so the format is whatever the
-sidecar and viewer agree on:
+The relay just pipes frames between the two peers. Messages are **multiplexed**:
+binary messages carry a 1-byte channel tag; text messages are JSON keyed by `t`.
 
-| Direction | WS message | Payload |
+| Message | Bytes / shape | Meaning |
 |---|---|---|
-| agent → viewer | **binary** | a full-screen **JPEG** frame |
-| viewer → agent | **text** | a JSON input event |
+| binary | `[0x01][JPEG]` | screen frame (agent → viewer) |
+| binary | `[0x02][id][bytes]` | file chunk (either direction) |
+| text | `{"t":"m"\|"b"\|"w"\|"k", …}` | input (viewer → agent) |
+| text | `{"t":"chat","from":"tech"\|"user","text":…}` | chat (either direction) |
+| text | `{"t":"fput","id","path","size"}` | start upload viewer → agent |
+| text | `{"t":"fget","id","path"}` | request download agent → viewer |
+| text | `{"t":"fmeta","id","name","size"}` | download starting (agent → viewer) |
+| text | `{"t":"fend","id","ok"}` / `{"t":"ferr","id","err"}` | transfer end / error |
 
-Input events: `{"t":"m","x":0..1,"y":0..1}` (move), `{"t":"b",x,y,"button":0/1/2,"down":bool}` (click), `{"t":"w","dy":deltaY}` (wheel), `{"t":"k","code":VK,"down":bool}` (key). Coordinates are normalized 0..1 across the primary screen.
+Input events: `m` move `{x,y}` (0..1), `b` button `{x,y,button:0/1/2,down}`, `w`
+wheel `{dy}`, `k` key `{code:VK,down}`. Coordinates are normalized 0..1 across the
+**virtual desktop** (all monitors).
+
+### Built features (reference engine)
+- **Multi-monitor:** captures the whole virtual desktop as one image; input uses
+  `MOUSEEVENTF_VIRTUALDESK`.
+- **Real cursor:** composited into each frame (`GetCursorInfo`+`DrawIconEx`); the
+  viewer hides its own pointer.
+- **Chat:** an always-on-top Win32 window on the endpoint (`chat_windows.go`) ↔ a
+  chat panel in the viewer.
+- **File transfer:** bidirectional, free-path (`transfer_windows.go`) — upload
+  from the browser to any remote path, download any remote file to the browser.
+  Guarded by a 2 GiB cap and logged; the relay is the only transport.
 
 ### Known limitations of the reference engine (intentional, fork closes them)
 - **Session-0 isolation:** the agent runs as a service in session 0, which

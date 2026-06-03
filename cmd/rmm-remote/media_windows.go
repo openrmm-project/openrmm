@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"os"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -301,6 +303,36 @@ func handleInput(data []byte) {
 
 // ---- session loop ----
 
+// Relay messages are multiplexed: binary messages carry a 1-byte channel tag,
+// text messages are JSON with a "t" field.
+const (
+	chVideo = 0x01 // agent -> viewer: [chVideo][JPEG]
+	chFile  = 0x02 // either way:      [chFile][id][bytes]
+)
+
+type wsMsg struct {
+	mt   int
+	data []byte
+}
+
+// session multiplexes video, input, chat and file transfer over one relay conn.
+// A single writer goroutine serializes all sends (gorilla forbids concurrent
+// writes).
+type session struct {
+	conn    *websocket.Conn
+	out     chan wsMsg
+	chat    *chatWindow
+	mu      sync.Mutex
+	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
+}
+
+func (s *session) send(mt int, data []byte) { s.out <- wsMsg{mt, data} }
+
+func (s *session) sendJSON(v any) {
+	b, _ := json.Marshal(v)
+	s.send(websocket.TextMessage, b)
+}
+
 func runMedia(conn *websocket.Conn) error {
 	cap, err := newCapturer()
 	if err != nil {
@@ -308,8 +340,27 @@ func runMedia(conn *websocket.Conn) error {
 	}
 	defer cap.close()
 
-	errc := make(chan error, 2)
-	// viewer -> agent: input events
+	s := &session{conn: conn, out: make(chan wsMsg, 32), uploads: map[uint8]*os.File{}}
+	s.chat = newChatWindow("RMM-AI — Chat with technician", func(text string) {
+		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
+	})
+	defer func() {
+		if s.chat != nil {
+			s.chat.close()
+		}
+	}()
+
+	errc := make(chan error, 3)
+	// single writer
+	go func() {
+		for m := range s.out {
+			if err := conn.WriteMessage(m.mt, m.data); err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+	// reader / dispatcher
 	go func() {
 		for {
 			mt, data, err := conn.ReadMessage()
@@ -317,12 +368,10 @@ func runMedia(conn *websocket.Conn) error {
 				errc <- err
 				return
 			}
-			if mt == websocket.TextMessage {
-				handleInput(data)
-			}
+			s.onMessage(mt, data)
 		}
 	}()
-	// agent -> viewer: screen frames (~12 fps)
+	// screen capture (~12 fps)
 	go func() {
 		var buf bytes.Buffer
 		ticker := time.NewTicker(80 * time.Millisecond)
@@ -333,11 +382,40 @@ func runMedia(conn *websocket.Conn) error {
 				errc <- err
 				return
 			}
-			if err := conn.WriteMessage(websocket.BinaryMessage, jpg); err != nil {
-				errc <- err
-				return
-			}
+			s.send(websocket.BinaryMessage, append([]byte{chVideo}, jpg...))
 		}
 	}()
 	return <-errc
+}
+
+// onMessage routes a relay frame to input / chat / file handling.
+func (s *session) onMessage(mt int, data []byte) {
+	if mt == websocket.BinaryMessage {
+		if len(data) >= 2 && data[0] == chFile {
+			s.onUploadChunk(data[1], data[2:])
+		}
+		return
+	}
+	var e struct {
+		T    string `json:"t"`
+		Text string `json:"text"`
+		ID   uint8  `json:"id"`
+	}
+	if json.Unmarshal(data, &e) != nil {
+		return
+	}
+	switch e.T {
+	case "m", "b", "w", "k":
+		handleInput(data)
+	case "chat":
+		if s.chat != nil {
+			s.chat.append("Tech: " + e.Text)
+		}
+	case "fput":
+		s.onUploadStart(data)
+	case "fget":
+		go s.onDownload(data)
+	case "fend":
+		s.onUploadEnd(e.ID)
+	}
 }

@@ -192,42 +192,74 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
 }
 
 // RemoteViewer is the native remote-desktop viewer: it connects to the relay as
-// the viewer peer, renders the JPEG frames the agent's media sidecar streams,
-// and forwards mouse/keyboard events as JSON. Pairs with cmd/rmm-remote.
+// the viewer peer and multiplexes video (JPEG frames), input, chat and file
+// transfer over the one socket. Pairs with cmd/rmm-remote.
+//   binary [0x01][JPEG]      screen frame   (agent -> viewer)
+//   binary [0x02][id][bytes] file chunk     (both directions)
+//   text   {"t":...}         input / chat / file control
+const CH_VIDEO = 0x01, CH_FILE = 0x02;
 function RemoteViewer({ wsUrl, hostname, onClose }) {
+  const toast = useToast();
   const canvasRef = useRef(null);
+  const wsRef = useRef(null);
+  const dlRef = useRef({});   // active downloads: id -> { name, chunks: [] }
+  const tidRef = useRef(0);
+  const fileInputRef = useRef(null);
   const [status, setStatus] = useState('connecting');
+  const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
+  const [draft, setDraft] = useState('');
+
+  const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
+  const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
   useEffect(() => {
     const cv = canvasRef.current;
     const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'blob';
+    wsRef.current = ws;
+    ws.binaryType = 'arraybuffer';
     let closed = false;
     ws.onopen = () => setStatus('streaming');
     ws.onclose = () => { if (!closed) setStatus('closed'); };
     ws.onerror = () => setStatus('error');
     ws.onmessage = (ev) => {
-      if (typeof ev.data === 'string') return;
-      const url = URL.createObjectURL(ev.data);
-      const img = new Image();
-      img.onload = () => {
-        if (canvasRef.current) {
-          if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
-          cv.getContext('2d').drawImage(img, 0, 0);
-        }
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
+      if (typeof ev.data === 'string') {
+        const m = JSON.parse(ev.data);
+        if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
+        else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
+        else if (m.t === 'fend') {
+          const d = dlRef.current[m.id];
+          if (d && d.chunks) { saveBlob(new Blob(d.chunks), d.name); toast.success('Downloaded', d.name); delete dlRef.current[m.id]; }
+        } else if (m.t === 'ferr') toast.error('Transfer failed', m.err || '');
+        return;
+      }
+      const bytes = new Uint8Array(ev.data);
+      if (bytes[0] === CH_VIDEO) {
+        const url = URL.createObjectURL(new Blob([ev.data.slice(1)], { type: 'image/jpeg' }));
+        const img = new Image();
+        img.onload = () => {
+          if (canvasRef.current) {
+            if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
+            cv.getContext('2d').drawImage(img, 0, 0);
+          }
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      } else if (bytes[0] === CH_FILE) {
+        const d = dlRef.current[bytes[1]];
+        if (d) d.chunks.push(ev.data.slice(2));
+      }
     };
     const send = (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
     const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
+    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
     let lastMove = 0;
     const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
     const onDown = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: true }); };
     const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
     const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
     const onCtx = (e) => e.preventDefault();
-    const kd = (e) => { e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
-    const ku = (e) => { e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
+    const kd = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
+    const ku = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
     cv.addEventListener('mousemove', onMove);
     cv.addEventListener('mousedown', onDown);
     cv.addEventListener('mouseup', onUp);
@@ -241,20 +273,76 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
       window.removeEventListener('keyup', ku);
     };
   }, [wsUrl]);
+
+  const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
+  const uploadFile = async (file) => {
+    if (!file) return;
+    const dest = window.prompt('Remote destination path:', 'C:\\Users\\Public\\Downloads\\' + file.name);
+    if (!dest) return;
+    const ws = wsRef.current; if (!ws || ws.readyState !== 1) return;
+    const id = nextId();
+    sendJSON({ t: 'fput', id, path: dest, size: file.size });
+    const u8 = new Uint8Array(await file.arrayBuffer());
+    const CHUNK = 64 * 1024;
+    for (let off = 0; off < u8.length; off += CHUNK) {
+      const slice = u8.subarray(off, Math.min(off + CHUNK, u8.length));
+      const frame = new Uint8Array(slice.length + 2); frame[0] = CH_FILE; frame[1] = id; frame.set(slice, 2);
+      ws.send(frame);
+    }
+    sendJSON({ t: 'fend', id });
+    toast.success('Upload sent', dest);
+  };
+  const downloadPath = () => {
+    const path = window.prompt('Remote file path to download:', 'C:\\Users\\Public\\Downloads\\');
+    if (!path) return;
+    sendJSON({ t: 'fget', id: nextId(), path });
+  };
+
+  const statusCls = status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
   return (
     <div className="fixed inset-0 z-[80] bg-black flex flex-col">
       <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
         <Icon name="remote" size={15} className="text-muted" />
         <span className="text-[13px] font-semibold text-ink">{hostname}</span>
-        <span className={cx('text-[11px] px-2 py-0.5 rounded-md', status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn')}>{status}</span>
-        <span className="text-[11px] text-faint ml-auto">Native (beta) · keyboard & mouse forwarded to {hostname}</span>
-        <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+          <Button variant="ghost" size="sm" icon="external" onClick={() => fileInputRef.current?.click()}>Send file</Button>
+          <Button variant="ghost" size="sm" icon="link" onClick={downloadPath}>Get file</Button>
+          <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
+        </div>
       </div>
-      <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
-        <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'none' }} />
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
+          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'none' }} />
+        </div>
+        <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
+          <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat</div>
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}
+            {chat.map((m, i) => (
+              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand/15 text-ink' : 'bg-elevated text-ink')}>
+                <div className="text-[10px] text-faint mb-0.5">{m.from === 'tech' ? 'You' : hostname}</div>{m.text}
+              </div>
+            ))}
+          </div>
+          <div className="p-2 border-t border-line flex gap-1.5">
+            <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} placeholder="Message…" className="text-[12px]" />
+            <Button variant="primary" size="sm" icon="send" onClick={sendChat} disabled={!draft.trim()} />
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+// saveBlob triggers a browser download of a received remote file.
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name || 'download';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* inventory */

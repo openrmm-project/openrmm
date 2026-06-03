@@ -64,14 +64,21 @@ func (a *agent) ensureSidecar() (string, error) {
 		return "", err
 	}
 	path := filepath.Join(filepath.Dir(exe), sidecarName())
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
-	}
 	dlName := fmt.Sprintf("rmm-remote-%s-%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		dlName += ".exe"
 	}
 	src := a.httpBase() + "/dl/" + dlName
+
+	// Keep the cached sidecar only if it matches the server's current build.
+	// Comparing Content-Length (HEAD) auto-updates it when we ship a new sidecar,
+	// without a manual delete; if the HEAD fails we keep whatever is on disk.
+	if fi, err := os.Stat(path); err == nil {
+		if remote := remoteSize(src); remote < 0 || remote == fi.Size() {
+			return path, nil
+		}
+		log.Printf("remote: sidecar changed on server; refreshing")
+	}
 	log.Printf("remote: downloading sidecar from %s", src)
 	if err := download(src, path); err != nil {
 		return "", err
@@ -80,6 +87,20 @@ func (a *agent) ensureSidecar() (string, error) {
 		_ = os.Chmod(path, 0o755)
 	}
 	return path, nil
+}
+
+// remoteSize returns the Content-Length of a URL via HEAD, or -1 if unknown.
+func remoteSize(src string) int64 {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Head(src)
+	if err != nil {
+		return -1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.ContentLength <= 0 {
+		return -1
+	}
+	return resp.ContentLength
 }
 
 // httpBase derives the server's HTTP origin from the agent WebSocket URL.

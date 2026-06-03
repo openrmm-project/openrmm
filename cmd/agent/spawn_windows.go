@@ -26,6 +26,7 @@ var (
 	procCloseHandle             = kernel32.NewProc("CloseHandle")
 	procWTSQueryUserToken       = wtsapi32.NewProc("WTSQueryUserToken")
 	procDuplicateTokenEx        = advapi32.NewProc("DuplicateTokenEx")
+	procGetTokenInformation     = advapi32.NewProc("GetTokenInformation")
 	procCreateProcessAsUser     = advapi32.NewProc("CreateProcessAsUserW")
 	procCreateEnvironmentBlock  = userenv.NewProc("CreateEnvironmentBlock")
 	procDestroyEnvironmentBlock = userenv.NewProc("DestroyEnvironmentBlock")
@@ -38,6 +39,7 @@ const (
 	createUnicodeEnv       = 0x00000400
 	createNoWindow         = 0x08000000
 	invalidSessionID       = 0xFFFFFFFF
+	tokenLinkedToken       = 19 // TOKEN_INFORMATION_CLASS
 )
 
 type startupInfoW struct {
@@ -93,8 +95,20 @@ func launchInUserSession(bin, relay string) error {
 	}
 	defer procCloseHandle.Call(hToken)
 
+	// If the user is an admin, WTSQueryUserToken hands back the filtered
+	// (medium-integrity) token — which UIPI blocks from sending input to
+	// elevated windows. Swap in the full linked (elevated) token when present so
+	// the technician can drive UAC-elevated apps (e.g. an admin PowerShell).
+	srcToken := hToken
+	var linked struct{ Token uintptr } // TOKEN_LINKED_TOKEN
+	var retLen uint32
+	if r, _, _ := procGetTokenInformation.Call(hToken, tokenLinkedToken, uintptr(unsafe.Pointer(&linked)), uintptr(unsafe.Sizeof(linked)), uintptr(unsafe.Pointer(&retLen))); r != 0 && linked.Token != 0 {
+		srcToken = linked.Token
+		defer procCloseHandle.Call(linked.Token)
+	}
+
 	var hDup uintptr
-	if r, _, e := procDuplicateTokenEx.Call(hToken, maximumAllowed, 0, securityImpersonation, tokenPrimary, uintptr(unsafe.Pointer(&hDup))); r == 0 {
+	if r, _, e := procDuplicateTokenEx.Call(srcToken, maximumAllowed, 0, securityImpersonation, tokenPrimary, uintptr(unsafe.Pointer(&hDup))); r == 0 {
 		return fmt.Errorf("DuplicateTokenEx: %v", e)
 	}
 	defer procCloseHandle.Call(hDup)

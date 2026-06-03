@@ -27,6 +27,9 @@ var (
 	procWTSQueryUserToken       = wtsapi32.NewProc("WTSQueryUserToken")
 	procDuplicateTokenEx        = advapi32.NewProc("DuplicateTokenEx")
 	procGetTokenInformation     = advapi32.NewProc("GetTokenInformation")
+	procOpenProcessToken        = advapi32.NewProc("OpenProcessToken")
+	procSetTokenInformation     = advapi32.NewProc("SetTokenInformation")
+	procGetCurrentProcess       = kernel32.NewProc("GetCurrentProcess")
 	procCreateProcessAsUser     = advapi32.NewProc("CreateProcessAsUserW")
 	procCreateEnvironmentBlock  = userenv.NewProc("CreateEnvironmentBlock")
 	procDestroyEnvironmentBlock = userenv.NewProc("DestroyEnvironmentBlock")
@@ -40,6 +43,9 @@ const (
 	createNoWindow         = 0x08000000
 	invalidSessionID       = 0xFFFFFFFF
 	tokenLinkedToken       = 19 // TOKEN_INFORMATION_CLASS
+	tokenSessionID         = 12 // TokenSessionId
+	tokenDuplicate         = 0x0002
+	tokenQuery             = 0x0008
 )
 
 type startupInfoW struct {
@@ -89,29 +95,28 @@ func launchInUserSession(bin, relay string) error {
 	if sid == invalidSessionID {
 		return fmt.Errorf("no active console session")
 	}
+	// Run the sidecar as SYSTEM (the agent's own token when installed as a
+	// service) placed into the interactive session. SYSTEM integrity is required
+	// to inject input into the UAC consent dialog (consent.exe runs as SYSTEM);
+	// an elevated *user* is blocked by UIPI. Falls back below if not SYSTEM.
+	hProc, _, _ := procGetCurrentProcess.Call()
 	var hToken uintptr
-	if r, _, e := procWTSQueryUserToken.Call(sid, uintptr(unsafe.Pointer(&hToken))); r == 0 {
-		return fmt.Errorf("WTSQueryUserToken: %v", e)
+	if r, _, e := procOpenProcessToken.Call(hProc, tokenDuplicate|tokenQuery, uintptr(unsafe.Pointer(&hToken))); r == 0 {
+		return fmt.Errorf("OpenProcessToken: %v", e)
 	}
 	defer procCloseHandle.Call(hToken)
 
-	// If the user is an admin, WTSQueryUserToken hands back the filtered
-	// (medium-integrity) token — which UIPI blocks from sending input to
-	// elevated windows. Swap in the full linked (elevated) token when present so
-	// the technician can drive UAC-elevated apps (e.g. an admin PowerShell).
-	srcToken := hToken
-	var linked struct{ Token uintptr } // TOKEN_LINKED_TOKEN
-	var retLen uint32
-	if r, _, _ := procGetTokenInformation.Call(hToken, tokenLinkedToken, uintptr(unsafe.Pointer(&linked)), uintptr(unsafe.Sizeof(linked)), uintptr(unsafe.Pointer(&retLen))); r != 0 && linked.Token != 0 {
-		srcToken = linked.Token
-		defer procCloseHandle.Call(linked.Token)
-	}
-
 	var hDup uintptr
-	if r, _, e := procDuplicateTokenEx.Call(srcToken, maximumAllowed, 0, securityImpersonation, tokenPrimary, uintptr(unsafe.Pointer(&hDup))); r == 0 {
+	if r, _, e := procDuplicateTokenEx.Call(hToken, maximumAllowed, 0, securityImpersonation, tokenPrimary, uintptr(unsafe.Pointer(&hDup))); r == 0 {
 		return fmt.Errorf("DuplicateTokenEx: %v", e)
 	}
 	defer procCloseHandle.Call(hDup)
+
+	// Move the duplicated token into the active console session.
+	sessID := uint32(sid)
+	if r, _, e := procSetTokenInformation.Call(hDup, tokenSessionID, uintptr(unsafe.Pointer(&sessID)), uintptr(unsafe.Sizeof(sessID))); r == 0 {
+		return fmt.Errorf("SetTokenInformation(session): %v", e)
+	}
 
 	var env uintptr
 	hasEnv := false

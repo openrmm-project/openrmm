@@ -467,6 +467,16 @@ func (s *session) onMessage(mt int, data []byte) {
 		go s.setUAC(e.Enable)
 	case "fls":
 		go s.onList(data)
+	case "fmkdir":
+		go s.onMkdir(data)
+	case "fdel":
+		go s.onDelete(data)
+	case "frename":
+		go s.onRename(data)
+	case "fcopy":
+		go s.onCopy(data)
+	case "fmove":
+		go s.onMove(data)
 	case "fput":
 		s.onUploadStart(data)
 	case "fget":

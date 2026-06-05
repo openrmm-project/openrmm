@@ -481,16 +481,29 @@ function ScopePicker({ scopes, setScopes }) {
   const [expC, setExpC] = useState({});          // expanded clients
   const [expS, setExpS] = useState({});          // expanded sites
   const [q, setQ] = useState('');
+  const [allSites, setAllSites] = useState(null); // every site (for search by name + client lookup)
+  const [found, setFound] = useState([]);          // device search results
   // Mode is independent of the selection so "Restrito" works before any node is
   // picked (empty selection still means full access on save — hinted below).
   const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
   const restricted = mode === 'restricted';
+  const searching = q.trim().length > 0;
   const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
+  const siteClient = {}; (allSites || []).forEach((st) => { siteClient[st.id] = st.client_id; });
 
   useEffect(() => { if (restricted && clients === null) loadClients(); }, [mode]);
   const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
   const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
   const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
+
+  // Search across the whole org (not just loaded/expanded nodes): devices via the
+  // server (?q=), companies/sites client-side. Debounced.
+  useEffect(() => {
+    if (!searching) { setFound([]); return; }
+    if (allSites === null) { api.listSites().then((r) => setAllSites(r.sites || [])).catch(() => setAllSites([])); }
+    const t = setTimeout(() => { api.listDevices({ q: q.trim() }).then((r) => setFound(r.devices || [])).catch(() => setFound([])); }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
 
   const toggle = (type, id) => {
     const k = type + ':' + id;
@@ -521,6 +534,18 @@ function ScopePicker({ scopes, setScopes }) {
         <div className="rounded-xl border border-line overflow-hidden">
           <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar empresa/site/máquina…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
+            {searching ? (() => {
+              const cl = (clients || []).filter((c) => match(c.name));
+              const st = (allSites || []).filter((s) => match(s.name));
+              const cName = (id) => ((clients || []).find((c) => c.id === id) || {}).name || '';
+              if (allSites === null) return <div className="p-3 text-center text-faint text-[12px]">Buscando…</div>;
+              if (!cl.length && !st.length && !found.length) return <div className="p-3 text-center text-faint text-[12px]">Nada encontrado para “{q}”.</div>;
+              return <>
+                {cl.map((c) => <Row key={'c' + c.id} depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)} />)}
+                {st.map((s) => { const cov = sel.has('client:' + s.client_id); return <Row key={'s' + s.id} depth={0} icon="pin" name={s.name} hint={cName(s.client_id)} checked={cov || sel.has('site:' + s.id)} disabled={cov} onCheck={() => toggle('site', s.id)} />; })}
+                {found.map((d) => { const cov = sel.has('agent:' + d.id) ? false : (sel.has('site:' + d.site_id) || sel.has('client:' + siteClient[d.site_id])); return <Row key={'d' + d.id} depth={0} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+              </>;
+            })() : <>
             {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
             {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">Nenhuma empresa cadastrada.</div>}
             {(clients || []).filter((c) => match(c.name) || expC[c.id]).map((c) => (
@@ -544,6 +569,7 @@ function ScopePicker({ scopes, setScopes }) {
                 {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">sem sites</div>}
               </div>
             ))}
+            </>}
           </div>
         </div>
       )}

@@ -113,6 +113,27 @@ func (s *Store) ListAgents(ctx context.Context) ([]models.Agent, error) {
 	return out, rows.Err()
 }
 
+// SearchAgents finds agents whose hostname matches a query (scope-tree search).
+func (s *Store) SearchAgents(ctx context.Context, q string, limit int) ([]models.Agent, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents WHERE hostname ILIKE '%' || $1 || '%' ORDER BY hostname LIMIT $2`, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
 // ListAgentsBySite lists the agents in one site (for the scope tree's lazy load).
 func (s *Store) ListAgentsBySite(ctx context.Context, siteID string) ([]models.Agent, error) {
 	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents WHERE site_id=$1 ORDER BY hostname`, siteID)

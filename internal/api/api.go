@@ -566,6 +566,8 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Query().Get("site_id") != "": // lazy load for the scope tree
 		agents, err = s.store.ListAgentsBySite(r.Context(), r.URL.Query().Get("site_id"))
+	case r.URL.Query().Get("q") != "": // scope-tree search by hostname
+		agents, err = s.store.SearchAgents(r.Context(), r.URL.Query().Get("q"), 200)
 	case s.scopeUserID(r) != "":
 		agents, err = s.store.ListAgentsForUser(r.Context(), s.scopeUserID(r))
 	default:

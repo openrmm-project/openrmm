@@ -481,10 +481,13 @@ function ScopePicker({ scopes, setScopes }) {
   const [expC, setExpC] = useState({});          // expanded clients
   const [expS, setExpS] = useState({});          // expanded sites
   const [q, setQ] = useState('');
-  const restricted = scopes.length > 0;
+  // Mode is independent of the selection so "Restrito" works before any node is
+  // picked (empty selection still means full access on save — hinted below).
+  const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
+  const restricted = mode === 'restricted';
   const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
 
-  useEffect(() => { if (restricted && clients === null) loadClients(); }, [restricted]);
+  useEffect(() => { if (restricted && clients === null) loadClients(); }, [mode]);
   const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
   const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
   const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
@@ -510,8 +513,8 @@ function ScopePicker({ scopes, setScopes }) {
   return (
     <div className="space-y-2">
       <div className="flex gap-4 text-[12px]">
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => setScopes([])} className="accent-brand" />Acesso total</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setScopes(scopes.length ? scopes : []); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Acesso total</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
         {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selecionado(s)</span>}
       </div>
       {restricted && (
@@ -544,7 +547,9 @@ function ScopePicker({ scopes, setScopes }) {
           </div>
         </div>
       )}
-      <div className="text-[11px] text-faint">Sem restrições = acesso total. Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>
+      {restricted && scopes.length === 0
+        ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Selecione ao menos um item — sem seleção o usuário terá acesso total.</div>
+        : <div className="text-[11px] text-faint">Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>}
     </div>
   );
 }

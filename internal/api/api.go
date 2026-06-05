@@ -110,6 +110,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/devices", s.listDevices)
 			r.Get("/devices/{id}", s.getDevice)
 			r.Get("/devices/{id}/inventory", s.getInventory)
+			// Remote access is allowed for readonly (remote assistance/observation);
+			// it still cannot run scripts, approve jobs, or change config.
+			r.Post("/devices/{id}/remote", s.startRemote)
 			r.Get("/scripts", s.listScripts)
 			r.Get("/scripts/{id}", s.getScript)
 			r.Get("/jobs", s.listJobs)
@@ -128,7 +131,6 @@ func (s *Server) Router() http.Handler {
 		// ---- tech (run things) ----
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleTech))
-			r.Post("/devices/{id}/remote", s.startRemote)
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/{id}/approve", s.approveJob)

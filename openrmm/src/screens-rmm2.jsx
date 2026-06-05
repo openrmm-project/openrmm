@@ -543,7 +543,12 @@ function ScopePicker({ scopes, setScopes }) {
               return <>
                 {cl.map((c) => <Row key={'c' + c.id} depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)} />)}
                 {st.map((s) => { const cov = sel.has('client:' + s.client_id); return <Row key={'s' + s.id} depth={0} icon="pin" name={s.name} hint={cName(s.client_id)} checked={cov || sel.has('site:' + s.id)} disabled={cov} onCheck={() => toggle('site', s.id)} />; })}
-                {found.map((d) => { const cov = sel.has('agent:' + d.id) ? false : (sel.has('site:' + d.site_id) || sel.has('client:' + siteClient[d.site_id])); return <Row key={'d' + d.id} depth={0} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+                {found.map((d) => {
+                  const cov = sel.has('agent:' + d.id) ? false : (sel.has('site:' + d.site_id) || sel.has('client:' + siteClient[d.site_id]));
+                  const stName = ((allSites || []).find((s) => s.id === d.site_id) || {}).name;
+                  const ctx = stName ? stName + (cName(siteClient[d.site_id]) ? ' · ' + cName(siteClient[d.site_id]) : '') : 'sem site';
+                  return <Row key={'d' + d.id} depth={0} icon="devices" name={d.hostname} hint={ctx} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />;
+                })}
               </>;
             })() : <>
             {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}

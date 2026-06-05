@@ -535,21 +535,38 @@ function ScopePicker({ scopes, setScopes }) {
           <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar empresa/site/máquina…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
             {searching ? (() => {
-              const cl = (clients || []).filter((c) => match(c.name));
-              const st = (allSites || []).filter((s) => match(s.name));
-              const cName = (id) => ((clients || []).find((c) => c.id === id) || {}).name || '';
-              if (allSites === null) return <div className="p-3 text-center text-faint text-[12px]">Buscando…</div>;
-              if (!cl.length && !st.length && !found.length) return <div className="p-3 text-center text-faint text-[12px]">Nada encontrado para “{q}”.</div>;
-              return <>
-                {cl.map((c) => <Row key={'c' + c.id} depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)} />)}
-                {st.map((s) => { const cov = sel.has('client:' + s.client_id); return <Row key={'s' + s.id} depth={0} icon="pin" name={s.name} hint={cName(s.client_id)} checked={cov || sel.has('site:' + s.id)} disabled={cov} onCheck={() => toggle('site', s.id)} />; })}
-                {found.map((d) => {
-                  const cov = sel.has('agent:' + d.id) ? false : (sel.has('site:' + d.site_id) || sel.has('client:' + siteClient[d.site_id]));
-                  const stName = ((allSites || []).find((s) => s.id === d.site_id) || {}).name;
-                  const ctx = stName ? stName + (cName(siteClient[d.site_id]) ? ' · ' + cName(siteClient[d.site_id]) : '') : 'sem site';
-                  return <Row key={'d' + d.id} depth={0} icon="devices" name={d.hostname} hint={ctx} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />;
-                })}
-              </>;
+              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Buscando…</div>;
+              const m = (n) => (n || '').toLowerCase().includes(q.trim().toLowerCase());
+              const siteObj = {}; allSites.forEach((s) => { siteObj[s.id] = s; });
+              const clientObj = {}; clients.forEach((c) => { clientObj[c.id] = c; });
+              // group matching machines under their site
+              const devBySite = {}; found.forEach((d) => { (devBySite[d.site_id] = devBySite[d.site_id] || []).push(d); });
+              // relevant sites = have a matching machine OR match by name
+              const siteIds = new Set([...Object.keys(devBySite), ...allSites.filter((s) => m(s.name)).map((s) => s.id)]);
+              // relevant clients = parents of relevant sites + name matches
+              const clientIds = new Set(clients.filter((c) => m(c.name)).map((c) => c.id));
+              siteIds.forEach((sid) => { const s = siteObj[sid]; if (s) clientIds.add(s.client_id); });
+              if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">Nada encontrado para “{q}”.</div>;
+              // build the filtered, auto-expanded tree (only branches with results)
+              return [...clientIds].map((cid) => {
+                const c = clientObj[cid]; if (!c) return null;
+                const clientCov = sel.has('client:' + cid);
+                const sitesUnder = [...siteIds].map((id) => siteObj[id]).filter((s) => s && s.client_id === cid);
+                return (
+                  <div key={cid}>
+                    <Row depth={0} icon="building" name={c.name} checked={clientCov} onCheck={() => toggle('client', cid)} />
+                    {sitesUnder.map((s) => {
+                      const siteCov = clientCov;
+                      return (
+                        <div key={s.id}>
+                          <Row depth={1} icon="pin" name={s.name} checked={siteCov || sel.has('site:' + s.id)} disabled={siteCov} onCheck={() => toggle('site', s.id)} />
+                          {(devBySite[s.id] || []).map((d) => { const cov = siteCov || sel.has('site:' + s.id); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              });
             })() : <>
             {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
             {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">Nenhuma empresa cadastrada.</div>}

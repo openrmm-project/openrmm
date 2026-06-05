@@ -117,7 +117,7 @@ const api = {
   hasUsers() { return true; },
 
   /* ---- devices ---- */
-  listDevices() { return GET('/api/devices'); },
+  listDevices(params) { return GET('/api/devices' + qs(params || {})); },
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },

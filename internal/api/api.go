@@ -560,9 +560,12 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	var agents []models.Agent
 	var err error
-	if uid := s.scopeUserID(r); uid != "" {
-		agents, err = s.store.ListAgentsForUser(r.Context(), uid)
-	} else {
+	switch {
+	case r.URL.Query().Get("site_id") != "": // lazy load for the scope tree
+		agents, err = s.store.ListAgentsBySite(r.Context(), r.URL.Query().Get("site_id"))
+	case s.scopeUserID(r) != "":
+		agents, err = s.store.ListAgentsForUser(r.Context(), s.scopeUserID(r))
+	default:
 		agents, err = s.store.ListAgents(r.Context())
 	}
 	if err != nil {

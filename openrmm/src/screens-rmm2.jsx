@@ -409,46 +409,82 @@ function UsersPanel({ canAdmin }) {
   );
 }
 
-// ScopePicker builds a user's access scope: full, or a list of Company/Site/
-// Machine restrictions. Empty list = full access.
+// ScopePicker builds a user's access scope as a lazy-loaded, searchable tree
+// (Company → Site → Machine). Scales to thousands of machines: sites load when
+// a company is expanded, machines when a site is expanded. Empty = full access.
+// Checking a company covers all its sites/machines; checking a site covers its
+// machines. scopes is [{scope_type, scope_id}]; selection keys are "type:id".
 function ScopePicker({ scopes, setScopes }) {
-  const clients = useQuery(['clients'], () => api.listClients(), {}).data?.clients || [];
-  const sites = useQuery(['sites'], () => api.listSites(), {}).data?.sites || [];
-  const devices = useQuery(['devices'], () => api.listDevices(), {}).data?.devices || [];
-  const [type, setType] = useState('client');
-  const [sel, setSel] = useState('');
+  const [clients, setClients] = useState(null);
+  const [sitesBy, setSitesBy] = useState({});   // clientId -> [sites]
+  const [devsBy, setDevsBy] = useState({});      // siteId -> [devices]
+  const [expC, setExpC] = useState({});          // expanded clients
+  const [expS, setExpS] = useState({});          // expanded sites
+  const [q, setQ] = useState('');
   const restricted = scopes.length > 0;
+  const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
 
-  const opts = type === 'client' ? clients.map((c) => ({ id: c.id, name: c.name }))
-    : type === 'site' ? sites.map((s) => ({ id: s.id, name: s.name }))
-    : devices.map((d) => ({ id: d.id, name: d.hostname }));
-  const label = (t, id) => {
-    const list = t === 'client' ? clients : t === 'site' ? sites : devices;
-    const m = list.find((x) => x.id === id);
-    return (t === 'client' ? 'Empresa' : t === 'site' ? 'Site' : 'Máquina') + ': ' + (m ? (m.name || m.hostname) : id.slice(0, 8));
+  useEffect(() => { if (restricted && clients === null) loadClients(); }, [restricted]);
+  const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
+  const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
+  const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
+
+  const toggle = (type, id) => {
+    const k = type + ':' + id;
+    setScopes(sel.has(k) ? scopes.filter((s) => s.scope_type + ':' + s.scope_id !== k) : [...scopes, { scope_type: type, scope_id: id }]);
   };
-  const add = () => { if (sel && !scopes.some((s) => s.scope_id === sel && s.scope_type === type)) { setScopes([...scopes, { scope_type: type, scope_id: sel }]); setSel(''); } };
-  const remove = (i) => setScopes(scopes.filter((_, idx) => idx !== i));
+  const match = (name) => !q || (name || '').toLowerCase().includes(q.toLowerCase());
+
+  const Row = ({ depth, icon, name, checked, disabled, onCheck, expandable, expanded, onExpand, hint }) => (
+    <div className="flex items-center gap-1.5 py-1 hover:bg-elevated rounded" style={{ paddingLeft: depth * 18 + 4 }}>
+      {expandable
+        ? <button onClick={onExpand} className="text-faint hover:text-ink w-4"><Icon name={expanded ? 'chevdown' : 'chevright'} size={14} /></button>
+        : <span className="w-4" />}
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={onCheck} className="h-3.5 w-3.5 accent-brand disabled:opacity-50" />
+      <Icon name={icon} size={13} className="text-muted shrink-0" />
+      <span className={cx('text-[12.5px] truncate', disabled ? 'text-faint' : 'text-ink')}>{name}</span>
+      {hint && <span className="text-[10.5px] text-faint">· {hint}</span>}
+    </div>
+  );
 
   return (
     <div className="space-y-2">
-      <div className="flex gap-3 text-[12px]">
+      <div className="flex gap-4 text-[12px]">
         <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => setScopes([])} className="accent-brand" />Acesso total</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => sel ? add() : setType(type)} className="accent-brand" />Restrito</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setScopes(scopes.length ? scopes : []); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
+        {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selecionado(s)</span>}
       </div>
-      {scopes.map((s, i) => (
-        <div key={i} className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5">
-          <Icon name={s.scope_type === 'client' ? 'building' : s.scope_type === 'site' ? 'pin' : 'devices'} size={13} className="text-muted" />
-          <span className="text-[12px] text-ink flex-1 truncate">{label(s.scope_type, s.scope_id)}</span>
-          <button onClick={() => remove(i)} className="text-faint hover:text-bad"><Icon name="close" size={14} /></button>
+      {restricted && (
+        <div className="rounded-xl border border-line overflow-hidden">
+          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar empresa/site/máquina…" className="text-[12px] h-8" /></div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
+            {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">Nenhuma empresa cadastrada.</div>}
+            {(clients || []).filter((c) => match(c.name) || expC[c.id]).map((c) => (
+              <div key={c.id}>
+                <Row depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)}
+                  expandable expanded={!!expC[c.id]} onExpand={() => { setExpC((m) => ({ ...m, [c.id]: !m[c.id] })); loadSites(c.id); }} />
+                {expC[c.id] && (sitesBy[c.id] || []).filter((st) => match(st.name)).map((st) => {
+                  const siteCovered = sel.has('client:' + c.id);
+                  return (
+                    <div key={st.id}>
+                      <Row depth={1} icon="pin" name={st.name} checked={siteCovered || sel.has('site:' + st.id)} disabled={siteCovered} onCheck={() => toggle('site', st.id)}
+                        expandable expanded={!!expS[st.id]} onExpand={() => { setExpS((m) => ({ ...m, [st.id]: !m[st.id] })); loadDevs(st.id); }} />
+                      {expS[st.id] && (devsBy[st.id] || []).filter((d) => match(d.hostname)).map((d) => {
+                        const covered = siteCovered || sel.has('site:' + st.id);
+                        return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
+                      })}
+                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">sem máquinas</div>}
+                    </div>
+                  );
+                })}
+                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">sem sites</div>}
+              </div>
+            ))}
+          </div>
         </div>
-      ))}
-      <div className="flex gap-1.5">
-        <Select value={type} onChange={(e) => { setType(e.target.value); setSel(''); }} className="w-32 text-[12px]"><option value="client">Empresa</option><option value="site">Site</option><option value="agent">Máquina</option></Select>
-        <Select value={sel} onChange={(e) => setSel(e.target.value)} className="flex-1 text-[12px]"><option value="">Selecione…</option>{opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
-        <Button variant="secondary" size="sm" icon="plus" onClick={add} disabled={!sel}>Add</Button>
-      </div>
-      <div className="text-[11px] text-faint">Sem restrições = acesso total. Restrições somam (união) — pode misturar empresa, site e máquina.</div>
+      )}
+      <div className="text-[11px] text-faint">Sem restrições = acesso total. Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>
     </div>
   );
 }

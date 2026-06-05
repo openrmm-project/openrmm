@@ -113,6 +113,24 @@ func (s *Store) ListAgents(ctx context.Context) ([]models.Agent, error) {
 	return out, rows.Err()
 }
 
+// ListAgentsBySite lists the agents in one site (for the scope tree's lazy load).
+func (s *Store) ListAgentsBySite(ctx context.Context, siteID string) ([]models.Agent, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents WHERE site_id=$1 ORDER BY hostname`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
 // SetAgentStatus updates online/offline state and last_seen.
 func (s *Store) SetAgentStatus(ctx context.Context, id, status string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agents SET status=$2, last_seen=now() WHERE id=$1`, id, status)

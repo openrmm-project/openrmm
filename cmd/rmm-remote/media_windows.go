@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/jpeg"
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -30,6 +31,10 @@ var (
 	procGetCursorInfo    = user32.NewProc("GetCursorInfo")
 	procGetIconInfo      = user32.NewProc("GetIconInfo")
 	procDrawIconEx       = user32.NewProc("DrawIconEx")
+	procOpenInputDesktop = user32.NewProc("OpenInputDesktop")
+	procSetThreadDesktop = user32.NewProc("SetThreadDesktop")
+	procCloseDesktop     = user32.NewProc("CloseDesktop")
+	procGetUserObjectInfo = user32.NewProc("GetUserObjectInformationW")
 	procCreateDC         = gdi32.NewProc("CreateCompatibleDC")
 	procCreateDIB        = gdi32.NewProc("CreateDIBSection")
 	procSelectObject     = gdi32.NewProc("SelectObject")
@@ -325,6 +330,7 @@ type session struct {
 	conn    *websocket.Conn
 	out     chan wsMsg
 	done    chan struct{}
+	inputCh chan []byte // input events handed to the desktop worker
 	chat    *chatWindow
 	mu      sync.Mutex
 	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
@@ -344,12 +350,8 @@ func (s *session) sendJSON(v any) {
 }
 
 func runMedia(conn *websocket.Conn) error {
-	cap, err := newCapturer()
-	if err != nil {
-		return err
-	}
-
-	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}), uploads: map[uint8]*os.File{}}
+	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
+		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}}
 	defer close(s.done)
 	s.chat = newChatWindow("RMM-AI — Chat with technician", func(text string) {
 		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
@@ -395,38 +397,80 @@ func runMedia(conn *websocket.Conn) error {
 			s.onMessage(mt, data)
 		}
 	}()
-	// screen capture (~12 fps). The capture goroutine owns the capturer and is
-	// resilient: a BitBlt failure (desktop switch — UAC/secure desktop, lock
-	// screen, resolution change, RDP reconnect) invalidates the cached DC, so we
-	// rebuild it and keep the session alive instead of dropping it.
-	go func() {
-		defer func() {
-			if cap != nil {
-				cap.close()
-			}
-		}()
-		var buf bytes.Buffer
-		ticker := time.NewTicker(80 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-s.done:
-				return
-			case <-ticker.C:
-			}
-			if cap == nil { // previous rebuild failed (e.g. transient secure desktop)
-				if nc, e := newCapturer(); e == nil {
-					cap = nc
-				}
+	// Capture + input on a dedicated thread that FOLLOWS the active input desktop
+	// (default / secure-UAC / Winlogon login / lock). Running as SYSTEM, this lets
+	// us stream the logon screen and inject into elevated/secure desktops, and
+	// survive desktop switches.
+	go s.desktopWorker()
+	return <-errc
+}
+
+const genericAll = 0x10000000
+
+// desktopWorker streams frames and injects input, re-attaching its thread to
+// whichever desktop is currently receiving input.
+func (s *session) desktopWorker() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	var cap *capturer
+	var curDesk uintptr
+	var curName string
+	var buf bytes.Buffer
+	defer func() {
+		if cap != nil {
+			cap.close()
+		}
+		if curDesk != 0 {
+			procCloseDesktop.Call(curDesk)
+		}
+	}()
+
+	// ensure the thread is attached to the active input desktop, rebuilding the
+	// capturer when the desktop (or resolution) changes or a BitBlt fails.
+	ensure := func(force bool) {
+		h, _, _ := procOpenInputDesktop.Call(0, 0, genericAll)
+		if h == 0 {
+			return
+		}
+		name := desktopName(h)
+		if !force && name != "" && name == curName && cap != nil {
+			procCloseDesktop.Call(h)
+			return
+		}
+		if r, _, _ := procSetThreadDesktop.Call(h); r == 0 {
+			procCloseDesktop.Call(h)
+			return
+		}
+		if cap != nil {
+			cap.close()
+			cap = nil
+		}
+		if nc, e := newCapturer(); e == nil {
+			cap = nc
+		}
+		if curDesk != 0 {
+			procCloseDesktop.Call(curDesk)
+		}
+		curDesk, curName = h, name
+	}
+
+	ticker := time.NewTicker(80 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case data := <-s.inputCh:
+			ensure(false)
+			handleInput(data)
+		case <-ticker.C:
+			ensure(false)
+			if cap == nil {
 				continue
 			}
 			jpg, err := cap.frameJPEG(&buf)
 			if err != nil {
-				cap.close()
-				cap = nil
-				if nc, e := newCapturer(); e == nil {
-					cap = nc
-				}
+				ensure(true) // rebuild (desktop likely switched)
 				continue
 			}
 			select {
@@ -435,8 +479,16 @@ func runMedia(conn *websocket.Conn) error {
 				return
 			}
 		}
-	}()
-	return <-errc
+	}
+}
+
+// desktopName returns the name of a desktop handle (e.g. "Default", "Winlogon").
+func desktopName(h uintptr) string {
+	var buf [256]uint16
+	var needed uint32
+	const uoiName = 2
+	procGetUserObjectInfo.Call(h, uoiName, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)*2), uintptr(unsafe.Pointer(&needed)))
+	return syscall.UTF16ToString(buf[:])
 }
 
 // onMessage routes a relay frame to input / chat / file handling.
@@ -458,7 +510,12 @@ func (s *session) onMessage(mt int, data []byte) {
 	}
 	switch e.T {
 	case "m", "b", "w", "k":
-		handleInput(data)
+		// hand to the desktop worker so injection runs on the active desktop;
+		// drop if backed up (mouse-move spam) rather than block the reader.
+		select {
+		case s.inputCh <- data:
+		default:
+		}
 	case "chat":
 		if s.chat != nil {
 			s.chat.append("Tech: " + e.Text)

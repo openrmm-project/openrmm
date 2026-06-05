@@ -208,6 +208,11 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	return Effective(ctx, st, cfg)
 }
 
+// Encrypt/Decrypt expose the instance secret encryption for other packages
+// (e.g. per-user TOTP secrets), using the same key derivation as settings.
+func Encrypt(cfg *config.Config, plaintext string) (string, error) { return encrypt(cfg, plaintext) }
+func Decrypt(cfg *config.Config, ciphertext string) (string, error) { return decrypt(cfg, ciphertext) }
+
 func encryptionKey(cfg *config.Config) [32]byte {
 	key := cfg.SettingsEncryptionKey
 	if key == "" {

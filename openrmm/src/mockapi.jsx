@@ -37,7 +37,13 @@ async function request(method, path, body) {
   } catch (e) {
     throw apiError(0, 'cannot reach backend at ' + API_BASE);
   }
-  if (res.status === 401) { setSession(null); throw apiError(401, 'unauthorized'); }
+  if (res.status === 401) {
+    setSession(null);
+    let j = {}; try { j = await res.json(); } catch (e) {}
+    const err = apiError(401, j.error || 'unauthorized');
+    if (j.totp_required) err.totpRequired = true;
+    throw err;
+  }
   if (!res.ok) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = j.error || j.message || msg; } catch (e) {}
@@ -94,11 +100,14 @@ const api = {
   API_BASE,
 
   /* ---- auth ---- */
-  async login(username, password) {
-    const r = await POST('/api/auth/login', { username, password });
+  async login(username, password, code) {
+    const r = await POST('/api/auth/login', { username, password, code });
     setSession({ token: r.token, user: r.user, role: r.role });
     return r;
   },
+  setup2FA() { return POST('/api/me/2fa/setup'); },
+  enable2FA(code) { return POST('/api/me/2fa/enable', { code }); },
+  disable2FA(code) { return POST('/api/me/2fa/disable', { code }); },
   async bootstrap(username, password) {
     const r = await POST('/api/auth/bootstrap', { username, password });
     setSession({ token: r.token, user: r.user, role: r.role });
@@ -117,7 +126,7 @@ const api = {
   hasUsers() { return true; },
 
   /* ---- devices ---- */
-  listDevices() { return GET('/api/devices'); },
+  listDevices(params) { return GET('/api/devices' + qs(params || {})); },
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },

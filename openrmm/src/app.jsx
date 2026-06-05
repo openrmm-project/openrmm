@@ -17,16 +17,21 @@ function LoginScreen({ onAuthed }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('demo');
   const [token, setToken] = useState('');
+  const [code, setCode] = useState('');
+  const [need2fa, setNeed2fa] = useState(false);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const doLogin = async () => {
     setBusy(true); setErr(null);
     try {
-      const res = mode === 'token' ? await api.loginWithToken(token.trim()) : await api.login(username.trim(), password);
+      const res = mode === 'token' ? await api.loginWithToken(token.trim()) : await api.login(username.trim(), password, code.trim() || undefined);
       localStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role }));
       onAuthed(res);
-    } catch (e) { setErr(e.message || 'Login failed'); } finally { setBusy(false); }
+    } catch (e) {
+      if (e.totpRequired) { setNeed2fa(true); setErr(code ? 'Invalid code — try again' : 'Enter your authenticator code'); }
+      else setErr(e.message || 'Login failed');
+    } finally { setBusy(false); }
   };
 
   return (
@@ -55,6 +60,7 @@ function LoginScreen({ onAuthed }) {
               <>
                 <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoFocus /></Field>
                 <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" /></Field>
+                {need2fa && <Field label="Authenticator code" hint="6-digit code from your authenticator app."><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" autoFocus className="mono tracking-widest" /></Field>}
               </>
             ) : (
               <Field label="Bearer token" hint="Paste an issued API token or the admin token.">

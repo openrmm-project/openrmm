@@ -55,10 +55,18 @@ const (
 
 // User is a console operator.
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Username    string    `json:"username"`
+	Role        string    `json:"role"`
+	CreatedAt   time.Time `json:"created_at"`
+	TOTPEnabled bool      `json:"totp_enabled"`
+}
+
+// UserScope restricts a user's access to a client/site/agent subtree. A user
+// with no scopes has full access. Applies to tech/readonly; admins are full.
+type UserScope struct {
+	ScopeType string `json:"scope_type"` // client | site | agent
+	ScopeID   string `json:"scope_id"`
 }
 
 // APITokenInfo is a stored API token (without the secret).

@@ -69,6 +69,9 @@ func (s *Server) deleteScript(w http.ResponseWriter, r *http.Request) {
 // runLibraryScript runs a stored script on a device, creating an approval-gated
 // job (or pre-approved when require_approval=false).
 func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	var in struct {
 		ScriptID        string `json:"script_id"`
 		RequireApproval *bool  `json:"require_approval"`

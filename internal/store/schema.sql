@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Per-user TOTP two-factor. Secret is AES-GCM encrypted at rest (enc:v1:…).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+
 CREATE TABLE IF NOT EXISTS sessions (
     id          UUID PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -26,6 +30,22 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     role        TEXT NOT NULL DEFAULT 'admin',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Bind an API token (e.g. an MCP connector) to a user so it inherits that
+-- user's access scope. NULL = unscoped (full, current behavior).
+ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+
+-- Per-user access scope. A user with NO rows has full access (all clients);
+-- any rows restrict the user to the union of those client/site/agent subtrees.
+-- Scopes apply to tech/readonly; admins always have full access.
+CREATE TABLE IF NOT EXISTS user_scopes (
+    id         UUID PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope_type TEXT NOT NULL, -- client | site | agent
+    scope_id   UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, scope_type, scope_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_scopes_user ON user_scopes(user_id);
 
 -- Editable instance configuration. Secret values are encrypted by the server
 -- before storage and are never returned by the API.

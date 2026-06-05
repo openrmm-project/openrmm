@@ -343,10 +343,70 @@ function SettingsScreen() {
     <Page>
       <PageHeader title="Users & Settings" subtitle="Manage access and review your instance configuration." />
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[{ value: 'users', label: 'Users' }, { value: 'config', label: 'Configuration' }, { value: 'enroll', label: 'Enrollment' }]} />
-      {tab === 'users' && <UsersPanel canAdmin={can('admin')} />}
+      {tab === 'users' && <><TwoFactorCard /><UsersPanel canAdmin={can('admin')} /></>}
       {tab === 'config' && <ConfigPanel />}
       {tab === 'enroll' && <EnrollPanel canAdmin={can('admin')} />}
     </Page>
+  );
+}
+
+// TwoFactorCard manages the CURRENT user's TOTP 2FA (self-service, any role).
+function TwoFactorCard() {
+  const toast = useToast();
+  const meQ = useQuery(['me'], () => api.me(), { invalidateOn: ['me'] });
+  const enabled = !!meQ.data?.totp_enabled;
+  const [setup, setSetup] = useState(null); // { secret, uri } during enrollment
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const qrRef = useRef(null);
+
+  useEffect(() => {
+    if (setup && qrRef.current && window.QRCode) {
+      qrRef.current.innerHTML = '';
+      try { new window.QRCode(qrRef.current, { text: setup.uri, width: 168, height: 168, correctLevel: window.QRCode.CorrectLevel.M }); } catch (e) {}
+    }
+  }, [setup]);
+
+  const start = async () => { setBusy(true); try { setSetup(await api.setup2FA()); setCode(''); } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); } };
+  const activate = async () => { setBusy(true); try { await api.enable2FA(code.trim()); setSetup(null); setCode(''); meQ.refetch(); toast.success('Two-factor enabled'); } catch (e) { toast.error('Could not enable', e.message); } finally { setBusy(false); } };
+  const disable = async () => { setBusy(true); try { await api.disable2FA(code.trim()); setCode(''); meQ.refetch(); toast.info('Two-factor disabled'); } catch (e) { toast.error('Could not disable', e.message); } finally { setBusy(false); } };
+
+  return (
+    <Card className="p-5 mb-5 max-w-2xl">
+      <div className="flex items-center gap-2.5 mb-1">
+        <Icon name="shield" size={16} className="text-muted" />
+        <div className="text-[14px] font-semibold text-ink">Two-factor authentication</div>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md ml-auto', enabled ? 'bg-oksoft text-ok' : 'bg-elevated text-faint')}>{enabled ? 'Enabled' : 'Disabled'}</span>
+      </div>
+      <div className="text-[12.5px] text-muted mb-3">Protect your account with a TOTP authenticator app (Google Authenticator, Authy, 1Password…).</div>
+
+      {enabled && !setup && (
+        <div className="flex items-end gap-2">
+          <Field label="Disable — enter a current code" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" className="mono tracking-widest" /></Field>
+          <Button variant="danger" loading={busy} disabled={code.trim().length !== 6} onClick={disable}>Disable 2FA</Button>
+        </div>
+      )}
+
+      {!enabled && !setup && <Button variant="primary" icon="shield" loading={busy} onClick={start}>Enable 2FA</Button>}
+
+      {setup && (
+        <div className="space-y-3 animate-fade-in">
+          <div className="flex gap-4 flex-wrap">
+            <div className="rounded-xl border border-line bg-white p-2 shrink-0" ref={qrRef} />
+            <div className="min-w-0 flex-1">
+              <div className="text-[12px] text-muted mb-1">1. Scan the QR, or add this secret manually:</div>
+              <div className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5"><span className="text-[12.5px] mono text-ink break-all flex-1">{setup.secret}</span><CopyButton value={setup.secret} size="sm" variant="ghost" /></div>
+              <div className="text-[11px] text-faint mt-1.5">Issuer: RMM-AI · 6 digits · 30s</div>
+            </div>
+          </div>
+          <div className="flex items-end gap-2">
+            <Field label="2. Enter the 6-digit code to activate" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" autoFocus className="mono tracking-widest" /></Field>
+            <Button variant="ghost" onClick={() => { setSetup(null); setCode(''); }}>Cancel</Button>
+            <Button variant="primary" loading={busy} disabled={code.trim().length !== 6} onClick={activate}>Activate</Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -355,11 +415,19 @@ function UsersPanel({ canAdmin }) {
   const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
   const [creating, setCreating] = useState(false);
   const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [newRole, setNewRole] = useState('tech');
+  const [scopes, setScopes] = useState([]); // [] = full access
   const [confirmDel, setConfirmDel] = useState(null);
   const users = usersQ.data?.users || [];
 
-  const create = async () => { try { await api.createUser({ username, role: newRole }); setUsername(''); setCreating(false); toast.success('User created'); } catch (e) { toast.error('Failed', e.message); } };
+  const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setCreating(false); };
+  const create = async () => {
+    try {
+      await api.createUser({ username, password, role: newRole, scopes: scopes.map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })) });
+      reset(); toast.success('User created', scopes.length ? scopes.length + ' scope(s)' : 'full access');
+    } catch (e) { toast.error('Failed', e.message); }
+  };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
@@ -382,9 +450,102 @@ function UsersPanel({ canAdmin }) {
           ))}
         </tbody>
       </table>
-      <Modal open={creating} onClose={() => setCreating(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">Add user</div><div className="space-y-3"><Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field><Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}><option value="readonly">readonly — view only</option><option value="tech">tech — run, approve & ack</option><option value="admin">admin — manage everything</option></Select></Field></div><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username}>Create user</Button></div></div></Modal>
+      <Modal open={creating} onClose={reset} width="max-w-lg">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-4">Add user</div>
+          <div className="space-y-3">
+            <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field>
+            <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="a strong password" /></Field>
+            <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}><option value="readonly">readonly — view (+ remote)</option><option value="tech">tech — run, approve & ack</option><option value="admin">admin — manage everything</option></Select></Field>
+            {newRole === 'admin'
+              ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
+              : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} /></Field>}
+          </div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || !password}>Create user</Button></div>
+        </div>
+      </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
     </Card>
+  );
+}
+
+// ScopePicker builds a user's access scope as a lazy-loaded, searchable tree
+// (Company → Site → Machine). Scales to thousands of machines: sites load when
+// a company is expanded, machines when a site is expanded. Empty = full access.
+// Checking a company covers all its sites/machines; checking a site covers its
+// machines. scopes is [{scope_type, scope_id}]; selection keys are "type:id".
+function ScopePicker({ scopes, setScopes }) {
+  const [clients, setClients] = useState(null);
+  const [sitesBy, setSitesBy] = useState({});   // clientId -> [sites]
+  const [devsBy, setDevsBy] = useState({});      // siteId -> [devices]
+  const [expC, setExpC] = useState({});          // expanded clients
+  const [expS, setExpS] = useState({});          // expanded sites
+  const [q, setQ] = useState('');
+  const restricted = scopes.length > 0;
+  const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
+
+  useEffect(() => { if (restricted && clients === null) loadClients(); }, [restricted]);
+  const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
+  const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
+  const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
+
+  const toggle = (type, id) => {
+    const k = type + ':' + id;
+    setScopes(sel.has(k) ? scopes.filter((s) => s.scope_type + ':' + s.scope_id !== k) : [...scopes, { scope_type: type, scope_id: id }]);
+  };
+  const match = (name) => !q || (name || '').toLowerCase().includes(q.toLowerCase());
+
+  const Row = ({ depth, icon, name, checked, disabled, onCheck, expandable, expanded, onExpand, hint }) => (
+    <div className="flex items-center gap-1.5 py-1 hover:bg-elevated rounded" style={{ paddingLeft: depth * 18 + 4 }}>
+      {expandable
+        ? <button onClick={onExpand} className="text-faint hover:text-ink w-4"><Icon name={expanded ? 'chevdown' : 'chevright'} size={14} /></button>
+        : <span className="w-4" />}
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={onCheck} className="h-3.5 w-3.5 accent-brand disabled:opacity-50" />
+      <Icon name={icon} size={13} className="text-muted shrink-0" />
+      <span className={cx('text-[12.5px] truncate', disabled ? 'text-faint' : 'text-ink')}>{name}</span>
+      {hint && <span className="text-[10.5px] text-faint">· {hint}</span>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-4 text-[12px]">
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => setScopes([])} className="accent-brand" />Acesso total</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setScopes(scopes.length ? scopes : []); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
+        {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selecionado(s)</span>}
+      </div>
+      {restricted && (
+        <div className="rounded-xl border border-line overflow-hidden">
+          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar empresa/site/máquina…" className="text-[12px] h-8" /></div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
+            {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">Nenhuma empresa cadastrada.</div>}
+            {(clients || []).filter((c) => match(c.name) || expC[c.id]).map((c) => (
+              <div key={c.id}>
+                <Row depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)}
+                  expandable expanded={!!expC[c.id]} onExpand={() => { setExpC((m) => ({ ...m, [c.id]: !m[c.id] })); loadSites(c.id); }} />
+                {expC[c.id] && (sitesBy[c.id] || []).filter((st) => match(st.name)).map((st) => {
+                  const siteCovered = sel.has('client:' + c.id);
+                  return (
+                    <div key={st.id}>
+                      <Row depth={1} icon="pin" name={st.name} checked={siteCovered || sel.has('site:' + st.id)} disabled={siteCovered} onCheck={() => toggle('site', st.id)}
+                        expandable expanded={!!expS[st.id]} onExpand={() => { setExpS((m) => ({ ...m, [st.id]: !m[st.id] })); loadDevs(st.id); }} />
+                      {expS[st.id] && (devsBy[st.id] || []).filter((d) => match(d.hostname)).map((d) => {
+                        const covered = siteCovered || sel.has('site:' + st.id);
+                        return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
+                      })}
+                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">sem máquinas</div>}
+                    </div>
+                  );
+                })}
+                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">sem sites</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="text-[11px] text-faint">Sem restrições = acesso total. Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>
+    </div>
   );
 }
 

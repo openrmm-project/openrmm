@@ -42,11 +42,34 @@ func (s *Store) GetUserAuth(ctx context.Context, username string) (id, role, pas
 	return id, role, passwordHash, err
 }
 
+// GetUserTOTP returns a user's (encrypted) TOTP secret and whether 2FA is on.
+func (s *Store) GetUserTOTP(ctx context.Context, id string) (secret string, enabled bool, err error) {
+	var sec *string
+	err = s.pool.QueryRow(ctx, `SELECT totp_secret, totp_enabled FROM users WHERE id=$1`, id).Scan(&sec, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, ErrNotFound
+	}
+	if sec != nil {
+		secret = *sec
+	}
+	return secret, enabled, err
+}
+
+// SetUserTOTP stores the (encrypted) secret and enabled flag; pass "" to clear.
+func (s *Store) SetUserTOTP(ctx context.Context, id, secret string, enabled bool) error {
+	var sec *string
+	if secret != "" {
+		sec = &secret
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE users SET totp_secret=$2, totp_enabled=$3 WHERE id=$1`, id, sec, enabled)
+	return err
+}
+
 // GetUserByID returns a user by id (no password hash).
 func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var u models.User
-	err := s.pool.QueryRow(ctx, `SELECT id, username, role, created_at FROM users WHERE id=$1`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id, username, role, created_at, totp_enabled FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -105,16 +128,103 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
-// APITokenRole returns the role for an API token hash, if it exists.
-func (s *Store) APITokenRole(ctx context.Context, hash string) (role string, ok bool, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT role FROM api_tokens WHERE token_hash=$1`, hash).Scan(&role)
+// APITokenRole returns the role and bound user id (empty if unscoped) for an API
+// token hash, if it exists.
+func (s *Store) APITokenRole(ctx context.Context, hash string) (role, userID string, ok bool, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT role, COALESCE(user_id::text, '') FROM api_tokens WHERE token_hash=$1`, hash).Scan(&role, &userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
-	return role, true, nil
+	return role, userID, true, nil
+}
+
+// ---- per-user access scope ----
+
+// ReplaceUserScopes sets a user's access scopes (empty = full access).
+func (s *Store) ReplaceUserScopes(ctx context.Context, userID string, scopes []models.UserScope) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM user_scopes WHERE user_id=$1`, userID); err != nil {
+		return err
+	}
+	for _, sc := range scopes {
+		if sc.ScopeType == "" || sc.ScopeID == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_scopes (id, user_id, scope_type, scope_id) VALUES ($1,$2,$3,$4)
+			 ON CONFLICT (user_id, scope_type, scope_id) DO NOTHING`,
+			newID(), userID, sc.ScopeType, sc.ScopeID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// ListUserScopes returns a user's scopes (empty slice = full access).
+func (s *Store) ListUserScopes(ctx context.Context, userID string) ([]models.UserScope, error) {
+	rows, err := s.pool.Query(ctx, `SELECT scope_type, scope_id FROM user_scopes WHERE user_id=$1 ORDER BY scope_type, scope_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.UserScope
+	for rows.Next() {
+		var sc models.UserScope
+		if err := rows.Scan(&sc.ScopeType, &sc.ScopeID); err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+// AgentAllowedForUser reports whether a user may access an agent. A user with no
+// scopes has full access; otherwise the agent must match one of the user's
+// client/site/agent scopes.
+func (s *Store) AgentAllowedForUser(ctx context.Context, userID, agentID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT (NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1))
+		    OR EXISTS (
+		      SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		        (us.scope_type='agent'  AND us.scope_id=$2) OR
+		        (us.scope_type='site'   AND us.scope_id=(SELECT site_id FROM agents WHERE id=$2)) OR
+		        (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM agents a JOIN sites s ON s.id=a.site_id WHERE a.id=$2))
+		      ))`, userID, agentID).Scan(&ok)
+	return ok, err
+}
+
+// ListAgentsForUser lists the agents a user may see (all when unscoped).
+func (s *Store) ListAgentsForUser(ctx context.Context, userID string) ([]models.Agent, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents a WHERE
+		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR EXISTS (
+		  SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='agent'  AND us.scope_id=a.id) OR
+		    (us.scope_type='site'   AND us.scope_id=a.site_id) OR
+		    (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		  ))
+		ORDER BY a.created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
 }
 
 // ===================== Clients & sites =====================

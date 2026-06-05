@@ -61,7 +61,7 @@ type Reply struct {
 
 // Respond appends the user's message, runs the tool-calling loop, persists every
 // step, and returns the assistant's final text plus any jobs it proposed.
-func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor string) (*Reply, error) {
+func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, scopeUser string) (*Reply, error) {
 	if err := e.store.AddChatMessage(ctx, &models.ChatMessage{
 		SessionID: sessionID, Role: "user", Content: userContent,
 	}); err != nil {
@@ -73,7 +73,7 @@ func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor stri
 		return nil, err
 	}
 
-	tc := ToolContext{Store: e.store, Jobs: e.jobs, Actor: actor}
+	tc := ToolContext{Store: e.store, Jobs: e.jobs, Actor: actor, ScopeUserID: scopeUser}
 	var createdJobs []string
 
 	for i := 0; i < maxIters; i++ {

@@ -33,3 +33,6 @@ Thumbs.db
 # Go
 *.test
 *.out
+/server
+/agent
+/rmm-remote

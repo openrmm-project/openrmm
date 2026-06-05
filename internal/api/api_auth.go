@@ -118,9 +118,10 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Username string             `json:"username"`
+		Password string             `json:"password"`
+		Role     string             `json:"role"`
+		Scopes   []models.UserScope `json:"scopes"` // empty = full access
 	}
 	if err := decode(r, &in); err != nil || in.Username == "" || in.Password == "" {
 		writeErr(w, http.StatusBadRequest, "username and password required")
@@ -139,7 +140,39 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if len(in.Scopes) > 0 {
+		if err := s.store.ReplaceUserScopes(r.Context(), u.ID, in.Scopes); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, u)
+}
+
+// getUserScopes returns a user's access scopes (empty = full access).
+func (s *Server) getUserScopes(w http.ResponseWriter, r *http.Request) {
+	scopes, err := s.store.ListUserScopes(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"scopes": scopes})
+}
+
+// setUserScopes replaces a user's access scopes.
+func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Scopes []models.UserScope `json:"scopes"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.store.ReplaceUserScopes(r.Context(), chi.URLParam(r, "id"), in.Scopes); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"scopes": in.Scopes})
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {

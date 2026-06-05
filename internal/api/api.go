@@ -41,8 +41,9 @@ const (
 type ctxKey string
 
 const (
-	actorKey ctxKey = "actor"
-	roleKey  ctxKey = "role"
+	actorKey     ctxKey = "actor"
+	roleKey      ctxKey = "role"
+	scopeUserKey ctxKey = "scopeUser"
 )
 
 // Server holds all HTTP dependencies.
@@ -83,7 +84,9 @@ func (s *Server) Router() http.Handler {
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; tech role minimum since it
 	// can propose jobs (which still require human approval).
-	mcpHandler := mcpserver.Handler(s.store, s.jobs, actorOf)
+	mcpHandler := mcpserver.Handler(s.store, s.jobs, func(r *http.Request) (string, string) {
+		return actorOf(r), s.scopeUserID(r)
+	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.rateLimit(mcpRateLimit))
 		r.Use(s.mcpIPAllowlist)
@@ -152,6 +155,8 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/api-tokens/{id}", s.deleteAPIToken)
 			r.Get("/users", s.listUsers)
 			r.Post("/users", s.createUser)
+			r.Get("/users/{id}/scopes", s.getUserScopes)
+			r.Put("/users/{id}/scopes", s.setUserScopes)
 			r.Delete("/users/{id}", s.deleteUser)
 			r.Delete("/devices/{id}", s.deleteDevice)
 			r.Patch("/devices/{id}/group", s.setDeviceGroup)
@@ -205,16 +210,16 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		var actor, role string
+		var actor, role, scopeUser string
 		switch {
 		case auth.ConstantTimeEqual(token, s.cfg.AdminToken):
 			actor, role = "admin", models.RoleAdmin
 		default:
 			hash := auth.Hash(token)
 			if uid, rl, err := s.store.SessionPrincipal(r.Context(), hash); err == nil {
-				actor, role = uid, rl
-			} else if rl, ok, _ := s.store.APITokenRole(r.Context(), hash); ok {
-				actor, role = "api", rl
+				actor, role, scopeUser = uid, rl, uid
+			} else if rl, uid, ok, _ := s.store.APITokenRole(r.Context(), hash); ok {
+				actor, role, scopeUser = "api", rl, uid // uid set only for tokens bound to a user
 			} else {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return
@@ -222,6 +227,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), actorKey, actor)
 		ctx = context.WithValue(ctx, roleKey, role)
+		ctx = context.WithValue(ctx, scopeUserKey, scopeUser)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -445,6 +451,39 @@ func roleOf(r *http.Request) string {
 	return ""
 }
 
+// scopeUserID returns the user id whose access scope restricts this request, or
+// "" when the principal has full access (admin role, bootstrap/admin token, or
+// an unscoped API token).
+func (s *Server) scopeUserID(r *http.Request) string {
+	if roleOf(r) == models.RoleAdmin {
+		return ""
+	}
+	if v, ok := r.Context().Value(scopeUserKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// agentAllowed reports whether the request's principal may access the agent.
+func (s *Server) agentAllowed(r *http.Request, agentID string) bool {
+	uid := s.scopeUserID(r)
+	if uid == "" {
+		return true
+	}
+	ok, err := s.store.AgentAllowedForUser(r.Context(), uid, agentID)
+	return err == nil && ok
+}
+
+// requireAgent 403s when the principal may not access the agent. Returns false
+// when it has already written the response.
+func (s *Server) requireAgent(w http.ResponseWriter, r *http.Request, agentID string) bool {
+	if s.agentAllowed(r, agentID) {
+		return true
+	}
+	writeErr(w, http.StatusForbidden, "device is outside your access scope")
+	return false
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	denilSlices(v)
 	w.Header().Set("Content-Type", "application/json")
@@ -519,7 +558,13 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 // ---------- devices ----------
 
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
-	agents, err := s.store.ListAgents(r.Context())
+	var agents []models.Agent
+	var err error
+	if uid := s.scopeUserID(r); uid != "" {
+		agents, err = s.store.ListAgentsForUser(r.Context(), uid)
+	} else {
+		agents, err = s.store.ListAgents(r.Context())
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -528,6 +573,9 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getDevice(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	a, err := s.store.GetAgent(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -537,6 +585,9 @@ func (s *Server) getDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getInventory(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	inv, err := s.store.GetInventory(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -546,6 +597,9 @@ func (s *Server) getInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	var in struct {
 		Provider string `json:"provider"`
 	}
@@ -595,6 +649,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !s.requireAgent(w, r, in.AgentID) {
+		return
+	}
 	// Approval is mandatory unless the deployer explicitly opted into unapproved
 	// jobs (RMM_ALLOW_UNAPPROVED_JOBS=true). Every ad-hoc script run is gated.
 	require := true
@@ -612,7 +669,24 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, job)
 }
 
+// requireJobAgent 403s when the job's target agent is outside the principal's
+// scope. Returns false when it has already written the response.
+func (s *Server) requireJobAgent(w http.ResponseWriter, r *http.Request, jobID string) bool {
+	if s.scopeUserID(r) == "" {
+		return true
+	}
+	job, err := s.store.GetJob(r.Context(), jobID)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return false
+	}
+	return s.requireAgent(w, r, job.AgentID)
+}
+
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJobAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	job, err := s.store.GetJob(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -622,6 +696,9 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) approveJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJobAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	job, err := s.jobs.Approve(r.Context(), chi.URLParam(r, "id"), actorOf(r))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -631,6 +708,9 @@ func (s *Server) approveJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rejectJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJobAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	job, err := s.jobs.Reject(r.Context(), chi.URLParam(r, "id"), actorOf(r))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -640,6 +720,9 @@ func (s *Server) rejectJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJobAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	job, err := s.jobs.Cancel(r.Context(), chi.URLParam(r, "id"), actorOf(r))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -711,7 +794,7 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r))
+	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return

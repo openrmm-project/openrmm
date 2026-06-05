@@ -355,11 +355,19 @@ function UsersPanel({ canAdmin }) {
   const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
   const [creating, setCreating] = useState(false);
   const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [newRole, setNewRole] = useState('tech');
+  const [scopes, setScopes] = useState([]); // [] = full access
   const [confirmDel, setConfirmDel] = useState(null);
   const users = usersQ.data?.users || [];
 
-  const create = async () => { try { await api.createUser({ username, role: newRole }); setUsername(''); setCreating(false); toast.success('User created'); } catch (e) { toast.error('Failed', e.message); } };
+  const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setCreating(false); };
+  const create = async () => {
+    try {
+      await api.createUser({ username, password, role: newRole, scopes: scopes.map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })) });
+      reset(); toast.success('User created', scopes.length ? scopes.length + ' scope(s)' : 'full access');
+    } catch (e) { toast.error('Failed', e.message); }
+  };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
@@ -382,9 +390,66 @@ function UsersPanel({ canAdmin }) {
           ))}
         </tbody>
       </table>
-      <Modal open={creating} onClose={() => setCreating(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">Add user</div><div className="space-y-3"><Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field><Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}><option value="readonly">readonly — view only</option><option value="tech">tech — run, approve & ack</option><option value="admin">admin — manage everything</option></Select></Field></div><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username}>Create user</Button></div></div></Modal>
+      <Modal open={creating} onClose={reset} width="max-w-lg">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-4">Add user</div>
+          <div className="space-y-3">
+            <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field>
+            <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="a strong password" /></Field>
+            <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}><option value="readonly">readonly — view (+ remote)</option><option value="tech">tech — run, approve & ack</option><option value="admin">admin — manage everything</option></Select></Field>
+            {newRole === 'admin'
+              ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
+              : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} /></Field>}
+          </div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || !password}>Create user</Button></div>
+        </div>
+      </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
     </Card>
+  );
+}
+
+// ScopePicker builds a user's access scope: full, or a list of Company/Site/
+// Machine restrictions. Empty list = full access.
+function ScopePicker({ scopes, setScopes }) {
+  const clients = useQuery(['clients'], () => api.listClients(), {}).data?.clients || [];
+  const sites = useQuery(['sites'], () => api.listSites(), {}).data?.sites || [];
+  const devices = useQuery(['devices'], () => api.listDevices(), {}).data?.devices || [];
+  const [type, setType] = useState('client');
+  const [sel, setSel] = useState('');
+  const restricted = scopes.length > 0;
+
+  const opts = type === 'client' ? clients.map((c) => ({ id: c.id, name: c.name }))
+    : type === 'site' ? sites.map((s) => ({ id: s.id, name: s.name }))
+    : devices.map((d) => ({ id: d.id, name: d.hostname }));
+  const label = (t, id) => {
+    const list = t === 'client' ? clients : t === 'site' ? sites : devices;
+    const m = list.find((x) => x.id === id);
+    return (t === 'client' ? 'Empresa' : t === 'site' ? 'Site' : 'Máquina') + ': ' + (m ? (m.name || m.hostname) : id.slice(0, 8));
+  };
+  const add = () => { if (sel && !scopes.some((s) => s.scope_id === sel && s.scope_type === type)) { setScopes([...scopes, { scope_type: type, scope_id: sel }]); setSel(''); } };
+  const remove = (i) => setScopes(scopes.filter((_, idx) => idx !== i));
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-3 text-[12px]">
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => setScopes([])} className="accent-brand" />Acesso total</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => sel ? add() : setType(type)} className="accent-brand" />Restrito</label>
+      </div>
+      {scopes.map((s, i) => (
+        <div key={i} className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5">
+          <Icon name={s.scope_type === 'client' ? 'building' : s.scope_type === 'site' ? 'pin' : 'devices'} size={13} className="text-muted" />
+          <span className="text-[12px] text-ink flex-1 truncate">{label(s.scope_type, s.scope_id)}</span>
+          <button onClick={() => remove(i)} className="text-faint hover:text-bad"><Icon name="close" size={14} /></button>
+        </div>
+      ))}
+      <div className="flex gap-1.5">
+        <Select value={type} onChange={(e) => { setType(e.target.value); setSel(''); }} className="w-32 text-[12px]"><option value="client">Empresa</option><option value="site">Site</option><option value="agent">Máquina</option></Select>
+        <Select value={sel} onChange={(e) => setSel(e.target.value)} className="flex-1 text-[12px]"><option value="">Selecione…</option>{opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
+        <Button variant="secondary" size="sm" icon="plus" onClick={add} disabled={!sel}>Add</Button>
+      </div>
+      <div className="text-[11px] text-faint">Sem restrições = acesso total. Restrições somam (união) — pode misturar empresa, site e máquina.</div>
+    </div>
   );
 }
 

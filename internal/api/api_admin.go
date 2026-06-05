@@ -23,15 +23,20 @@ func (s *Server) listAPITokens(w http.ResponseWriter, r *http.Request) {
 // createAPIToken issues a scoped, revocable token. The secret is returned ONCE.
 func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
-		Role string `json:"role"`
+		Name   string `json:"name"`
+		Role   string `json:"role"`
+		UserID string `json:"user_id"` // optional: bind to a user to inherit their access scope
 	}
 	_ = decode(r, &in)
 	if roleLevel(in.Role) == 0 {
 		in.Role = models.RoleTech // sensible default for MCP connectors
 	}
+	var boundUser *string
+	if in.UserID != "" {
+		boundUser = &in.UserID
+	}
 	token := auth.NewToken()
-	id, err := s.store.CreateAPIToken(r.Context(), auth.Hash(token), in.Name, in.Role)
+	id, err := s.store.CreateAPIToken(r.Context(), auth.Hash(token), in.Name, in.Role, boundUser)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

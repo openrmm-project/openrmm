@@ -6,14 +6,25 @@ import (
 	"fmt"
 
 	"github.com/p1ngu/rmm/internal/jobs"
+	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
 // ToolContext carries the dependencies and identity a tool needs to run.
 type ToolContext struct {
-	Store *store.Store
-	Jobs  *jobs.Service
-	Actor string // who is driving the chat (recorded as job creator / audit actor)
+	Store       *store.Store
+	Jobs        *jobs.Service
+	Actor       string // who is driving the chat (recorded as job creator / audit actor)
+	ScopeUserID string // restrict tools to this user's access scope ("" = full)
+}
+
+// allows reports whether the caller's scope permits acting on an agent.
+func (tc ToolContext) allows(ctx context.Context, agentID string) bool {
+	if tc.ScopeUserID == "" {
+		return true
+	}
+	ok, err := tc.Store.AgentAllowedForUser(ctx, tc.ScopeUserID, agentID)
+	return err == nil && ok
 }
 
 // ToolResult is returned to the chat loop after a tool runs.
@@ -104,7 +115,13 @@ func jsonResult(v any, err error) ToolResult {
 }
 
 func listDevices(ctx context.Context, tc ToolContext) (any, error) {
-	agents, err := tc.Store.ListAgents(ctx)
+	var agents []models.Agent
+	var err error
+	if tc.ScopeUserID != "" {
+		agents, err = tc.Store.ListAgentsForUser(ctx, tc.ScopeUserID)
+	} else {
+		agents, err = tc.Store.ListAgents(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +145,9 @@ func getInventory(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
+	}
+	if !tc.allows(ctx, in.AgentID) {
+		return nil, fmt.Errorf("device is outside your access scope")
 	}
 	inv, err := tc.Store.GetInventory(ctx, in.AgentID)
 	if err != nil {
@@ -153,6 +173,9 @@ func proposeScript(ctx context.Context, tc ToolContext, args json.RawMessage) To
 // "awaiting approval" tool result. Shared by propose_script and every
 // high-level tool so the guardrail is identical across all of them.
 func proposeJob(ctx context.Context, tc ToolContext, agentID, shell, script, desc string) ToolResult {
+	if !tc.allows(ctx, agentID) {
+		return errResult("device is outside your access scope")
+	}
 	job, err := tc.Jobs.Propose(ctx, agentID, shell, script, desc, "ai:"+tc.Actor, true)
 	if err != nil {
 		return errResult(err.Error())
@@ -172,7 +195,14 @@ func getJobStatus(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
 	}
-	return tc.Store.GetJob(ctx, in.JobID)
+	job, err := tc.Store.GetJob(ctx, in.JobID)
+	if err != nil {
+		return nil, err
+	}
+	if !tc.allows(ctx, job.AgentID) {
+		return nil, fmt.Errorf("job is outside your access scope")
+	}
+	return job, nil
 }
 
 func cancelJobTool(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
@@ -182,11 +212,26 @@ func cancelJobTool(ctx context.Context, tc ToolContext, args json.RawMessage) (a
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
 	}
+	if tc.ScopeUserID != "" {
+		job, err := tc.Store.GetJob(ctx, in.JobID)
+		if err != nil {
+			return nil, err
+		}
+		if !tc.allows(ctx, job.AgentID) {
+			return nil, fmt.Errorf("job is outside your access scope")
+		}
+	}
 	return tc.Jobs.Cancel(ctx, in.JobID, "ai:"+tc.Actor)
 }
 
 func fleetSummary(ctx context.Context, tc ToolContext) (any, error) {
-	agents, err := tc.Store.ListAgents(ctx)
+	var agents []models.Agent
+	var err error
+	if tc.ScopeUserID != "" {
+		agents, err = tc.Store.ListAgentsForUser(ctx, tc.ScopeUserID)
+	} else {
+		agents, err = tc.Store.ListAgents(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +251,19 @@ func fleetSummary(ctx context.Context, tc ToolContext) (any, error) {
 		Description string `json:"description"`
 		Status      string `json:"status"`
 	}
+	// When scoped, only surface jobs for in-scope agents.
+	var allowed map[string]bool
+	if tc.ScopeUserID != "" {
+		allowed = make(map[string]bool, len(agents))
+		for _, a := range agents {
+			allowed[a.ID] = true
+		}
+	}
 	js := make([]jobSummary, 0, len(recent))
 	for _, j := range recent {
+		if allowed != nil && !allowed[j.AgentID] {
+			continue
+		}
 		js = append(js, jobSummary{j.ID, j.AgentID, j.Description, j.Status})
 	}
 	return map[string]any{

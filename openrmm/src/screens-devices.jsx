@@ -103,30 +103,17 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const d = devQ.data;
 
   const [remoteBusy, setRemoteBusy] = useState(false);
-  const [remote, setRemote] = useState(null); // { wsUrl, hostname } for the native viewer
+  const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
   const startRemote = async (provider) => {
+    if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
     try {
       const s = await api.startRemote(id, provider);
-      if (provider === 'native') {
-        // Build the viewer WS from the browser origin (not the server's public
-        // URL, which may be localhost) and the session token.
-        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
-        const wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
-        setRemote({ wsUrl, hostname: d.hostname });
-      } else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
+      window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab');
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
-  // Native remote in a standalone browser tab (auth is shared via localStorage;
-  // the relay authenticates by the session token in the URL).
-  const startRemoteNewTab = async () => {
-    setRemoteBusy(true);
-    try {
-      const s = await api.startRemote(id, 'native');
-      const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
-      window.open(`${location.origin}/?remote=${encodeURIComponent(tok)}&host=${encodeURIComponent(d.hostname)}`, '_blank');
-    } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
-  };
+  // Native remote in a standalone browser tab (auth is shared via localStorage).
+  const startRemoteNewTab = () => window.open(`${location.origin}/?dev=${encodeURIComponent(id)}&host=${encodeURIComponent(d.hostname)}`, '_blank');
   const linkRemote = async (field, label) => {
     const v = window.prompt('Enter the ' + label + ' for this device:');
     if (!v || !v.trim()) return;
@@ -194,7 +181,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
         </>
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
-      {remote && <RemoteViewer wsUrl={remote.wsUrl} hostname={remote.hostname} onClose={() => setRemote(null)} />}
+      {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} onClose={() => setRemote(null)} />}
     </Drawer>
   );
 }
@@ -206,7 +193,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
 //   binary [0x02][id][bytes] file chunk     (both directions)
 //   text   {"t":...}         input / chat / file control
 const CH_VIDEO = 0x01, CH_FILE = 0x02;
-function RemoteViewer({ wsUrl, hostname, onClose }) {
+function RemoteViewer({ deviceId, hostname, onClose }) {
   const toast = useToast();
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
@@ -233,14 +220,9 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
 
   useEffect(() => {
     const cv = canvasRef.current;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-    ws.binaryType = 'arraybuffer';
-    let closed = false;
-    ws.onopen = () => setStatus('streaming');
-    ws.onclose = () => { if (!closed) setStatus('closed'); };
-    ws.onerror = () => setStatus('error');
-    ws.onmessage = (ev) => {
+    let stopped = false, retries = 0;
+
+    const onMsg = (ev) => {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.t === 'hello') setVer(m.v);
@@ -271,7 +253,38 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         if (d) d.chunks.push(ev.data.slice(2));
       }
     };
-    const send = (o) => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+    // Broker a session and connect. On drop (e.g. user logoff tears the session
+    // down) re-broker and reconnect — the agent re-spawns the SYSTEM sidecar into
+    // the now-active session (login screen included).
+    const connect = async () => {
+      if (stopped) return;
+      setStatus(retries ? 'reconnecting' : 'connecting');
+      let wsUrl;
+      try {
+        const s = await api.startRemote(deviceId, 'native');
+        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+        wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+      } catch (e) {
+        if (!stopped && retries++ < 40) setTimeout(connect, 3000);
+        else setStatus('closed');
+        return;
+      }
+      if (stopped) return;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => { retries = 0; setStatus('streaming'); };
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        if (stopped) return;
+        if (retries++ < 40) { setStatus('reconnecting'); setTimeout(connect, 2000); }
+        else setStatus('closed');
+      };
+      ws.onmessage = onMsg;
+    };
+
+    const send = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
     const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
     const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
     let lastMove = 0;
@@ -289,12 +302,14 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
     cv.addEventListener('contextmenu', onCtx);
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
+    connect();
     return () => {
-      closed = true; ws.close();
+      stopped = true;
+      if (wsRef.current) wsRef.current.close();
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
     };
-  }, [wsUrl]);
+  }, [deviceId]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
   // Remote file browser (RustDesk-style): navigate folders, download a file, or

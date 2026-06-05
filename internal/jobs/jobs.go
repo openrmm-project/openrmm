@@ -7,20 +7,37 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/p1ngu/rmm/internal/hub"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
-	"github.com/p1ngu/rmm/internal/store"
 )
+
+// Store is the persistence surface the job service needs. *store.Store satisfies
+// it; tests use an in-memory fake. Defining it here (consumer side) keeps the
+// service decoupled from the concrete DB and unit-testable without Postgres.
+type Store interface {
+	GetAgent(ctx context.Context, id string) (*models.Agent, error)
+	CreateJob(ctx context.Context, j *models.Job) (*models.Job, error)
+	GetJob(ctx context.Context, id string) (*models.Job, error)
+	SetJobStatus(ctx context.Context, id, status string, approvedBy *string) error
+	SetJobResult(ctx context.Context, id, status string, exitCode int, stdout, stderr string) error
+	ListDispatchableJobs(ctx context.Context, agentID string) ([]models.Job, error)
+	AddAudit(ctx context.Context, actor, action, target string, detail []byte) error
+}
+
+// Sender pushes a frame to a connected agent, reporting whether it was online.
+// *hub.Hub satisfies it.
+type Sender interface {
+	Send(agentID string, msg []byte) bool
+}
 
 // Service coordinates jobs across the store and the live-agent hub.
 type Service struct {
-	store *store.Store
-	hub   *hub.Hub
+	store Store
+	hub   Sender
 }
 
 // New builds a job service.
-func New(s *store.Store, h *hub.Hub) *Service {
+func New(s Store, h Sender) *Service {
 	return &Service{store: s, hub: h}
 }
 

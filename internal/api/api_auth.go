@@ -8,6 +8,7 @@ import (
 
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/settings"
 )
 
 const sessionTTL = 7 * 24 * time.Hour
@@ -55,6 +56,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Code     string `json:"code"` // TOTP, required when the user has 2FA enabled
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -71,6 +73,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !auth.CheckPassword(hash, in.Password) {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+	// Second factor: if enabled, a valid TOTP code is required.
+	if encSecret, enabled, _ := s.store.GetUserTOTP(r.Context(), id); enabled {
+		if in.Code == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "two-factor code required", "totp_required": true})
+			return
+		}
+		secret, derr := settings.Decrypt(s.cfg, encSecret)
+		if derr != nil || !auth.ValidateTOTP(secret, in.Code) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid two-factor code", "totp_required": true})
+			return
+		}
 	}
 	token := auth.NewToken()
 	if err := s.store.CreateSession(r.Context(), id, auth.Hash(token), time.Now().Add(sessionTTL)); err != nil {
@@ -173,6 +187,81 @@ func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"scopes": in.Scopes})
+}
+
+// setup2FA generates a pending TOTP secret for the current user (not yet
+// enabled) and returns the secret + otpauth URI for the authenticator app.
+func (s *Server) setup2FA(w http.ResponseWriter, r *http.Request) {
+	uid := actorOf(r)
+	user, err := s.store.GetUserByID(r.Context(), uid)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "only real user accounts can enable 2FA")
+		return
+	}
+	secret := auth.GenerateTOTPSecret()
+	enc, err := settings.Encrypt(s.cfg, secret)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.store.SetUserTOTP(r.Context(), uid, enc, false); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"secret": secret,
+		"uri":    auth.TOTPURI("RMM-AI", user.Username, secret),
+	})
+}
+
+// enable2FA activates 2FA once the user proves they can generate a valid code.
+func (s *Server) enable2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	_ = decode(r, &in)
+	uid := actorOf(r)
+	enc, _, err := s.store.GetUserTOTP(r.Context(), uid)
+	if err != nil || enc == "" {
+		writeErr(w, http.StatusBadRequest, "run 2FA setup first")
+		return
+	}
+	secret, err := settings.Decrypt(s.cfg, enc)
+	if err != nil || !auth.ValidateTOTP(secret, in.Code) {
+		writeErr(w, http.StatusBadRequest, "invalid code")
+		return
+	}
+	if err := s.store.SetUserTOTP(r.Context(), uid, enc, true); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.enable", uid, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": true})
+}
+
+// disable2FA turns 2FA off, requiring a current code to do so.
+func (s *Server) disable2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	_ = decode(r, &in)
+	uid := actorOf(r)
+	enc, enabled, err := s.store.GetUserTOTP(r.Context(), uid)
+	if err != nil || !enabled {
+		writeErr(w, http.StatusBadRequest, "2FA is not enabled")
+		return
+	}
+	secret, err := settings.Decrypt(s.cfg, enc)
+	if err != nil || !auth.ValidateTOTP(secret, in.Code) {
+		writeErr(w, http.StatusBadRequest, "invalid code")
+		return
+	}
+	if err := s.store.SetUserTOTP(r.Context(), uid, "", false); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.disable", uid, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": false})
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {

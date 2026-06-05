@@ -105,6 +105,9 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireRole(models.RoleReadOnly))
 			r.Post("/auth/logout", s.logout)
 			r.Get("/me", s.me)
+			r.Post("/me/2fa/setup", s.setup2FA)
+			r.Post("/me/2fa/enable", s.enable2FA)
+			r.Post("/me/2fa/disable", s.disable2FA)
 			r.Get("/config", s.getConfig)
 
 			r.Get("/clients", s.listClients)

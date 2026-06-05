@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Per-user TOTP two-factor. Secret is AES-GCM encrypted at rest (enc:v1:…).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+
 CREATE TABLE IF NOT EXISTS sessions (
     id          UUID PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

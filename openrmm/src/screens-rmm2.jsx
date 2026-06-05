@@ -343,10 +343,70 @@ function SettingsScreen() {
     <Page>
       <PageHeader title="Users & Settings" subtitle="Manage access and review your instance configuration." />
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[{ value: 'users', label: 'Users' }, { value: 'config', label: 'Configuration' }, { value: 'enroll', label: 'Enrollment' }]} />
-      {tab === 'users' && <UsersPanel canAdmin={can('admin')} />}
+      {tab === 'users' && <><TwoFactorCard /><UsersPanel canAdmin={can('admin')} /></>}
       {tab === 'config' && <ConfigPanel />}
       {tab === 'enroll' && <EnrollPanel canAdmin={can('admin')} />}
     </Page>
+  );
+}
+
+// TwoFactorCard manages the CURRENT user's TOTP 2FA (self-service, any role).
+function TwoFactorCard() {
+  const toast = useToast();
+  const meQ = useQuery(['me'], () => api.me(), { invalidateOn: ['me'] });
+  const enabled = !!meQ.data?.totp_enabled;
+  const [setup, setSetup] = useState(null); // { secret, uri } during enrollment
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const qrRef = useRef(null);
+
+  useEffect(() => {
+    if (setup && qrRef.current && window.QRCode) {
+      qrRef.current.innerHTML = '';
+      try { new window.QRCode(qrRef.current, { text: setup.uri, width: 168, height: 168, correctLevel: window.QRCode.CorrectLevel.M }); } catch (e) {}
+    }
+  }, [setup]);
+
+  const start = async () => { setBusy(true); try { setSetup(await api.setup2FA()); setCode(''); } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); } };
+  const activate = async () => { setBusy(true); try { await api.enable2FA(code.trim()); setSetup(null); setCode(''); meQ.refetch(); toast.success('Two-factor enabled'); } catch (e) { toast.error('Could not enable', e.message); } finally { setBusy(false); } };
+  const disable = async () => { setBusy(true); try { await api.disable2FA(code.trim()); setCode(''); meQ.refetch(); toast.info('Two-factor disabled'); } catch (e) { toast.error('Could not disable', e.message); } finally { setBusy(false); } };
+
+  return (
+    <Card className="p-5 mb-5 max-w-2xl">
+      <div className="flex items-center gap-2.5 mb-1">
+        <Icon name="shield" size={16} className="text-muted" />
+        <div className="text-[14px] font-semibold text-ink">Two-factor authentication</div>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md ml-auto', enabled ? 'bg-oksoft text-ok' : 'bg-elevated text-faint')}>{enabled ? 'Enabled' : 'Disabled'}</span>
+      </div>
+      <div className="text-[12.5px] text-muted mb-3">Protect your account with a TOTP authenticator app (Google Authenticator, Authy, 1Password…).</div>
+
+      {enabled && !setup && (
+        <div className="flex items-end gap-2">
+          <Field label="Disable — enter a current code" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" className="mono tracking-widest" /></Field>
+          <Button variant="danger" loading={busy} disabled={code.trim().length !== 6} onClick={disable}>Disable 2FA</Button>
+        </div>
+      )}
+
+      {!enabled && !setup && <Button variant="primary" icon="shield" loading={busy} onClick={start}>Enable 2FA</Button>}
+
+      {setup && (
+        <div className="space-y-3 animate-fade-in">
+          <div className="flex gap-4 flex-wrap">
+            <div className="rounded-xl border border-line bg-white p-2 shrink-0" ref={qrRef} />
+            <div className="min-w-0 flex-1">
+              <div className="text-[12px] text-muted mb-1">1. Scan the QR, or add this secret manually:</div>
+              <div className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5"><span className="text-[12.5px] mono text-ink break-all flex-1">{setup.secret}</span><CopyButton value={setup.secret} size="sm" variant="ghost" /></div>
+              <div className="text-[11px] text-faint mt-1.5">Issuer: RMM-AI · 6 digits · 30s</div>
+            </div>
+          </div>
+          <div className="flex items-end gap-2">
+            <Field label="2. Enter the 6-digit code to activate" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" autoFocus className="mono tracking-widest" /></Field>
+            <Button variant="ghost" onClick={() => { setSetup(null); setCode(''); }}>Cancel</Button>
+            <Button variant="primary" loading={busy} disabled={code.trim().length !== 6} onClick={activate}>Activate</Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

@@ -42,11 +42,34 @@ func (s *Store) GetUserAuth(ctx context.Context, username string) (id, role, pas
 	return id, role, passwordHash, err
 }
 
+// GetUserTOTP returns a user's (encrypted) TOTP secret and whether 2FA is on.
+func (s *Store) GetUserTOTP(ctx context.Context, id string) (secret string, enabled bool, err error) {
+	var sec *string
+	err = s.pool.QueryRow(ctx, `SELECT totp_secret, totp_enabled FROM users WHERE id=$1`, id).Scan(&sec, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, ErrNotFound
+	}
+	if sec != nil {
+		secret = *sec
+	}
+	return secret, enabled, err
+}
+
+// SetUserTOTP stores the (encrypted) secret and enabled flag; pass "" to clear.
+func (s *Store) SetUserTOTP(ctx context.Context, id, secret string, enabled bool) error {
+	var sec *string
+	if secret != "" {
+		sec = &secret
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE users SET totp_secret=$2, totp_enabled=$3 WHERE id=$1`, id, sec, enabled)
+	return err
+}
+
 // GetUserByID returns a user by id (no password hash).
 func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var u models.User
-	err := s.pool.QueryRow(ctx, `SELECT id, username, role, created_at FROM users WHERE id=$1`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt)
+	err := s.pool.QueryRow(ctx, `SELECT id, username, role, created_at, totp_enabled FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

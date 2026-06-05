@@ -133,6 +133,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/{id}/approve", s.approveJob)
 			r.Post("/jobs/{id}/reject", s.rejectJob)
+			r.Post("/jobs/{id}/cancel", s.cancelJob)
 			r.Post("/alerts/{id}/ack", s.ackAlert)
 			r.Post("/alerts/{id}/resolve", s.resolveAlert)
 			r.Post("/chat/sessions", s.createChatSession)
@@ -299,7 +300,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"api_key_set": eff.AIAPIKey != "",
 		},
 		"remote": map[string]any{
-			"providers":             []string{"native", "meshcentral", "rustdesk"},
+			"providers":             []string{"native", "meshcentral"},
 			"default":               eff.RemoteDefaultProvider,
 			"meshcentral_url":       eff.MeshCentralURL,
 			"meshcentral_user":      eff.MeshCentralUser,
@@ -322,7 +323,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, "native", "meshcentral", "rustdesk") {
+	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, "native", "meshcentral") {
 		writeErr(w, http.StatusBadRequest, "invalid remote provider")
 		return
 	}
@@ -629,6 +630,15 @@ func (s *Server) approveJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) rejectJob(w http.ResponseWriter, r *http.Request) {
 	job, err := s.jobs.Reject(r.Context(), chi.URLParam(r, "id"), actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
+	job, err := s.jobs.Cancel(r.Context(), chi.URLParam(r, "id"), actorOf(r))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return

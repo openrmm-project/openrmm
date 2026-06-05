@@ -106,7 +106,7 @@ func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (
 	if !auth.ConstantTimeEqual(hash, auth.Hash(reg.AgentToken)) {
 		return "", "", errors.New("invalid agent token")
 	}
-	_ = s.store.TouchAgent(ctx, reg.AgentID)
+	_ = s.store.RefreshAgentInfo(ctx, reg.AgentID, reg.Hostname, reg.OS, reg.Arch, reg.Version)
 	return reg.AgentID, "", nil
 }
 

@@ -1,13 +1,11 @@
 // Package remote abstracts remote-desktop access behind a pluggable provider so
-// the rest of the system never depends on a single tool. Three providers ship:
+// the rest of the system never depends on a single tool. Two providers ship:
 //
-//   - native      : a built-in session broker + relay (the future "own" remote
-//     tool / RustDesk fork connects its media engine to this relay).
+//   - native      : a built-in session broker + relay with our own media sidecar
+//     (the engine that streams the screen and injects input rides on this relay).
 //   - meshcentral : deep-link / token login into a MeshCentral server.
-//   - rustdesk    : launches the native RustDesk client via the rustdesk:// URI.
 //
-// Adding or removing a provider never touches callers — if the native tool does
-// not pan out, drop it and MeshCentral keeps working.
+// Adding or removing a provider never touches callers.
 package remote
 
 import (
@@ -63,7 +61,6 @@ func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, me
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
 	register(&meshProvider{m: m})
-	register(&rustdeskProvider{m: m})
 	return m
 }
 
@@ -167,34 +164,6 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 	rs := &models.RemoteSession{
 		AgentID:    agent.ID,
 		Provider:   "meshcentral",
-		Status:     "ready",
-		Token:      auth.NewToken(),
-		ConnectURL: connect,
-		CreatedBy:  createdBy,
-		ExpiresAt:  time.Now().Add(sessionTTL),
-	}
-	if err := p.m.persist(ctx, rs); err != nil {
-		return nil, err
-	}
-	return rs, nil
-}
-
-// ---------- rustdesk ----------
-
-type rustdeskProvider struct{ m *Manager }
-
-func (p *rustdeskProvider) Name() string { return "rustdesk" }
-
-// StartSession returns a rustdesk:// URI that launches the technician's local
-// RustDesk client and connects to the agent's RustDesk ID.
-func (p *rustdeskProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
-	if agent.RustDeskID == nil || *agent.RustDeskID == "" {
-		return nil, fmt.Errorf("agent has no RustDesk id")
-	}
-	connect := fmt.Sprintf("rustdesk://connect/%s", *agent.RustDeskID)
-	rs := &models.RemoteSession{
-		AgentID:    agent.ID,
-		Provider:   "rustdesk",
 		Status:     "ready",
 		Token:      auth.NewToken(),
 		ConnectURL: connect,

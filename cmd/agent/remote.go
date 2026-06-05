@@ -71,10 +71,13 @@ func (a *agent) ensureSidecar() (string, error) {
 	src := a.httpBase() + "/dl/" + dlName
 
 	// Keep the cached sidecar only if it matches the server's current build.
-	// Comparing Content-Length (HEAD) auto-updates it when we ship a new sidecar,
-	// without a manual delete; if the HEAD fails we keep whatever is on disk.
-	if fi, err := os.Stat(path); err == nil {
-		if remote := remoteSize(src); remote < 0 || remote == fi.Size() {
+	// We compare the ETag (changes on any content change — unlike size, which can
+	// collide between builds) stored alongside the binary. If the HEAD fails we
+	// keep whatever is on disk.
+	etagPath := path + ".etag"
+	remoteTag := remoteETag(src)
+	if _, err := os.Stat(path); err == nil {
+		if remoteTag == "" || remoteTag == readETag(etagPath) {
 			return path, nil
 		}
 		log.Printf("remote: sidecar changed on server; refreshing")
@@ -86,21 +89,32 @@ func (a *agent) ensureSidecar() (string, error) {
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(path, 0o755)
 	}
+	if remoteTag != "" {
+		_ = os.WriteFile(etagPath, []byte(remoteTag), 0o644)
+	}
 	return path, nil
 }
 
-// remoteSize returns the Content-Length of a URL via HEAD, or -1 if unknown.
-func remoteSize(src string) int64 {
+// remoteETag returns the ETag of a URL via HEAD, or "" if unknown.
+func remoteETag(src string) string {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Head(src)
 	if err != nil {
-		return -1
+		return ""
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || resp.ContentLength <= 0 {
-		return -1
+	if resp.StatusCode != http.StatusOK {
+		return ""
 	}
-	return resp.ContentLength
+	return resp.Header.Get("ETag")
+}
+
+func readETag(p string) string {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // httpBase derives the server's HTTP origin from the agent WebSocket URL.

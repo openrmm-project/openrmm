@@ -130,6 +130,7 @@ const api = {
   createJob(body) { return POST('/api/jobs', body); },
   approveJob(id) { return POST('/api/jobs/' + id + '/approve'); },
   rejectJob(id) { return POST('/api/jobs/' + id + '/reject'); },
+  cancelJob(id) { return POST('/api/jobs/' + id + '/cancel'); },
 
   /* ---- audit ---- */
   listAudit(limit = 100) { return GET('/api/audit' + qs({ limit })); },

@@ -47,15 +47,6 @@ with a `connect_url` the UI acts on.
 > but the exact payload acceptance can only be confirmed against a live server —
 > validate on your instance; the deep-link mode works regardless.
 
-### `rustdesk`
-- Returns a `rustdesk://connect/<id>` URI that launches the technician's local
-  RustDesk client against the agent's RustDesk ID.
-- Requires the agent to run RustDesk as a service with a permanent password and
-  to report its RustDesk ID (the agent's `rustdesk_id`). Provisioning that is an
-  agent-side task (roadmap).
-- License: RustDesk is **AGPL-3.0** — see licensing below.
-- Best for: superior native session quality without dealing with a web client.
-
 ### `native` (built-in)
 - A session **broker + relay** built into the server (`internal/remote/relay.go`).
   On `StartSession` it mints a token, pushes `remote_start{token, relay_url}` to
@@ -86,11 +77,10 @@ Build options, in order of effort:
    work.
 3. **From scratch** — highest effort; only for very specific requirements.
 
-If the native tool underperforms, remove the provider — MeshCentral and RustDesk
-remain.
+If the native tool underperforms, remove the provider — MeshCentral remains.
 
 ## Choosing a default
 
-`RMM_REMOTE_PROVIDER` sets the default. Reasonable path: ship with `meshcentral`
-(fast, Apache, in-browser), add `rustdesk` for quality, and graduate to `native`
-once the forked media engine is solid.
+`RMM_REMOTE_PROVIDER` sets the default (`native` or `meshcentral`). Reasonable
+path: ship with `meshcentral` (fast, Apache, in-browser) and graduate to
+`native` as its media engine matures.

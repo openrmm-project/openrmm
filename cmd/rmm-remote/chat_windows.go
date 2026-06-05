@@ -82,8 +82,9 @@ const (
 	emReplaceSel = 0x00C2
 	emSetSel     = 0x00B1
 
-	swShow = 5
-	swHide = 0
+	swShow   = 5
+	swHide   = 0
+	swShowNA = 8 // show in current state without activating (un-hides)
 
 	idHistory = 101
 	idInput   = 102
@@ -210,13 +211,16 @@ func (cw *chatWindow) loop() {
 }
 
 // append shows a line in the history box. Safe to call from any goroutine
-// (SendMessage marshals to the window thread).
+// (SendMessage marshals to the window thread). It also re-reveals the window
+// (without stealing focus) so a new message brings back a chat the user closed
+// (X just hides it).
 func (cw *chatWindow) append(line string) {
 	if cw == nil || cw.history == 0 {
 		return
 	}
 	procSendMessage.Call(cw.history, emSetSel, ^uintptr(0), ^uintptr(0))
 	procSendMessage.Call(cw.history, emReplaceSel, 0, uintptr(unsafe.Pointer(u16(line+"\r\n"))))
+	procShowWindow.Call(cw.hwnd, swShowNA)
 }
 
 func (cw *chatWindow) close() {

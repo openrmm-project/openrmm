@@ -114,8 +114,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
         const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
         const wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
         setRemote({ wsUrl, hostname: d.hostname });
-      } else if (provider === 'rustdesk') { toast.info('RustDesk session', 'Triggering ' + s.connect_url); }
-      else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
+      } else { window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab'); }
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
   // Native remote in a standalone browser tab (auth is shared via localStorage;
@@ -167,11 +166,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
-                <MenuItem icon="link" onClick={() => startRemote('rustdesk')} disabled={!d.rustdesk_id} hint={d.rustdesk_id || 'no id'}>RustDesk</MenuItem>
                 {can('admin') && <>
                   <div className="my-1 border-t border-line" />
                   <MenuItem icon="external" onClick={() => linkRemote('mesh_id', 'MeshCentral node id')}>Link MeshCentral node…</MenuItem>
-                  <MenuItem icon="link" onClick={() => linkRemote('rustdesk_id', 'RustDesk id')}>Link RustDesk id…</MenuItem>
                 </>}
               </Dropdown>
               {can('tech') && <Button variant="secondary" icon="terminal" onClick={() => setTab('run')}>Run script</Button>}
@@ -222,8 +219,14 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
   const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
   const [fbSel, setFbSel] = useState([]); // selected entry names
   const [fbClip, setFbClip] = useState(null); // { op:'copy'|'cut', base, names }
+  const [pathEdit, setPathEdit] = useState(''); // editable address bar
+  useEffect(() => { if (fb) setPathEdit(fb.path); }, [fb && fb.path]);
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
+  const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
+  const [unread, setUnread] = useState(0);
+  const openRef = useRef(true);
+  useEffect(() => { openRef.current = chatOpen; if (chatOpen) setUnread(0); }, [chatOpen]);
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
   const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -241,7 +244,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.t === 'hello') setVer(m.v);
-        else if (m.t === 'chat') setChat((c) => [...c, { from: m.from, text: m.text }]);
+        else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
@@ -342,6 +345,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
           <Button variant="ghost" size="sm" icon="link" onClick={() => browse('')}>Files</Button>
+          <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
       </div>
@@ -368,8 +372,11 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
               {fbClip && <Button variant="secondary" size="sm" icon="approve" onClick={doPaste}>Paste {fbClip.names.length}</Button>}
               <span className="ml-auto text-[11px] text-faint pr-1">{fbSel.length ? fbSel.length + ' selected' : (fb.entries ? fb.entries.length + ' items' : '')}</span>
             </div>
-            {/* path */}
-            <div className="px-3 h-8 flex items-center text-[11.5px] mono text-muted border-b border-line truncate shrink-0">{fb.path || 'This PC'}</div>
+            {/* editable address bar */}
+            <div className="px-2 h-10 flex items-center gap-2 border-b border-line shrink-0">
+              <Input value={pathEdit} onChange={(e) => setPathEdit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') browse(pathEdit.trim()); }} placeholder="Type a path, e.g. C:\Users\" className="text-[11.5px] mono h-7" />
+              <Button variant="secondary" size="sm" icon="arrowright" onClick={() => browse(pathEdit.trim())} title="Go" />
+            </div>
             {/* list */}
             <div className="flex-1 overflow-y-auto">
               {fb.entries === null && <div className="p-6 text-center text-faint text-[12px]">Loading…</div>}
@@ -394,8 +401,8 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
         <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
           <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
         </div>
-        <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
-          <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat</div>
+        {chatOpen && <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
+          <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title="Collapse chat"><Icon name="chevright" size={16} /></button></div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}
             {chat.map((m, i) => (
@@ -408,7 +415,7 @@ function RemoteViewer({ wsUrl, hostname, onClose }) {
             <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} placeholder="Message…" className="text-[12px]" />
             <Button variant="primary" size="sm" icon="send" onClick={sendChat} disabled={!draft.trim()} />
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );

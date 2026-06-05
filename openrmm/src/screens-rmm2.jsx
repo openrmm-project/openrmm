@@ -481,13 +481,29 @@ function ScopePicker({ scopes, setScopes }) {
   const [expC, setExpC] = useState({});          // expanded clients
   const [expS, setExpS] = useState({});          // expanded sites
   const [q, setQ] = useState('');
-  const restricted = scopes.length > 0;
+  const [allSites, setAllSites] = useState(null); // every site (for search by name + client lookup)
+  const [found, setFound] = useState([]);          // device search results
+  // Mode is independent of the selection so "Restrito" works before any node is
+  // picked (empty selection still means full access on save — hinted below).
+  const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
+  const restricted = mode === 'restricted';
+  const searching = q.trim().length > 0;
   const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
+  const siteClient = {}; (allSites || []).forEach((st) => { siteClient[st.id] = st.client_id; });
 
-  useEffect(() => { if (restricted && clients === null) loadClients(); }, [restricted]);
+  useEffect(() => { if (restricted && clients === null) loadClients(); }, [mode]);
   const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
   const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
   const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
+
+  // Search across the whole org (not just loaded/expanded nodes): devices via the
+  // server (?q=), companies/sites client-side. Debounced.
+  useEffect(() => {
+    if (!searching) { setFound([]); return; }
+    if (allSites === null) { api.listSites().then((r) => setAllSites(r.sites || [])).catch(() => setAllSites([])); }
+    const t = setTimeout(() => { api.listDevices({ q: q.trim() }).then((r) => setFound(r.devices || [])).catch(() => setFound([])); }, 250);
+    return () => clearTimeout(t);
+  }, [q]);
 
   const toggle = (type, id) => {
     const k = type + ':' + id;
@@ -510,14 +526,48 @@ function ScopePicker({ scopes, setScopes }) {
   return (
     <div className="space-y-2">
       <div className="flex gap-4 text-[12px]">
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => setScopes([])} className="accent-brand" />Acesso total</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setScopes(scopes.length ? scopes : []); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Acesso total</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
         {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selecionado(s)</span>}
       </div>
       {restricted && (
         <div className="rounded-xl border border-line overflow-hidden">
           <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar empresa/site/máquina…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
+            {searching ? (() => {
+              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Buscando…</div>;
+              const m = (n) => (n || '').toLowerCase().includes(q.trim().toLowerCase());
+              const siteObj = {}; allSites.forEach((s) => { siteObj[s.id] = s; });
+              const clientObj = {}; clients.forEach((c) => { clientObj[c.id] = c; });
+              // group matching machines under their site
+              const devBySite = {}; found.forEach((d) => { (devBySite[d.site_id] = devBySite[d.site_id] || []).push(d); });
+              // relevant sites = have a matching machine OR match by name
+              const siteIds = new Set([...Object.keys(devBySite), ...allSites.filter((s) => m(s.name)).map((s) => s.id)]);
+              // relevant clients = parents of relevant sites + name matches
+              const clientIds = new Set(clients.filter((c) => m(c.name)).map((c) => c.id));
+              siteIds.forEach((sid) => { const s = siteObj[sid]; if (s) clientIds.add(s.client_id); });
+              if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">Nada encontrado para “{q}”.</div>;
+              // build the filtered, auto-expanded tree (only branches with results)
+              return [...clientIds].map((cid) => {
+                const c = clientObj[cid]; if (!c) return null;
+                const clientCov = sel.has('client:' + cid);
+                const sitesUnder = [...siteIds].map((id) => siteObj[id]).filter((s) => s && s.client_id === cid);
+                return (
+                  <div key={cid}>
+                    <Row depth={0} icon="building" name={c.name} checked={clientCov} onCheck={() => toggle('client', cid)} />
+                    {sitesUnder.map((s) => {
+                      const siteCov = clientCov;
+                      return (
+                        <div key={s.id}>
+                          <Row depth={1} icon="pin" name={s.name} checked={siteCov || sel.has('site:' + s.id)} disabled={siteCov} onCheck={() => toggle('site', s.id)} />
+                          {(devBySite[s.id] || []).map((d) => { const cov = siteCov || sel.has('site:' + s.id); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })() : <>
             {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
             {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">Nenhuma empresa cadastrada.</div>}
             {(clients || []).filter((c) => match(c.name) || expC[c.id]).map((c) => (
@@ -541,10 +591,13 @@ function ScopePicker({ scopes, setScopes }) {
                 {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">sem sites</div>}
               </div>
             ))}
+            </>}
           </div>
         </div>
       )}
-      <div className="text-[11px] text-faint">Sem restrições = acesso total. Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>
+      {restricted && scopes.length === 0
+        ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Selecione ao menos um item — sem seleção o usuário terá acesso total.</div>
+        : <div className="text-[11px] text-faint">Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>}
     </div>
   );
 }

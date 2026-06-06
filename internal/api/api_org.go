@@ -4,10 +4,18 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/p1ngu/rmm/internal/models"
 )
 
 func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
-	clients, err := s.store.ListClients(r.Context())
+	var clients []models.Client
+	var err error
+	if uid := s.scopeUserID(r); uid != "" {
+		clients, err = s.store.ListClientsForUser(r.Context(), uid)
+	} else {
+		clients, err = s.store.ListClients(r.Context())
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -40,7 +48,13 @@ func (s *Server) deleteClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
-	sites, err := s.store.ListSites(r.Context(), r.URL.Query().Get("client_id"))
+	var sites []models.Site
+	var err error
+	if uid := s.scopeUserID(r); uid != "" {
+		sites, err = s.store.ListSitesForUser(r.Context(), uid, r.URL.Query().Get("client_id"))
+	} else {
+		sites, err = s.store.ListSites(r.Context(), r.URL.Query().Get("client_id"))
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

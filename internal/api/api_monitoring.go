@@ -29,6 +29,15 @@ func (s *Server) listChecks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := checks[:0]
+		for _, c := range checks {
+			if inScope(set, c.AgentID) { // policy-owned (no agent) hidden for restricted users
+				f = append(f, c)
+			}
+		}
+		checks = f
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"checks": checks})
 }
 
@@ -82,6 +91,15 @@ func (s *Server) listCheckResults(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := results[:0]
+		for _, rr := range results {
+			if set[rr.AgentID] {
+				f = append(f, rr)
+			}
+		}
+		results = f
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
@@ -92,6 +110,15 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := tasks[:0]
+		for _, t := range tasks {
+			if inScope(set, t.AgentID) {
+				f = append(f, t)
+			}
+		}
+		tasks = f
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
 }
@@ -153,6 +180,15 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := alerts[:0]
+		for _, a := range alerts {
+			if inScope(set, a.AgentID) {
+				f = append(f, a)
+			}
+		}
+		alerts = f
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
 }

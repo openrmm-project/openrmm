@@ -279,6 +279,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     title       TEXT NOT NULL DEFAULT 'New chat',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Owner (actor) of a chat session, so users only see their own AI conversations.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS created_by TEXT;
 
 CREATE TABLE IF NOT EXISTS chat_messages (
     id           UUID PRIMARY KEY,

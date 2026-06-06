@@ -836,6 +836,16 @@ func (s *Store) ListAlerts(ctx context.Context, status string, limit int) ([]mod
 }
 
 // SetAlertStatus updates an alert's status by id (e.g. ack/resolve).
+// AlertAgent returns the agent an alert belongs to (nil for non-device alerts).
+func (s *Store) AlertAgent(ctx context.Context, id string) (*string, error) {
+	var agentID *string
+	err := s.pool.QueryRow(ctx, `SELECT agent_id FROM alerts WHERE id=$1`, id).Scan(&agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return agentID, err
+}
+
 func (s *Store) SetAlertStatus(ctx context.Context, id, status string) error {
 	var resolved interface{}
 	if status == models.AlertResolved {

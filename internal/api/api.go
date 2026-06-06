@@ -112,24 +112,18 @@ func (s *Server) Router() http.Handler {
 
 			r.Get("/clients", s.listClients)
 			r.Get("/sites", s.listSites)
-			r.Get("/groups", s.listGroups)
 			r.Get("/devices", s.listDevices)
 			r.Get("/devices/{id}", s.getDevice)
 			r.Get("/devices/{id}/inventory", s.getInventory)
 			// Remote access is allowed for readonly (remote assistance/observation);
 			// it still cannot run scripts, approve jobs, or change config.
 			r.Post("/devices/{id}/remote", s.startRemote)
-			r.Get("/scripts", s.listScripts)
-			r.Get("/scripts/{id}", s.getScript)
 			r.Get("/jobs", s.listJobs)
 			r.Get("/jobs/{id}", s.getJob)
 			r.Get("/checks", s.listChecks)
 			r.Get("/checks/{id}/results", s.listCheckResults)
 			r.Get("/tasks", s.listTasks)
-			r.Get("/policies", s.listPolicies)
-			r.Get("/policies/{id}/assignments", s.listPolicyAssignments)
 			r.Get("/alerts", s.listAlerts)
-			r.Get("/audit", s.listAudit)
 			r.Get("/chat/sessions", s.listChatSessions)
 			r.Get("/chat/sessions/{id}/messages", s.listChatMessages)
 		})
@@ -137,6 +131,9 @@ func (s *Server) Router() http.Handler {
 		// ---- tech (run things) ----
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleTech))
+			// Script library: tech+ (a script body can carry sensitive commands).
+			r.Get("/scripts", s.listScripts)
+			r.Get("/scripts/{id}", s.getScript)
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/{id}/approve", s.approveJob)
@@ -151,6 +148,12 @@ func (s *Server) Router() http.Handler {
 		// ---- admin (manage config) ----
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleAdmin))
+			// Cross-tenant management data — admin-only to avoid leaking other
+			// tenants' activity/structure to restricted users.
+			r.Get("/audit", s.listAudit)
+			r.Get("/groups", s.listGroups)
+			r.Get("/policies", s.listPolicies)
+			r.Get("/policies/{id}/assignments", s.listPolicyAssignments)
 			r.Put("/config", s.updateConfig)
 			r.Post("/enroll-tokens", s.createEnrollToken)
 			r.Get("/api-tokens", s.listAPITokens)

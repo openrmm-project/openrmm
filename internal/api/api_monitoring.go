@@ -193,7 +193,28 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
 }
 
+// requireAlertAgent enforces scope on an alert by its target agent. Returns
+// false when it has written the response.
+func (s *Server) requireAlertAgent(w http.ResponseWriter, r *http.Request, alertID string) bool {
+	if s.scopeUserID(r) == "" {
+		return true
+	}
+	agentID, err := s.store.AlertAgent(r.Context(), alertID)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return false
+	}
+	if agentID == nil || !s.agentAllowed(r, *agentID) {
+		writeErr(w, http.StatusForbidden, "alert is outside your access scope")
+		return false
+	}
+	return true
+}
+
 func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAlertAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	if err := s.store.SetAlertStatus(r.Context(), chi.URLParam(r, "id"), models.AlertAcked); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -202,6 +223,9 @@ func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAlertAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	if err := s.store.SetAlertStatus(r.Context(), chi.URLParam(r, "id"), models.AlertResolved); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

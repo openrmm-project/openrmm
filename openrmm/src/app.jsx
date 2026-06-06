@@ -114,18 +114,18 @@ const NAV = [
     { id: 'jobs', label: 'Jobs', icon: 'flash', badge: 'jobs' },
     { id: 'checks', label: 'Checks', icon: 'check' },
     { id: 'tasks', label: 'Scheduled tasks', icon: 'tasks' },
-    { id: 'policies', label: 'Policies', icon: 'policy' },
-    { id: 'scripts', label: 'Scripts', icon: 'script' },
+    { id: 'policies', label: 'Policies', icon: 'policy', min: 'admin' },
+    { id: 'scripts', label: 'Scripts', icon: 'script', min: 'tech' },
   ] },
   { section: 'Organization', items: [
     { id: 'clients', label: 'Clients & Sites', icon: 'building' },
-    { id: 'audit', label: 'Audit log', icon: 'audit' },
+    { id: 'audit', label: 'Audit log', icon: 'audit', min: 'admin' },
     { id: 'settings', label: 'Users & Settings', icon: 'settings' },
   ] },
 ];
 
 function Sidebar({ route, navigate }) {
-  const { user, role, logout } = useAuth();
+  const { user, role, logout, can } = useAuth();
   const jobsQ = useQuery(['nav-jobs'], () => api.listJobs(), { invalidateOn: ['jobs'], poll: 5000 });
   const alertsQ = useQuery(['nav-alerts'], () => api.listAlerts(), { invalidateOn: ['alerts'], poll: 8000 });
   const awaiting = (jobsQ.data?.jobs || []).filter((j) => j.status === 'awaiting_approval').length;
@@ -143,11 +143,14 @@ function Sidebar({ route, navigate }) {
       </div>
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-area px-2.5 py-3">
-        {NAV.map((grp, gi) => (
+        {NAV.map((grp, gi) => {
+          const items = grp.items.filter((it) => !it.min || can(it.min));
+          if (!items.length) return null;
+          return (
           <div key={gi} className={gi > 0 ? 'mt-5' : ''}>
             {grp.section && <div className="px-2.5 mb-1.5 text-[10.5px] uppercase tracking-wider text-faint font-semibold">{grp.section}</div>}
             <div className="space-y-0.5">
-              {grp.items.map((it) => {
+              {items.map((it) => {
                 const active = route.name === it.id;
                 const badge = badges[it.badge];
                 return (
@@ -166,7 +169,8 @@ function Sidebar({ route, navigate }) {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div className="p-2.5 border-t border-line">

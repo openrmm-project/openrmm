@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -12,20 +11,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// runMedia is the Linux (X11) media engine: capture the root window, encode via
-// the shared tile-delta codec, and inject input through XTEST. It deliberately
-// mirrors the Windows loop's wire behavior (hello + chVideo frames + {t:"kf"})
-// so the same viewer drives both. Chat / file-transfer / UAC are Windows-only
-// for now; on Linux those viewer controls simply get no response.
+// runMedia is the Linux (X11) media engine with seat-following: it attaches to
+// whichever X server owns the active VT — the display-manager greeter before
+// login, the user's session after — and re-attaches as that changes, so remote
+// works on the login screen and survives logout/lock (the Linux analogue of the
+// Windows desktop-following). It mirrors the Windows wire behavior (hello +
+// chVideo tile frames + {t:"kf"}) so the same viewer drives both. Chat /
+// file-transfer are Windows-only for now; on Linux those controls get no reply.
 func runMedia(conn *websocket.Conn) error {
-	x, err := newX11()
-	if err != nil {
-		return fmt.Errorf("x11 init: %w", err)
-	}
-	defer x.close()
-	log.Printf("rmm-remote: x11 %dx%d root=%#x xtest=%v keymap=%d",
-		x.width, x.height, x.root, x.xtestOp != 0, len(x.keycodeFor))
-
 	type omsg struct {
 		mt int
 		b  []byte
@@ -86,9 +79,50 @@ func runMedia(conn *websocket.Conn) error {
 		}
 	}()
 
-	// capture + input on one goroutine so all X11 socket access is serialized.
+	// Capture + input + seat-following on one goroutine so all X11 socket access
+	// is serialized and the connection can be swapped on a session change.
 	go func() {
 		enc := newVideoEncoder(65)
+		var x *x11
+		var curKey string
+		var lastEval time.Time
+		defer func() {
+			if x != nil {
+				x.close()
+			}
+		}()
+
+		// reattach connects to the active X server when it differs from the
+		// current one (or when we have none); a no-op while the session is stable.
+		reattach := func() {
+			disp, auth, ok := findActiveX()
+			key := ""
+			if ok {
+				key = disp + "\x00" + auth
+			}
+			if x != nil && key == curKey {
+				return
+			}
+			if x != nil {
+				x.close()
+				x = nil
+			}
+			curKey = key
+			if !ok {
+				return
+			}
+			nx, err := newX11At(disp, auth)
+			if err != nil {
+				log.Printf("rmm-remote: x11 attach %s (auth=%s): %v", disp, auth, err)
+				curKey = "" // retry next eval
+				return
+			}
+			x = nx
+			enc.reset()
+			log.Printf("rmm-remote: attached x11 %s %dx%d xtest=%v keymap=%d",
+				disp, x.width, x.height, x.xtestOp != 0, len(x.keycodeFor))
+		}
+
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
@@ -96,15 +130,27 @@ func runMedia(conn *websocket.Conn) error {
 			case <-done:
 				return
 			case data := <-inputCh:
-				x.handleInput(data)
+				if x != nil {
+					x.handleInput(data)
+				}
 			case <-ticker.C:
+				// Re-evaluate the active session ~1×/s, or immediately if detached.
+				if x == nil || time.Since(lastEval) > time.Second {
+					lastEval = time.Now()
+					reattach()
+				}
+				if x == nil {
+					continue
+				}
 				if kfReq.Swap(false) {
 					enc.forceKeyframe()
 				}
 				img, err := x.getImage()
 				if err != nil {
-					errc <- err
-					return
+					x.close()
+					x = nil
+					curKey = "" // reattach on the next tick (session likely switched)
+					continue
 				}
 				payload, err := enc.encode(img)
 				if err != nil || payload == nil {

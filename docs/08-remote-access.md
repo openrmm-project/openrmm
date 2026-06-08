@@ -80,16 +80,22 @@ with a `connect_url` the UI acts on.
   the active console session via `CreateProcessAsUser`; `PromptOnSecureDesktop=0`),
   and **logoff survival** (desktop-following via `OpenInputDesktop`/`SetThreadDesktop`
   + viewer auto-reconnect). The agent keeps the sidecar current via an **ETag**
-  check. The **Linux** engine currently does screen + mouse + keyboard only (chat /
-  file-transfer / multi-seat are Windows-only for now); keyboard maps DOM keyCodes
-  to X keysyms (US layout, best-effort) resolved through the server keymap.
+  check. The **Linux** engine does screen + mouse + keyboard, with **seat-following**:
+  it attaches to the X server owning the active VT — the display-manager greeter
+  before login, the user's session after — by scanning `/proc` for the X process
+  (`-auth`/display/`vt`) and re-attaching when the session switches (login / logout
+  / lock), the Linux analogue of the Windows desktop-following (`seat_linux.go`).
+  This needs the sidecar to run as **root** (it does — the agent is a system
+  service) to read the greeter's cookie. Chat / file-transfer are Windows-only for
+  now; keyboard maps DOM keyCodes to X keysyms (US layout, best-effort).
 - **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
   rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
   full-motion video. The Linux engine assumes a TrueColor little-endian X server
-  and captures the first screen (RandR multi-monitor stitched); Wayland sessions
-  need XWayland. macOS capture (CoreGraphics) needs CGO and stays a stub. End-to-end
-  media encryption is still open (today the relay is the trust boundary; terminate
-  WSS — see `07`).
+  and captures the active screen; **login-screen capture requires an Xorg greeter**
+  (set GDM `WaylandEnable=false`, or use LightDM) — a Wayland greeter only exposes
+  Xwayland, which can't capture native Wayland surfaces. macOS capture
+  (CoreGraphics) needs CGO and stays a stub. End-to-end media encryption is still
+  open (today the relay is the trust boundary; terminate WSS — see `07`).
 
 ## The "own remote tool" plan (no fork)
 

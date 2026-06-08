@@ -53,12 +53,17 @@ type x11 struct {
 	raw                []byte // reusable GetImage payload buffer
 }
 
-// dialX11 opens the display socket and returns the connection + display number.
+// dialX11 opens the display socket from $DISPLAY (fallback :0).
 func dialX11() (net.Conn, int, error) {
 	disp := os.Getenv("DISPLAY")
 	if disp == "" {
 		disp = ":0"
 	}
+	return dialDisplay(disp)
+}
+
+// dialDisplay opens the socket for an explicit display string (e.g. ":0").
+func dialDisplay(disp string) (net.Conn, int, error) {
 	host, rest := "", disp
 	if i := strings.LastIndex(disp, ":"); i >= 0 {
 		host, rest = disp[:i], disp[i+1:]
@@ -80,7 +85,7 @@ func dialX11() (net.Conn, int, error) {
 	return c, n, err
 }
 
-// xauth reads the MIT-MAGIC-COOKIE-1 for the display from ~/.Xauthority.
+// xauth reads the MIT-MAGIC-COOKIE-1 for the display from $XAUTHORITY/~/.Xauthority.
 func xauth(displayNum int) (name, data []byte) {
 	path := os.Getenv("XAUTHORITY")
 	if path == "" {
@@ -90,11 +95,22 @@ func xauth(displayNum int) (name, data []byte) {
 		}
 		path = filepath.Join(home, ".Xauthority")
 	}
+	return authFromFile(path, displayNum)
+}
+
+// authFromFile reads the MIT-MAGIC-COOKIE-1 for a display from a specific
+// Xauthority file (used by seat-following to read the greeter's cookie).
+func authFromFile(path string, displayNum int) (name, data []byte) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil
 	}
-	want := strconv.Itoa(displayNum)
+	return parseXauth(b, strconv.Itoa(displayNum))
+}
+
+// parseXauth scans an Xauthority blob for the MIT-MAGIC-COOKIE-1 entry matching
+// the wanted display number (empty number in an entry matches any display).
+func parseXauth(b []byte, want string) (name, data []byte) {
 	off := 0
 	blk := func() ([]byte, bool) {
 		if off+2 > len(b) {
@@ -135,15 +151,31 @@ func xauth(displayNum int) (name, data []byte) {
 
 func pad4(n int) int { return (4 - n%4) % 4 }
 
-// newX11 connects, authenticates, and parses the server setup (root window,
-// screen size, keycode range), then resolves XTEST + the keymap.
+// newX11 connects using $DISPLAY and the environment/home Xauthority.
 func newX11() (*x11, error) {
 	conn, dnum, err := dialX11()
 	if err != nil {
 		return nil, err
 	}
 	name, data := xauth(dnum)
+	return connectX11(conn, name, data)
+}
 
+// newX11At connects to an explicit display using a specific Xauthority file —
+// used by seat-following to attach to the active session or the DM greeter.
+func newX11At(display, authPath string) (*x11, error) {
+	conn, dnum, err := dialDisplay(display)
+	if err != nil {
+		return nil, err
+	}
+	name, data := authFromFile(authPath, dnum)
+	return connectX11(conn, name, data)
+}
+
+// connectX11 performs the X11 setup handshake on an open connection and parses
+// the server reply (root window, screen size, keycode range), then resolves
+// XTEST + the keymap.
+func connectX11(conn net.Conn, name, data []byte) (*x11, error) {
 	// Connection setup request.
 	req := make([]byte, 0, 64)
 	req = append(req, 'l', 0) // little-endian

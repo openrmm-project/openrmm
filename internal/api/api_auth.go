@@ -74,14 +74,24 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	// Second factor: if enabled, a valid TOTP code is required.
+	// Second factor: if enabled, a valid TOTP code — or a one-time recovery
+	// code — is required.
 	if encSecret, enabled, _ := s.store.GetUserTOTP(r.Context(), id); enabled {
 		if in.Code == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "two-factor code required", "totp_required": true})
 			return
 		}
 		secret, derr := settings.Decrypt(s.cfg, encSecret)
-		if derr != nil || !auth.ValidateTOTP(secret, in.Code) {
+		ok := derr == nil && auth.ValidateTOTP(secret, in.Code)
+		if !ok {
+			// Fall back to a recovery code (consumed on use).
+			used, uerr := s.store.UseRecoveryCode(r.Context(), id, auth.Hash(auth.NormalizeRecoveryCode(in.Code)))
+			if uerr == nil && used {
+				ok = true
+				_ = s.store.AddAudit(r.Context(), id, "user.2fa.recovery.used", id, nil)
+			}
+		}
+		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid two-factor code", "totp_required": true})
 			return
 		}
@@ -235,8 +245,70 @@ func (s *Server) enable2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	codes, err := s.issueRecoveryCodes(r, uid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.enable", uid, nil)
-	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": true})
+	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": true, "recovery_codes": codes})
+}
+
+// issueRecoveryCodes generates a fresh set of one-time recovery codes for the
+// user, persists their hashes, and returns the plaintext codes (shown once).
+func (s *Server) issueRecoveryCodes(r *http.Request, uid string) ([]string, error) {
+	codes := auth.GenerateRecoveryCodes(10)
+	hashes := make([]string, len(codes))
+	for i, c := range codes {
+		hashes[i] = auth.Hash(auth.NormalizeRecoveryCode(c))
+	}
+	if err := s.store.ReplaceRecoveryCodes(r.Context(), uid, hashes); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+// regenRecoveryCodes re-issues recovery codes for the caller (requires a valid
+// current TOTP code), invalidating any previous set.
+func (s *Server) regenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	_ = decode(r, &in)
+	uid := actorOf(r)
+	enc, enabled, err := s.store.GetUserTOTP(r.Context(), uid)
+	if err != nil || !enabled {
+		writeErr(w, http.StatusBadRequest, "2FA is not enabled")
+		return
+	}
+	secret, err := settings.Decrypt(s.cfg, enc)
+	if err != nil || !auth.ValidateTOTP(secret, in.Code) {
+		writeErr(w, http.StatusBadRequest, "invalid code")
+		return
+	}
+	codes, err := s.issueRecoveryCodes(r, uid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.recovery.regenerate", uid, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
+}
+
+// reset2FA (admin) disables a user's 2FA and clears their recovery codes so a
+// locked-out user can sign in with their password and re-enroll.
+func (s *Server) reset2FA(w http.ResponseWriter, r *http.Request) {
+	target := chi.URLParam(r, "id")
+	if err := s.store.SetUserTOTP(r.Context(), target, "", false); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if err := s.store.DeleteRecoveryCodes(r.Context(), target); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.2fa.reset", target, nil)
+	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": false})
 }
 
 // disable2FA turns 2FA off, requiring a current code to do so.
@@ -260,6 +332,7 @@ func (s *Server) disable2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = s.store.DeleteRecoveryCodes(r.Context(), uid)
 	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.disable", uid, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": false})
 }

@@ -11,6 +11,21 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Per-user TOTP two-factor. Secret is AES-GCM encrypted at rest (enc:v1:…).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+
+-- One-time 2FA recovery codes. Stored hashed (SHA-256); single-use (used_at set
+-- on consumption). Used to log in when the authenticator is lost.
+CREATE TABLE IF NOT EXISTS user_recovery_codes (
+    id         UUID PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    used_at    TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_recovery_user ON user_recovery_codes(user_id);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id          UUID PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -25,6 +40,31 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     name        TEXT NOT NULL DEFAULT '',
     role        TEXT NOT NULL DEFAULT 'admin',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Bind an API token (e.g. an MCP connector) to a user so it inherits that
+-- user's access scope. NULL = unscoped (full, current behavior).
+ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+
+-- Per-user access scope. A user with NO rows has full access (all clients);
+-- any rows restrict the user to the union of those client/site/agent subtrees.
+-- Scopes apply to tech/readonly; admins always have full access.
+CREATE TABLE IF NOT EXISTS user_scopes (
+    id         UUID PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope_type TEXT NOT NULL, -- client | site | agent
+    scope_id   UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, scope_type, scope_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_scopes_user ON user_scopes(user_id);
+
+-- Editable instance configuration. Secret values are encrypted by the server
+-- before storage and are never returned by the API.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    is_secret  BOOLEAN NOT NULL DEFAULT false,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ===================== Org hierarchy (Client -> Site -> Agent) =====================
@@ -250,6 +290,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     title       TEXT NOT NULL DEFAULT 'New chat',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Owner (actor) of a chat session, so users only see their own AI conversations.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS created_by TEXT;
 
 CREATE TABLE IF NOT EXISTS chat_messages (
     id           UUID PRIMARY KEY,

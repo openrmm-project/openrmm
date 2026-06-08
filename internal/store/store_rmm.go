@@ -81,7 +81,7 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error
 
 // ListUsers returns all users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, username, role, created_at FROM users ORDER BY username`)
+	rows, err := s.pool.Query(ctx, `SELECT id, username, role, created_at, totp_enabled FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -165,6 +165,55 @@ func (s *Store) ReplaceUserScopes(ctx context.Context, userID string, scopes []m
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// ReplaceRecoveryCodes swaps a user's 2FA recovery codes for a fresh set of
+// hashes (any prior codes, used or not, are discarded).
+func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID string, hashes []string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM user_recovery_codes WHERE user_id=$1`, userID); err != nil {
+		return err
+	}
+	for _, h := range hashes {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_recovery_codes (id, user_id, code_hash) VALUES ($1,$2,$3)`,
+			newID(), userID, h); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// UseRecoveryCode consumes a single unused recovery code by its hash, returning
+// true if a matching unused code was found and marked used.
+func (s *Store) UseRecoveryCode(ctx context.Context, userID, codeHash string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE user_recovery_codes SET used_at=now()
+		 WHERE id = (SELECT id FROM user_recovery_codes
+		             WHERE user_id=$1 AND code_hash=$2 AND used_at IS NULL LIMIT 1)`,
+		userID, codeHash)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// CountUnusedRecoveryCodes returns how many recovery codes the user has left.
+func (s *Store) CountUnusedRecoveryCodes(ctx context.Context, userID string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM user_recovery_codes WHERE user_id=$1 AND used_at IS NULL`, userID).Scan(&n)
+	return n, err
+}
+
+// DeleteRecoveryCodes removes all of a user's recovery codes (on disable/reset).
+func (s *Store) DeleteRecoveryCodes(ctx context.Context, userID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM user_recovery_codes WHERE user_id=$1`, userID)
+	return err
 }
 
 // ListUserScopes returns a user's scopes (empty slice = full access).

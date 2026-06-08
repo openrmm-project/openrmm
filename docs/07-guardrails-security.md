@@ -48,7 +48,10 @@ tamper-evidence in production.
   user — `internal/auth/totp.go` (HMAC-SHA1, ±1 step, constant-time compare).
   Setup returns a QR/secret; once enabled, login requires a `code` and returns
   `401 {totp_required:true}` until a valid code is supplied. The TOTP secret is
-  encrypted at rest (see below).
+  encrypted at rest (see below). Enabling 2FA issues **10 one-time recovery
+  codes** (shown once, stored SHA-256-hashed, single-use) usable in place of the
+  TOTP code at login; a user can regenerate them, and an **admin can reset** a
+  locked-out user's 2FA.
 - Editable runtime secrets (AI API key, MeshCentral token key, TOTP secrets) are
   admin-only / write-only fields, **encrypted with AES-256-GCM** (`enc:v1:` prefix,
   `internal/settings`) before storage; `/api/config` returns only boolean `*_set`
@@ -136,4 +139,4 @@ exposes no secrets).
   technician principal + agent identity is still pending.
 - **TLS** must be terminated by a reverse proxy / tunnel (see docs/11-mcp.md).
 - **Script sandboxing** and **agent token rotation/revocation** remain roadmap
-  items. **2FA recovery codes** and admin-reset of a user's 2FA are not yet built.
+  items.

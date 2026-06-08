@@ -60,7 +60,7 @@ function LoginScreen({ onAuthed }) {
               <>
                 <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" autoFocus /></Field>
                 <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" /></Field>
-                {need2fa && <Field label="Authenticator code" hint="6-digit code from your authenticator app."><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" autoFocus className="mono tracking-widest" /></Field>}
+                {need2fa && <Field label="Authenticator code" hint="6-digit app code, or a recovery code if you lost your device."><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456 or xxxxx-xxxxx" autoFocus className="mono tracking-widest" /></Field>}
               </>
             ) : (
               <Field label="Bearer token" hint="Paste an issued API token or the admin token.">

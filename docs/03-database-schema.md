@@ -30,6 +30,10 @@ One-time / limited-use enrollment tokens (token, uses_left, expires_at).
 Console accounts. `password_hash` (bcrypt), `role` (`admin`/`tech`/`readonly`),
 `totp_secret` (encrypted, nullable) and `totp_enabled` for optional TOTP 2FA.
 
+### `user_recovery_codes`
+One-time 2FA recovery codes (id, user_id, `code_hash` SHA-256, `used_at`
+nullable). Issued when 2FA is enabled, single-use; cleared on disable/admin-reset.
+
 ### `user_scopes`
 Per-user access scope. Each row grants a user access to a Company (client),
 a Site, or a specific device; a user with no rows is **unrestricted**. Enforced

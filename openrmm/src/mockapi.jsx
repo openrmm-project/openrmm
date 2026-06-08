@@ -108,6 +108,8 @@ const api = {
   setup2FA() { return POST('/api/me/2fa/setup'); },
   enable2FA(code) { return POST('/api/me/2fa/enable', { code }); },
   disable2FA(code) { return POST('/api/me/2fa/disable', { code }); },
+  regenRecoveryCodes(code) { return POST('/api/me/2fa/recovery-codes', { code }); },
+  reset2FA(id) { return POST('/api/users/' + id + '/2fa/reset'); },
   async bootstrap(username, password) {
     const r = await POST('/api/auth/bootstrap', { username, password });
     setSession({ token: r.token, user: r.user, role: r.role });

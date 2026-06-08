@@ -108,6 +108,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/me/2fa/setup", s.setup2FA)
 			r.Post("/me/2fa/enable", s.enable2FA)
 			r.Post("/me/2fa/disable", s.disable2FA)
+			r.Post("/me/2fa/recovery-codes", s.regenRecoveryCodes)
 			r.Get("/config", s.getConfig)
 
 			r.Get("/clients", s.listClients)
@@ -163,6 +164,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/users", s.createUser)
 			r.Get("/users/{id}/scopes", s.getUserScopes)
 			r.Put("/users/{id}/scopes", s.setUserScopes)
+			r.Post("/users/{id}/2fa/reset", s.reset2FA)
 			r.Delete("/users/{id}", s.deleteUser)
 			r.Delete("/devices/{id}", s.deleteDevice)
 			r.Patch("/devices/{id}/group", s.setDeviceGroup)

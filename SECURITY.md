@@ -14,11 +14,14 @@ designed defense-first. This summarizes the posture; details live in
   deletion never via AI/MCP).
 - **Approval is mandatory by default** for every ad-hoc/AI script run (bypass
   only via the explicit `RMM_ALLOW_UNAPPROVED_JOBS=true`).
-- **RBAC**: `admin` / `tech` / `readonly`, enforced per route.
+- **RBAC**: `admin` / `tech` / `readonly`, enforced per route, plus **per-user
+  access scope** (Company/Site/device) filtered on read + write paths and on the
+  AI/MCP surface — restricted users can't see or touch out-of-scope devices.
+- **Two-factor (TOTP)**: optional per-user 2FA (RFC 6238); secret encrypted at rest.
 - **Secrets**: tokens are 256-bit random and stored hashed (SHA-256); passwords
-  use bcrypt; editable runtime secrets are encrypted in `app_settings`; the
-  admin/agent token comparisons are constant-time; no secret is logged or
-  returned by the API.
+  use bcrypt; editable runtime secrets (incl. TOTP secrets) are encrypted with
+  AES-256-GCM in `app_settings`; the admin/agent token comparisons are
+  constant-time; no secret is logged or returned by the API.
 - **Per-IP rate limiting** on auth (10/min), MCP (60/min) and the API (120/min)
   to blunt brute-force and token-guessing.
 - **Immutable audit log** of every sensitive action.

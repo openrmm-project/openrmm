@@ -29,6 +29,10 @@ this project fills.
 - **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
   monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
   installs as a system service and reports rich inventory.
+- **Access control** — `admin`/`tech`/`readonly` roles, optional **TOTP 2FA**, and
+  **per-user access scope** (Company/Site/device) enforced on read, write, and the
+  AI/MCP surface. AI reports stay in chat with a client-side **CSV download** —
+  never written to an endpoint.
 - **MCP server** — connect external AI (Claude, ChatGPT, …) to manage the fleet,
   reusing the same tools and the same human-approval guardrail. Secured with
   scoped revocable tokens + an IP allowlist; deploy privately (Tailscale) or

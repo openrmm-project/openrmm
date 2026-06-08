@@ -26,9 +26,26 @@ Logical grouping of agents (id, name, created_at).
 ### `enroll_tokens`
 One-time / limited-use enrollment tokens (token, uses_left, expires_at).
 
+### `users`
+Console accounts. `password_hash` (bcrypt), `role` (`admin`/`tech`/`readonly`),
+`totp_secret` (encrypted, nullable) and `totp_enabled` for optional TOTP 2FA.
+
+### `user_scopes`
+Per-user access scope. Each row grants a user access to a Company (client),
+a Site, or a specific device; a user with no rows is **unrestricted**. Enforced
+on read + write paths and on the AI/MCP surface.
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| user_id | uuid FK → users | cascade delete |
+| scope_type | text | `client` / `site` / `agent` |
+| scope_id | uuid | id of the client/site/agent |
+| | | unique on (user_id, scope_type, scope_id) |
+
 ### `api_tokens`
-Hashed API tokens for the UI/integrations (token_hash, name, role). The
-bootstrap `RMM_ADMIN_TOKEN` is also accepted without a row.
+Hashed API tokens for the UI/integrations (token_hash, name, role, nullable
+`user_id`). When bound to a user, the token inherits that user's access scope.
+The bootstrap `RMM_ADMIN_TOKEN` is also accepted without a row.
 
 ### `jobs`
 Units of work targeted at an agent.
@@ -61,9 +78,10 @@ created_at). Actions include `job.propose`, `job.approve`, `job.reject`,
 `job.result`, `remote.start`.
 
 ### `chat_sessions` / `chat_messages`
-Conversations with the AI. `chat_messages` stores `role`, `content`,
-`tool_calls` (jsonb), `tool_call_id`, `name` — mirroring the OpenAI-compatible
-schema so history can be replayed to the model verbatim.
+Conversations with the AI. `chat_sessions.created_by` owns the session (private
+to its creator). `chat_messages` stores `role`, `content`, `tool_calls` (jsonb),
+`tool_call_id`, `name` — mirroring the OpenAI-compatible schema so history can be
+replayed to the model verbatim.
 
 ## Relationships
 

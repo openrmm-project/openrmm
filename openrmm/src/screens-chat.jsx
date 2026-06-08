@@ -1,12 +1,97 @@
 /* screens-chat.jsx — AI Chat: sessions, transparent tool steps, proposed-job cards */
 
+// inlineBold renders **bold** spans within a line of text.
+function inlineBold(text, keyPrefix) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((p, j) => p.startsWith('**') && p.endsWith('**')
+    ? <b key={keyPrefix + j} className="font-semibold text-ink">{p.slice(2, -2)}</b>
+    : <span key={keyPrefix + j}>{p}</span>);
+}
+
+// isSep reports whether a line is a Markdown table separator (| --- | :--: |).
+function isSep(line) {
+  const cells = line.trim().replace(/^\||\|$/g, '').split('|');
+  return cells.length > 0 && cells.every((c) => /^\s*:?-{2,}:?\s*$/.test(c));
+}
+function splitRow(line) {
+  return line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+}
+
+// parseBlocks turns assistant text into blocks: text / table / code(csv).
+function parseBlocks(text) {
+  const lines = (text || '').split('\n');
+  const blocks = [];
+  let buf = [];
+  const flush = () => { if (buf.length) { blocks.push({ type: 'text', lines: buf }); buf = []; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // fenced code block ```lang ... ```
+    const fence = line.match(/^\s*```(\w*)\s*$/);
+    if (fence) {
+      flush();
+      const lang = fence[1].toLowerCase();
+      const body = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { body.push(lines[i]); i++; }
+      blocks.push({ type: 'code', lang, content: body.join('\n') });
+      continue;
+    }
+    // GitHub-style table: a row line followed by a separator line
+    if (line.includes('|') && i + 1 < lines.length && isSep(lines[i + 1])) {
+      flush();
+      const headers = splitRow(line);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim() !== '') { rows.push(splitRow(lines[i])); i++; }
+      i--;
+      blocks.push({ type: 'table', headers, rows });
+      continue;
+    }
+    buf.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+// tabularCSV returns a downloadable CSV from the first table or ```csv block, or null.
+function tabularCSV(blocks) {
+  const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  for (const b of blocks) {
+    if (b.type === 'code' && b.lang === 'csv' && b.content.trim()) return b.content.trim();
+    if (b.type === 'table') return [b.headers, ...b.rows].map((r) => r.map(esc).join(',')).join('\r\n');
+  }
+  return null;
+}
+
+// downloadText saves text as a file from the browser — no server/endpoint write.
+function downloadText(name, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function renderRich(text) {
-  return (text || '').split('\n').map((line, i) => {
-    if (line.trim() === '') return <div key={i} className="h-2" />;
-    const bullet = /^\s*[•\-]\s+/.test(line);
-    const clean = line.replace(/^\s*[•\-]\s+/, '');
-    const parts = clean.split(/(\*\*[^*]+\*\*)/g).map((p, j) => p.startsWith('**') && p.endsWith('**') ? <b key={j} className="font-semibold text-ink">{p.slice(2, -2)}</b> : <span key={j}>{p}</span>);
-    return <div key={i} className={cx('leading-relaxed', bullet && 'flex gap-2 pl-1')}>{bullet && <span className="text-brandhi mt-0.5">•</span>}<span>{parts}</span></div>;
+  return parseBlocks(text).map((b, bi) => {
+    if (b.type === 'table') {
+      return (
+        <div key={bi} className="my-2 overflow-x-auto rounded-lg border border-line">
+          <table className="w-full text-[12px] border-collapse">
+            <thead><tr className="bg-elevated/60">{b.headers.map((h, j) => <th key={j} className="text-left font-semibold text-ink px-2.5 py-1.5 border-b border-line whitespace-nowrap">{inlineBold(h, bi + '-h' + j + '-')}</th>)}</tr></thead>
+            <tbody>{b.rows.map((r, ri) => <tr key={ri} className="odd:bg-card/40">{r.map((c, ci) => <td key={ci} className="px-2.5 py-1.5 border-b border-line/50 text-muted align-top">{inlineBold(c, bi + '-' + ri + '-' + ci + '-')}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      );
+    }
+    if (b.type === 'code') {
+      return <pre key={bi} className="my-2 rounded-lg border border-line bg-[#0a0b0e] p-2.5 text-[11.5px] mono text-[#c8d0e0] overflow-x-auto whitespace-pre">{b.content}</pre>;
+    }
+    return b.lines.map((line, i) => {
+      if (line.trim() === '') return <div key={bi + '-' + i} className="h-2" />;
+      const bullet = /^\s*[•\-]\s+/.test(line);
+      const clean = line.replace(/^\s*[•\-]\s+/, '');
+      return <div key={bi + '-' + i} className={cx('leading-relaxed', bullet && 'flex gap-2 pl-1')}>{bullet && <span className="text-brandhi mt-0.5">•</span>}<span>{inlineBold(clean, bi + '-' + i + '-')}</span></div>;
+    });
   });
 }
 
@@ -143,11 +228,17 @@ function ChatMessage({ m, navigate }) {
   if (m.role === 'tool') return <ToolStep m={m} />;
   // assistant
   const jobIds = m.tool_calls?.created_job_ids || [];
+  const csv = tabularCSV(parseBlocks(m.content));
   return (
     <div className="flex items-start gap-3 animate-fade-in">
       <div className="h-7 w-7 rounded-lg bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0 mt-0.5"><Icon name="sparkle" size={14} /></div>
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] text-ink space-y-0.5">{renderRich(m.content)}</div>
+        {csv && (
+          <button onClick={() => downloadText('report-' + (m.id || 'export') + '.csv', csv, 'text/csv')} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line bg-card hover:border-line2 hover:bg-elevated/60 transition px-2.5 py-1.5 text-[12px] text-muted hover:text-ink">
+            <Icon name="download" size={13} className="text-brandhi" />Baixar CSV
+          </button>
+        )}
         {jobIds.map((id) => <ProposedJob key={id} jobId={id} navigate={navigate} />)}
       </div>
     </div>

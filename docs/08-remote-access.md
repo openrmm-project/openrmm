@@ -54,9 +54,23 @@ with a `connect_url` the UI acts on.
 - Both peers connect to `/ws/remote?token=...&role=agent|viewer`; the relay pairs
   them by token and pipes frames. This is the **transport plane** — the
   equivalent of RustDesk's `hbbr` relay.
-- **What's missing:** the **media engine** (screen capture, encode/decode with
-  VP8/9/AV1, input injection) in the agent's remote module and the viewer client.
-  That rides on top of this relay.
+- **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
+  agent spawns on demand. On Windows it captures the screen via **GDI BitBlt →
+  JPEG** and injects input via **SendInput**; the viewer is a plain
+  browser client (`openrmm/src/screens-devices.jsx`, also openable in a new tab).
+  A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
+  `0x02`=file chunk; JSON text for input, chat, and file ops.
+- **Capabilities:** multi-monitor selection, **in-session chat** (native dark
+  Win32 window on the host, rounded/minimizable), **bidirectional free-path file
+  transfer** with a RustDesk-style file manager (browse / create folder / copy /
+  cut / delete / upload / download), **UAC handling** (sidecar runs as SYSTEM in
+  the active console session via `CreateProcessAsUser`; `PromptOnSecureDesktop=0`),
+  and **logoff survival** (desktop-following via `OpenInputDesktop`/`SetThreadDesktop`
+  + viewer auto-reconnect). The agent keeps the sidecar current via an **ETag**
+  check.
+- **Still maturing:** the codec is JPEG (simple, works everywhere) rather than
+  VP8/9/AV1; non-Windows hosts have a stub. The RustDesk-fork plan below is the
+  path to hardware-accelerated codecs + E2E encryption.
 
 ## The "own remote tool" plan
 

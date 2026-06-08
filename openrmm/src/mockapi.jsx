@@ -157,6 +157,8 @@ const api = {
   listUsers() { return GET('/api/users'); },
   createUser(body) { return POST('/api/users', body); },
   deleteUser(id) { return DELETE('/api/users/' + id); },
+  getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
+  setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },
 
   /* ---- org ---- */
   listClients() { return GET('/api/clients'); },

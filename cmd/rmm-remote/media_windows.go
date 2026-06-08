@@ -3,14 +3,13 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/jpeg"
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -221,17 +220,20 @@ func (c *capturer) close() {
 	}
 }
 
-// frameJPEG grabs the screen and returns it JPEG-encoded.
-func (c *capturer) frameJPEG(buf *bytes.Buffer) ([]byte, error) {
+// frame grabs the screen into the capturer's RGBA buffer and returns it. The
+// pixels belong to the capturer (reused each call); the tile-delta encoder
+// (encoder.go) consumes them and decides what to send. This keeps capture
+// OS-specific while encoding stays shared/cross-platform.
+func (c *capturer) frame() (*image.RGBA, error) {
 	r, _, _ := procBitBlt.Call(c.mem, 0, 0, uintptr(c.w), uintptr(c.h), c.screen, uintptr(c.vx), uintptr(c.vy), srcCopy|captureBlt)
 	if r == 0 {
 		return nil, fmt.Errorf("BitBlt failed")
 	}
 	// Note: we intentionally do NOT composite the cursor into the frame — that
-	// pins the pointer to the ~12fps frame rate and feels laggy. The viewer
-	// shows its own (instant) local cursor instead; drawCursor remains for a
-	// future separate high-rate cursor channel.
-	// DIB is BGRX top-down; convert to RGBA.
+	// pins the pointer to the frame rate and feels laggy. The viewer shows its
+	// own (instant) local cursor instead; drawCursor remains for a future
+	// separate high-rate cursor channel.
+	// DIB is BGRX top-down; convert to RGBA in place.
 	src, dst := c.pixels, c.img.Pix
 	for i := 0; i+3 < len(src); i += 4 {
 		dst[i] = src[i+2]   // R
@@ -239,11 +241,7 @@ func (c *capturer) frameJPEG(buf *bytes.Buffer) ([]byte, error) {
 		dst[i+2] = src[i]   // B
 		dst[i+3] = 255      // A
 	}
-	buf.Reset()
-	if err := jpeg.Encode(buf, c.img, &jpeg.Options{Quality: 55}); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return c.img, nil
 }
 
 // ---- input injection ----
@@ -314,7 +312,7 @@ func handleInput(data []byte) {
 // Relay messages are multiplexed: binary messages carry a 1-byte channel tag,
 // text messages are JSON with a "t" field.
 const (
-	chVideo = 0x01 // agent -> viewer: [chVideo][JPEG]
+	chVideo = 0x01 // agent -> viewer: [chVideo][tile-delta payload] (see encoder.go)
 	chFile  = 0x02 // either way:      [chFile][id][bytes]
 )
 
@@ -335,6 +333,7 @@ type session struct {
 	mu      sync.Mutex
 	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
 	uacOff  bool               // true while we've moved UAC prompts off the secure desktop
+	kfReq   atomic.Bool        // a viewer asked for a full keyframe (e.g. on reconnect)
 }
 
 func (s *session) send(mt int, data []byte) {
@@ -415,7 +414,7 @@ func (s *session) desktopWorker() {
 	var cap *capturer
 	var curDesk uintptr
 	var curName string
-	var buf bytes.Buffer
+	enc := newVideoEncoder(65)
 	defer func() {
 		if cap != nil {
 			cap.close()
@@ -448,13 +447,14 @@ func (s *session) desktopWorker() {
 		if nc, e := newCapturer(); e == nil {
 			cap = nc
 		}
+		enc.reset() // new desktop/resolution → next frame is a full keyframe
 		if curDesk != 0 {
 			procCloseDesktop.Call(curDesk)
 		}
 		curDesk, curName = h, name
 	}
 
-	ticker := time.NewTicker(80 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
@@ -468,13 +468,20 @@ func (s *session) desktopWorker() {
 			if cap == nil {
 				continue
 			}
-			jpg, err := cap.frameJPEG(&buf)
+			if s.kfReq.Swap(false) {
+				enc.forceKeyframe()
+			}
+			img, err := cap.frame()
 			if err != nil {
 				ensure(true) // rebuild (desktop likely switched)
 				continue
 			}
+			payload, err := enc.encode(img)
+			if err != nil || payload == nil {
+				continue // encode error, or nothing changed since last frame
+			}
 			select {
-			case s.out <- wsMsg{websocket.BinaryMessage, append([]byte{chVideo}, jpg...)}:
+			case s.out <- wsMsg{websocket.BinaryMessage, append([]byte{chVideo}, payload...)}:
 			case <-s.done:
 				return
 			}
@@ -516,6 +523,9 @@ func (s *session) onMessage(mt int, data []byte) {
 		case s.inputCh <- data:
 		default:
 		}
+	case "kf":
+		// Viewer (re)connected or its canvas was reset — force a full frame.
+		s.kfReq.Store(true)
 	case "chat":
 		if s.chat != nil {
 			s.chat.append("Tech: " + e.Text)

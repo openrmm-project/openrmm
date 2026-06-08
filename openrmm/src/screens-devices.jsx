@@ -189,9 +189,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
 // RemoteViewer is the native remote-desktop viewer: it connects to the relay as
 // the viewer peer and multiplexes video (JPEG frames), input, chat and file
 // transfer over the one socket. Pairs with cmd/rmm-remote.
-//   binary [0x01][JPEG]      screen frame   (agent -> viewer)
-//   binary [0x02][id][bytes] file chunk     (both directions)
-//   text   {"t":...}         input / chat / file control
+//   binary [0x01][tile-delta] screen frame  (agent -> viewer; see encoder.go)
+//   binary [0x02][id][bytes]  file chunk     (both directions)
+//   text   {"t":...}          input / chat / file control ({t:'kf'} = request keyframe)
 const CH_VIDEO = 0x01, CH_FILE = 0x02;
 function RemoteViewer({ deviceId, hostname, onClose }) {
   const toast = useToast();
@@ -238,19 +238,35 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       }
       const bytes = new Uint8Array(ev.data);
       if (bytes[0] === CH_VIDEO) {
-        const url = URL.createObjectURL(new Blob([ev.data.slice(1)], { type: 'image/jpeg' }));
-        const img = new Image();
-        img.onload = () => {
-          if (canvasRef.current) {
-            if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
-            cv.getContext('2d').drawImage(img, 0, 0);
-          }
-          URL.revokeObjectURL(url);
-        };
-        img.src = url;
+        drawVideo(ev.data);
       } else if (bytes[0] === CH_FILE) {
         const d = dlRef.current[bytes[1]];
         if (d) d.chunks.push(ev.data.slice(2));
+      }
+    };
+
+    // drawVideo composites a tile-delta frame (see cmd/rmm-remote/encoder.go):
+    //   [1] flags  [2] frameW  [2] frameH  [2] tileCount
+    //   per tile:  [2] x [2] y [2] w [2] h [4] jpegLen [jpeg…]
+    // Only changed tiles arrive; a keyframe carries one full-screen tile.
+    const drawVideo = (buf) => {
+      const cv2 = canvasRef.current;
+      if (!cv2 || buf.byteLength < 8) return;
+      const dv = new DataView(buf, 1);
+      const fw = dv.getUint16(1), fh = dv.getUint16(3), n = dv.getUint16(5);
+      if (cv2.width !== fw || cv2.height !== fh) { cv2.width = fw; cv2.height = fh; }
+      const ctx = cv2.getContext('2d');
+      let p = 7;
+      for (let i = 0; i < n; i++) {
+        if (p + 12 > dv.byteLength) break;
+        const x = dv.getUint16(p), y = dv.getUint16(p + 2);
+        const len = dv.getUint32(p + 8);
+        p += 12;
+        const jpg = buf.slice(1 + p, 1 + p + len);
+        p += len;
+        createImageBitmap(new Blob([jpg], { type: 'image/jpeg' }))
+          .then((bmp) => { if (canvasRef.current) ctx.drawImage(bmp, x, y); if (bmp.close) bmp.close(); })
+          .catch(() => {});
       }
     };
 
@@ -274,7 +290,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
-      ws.onopen = () => { retries = 0; setStatus('streaming'); };
+      ws.onopen = () => { retries = 0; setStatus('streaming'); try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {} };
       ws.onerror = () => {};
       ws.onclose = () => {
         if (stopped) return;

@@ -55,11 +55,22 @@ with a `connect_url` the UI acts on.
   them by token and pipes frames. This is the **transport plane** — the
   equivalent of RustDesk's `hbbr` relay.
 - **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
-  agent spawns on demand. On Windows it captures the screen via **GDI BitBlt →
-  JPEG** and injects input via **SendInput**; the viewer is a plain
-  browser client (`openrmm/src/screens-devices.jsx`, also openable in a new tab).
-  A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
-  `0x02`=file chunk; JSON text for input, chat, and file ops.
+  agent spawns on demand. On Windows it captures the screen via **GDI BitBlt**
+  and injects input via **SendInput**; the viewer is a plain browser client
+  (`openrmm/src/screens-devices.jsx`, also openable in a new tab). A
+  **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
+  `0x02`=file chunk; JSON text for input, chat, file ops, and `{t:"kf"}` (the
+  viewer asks for a keyframe on (re)connect).
+- **Codec — tile-delta (CGO-free, OS-agnostic):** `encoder.go` splits each
+  captured RGBA frame into a grid of 64-px tiles and JPEG-encodes only the tiles
+  that changed since the previous frame; a keyframe sends the whole screen as one
+  JPEG. Idle/static screens cost almost nothing on the wire, so the frame rate
+  rises (20 fps) without saturating the link. Because the encoder works purely on
+  the pixel buffer, **any per-OS capturer feeds the same codec** — no fork. The
+  payload is `[flags][frameW][frameH][tileCount]` then per tile
+  `[x][y][w][h][jpegLen][jpeg]` (big-endian); the viewer composites tiles onto a
+  `<canvas>`. Unit-tested in `encoder_test.go` (keyframe, no-change → no send,
+  changed-tile localization, forced keyframe).
 - **Capabilities:** multi-monitor selection, **in-session chat** (native dark
   Win32 window on the host, rounded/minimizable), **bidirectional free-path file
   transfer** with a RustDesk-style file manager (browse / create folder / copy /
@@ -68,15 +79,21 @@ with a `connect_url` the UI acts on.
   and **logoff survival** (desktop-following via `OpenInputDesktop`/`SetThreadDesktop`
   + viewer auto-reconnect). The agent keeps the sidecar current via an **ETag**
   check.
-- **Still maturing:** the codec is JPEG (simple, works everywhere) rather than
-  VP8/9/AV1; non-Windows hosts have a stub. The RustDesk-fork plan below is the
-  path to hardware-accelerated codecs + E2E encryption.
+- **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
+  rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
+  full-motion video. **Non-Windows host capture** is the next increment: a
+  pure-Go **X11** capturer (`XGetImage` over the display socket, no CGO) plus
+  **XTEST** input injection — the same "native technique," not a fork — which
+  plugs straight into the shared tile-delta codec. macOS lacks a CGO-free capture
+  path and stays a stub for now. End-to-end media encryption is still open
+  (today the relay is the trust boundary; terminate WSS — see `07`).
 
-## The "own remote tool" plan
+## The "own remote tool" plan (no fork)
 
-The recommendation (and the reason the native relay exists) is to build the own
-remote tool by **forking RustDesk** for the media engine and pointing it at this
-relay, rather than writing screen capture/codecs from scratch (years of work).
+The chosen direction is a **homegrown, CGO-free engine**: native per-OS capture
+(Windows GDI today, X11 next) + input injection feeding one shared tile-delta
+codec (`encoder.go`). A RustDesk fork is **explicitly not** pursued; the notes
+below are kept only as historical context for the licensing analysis.
 
 **Licensing — why a fork is now clean:** RustDesk is AGPL-3.0. Because this
 project ships as **open source**, distributing a RustDesk-derived module under

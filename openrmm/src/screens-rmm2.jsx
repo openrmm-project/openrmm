@@ -419,6 +419,10 @@ function UsersPanel({ canAdmin }) {
   const [newRole, setNewRole] = useState('tech');
   const [scopes, setScopes] = useState([]); // [] = full access
   const [confirmDel, setConfirmDel] = useState(null);
+  const [editUser, setEditUser] = useState(null);   // user whose scope is being edited
+  const [editScopes, setEditScopes] = useState([]);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
   const users = usersQ.data?.users || [];
 
   const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setCreating(false); };
@@ -429,6 +433,26 @@ function UsersPanel({ canAdmin }) {
     } catch (e) { toast.error('Failed', e.message); }
   };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
+
+  // Open the scope editor: fetch the user's current scopes first, then render the
+  // picker (so its mode initializes from the loaded selection).
+  const openEdit = async (u) => {
+    setEditUser(u); setEditLoading(true); setEditScopes([]);
+    try {
+      const r = await api.getUserScopes(u.id);
+      setEditScopes((r.scopes || []).map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })));
+    } catch (e) { toast.error('Failed to load scope', e.message); }
+    finally { setEditLoading(false); }
+  };
+  const saveEdit = async () => {
+    setEditSaving(true);
+    try {
+      await api.setUserScopes(editUser.id, editScopes.map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })));
+      toast.success('Scope updated', editScopes.length ? editScopes.length + ' scope(s)' : 'full access');
+      setEditUser(null);
+    } catch (e) { toast.error('Failed', e.message); }
+    finally { setEditSaving(false); }
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -445,7 +469,14 @@ function UsersPanel({ canAdmin }) {
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><Avatar name={u.username} size={28} /><span className="text-[13px] text-ink font-medium">{u.username}</span></div></td>
               <td className="px-3 py-3"><RoleBadge role={u.role} /></td>
               <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(u.created_at)}</td>
-              <td className="px-4 py-3 text-right">{canAdmin && u.username !== 'admin' && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(u)}>Remove</Button>}</td>
+              <td className="px-4 py-3 text-right">
+                {canAdmin && (
+                  <div className="flex items-center justify-end gap-1">
+                    {u.role !== 'admin' && <Button size="sm" variant="ghost" icon="shield" onClick={() => openEdit(u)}>Scope</Button>}
+                    {u.username !== 'admin' && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(u)}>Remove</Button>}
+                  </div>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -465,6 +496,16 @@ function UsersPanel({ canAdmin }) {
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
+      <Modal open={!!editUser} onClose={() => !editSaving && setEditUser(null)} width="max-w-lg">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-1">Access scope</div>
+          <div className="text-[12px] text-muted mb-4">Define which Companies, Sites or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
+          {editLoading
+            ? <div className="py-8 flex items-center justify-center gap-2 text-faint text-[12.5px]"><Spinner size={14} />Loading current scope…</div>
+            : <ScopePicker key={editUser?.id} scopes={editScopes} setScopes={setEditScopes} />}
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={saveEdit}>Save scope</Button></div>
+        </div>
+      </Modal>
     </Card>
   );
 }

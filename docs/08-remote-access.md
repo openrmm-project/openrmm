@@ -55,10 +55,12 @@ with a `connect_url` the UI acts on.
   them by token and pipes frames. This is the **transport plane** — the
   equivalent of RustDesk's `hbbr` relay.
 - **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
-  agent spawns on demand. On Windows it captures the screen via **GDI BitBlt**
-  and injects input via **SendInput**; the viewer is a plain browser client
-  (`openrmm/src/screens-devices.jsx`, also openable in a new tab). A
-  **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
+  agent spawns on demand. **Windows** captures via **GDI BitBlt** + **SendInput**;
+  **Linux** captures via pure-Go **X11** (`GetImage` over the display socket) +
+  **XTEST** input injection (`media_linux.go` / `x11_linux.go`) — the same native
+  technique, no fork. macOS has no CGO-free capture path yet (stub). The viewer is
+  a plain browser client (`openrmm/src/screens-devices.jsx`, also openable in a new
+  tab). A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
   `0x02`=file chunk; JSON text for input, chat, file ops, and `{t:"kf"}` (the
   viewer asks for a keyframe on (re)connect).
 - **Codec — tile-delta (CGO-free, OS-agnostic):** `encoder.go` splits each
@@ -71,27 +73,28 @@ with a `connect_url` the UI acts on.
   `[x][y][w][h][jpegLen][jpeg]` (big-endian); the viewer composites tiles onto a
   `<canvas>`. Unit-tested in `encoder_test.go` (keyframe, no-change → no send,
   changed-tile localization, forced keyframe).
-- **Capabilities:** multi-monitor selection, **in-session chat** (native dark
+- **Windows extras:** multi-monitor selection, **in-session chat** (native dark
   Win32 window on the host, rounded/minimizable), **bidirectional free-path file
   transfer** with a RustDesk-style file manager (browse / create folder / copy /
   cut / delete / upload / download), **UAC handling** (sidecar runs as SYSTEM in
   the active console session via `CreateProcessAsUser`; `PromptOnSecureDesktop=0`),
   and **logoff survival** (desktop-following via `OpenInputDesktop`/`SetThreadDesktop`
   + viewer auto-reconnect). The agent keeps the sidecar current via an **ETag**
-  check.
+  check. The **Linux** engine currently does screen + mouse + keyboard only (chat /
+  file-transfer / multi-seat are Windows-only for now); keyboard maps DOM keyCodes
+  to X keysyms (US layout, best-effort) resolved through the server keymap.
 - **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
   rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
-  full-motion video. **Non-Windows host capture** is the next increment: a
-  pure-Go **X11** capturer (`XGetImage` over the display socket, no CGO) plus
-  **XTEST** input injection — the same "native technique," not a fork — which
-  plugs straight into the shared tile-delta codec. macOS lacks a CGO-free capture
-  path and stays a stub for now. End-to-end media encryption is still open
-  (today the relay is the trust boundary; terminate WSS — see `07`).
+  full-motion video. The Linux engine assumes a TrueColor little-endian X server
+  and captures the first screen (RandR multi-monitor stitched); Wayland sessions
+  need XWayland. macOS capture (CoreGraphics) needs CGO and stays a stub. End-to-end
+  media encryption is still open (today the relay is the trust boundary; terminate
+  WSS — see `07`).
 
 ## The "own remote tool" plan (no fork)
 
 The chosen direction is a **homegrown, CGO-free engine**: native per-OS capture
-(Windows GDI today, X11 next) + input injection feeding one shared tile-delta
+(Windows GDI + Linux X11 today) + input injection feeding one shared tile-delta
 codec (`encoder.go`). A RustDesk fork is **explicitly not** pursued; the notes
 below are kept only as historical context for the licensing analysis.
 

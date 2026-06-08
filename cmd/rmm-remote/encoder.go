@@ -26,10 +26,17 @@ import (
 //		[4] jpegLen                  uint32 BE
 //		[jpegLen] JPEG bytes
 const (
-	tileSize   = 64
+	tileSize          = 64
 	videoFlagKeyframe = 0x01
 	videoHdrLen       = 7
 	tileHdrLen        = 12
+)
+
+// Relay messages are multiplexed: binary messages carry a 1-byte channel tag,
+// text messages are JSON with a "t" field. Shared across OS capturers.
+const (
+	chVideo = 0x01 // agent -> viewer: [chVideo][tile-delta payload] (see encode)
+	chFile  = 0x02 // either way:      [chFile][id][bytes]
 )
 
 // videoEncoder is single-goroutine except for forceKeyframe, which any goroutine

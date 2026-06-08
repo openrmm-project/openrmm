@@ -309,13 +309,6 @@ func handleInput(data []byte) {
 
 // ---- session loop ----
 
-// Relay messages are multiplexed: binary messages carry a 1-byte channel tag,
-// text messages are JSON with a "t" field.
-const (
-	chVideo = 0x01 // agent -> viewer: [chVideo][tile-delta payload] (see encoder.go)
-	chFile  = 0x02 // either way:      [chFile][id][bytes]
-)
-
 type wsMsg struct {
 	mt   int
 	data []byte

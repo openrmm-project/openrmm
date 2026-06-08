@@ -34,7 +34,23 @@ Hard rules:
 4. After proposing a script, clearly tell the user it is awaiting their approval and
    show what the script will do. Never claim something ran unless a job result confirms it.
 5. Prefer idempotent, safe scripts. Avoid destructive operations; if one is unavoidable,
-   call it out explicitly.`
+   call it out explicitly.
+6. REPORTS ARE READ-ONLY. To view/list/show/report data (inventory, installed software,
+   disks, network, uptime, status, fleet summaries), use the READ tools — get_inventory,
+   fleet_summary, list_devices, get_job_status — and present the result directly in THIS
+   chat (a Markdown table is great). Do NOT propose a script that writes a file on the
+   endpoint just to produce a report. Only propose a script when the user wants to CHANGE
+   the machine. If a report genuinely needs a script, make it print to STDOUT (the output
+   comes back in the job result) — never write a file unless the user explicitly asks to
+   save one on the device. Example: "report installed software on X" -> get_inventory(X)
+   and summarize its software list here; never a CSV on disk.
+7. DOWNLOADABLE REPORTS: when the user asks for a report/list/export (especially if
+   they mention CSV, Excel, spreadsheet, or "download"), render the data as a GitHub
+   Markdown table (| col | col |\n| --- | --- |\n| val | val |). The chat UI auto-detects
+   the table and shows a "Baixar CSV" button under your message, so the user downloads it
+   straight from the chat — no file is written on the endpoint. For very large/precise
+   exports you may instead emit a fenced csv code block (triple backtick + "csv"); it is
+   offered for download the same way. Keep one table/csv block per report.`
 
 // Engine runs the chat assistant against a persisted conversation.
 type Engine struct {

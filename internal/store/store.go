@@ -421,21 +421,34 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]models.AuditEntry, 
 // ---------- Chat ----------
 
 // CreateChatSession starts a new conversation.
-func (s *Store) CreateChatSession(ctx context.Context, title string) (*models.ChatSession, error) {
+func (s *Store) CreateChatSession(ctx context.Context, title, owner string) (*models.ChatSession, error) {
 	if title == "" {
 		title = "New chat"
 	}
 	id := newID()
-	_, err := s.pool.Exec(ctx, `INSERT INTO chat_sessions (id, title) VALUES ($1,$2)`, id, title)
+	_, err := s.pool.Exec(ctx, `INSERT INTO chat_sessions (id, title, created_by) VALUES ($1,$2,$3)`, id, title, owner)
 	if err != nil {
 		return nil, err
 	}
 	return &models.ChatSession{ID: id, Title: title, CreatedAt: time.Now()}, nil
 }
 
-// ListChatSessions returns conversations, newest first.
-func (s *Store) ListChatSessions(ctx context.Context) ([]models.ChatSession, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, title, created_at FROM chat_sessions ORDER BY created_at DESC`)
+// ChatSessionOwner returns the actor that owns a chat session ("" if unowned).
+func (s *Store) ChatSessionOwner(ctx context.Context, id string) (string, error) {
+	var owner *string
+	err := s.pool.QueryRow(ctx, `SELECT created_by FROM chat_sessions WHERE id=$1`, id).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if owner == nil {
+		return "", err
+	}
+	return *owner, err
+}
+
+// ListChatSessions returns a user's own conversations, newest first.
+func (s *Store) ListChatSessions(ctx context.Context, owner string) ([]models.ChatSession, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, title, created_at FROM chat_sessions WHERE created_by=$1 ORDER BY created_at DESC`, owner)
 	if err != nil {
 		return nil, err
 	}

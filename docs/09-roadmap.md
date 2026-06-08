@@ -13,6 +13,8 @@ audit). The product's differentiator.
 ## ✅ Phase 2 — Real RMM (done)
 - **Client → Site → Agent hierarchy** + site-bound enrollment tokens.
 - **RBAC** — users (bcrypt) + sessions; roles admin/tech/readonly; API tokens.
+  Plus **TOTP 2FA** and **per-user access scope** (Company/Site/device), enforced
+  on read + write paths and on the AI/MCP surface.
 - **Script library** + run-on-device.
 - **Monitoring checks** (diskspace, memory, cpuload, ping, winservice, script)
   with thresholds, history, and a server-driven scheduler.
@@ -27,16 +29,20 @@ Remaining Phase 2 nice-to-haves:
 - High-level AI action tools (`install_software`, `install_printer(model, ip)`).
 - Patch management.
 
-## Phase 3 — Remote access (dual → native)
-- Finish the MeshCentral token-login embed (turnkey in-browser sessions).
-- Agent-side RustDesk provisioning (install as service, set password, report ID).
-- Fork RustDesk for the native media engine on top of the existing relay; make
-  `native` a first-class provider. Drop it if it underperforms.
+## ✅ Phase 3 — Remote access (done; codecs maturing)
+- MeshCentral token-login embed (turnkey in-browser sessions).
+- **Native media engine built** on top of the relay: a CGO-free sidecar
+  (`cmd/rmm-remote`) doing GDI screen capture + SendInput, in-session chat,
+  bidirectional free-path file transfer with a file manager, multi-monitor, UAC
+  handling (SYSTEM in the active session), and logoff survival. `native` is a
+  first-class provider; the viewer also opens in a browser tab.
+- **Remaining:** hardware-accelerated codecs + E2E encryption via the RustDesk
+  fork ([12-native-remote-fork](12-native-remote-fork.md)); non-Windows host capture.
 
-## Phase 4 — Frontend
-Modern UI per `FRONTEND_DESIGN_BRIEF.md`: dashboard, devices, device detail with
-remote-launch, jobs + approval queue with dry-run preview, the AI chat, and the
-audit log.
+## ✅ Phase 4 — Frontend (done)
+React SPA (`openrmm/`) per `FRONTEND_DESIGN_BRIEF.md`, wired to the backend:
+dashboard, devices, device detail with remote-launch, jobs + approval queue with
+dry-run preview, AI chat (with in-chat CSV report download), audit, users/2FA/scope.
 
 ## Cross-cutting hardening
 TLS everywhere, rate limiting, script output caps, agent revocation, signed

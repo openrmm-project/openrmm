@@ -24,6 +24,10 @@ scoped tokens and IP allowlisting.
   # -> returns {"token":"..."}  (shown once; store it)
   ```
   Revoke anytime: `DELETE /api/api-tokens/{id}`.
+- **Access scope**: if the API token is bound to a user with a restricted access
+  scope, the MCP tools see and act on **only** that user's Companies/Sites/devices —
+  the same enforcement as the in-app AI (see `06-ai-chat` and `07-guardrails-security`).
+  An unbound/admin token sees the whole fleet.
 
 ## Connecting a client
 

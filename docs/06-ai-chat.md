@@ -23,7 +23,7 @@ only exposes an `api_key_set` boolean to the UI.
 
 ## The loop
 
-`internal/ai/chat.go` — `Engine.Respond(sessionID, userContent, actor)`:
+`internal/ai/chat.go` — `Engine.Respond(ctx, sessionID, userContent, actor, scopeUser)`:
 
 1. Persist the user message.
 2. Load full history + a system prompt that hard-codes the guardrails.
@@ -37,6 +37,16 @@ only exposes an `api_key_set` boolean to the UI.
 History is replayed verbatim each turn (tool_calls and tool results stored as
 they came), so the conversation is stateless on the server beyond Postgres.
 
+### Access-scope enforcement
+
+`scopeUser` is the caller's user id when they have a **restricted access scope**
+(see `07-guardrails-security`). It flows into `ToolContext.ScopeUserID`, and every
+device-targeting tool (`list_devices`, `get_inventory`, `propose_script`,
+`get_job_status`, `cancel_job`, `fleet_summary`) checks `tc.allows(ctx, agentID)`
+before reading or proposing — so a scoped user's AI sees and acts on exactly the
+devices that user can. Admins/unrestricted users pass an empty `scopeUser` and see
+everything. The same enforcement applies to the MCP server (`11-mcp`).
+
 ## Tools (`internal/ai/tools.go`)
 
 | Tool | Kind | Description |
@@ -45,6 +55,7 @@ they came), so the conversation is stateless on the server beyond Postgres.
 | `get_inventory` | read | Latest inventory for a device |
 | `get_job_status` | read | Status + result of a job |
 | `fleet_summary` | read | Aggregate counts + recent jobs (for reports) |
+| `cancel_job` | control | Reject a pending job or request cancel of a running one |
 | `propose_script` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
 
 ### Why `propose_script` is the only write tool
@@ -85,6 +96,29 @@ rejected, job left awaiting approval).
 Reports are just the model summarizing data it fetched via `fleet_summary` /
 `get_inventory` / `get_job_status`. No special endpoint — ask for a report in
 chat and the model assembles it from tool output.
+
+**Reports are read-only and stay in the chat.** A system-prompt rule forbids the
+model from proposing a script that writes a report file on the endpoint: to
+"report / list / show" data it must use the read tools and answer in chat. If a
+report genuinely needs a script, the script prints to **STDOUT** (the output comes
+back in the job result) — it never writes a file on the device unless the user
+explicitly asks to save one there.
+
+### Downloadable CSV in the chat
+
+When the user asks for a report/export (or mentions CSV/spreadsheet/download), the
+model renders the data as a **GitHub Markdown table** (or a fenced ` ```csv ` block).
+The chat UI (`openrmm/src/screens-chat.jsx`) parses the assistant message:
+
+- Markdown tables render as real HTML tables.
+- A **"Baixar CSV"** button appears under the message; it builds the CSV and
+  downloads it **client-side via a `Blob`** — nothing is written on the server or
+  the endpoint, and no file artifact is persisted.
+
+This is the recommended way to get a report "as a file": the data is fetched with
+read tools, shown in chat, and exported by the browser on demand. To pull an
+*existing* file off an endpoint instead, use the remote-access file manager
+(`08-remote-access`).
 
 ## Adding a tool
 

@@ -44,13 +44,34 @@ tamper-evidence in production.
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random
   secret; rotate it by issuing scoped `api_tokens` and retiring the bootstrap.
-- Editable runtime secrets (AI API key, MeshCentral token key) are admin-only,
-  write-only API fields. They are encrypted before storage in `app_settings` and
-  `/api/config` returns only boolean `*_set` flags.
+- Users: bcrypt password hashes. Optional **two-factor (TOTP, RFC 6238)** per
+  user — `internal/auth/totp.go` (HMAC-SHA1, ±1 step, constant-time compare).
+  Setup returns a QR/secret; once enabled, login requires a `code` and returns
+  `401 {totp_required:true}` until a valid code is supplied. The TOTP secret is
+  encrypted at rest (see below).
+- Editable runtime secrets (AI API key, MeshCentral token key, TOTP secrets) are
+  admin-only / write-only fields, **encrypted with AES-256-GCM** (`enc:v1:` prefix,
+  `internal/settings`) before storage; `/api/config` returns only boolean `*_set`
+  flags.
 - Agents: a random 32-byte token minted at enrollment, stored **hashed**
   (SHA-256) server-side; compared in constant time. Enroll tokens are
   single/limited-use and can expire.
 - Remote sessions: short-lived (2 min) random tokens, scoped to one session.
+
+## RBAC & per-user access scope
+
+- **Roles** `readonly < tech < admin`, enforced by chi route groups (the backend
+  returns `403`, the UI also gates nav). `readonly` may view and start **remote
+  access** but cannot run/approve scripts or delete devices; `tech` approves jobs
+  and manages scripts; `admin` manages users, policies, groups, audit, and deletes.
+- **Per-user access scope** (`user_scopes` table): a user is either *unrestricted*
+  (sees the whole fleet) or *restricted* to one or more assignments at
+  Company / Site / specific-device granularity. Scope is enforced on **both** the
+  read path (list endpoints are filtered — devices, jobs, alerts, checks, tasks,
+  check-results, clients, sites) and the write/action path, so a restricted user
+  cannot see or touch out-of-scope devices. **The AI/MCP respects the same scope**
+  (see `06-ai-chat`). Chat sessions are owned (`created_by`) and private to their
+  creator.
 
 ## Threat-model notes / hardening TODO
 
@@ -59,9 +80,9 @@ omitted:
 
 1. **TLS** — terminate HTTPS/WSS at a reverse proxy (Caddy/nginx/Traefik). Tokens
    and traffic must not cross the wire in clear text.
-2. **RBAC / multi-tenancy** — current auth is a single admin role. Per-tenant and
-   per-group scoping is on the roadmap; until then treat every token as full
-   admin.
+2. ~~**RBAC / multi-tenancy**~~ — **DONE**: `readonly/tech/admin` roles plus
+   per-user Company/Site/device access scope, enforced on read and write paths and
+   on the AI/MCP surface. See *RBAC & per-user access scope* above.
 3. **Script sandboxing** — scripts run with the agent's privileges. Consider an
    allowlist of vetted scripts, signing, or a constrained execution mode for
    AI-authored scripts.
@@ -97,13 +118,22 @@ exposes no secrets).
   brute-force), 60/min on `/mcp`, 120/min across the authenticated API (anti
   token-guessing). Returns `429`. The key respects `RMM_TRUST_PROXY_HEADERS`.
 
+**Second pass (multi-tenancy / scope):**
+- A review of the new per-user scope feature found cross-tenant **read-path leaks**
+  (list endpoints `/jobs`, `/alerts`, `/checks`, `/tasks`, `/check-results` returned
+  all tenants even when the action path was scoped) and **globally readable chats**.
+  Both fixed: list endpoints are now scope-filtered and chat sessions are owned by
+  their creator. `/audit`, `/policies`, `/groups` moved to admin-only, `/scripts` to
+  tech, and alert ack/resolve are scope-gated. Verified live (readonly→403,
+  scoped user sees 0 out-of-scope jobs/alerts/clients).
+- **Two-factor (TOTP)** added for user logins; secrets encrypted at rest.
+
 **Remaining (tracked):**
 - **Relay auth** (`/ws/remote`): authenticated only by a short-lived (2 min)
   session token in the URL, with no principal binding. Browser WebSockets can't
   send custom auth headers, so a URL token is the standard pattern — but it can
-  leak via logs/history. Mitigated by the short TTL; a full fix (bind to the
-  technician principal + agent identity) lands with the native media engine,
-  which is not built yet, so no real sessions traverse the relay today.
+  leak via logs/history. Mitigated by the short TTL; binding the session to the
+  technician principal + agent identity is still pending.
 - **TLS** must be terminated by a reverse proxy / tunnel (see docs/11-mcp.md).
-- **Script sandboxing**, **agent token rotation/revocation**, and per-group RBAC
-  remain roadmap items.
+- **Script sandboxing** and **agent token rotation/revocation** remain roadmap
+  items. **2FA recovery codes** and admin-reset of a user's 2FA are not yet built.

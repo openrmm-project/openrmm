@@ -29,6 +29,15 @@ func (s *Server) listChecks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := checks[:0]
+		for _, c := range checks {
+			if inScope(set, c.AgentID) { // policy-owned (no agent) hidden for restricted users
+				f = append(f, c)
+			}
+		}
+		checks = f
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"checks": checks})
 }
 
@@ -82,6 +91,15 @@ func (s *Server) listCheckResults(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := results[:0]
+		for _, rr := range results {
+			if set[rr.AgentID] {
+				f = append(f, rr)
+			}
+		}
+		results = f
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
@@ -92,6 +110,15 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := tasks[:0]
+		for _, t := range tasks {
+			if inScope(set, t.AgentID) {
+				f = append(f, t)
+			}
+		}
+		tasks = f
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
 }
@@ -154,10 +181,40 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := alerts[:0]
+		for _, a := range alerts {
+			if inScope(set, a.AgentID) {
+				f = append(f, a)
+			}
+		}
+		alerts = f
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"alerts": alerts})
 }
 
+// requireAlertAgent enforces scope on an alert by its target agent. Returns
+// false when it has written the response.
+func (s *Server) requireAlertAgent(w http.ResponseWriter, r *http.Request, alertID string) bool {
+	if s.scopeUserID(r) == "" {
+		return true
+	}
+	agentID, err := s.store.AlertAgent(r.Context(), alertID)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return false
+	}
+	if agentID == nil || !s.agentAllowed(r, *agentID) {
+		writeErr(w, http.StatusForbidden, "alert is outside your access scope")
+		return false
+	}
+	return true
+}
+
 func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAlertAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	if err := s.store.SetAlertStatus(r.Context(), chi.URLParam(r, "id"), models.AlertAcked); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -166,6 +223,9 @@ func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAlertAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	if err := s.store.SetAlertStatus(r.Context(), chi.URLParam(r, "id"), models.AlertResolved); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

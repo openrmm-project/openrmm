@@ -18,6 +18,12 @@ authenticate via their own handshake/token and do not use this header.
 
 Errors are JSON: `{"error":"message"}` with an appropriate HTTP status.
 
+**Access scope.** When the caller's token is bound to a user with a restricted
+access scope, all list endpoints (devices, jobs, alerts, checks, tasks,
+check-results, clients, sites) are **filtered to in-scope devices**, and
+per-resource actions return `403` for out-of-scope targets. Unrestricted/admin
+callers see the whole fleet. See [07-guardrails-security](07-guardrails-security.md).
+
 ## Health
 
 | Method | Path | Auth | Description |
@@ -43,8 +49,8 @@ here**.
 | GET | `/api/devices/{id}/inventory` | Latest inventory snapshot |
 | POST | `/api/devices/{id}/remote` | Start a remote session |
 
-`POST /devices/{id}/remote` body: `{ "provider": "native" }` (or `meshcentral` /
-`rustdesk`; omitted → `RMM_REMOTE_PROVIDER`). Returns a `RemoteSession` including
+`POST /devices/{id}/remote` body: `{ "provider": "native" }` (or `meshcentral`;
+omitted → `RMM_REMOTE_PROVIDER`). Returns a `RemoteSession` including
 `connect_url`.
 
 ## Jobs
@@ -56,6 +62,7 @@ here**.
 | GET | `/api/jobs/{id}` | One job (with result) |
 | POST | `/api/jobs/{id}/approve` | Approve → dispatch |
 | POST | `/api/jobs/{id}/reject` | Reject a proposal |
+| POST | `/api/jobs/{id}/cancel` | Reject if pending, or request cancel of a running job |
 
 `POST /jobs` body:
 ```json
@@ -69,7 +76,7 @@ immediately (use only for trusted automation, never for AI-authored scripts).
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/audit?limit=` | Recent audit entries (newest first) |
+| GET | `/api/audit?limit=` | Recent audit entries (newest first) — **admin only** |
 
 ## Chat (AI)
 
@@ -85,19 +92,35 @@ immediately (use only for trusted automation, never for AI-authored scripts).
 { "content": "assistant reply text", "created_job_ids": ["..."] }
 ```
 `created_job_ids` are jobs the AI proposed during this turn — surface them for
-approval in the UI.
+approval in the UI. Chat sessions are **private to their creator** (owned via
+`created_by`). When the assistant returns a Markdown table or ` ```csv ` block,
+the UI offers an in-chat **CSV download** (client-side; nothing is written to any
+endpoint) — see [06-ai-chat](06-ai-chat.md).
 
 ## Auth & users
 
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
 | POST | `/api/auth/bootstrap` | none | Create the first admin (only when no users exist) |
-| POST | `/api/auth/login` | none | `{username,password}` → `{token, role, user_id}` |
+| POST | `/api/auth/login` | none | `{username,password,code?}` → `{token, role, user_id}`. If 2FA is on and `code` is missing/invalid → `401 {totp_required:true}` |
 | POST | `/api/auth/logout` | any | Revoke the session token |
 | GET | `/api/me` | any | Current `{actor, role}` |
 | GET | `/api/users` | admin | List users |
-| POST | `/api/users` | admin | `{username,password,role}` |
+| POST | `/api/users` | admin | `{username,password,role,scopes?}` (`scopes`: array of `{scope_type,scope_id}`) |
 | DELETE | `/api/users/{id}` | admin | Remove a user |
+| GET | `/api/users/{id}/scopes` | admin | List a user's access-scope assignments |
+| PUT | `/api/users/{id}/scopes` | admin | Replace scope assignments (`[]` = unrestricted) |
+
+### Two-factor (TOTP)
+
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/api/me/2fa/setup` | any | Generate a secret → `{secret, uri}` (render as QR) |
+| POST | `/api/me/2fa/enable` | any | `{code}` confirms the secret and enables 2FA |
+| POST | `/api/me/2fa/disable` | any | `{code}` disables 2FA |
+
+The TOTP secret is encrypted at rest (AES-256-GCM). 2FA recovery codes and
+admin-reset are not yet implemented.
 
 ## Runtime configuration
 

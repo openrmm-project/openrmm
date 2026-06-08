@@ -256,6 +256,56 @@ func (s *Store) ListClients(ctx context.Context) ([]models.Client, error) {
 	return out, rows.Err()
 }
 
+// ListClientsForUser returns the clients a scoped user may see (all when
+// unscoped) — those directly scoped, or parents of the user's site/agent scopes.
+func (s *Store) ListClientsForUser(ctx context.Context, userID string) ([]models.Client, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, name, created_at FROM clients c WHERE
+		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR c.id IN (
+		  SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='client'
+		  UNION SELECT s.client_id FROM user_scopes us JOIN sites s ON s.id=us.scope_id WHERE us.user_id=$1 AND us.scope_type='site'
+		  UNION SELECT s.client_id FROM user_scopes us JOIN agents a ON a.id=us.scope_id JOIN sites s ON s.id=a.site_id WHERE us.user_id=$1 AND us.scope_type='agent'
+		) ORDER BY name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Client
+	for rows.Next() {
+		var c models.Client
+		if err := rows.Scan(&c.ID, &c.Name, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListSitesForUser returns the sites a scoped user may see (all when unscoped):
+// directly scoped sites, sites under a scoped client, or sites of a scoped agent.
+func (s *Store) ListSitesForUser(ctx context.Context, userID, clientID string) ([]models.Site, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, client_id, name, created_at FROM sites si WHERE
+		($2 = '' OR si.client_id = $2) AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR si.id IN (SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='site')
+		  OR si.client_id IN (SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='client')
+		  OR si.id IN (SELECT a.site_id FROM user_scopes us JOIN agents a ON a.id=us.scope_id WHERE us.user_id=$1 AND us.scope_type='agent')
+		) ORDER BY name`, userID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Site
+	for rows.Next() {
+		var st models.Site
+		if err := rows.Scan(&st.ID, &st.ClientID, &st.Name, &st.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
 // DeleteClient removes a client (cascades to sites).
 func (s *Store) DeleteClient(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM clients WHERE id=$1`, id)
@@ -786,6 +836,16 @@ func (s *Store) ListAlerts(ctx context.Context, status string, limit int) ([]mod
 }
 
 // SetAlertStatus updates an alert's status by id (e.g. ack/resolve).
+// AlertAgent returns the agent an alert belongs to (nil for non-device alerts).
+func (s *Store) AlertAgent(ctx context.Context, id string) (*string, error) {
+	var agentID *string
+	err := s.pool.QueryRow(ctx, `SELECT agent_id FROM alerts WHERE id=$1`, id).Scan(&agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return agentID, err
+}
+
 func (s *Store) SetAlertStatus(ctx context.Context, id, status string) error {
 	var resolved interface{}
 	if status == models.AlertResolved {

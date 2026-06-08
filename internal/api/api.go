@@ -112,24 +112,18 @@ func (s *Server) Router() http.Handler {
 
 			r.Get("/clients", s.listClients)
 			r.Get("/sites", s.listSites)
-			r.Get("/groups", s.listGroups)
 			r.Get("/devices", s.listDevices)
 			r.Get("/devices/{id}", s.getDevice)
 			r.Get("/devices/{id}/inventory", s.getInventory)
 			// Remote access is allowed for readonly (remote assistance/observation);
 			// it still cannot run scripts, approve jobs, or change config.
 			r.Post("/devices/{id}/remote", s.startRemote)
-			r.Get("/scripts", s.listScripts)
-			r.Get("/scripts/{id}", s.getScript)
 			r.Get("/jobs", s.listJobs)
 			r.Get("/jobs/{id}", s.getJob)
 			r.Get("/checks", s.listChecks)
 			r.Get("/checks/{id}/results", s.listCheckResults)
 			r.Get("/tasks", s.listTasks)
-			r.Get("/policies", s.listPolicies)
-			r.Get("/policies/{id}/assignments", s.listPolicyAssignments)
 			r.Get("/alerts", s.listAlerts)
-			r.Get("/audit", s.listAudit)
 			r.Get("/chat/sessions", s.listChatSessions)
 			r.Get("/chat/sessions/{id}/messages", s.listChatMessages)
 		})
@@ -137,6 +131,9 @@ func (s *Server) Router() http.Handler {
 		// ---- tech (run things) ----
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleTech))
+			// Script library: tech+ (a script body can carry sensitive commands).
+			r.Get("/scripts", s.listScripts)
+			r.Get("/scripts/{id}", s.getScript)
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/{id}/approve", s.approveJob)
@@ -151,6 +148,12 @@ func (s *Server) Router() http.Handler {
 		// ---- admin (manage config) ----
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireRole(models.RoleAdmin))
+			// Cross-tenant management data — admin-only to avoid leaking other
+			// tenants' activity/structure to restricted users.
+			r.Get("/audit", s.listAudit)
+			r.Get("/groups", s.listGroups)
+			r.Get("/policies", s.listPolicies)
+			r.Get("/policies/{id}/assignments", s.listPolicyAssignments)
 			r.Put("/config", s.updateConfig)
 			r.Post("/enroll-tokens", s.createEnrollToken)
 			r.Get("/api-tokens", s.listAPITokens)
@@ -487,6 +490,23 @@ func (s *Server) requireAgent(w http.ResponseWriter, r *http.Request, agentID st
 	return false
 }
 
+// scopedAgentSet returns (set, true) for a restricted principal — the agent ids
+// it may see — used to filter list endpoints. Returns (nil, false) for full access.
+func (s *Server) scopedAgentSet(r *http.Request) (map[string]bool, bool) {
+	uid := s.scopeUserID(r)
+	if uid == "" {
+		return nil, false
+	}
+	agents, _ := s.store.ListAgentsForUser(r.Context(), uid)
+	set := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		set[a.ID] = true
+	}
+	return set, true
+}
+
+func inScope(set map[string]bool, id *string) bool { return id != nil && set[*id] }
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	denilSlices(v)
 	w.Header().Set("Content-Type", "application/json")
@@ -642,6 +662,15 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		f := js[:0]
+		for _, j := range js {
+			if set[j.AgentID] {
+				f = append(f, j)
+			}
+		}
+		js = f
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": js})
 }
 
@@ -754,7 +783,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 // ---------- chat ----------
 
 func (s *Server) listChatSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.store.ListChatSessions(r.Context())
+	sessions, err := s.store.ListChatSessions(r.Context(), actorOf(r))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -767,7 +796,7 @@ func (s *Server) createChatSession(w http.ResponseWriter, r *http.Request) {
 		Title string `json:"title"`
 	}
 	_ = decode(r, &in)
-	sess, err := s.store.CreateChatSession(r.Context(), in.Title)
+	sess, err := s.store.CreateChatSession(r.Context(), in.Title, actorOf(r))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -775,7 +804,25 @@ func (s *Server) createChatSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sess)
 }
 
+// requireChatOwner 403s unless the session belongs to the caller (chats are
+// private per user). Returns false when it has written the response.
+func (s *Server) requireChatOwner(w http.ResponseWriter, r *http.Request, sessionID string) bool {
+	owner, err := s.store.ChatSessionOwner(r.Context(), sessionID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "chat session not found")
+		return false
+	}
+	if owner != actorOf(r) {
+		writeErr(w, http.StatusForbidden, "not your chat session")
+		return false
+	}
+	return true
+}
+
 func (s *Server) listChatMessages(w http.ResponseWriter, r *http.Request) {
+	if !s.requireChatOwner(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	msgs, err := s.store.ListChatMessages(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -786,13 +833,7 @@ func (s *Server) listChatMessages(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "id")
-	ok, err := s.store.ChatSessionExists(r.Context(), sessionID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "chat session not found")
+	if !s.requireChatOwner(w, r, sessionID) {
 		return
 	}
 	var in struct {

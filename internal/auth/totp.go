@@ -64,3 +64,32 @@ func ValidateTOTP(secret, code string) bool {
 	}
 	return false
 }
+
+// recoveryAlphabet excludes ambiguous characters (0/O, 1/I/L) so codes are
+// easy to transcribe.
+const recoveryAlphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+
+// GenerateRecoveryCodes returns n high-entropy one-time codes formatted as
+// "xxxxx-xxxxx" (10 chars from a 31-symbol alphabet ≈ 49 bits each).
+func GenerateRecoveryCodes(n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		b := make([]byte, 10)
+		_, _ = rand.Read(b)
+		var sb strings.Builder
+		for j, v := range b {
+			if j == 5 {
+				sb.WriteByte('-')
+			}
+			sb.WriteByte(recoveryAlphabet[int(v)%len(recoveryAlphabet)])
+		}
+		out = append(out, sb.String())
+	}
+	return out
+}
+
+// NormalizeRecoveryCode lowercases and trims a submitted code so formatting
+// (spaces, case) doesn't affect the hash lookup.
+func NormalizeRecoveryCode(code string) string {
+	return strings.ToLower(strings.TrimSpace(code))
+}

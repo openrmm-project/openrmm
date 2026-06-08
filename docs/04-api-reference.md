@@ -102,7 +102,7 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
 | POST | `/api/auth/bootstrap` | none | Create the first admin (only when no users exist) |
-| POST | `/api/auth/login` | none | `{username,password,code?}` → `{token, role, user_id}`. If 2FA is on and `code` is missing/invalid → `401 {totp_required:true}` |
+| POST | `/api/auth/login` | none | `{username,password,code?}` → `{token, role, user_id}`. `code` is a TOTP **or** a one-time recovery code. If 2FA is on and `code` is missing/invalid → `401 {totp_required:true}` |
 | POST | `/api/auth/logout` | any | Revoke the session token |
 | GET | `/api/me` | any | Current `{actor, role}` |
 | GET | `/api/users` | admin | List users |
@@ -116,11 +116,16 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
 | POST | `/api/me/2fa/setup` | any | Generate a secret → `{secret, uri}` (render as QR) |
-| POST | `/api/me/2fa/enable` | any | `{code}` confirms the secret and enables 2FA |
-| POST | `/api/me/2fa/disable` | any | `{code}` disables 2FA |
+| POST | `/api/me/2fa/enable` | any | `{code}` confirms the secret, enables 2FA → `{totp_enabled, recovery_codes}` |
+| POST | `/api/me/2fa/disable` | any | `{code}` disables 2FA (and clears recovery codes) |
+| POST | `/api/me/2fa/recovery-codes` | any | `{code}` re-issues recovery codes → `{recovery_codes}` (invalidates the old set) |
+| POST | `/api/users/{id}/2fa/reset` | admin | Disable a user's 2FA + clear recovery codes (unlock a locked-out user) |
 
-The TOTP secret is encrypted at rest (AES-256-GCM). 2FA recovery codes and
-admin-reset are not yet implemented.
+The TOTP secret is encrypted at rest (AES-256-GCM). Enabling 2FA returns **10
+one-time recovery codes** (shown once; stored hashed with SHA-256). At login, a
+recovery code is accepted in the same `code` field as the TOTP code and is
+consumed on use. An admin can reset a locked-out user's 2FA; per-user 2FA
+recovery does not require admin if the user kept their codes.
 
 ## Runtime configuration
 

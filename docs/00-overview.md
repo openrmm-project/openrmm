@@ -43,8 +43,8 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
 - **Hardware-accelerated codecs / E2E-encrypted media** — the native engine uses
   JPEG today; the RustDesk-fork plan ([12-native-remote-fork](12-native-remote-fork.md))
   is the upgrade path. Non-Windows hosts have a capture stub.
-- **Rich osquery inventory, patch management, 2FA recovery codes, script
-  sandboxing/signing** — see [09-roadmap](09-roadmap.md).
+- **Rich osquery inventory, patch management, script sandboxing/signing** — see
+  [09-roadmap](09-roadmap.md).
 
 ## Non-negotiable principle
 

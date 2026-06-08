@@ -15,6 +15,17 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret  TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
 
+-- One-time 2FA recovery codes. Stored hashed (SHA-256); single-use (used_at set
+-- on consumption). Used to log in when the authenticator is lost.
+CREATE TABLE IF NOT EXISTS user_recovery_codes (
+    id         UUID PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,
+    used_at    TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_recovery_user ON user_recovery_codes(user_id);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id          UUID PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

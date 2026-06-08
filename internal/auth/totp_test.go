@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,5 +36,31 @@ func TestValidateTOTPAcceptsCurrent(t *testing.T) {
 	}
 	if !ValidateTOTP(s, code) {
 		t.Error("a freshly-generated current code did not validate")
+	}
+}
+
+func TestGenerateRecoveryCodes(t *testing.T) {
+	codes := GenerateRecoveryCodes(10)
+	if len(codes) != 10 {
+		t.Fatalf("got %d codes, want 10", len(codes))
+	}
+	seen := map[string]bool{}
+	for _, c := range codes {
+		if len(c) != 11 || c[5] != '-' { // xxxxx-xxxxx
+			t.Errorf("bad code format: %q", c)
+		}
+		if strings.ToLower(c) != c {
+			t.Errorf("code not lowercase: %q", c)
+		}
+		if seen[c] {
+			t.Errorf("duplicate code: %q", c)
+		}
+		seen[c] = true
+	}
+}
+
+func TestNormalizeRecoveryCode(t *testing.T) {
+	if got := NormalizeRecoveryCode("  ABcd-EFgh \n"); got != "abcd-efgh" {
+		t.Errorf("NormalizeRecoveryCode = %q", got)
 	}
 }

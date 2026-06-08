@@ -358,6 +358,7 @@ function TwoFactorCard() {
   const [setup, setSetup] = useState(null); // { secret, uri } during enrollment
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [recovery, setRecovery] = useState(null); // string[] shown once after enable/regen
   const qrRef = useRef(null);
 
   useEffect(() => {
@@ -368,8 +369,17 @@ function TwoFactorCard() {
   }, [setup]);
 
   const start = async () => { setBusy(true); try { setSetup(await api.setup2FA()); setCode(''); } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); } };
-  const activate = async () => { setBusy(true); try { await api.enable2FA(code.trim()); setSetup(null); setCode(''); meQ.refetch(); toast.success('Two-factor enabled'); } catch (e) { toast.error('Could not enable', e.message); } finally { setBusy(false); } };
+  const activate = async () => { setBusy(true); try { const r = await api.enable2FA(code.trim()); setSetup(null); setCode(''); meQ.refetch(); setRecovery(r.recovery_codes || []); toast.success('Two-factor enabled'); } catch (e) { toast.error('Could not enable', e.message); } finally { setBusy(false); } };
   const disable = async () => { setBusy(true); try { await api.disable2FA(code.trim()); setCode(''); meQ.refetch(); toast.info('Two-factor disabled'); } catch (e) { toast.error('Could not disable', e.message); } finally { setBusy(false); } };
+  const regen = async () => { setBusy(true); try { const r = await api.regenRecoveryCodes(code.trim()); setCode(''); setRecovery(r.recovery_codes || []); toast.success('New recovery codes generated'); } catch (e) { toast.error('Could not regenerate', e.message); } finally { setBusy(false); } };
+
+  // downloadCodes saves the recovery codes as a text file (client-side).
+  const downloadCodes = () => {
+    const text = 'RMM-AI two-factor recovery codes\nKeep these somewhere safe. Each code works once.\n\n' + (recovery || []).join('\n') + '\n';
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = 'rmm-ai-recovery-codes.txt';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   return (
     <Card className="p-5 mb-5 max-w-2xl">
@@ -380,10 +390,29 @@ function TwoFactorCard() {
       </div>
       <div className="text-[12.5px] text-muted mb-3">Protect your account with a TOTP authenticator app (Google Authenticator, Authy, 1Password…).</div>
 
+      {recovery && (
+        <div className="mb-4 rounded-xl border border-warn/40 bg-warn/[0.04] p-3.5 animate-scale-in">
+          <div className="flex items-center gap-2 mb-1.5"><Icon name="key" size={14} className="text-warn" /><span className="text-[12.5px] font-semibold text-ink">Recovery codes</span></div>
+          <div className="text-[11.5px] text-muted mb-2.5">Save these now — each works <b>once</b> and they <b>won't be shown again</b>. Use one to sign in if you lose your authenticator.</div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-lg border border-line bg-app px-3 py-2.5 mono text-[12.5px] text-ink">
+            {recovery.map((c, i) => <div key={i} className="tracking-wide">{c}</div>)}
+          </div>
+          <div className="flex items-center gap-2 mt-3">
+            <Button size="sm" variant="secondary" icon="download" onClick={downloadCodes}>Download</Button>
+            <CopyButton value={recovery.join('\n')} size="sm" variant="ghost" />
+            <Button size="sm" variant="primary" className="ml-auto" onClick={() => setRecovery(null)}>I saved them</Button>
+          </div>
+        </div>
+      )}
+
       {enabled && !setup && (
-        <div className="flex items-end gap-2">
-          <Field label="Disable — enter a current code" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" className="mono tracking-widest" /></Field>
-          <Button variant="danger" loading={busy} disabled={code.trim().length !== 6} onClick={disable}>Disable 2FA</Button>
+        <div className="space-y-2">
+          <div className="flex items-end gap-2">
+            <Field label="Enter a current code" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" className="mono tracking-widest" /></Field>
+            <Button variant="secondary" icon="refresh" loading={busy} disabled={code.trim().length !== 6} onClick={regen} title="Generate a new set of recovery codes (invalidates the old ones)">New recovery codes</Button>
+            <Button variant="danger" loading={busy} disabled={code.trim().length !== 6} onClick={disable}>Disable 2FA</Button>
+          </div>
+          <div className="text-[11px] text-faint">A code disables 2FA or regenerates your recovery codes.</div>
         </div>
       )}
 
@@ -419,6 +448,7 @@ function UsersPanel({ canAdmin }) {
   const [newRole, setNewRole] = useState('tech');
   const [scopes, setScopes] = useState([]); // [] = full access
   const [confirmDel, setConfirmDel] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(null);
   const [editUser, setEditUser] = useState(null);   // user whose scope is being edited
   const [editScopes, setEditScopes] = useState([]);
   const [editLoading, setEditLoading] = useState(false);
@@ -433,6 +463,7 @@ function UsersPanel({ canAdmin }) {
     } catch (e) { toast.error('Failed', e.message); }
   };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
+  const reset2fa = async (u) => { try { await api.reset2FA(u.id); toast.info('2FA reset', u.username + ' can now sign in with their password'); usersQ.refetch(); } catch (e) { toast.error('Failed', e.message); } };
 
   // Open the scope editor: fetch the user's current scopes first, then render the
   // picker (so its mode initializes from the loaded selection).
@@ -473,6 +504,7 @@ function UsersPanel({ canAdmin }) {
                 {canAdmin && (
                   <div className="flex items-center justify-end gap-1">
                     {u.role !== 'admin' && <Button size="sm" variant="ghost" icon="shield" onClick={() => openEdit(u)}>Scope</Button>}
+                    {u.totp_enabled && <Button size="sm" variant="ghost" icon="key" onClick={() => setConfirmReset(u)} title="Disable this user's 2FA so they can sign in and re-enroll">Reset 2FA</Button>}
                     {u.username !== 'admin' && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(u)}>Remove</Button>}
                   </div>
                 )}
@@ -506,6 +538,7 @@ function UsersPanel({ canAdmin }) {
           <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={saveEdit}>Save scope</Button></div>
         </div>
       </Modal>
+      <ConfirmDialog open={!!confirmReset} onClose={() => setConfirmReset(null)} onConfirm={() => reset2fa(confirmReset)} danger title="Reset two-factor?" body={<>This turns off 2FA for <b>{confirmReset?.username}</b> and invalidates their recovery codes. They'll sign in with just their password until they re-enroll. Use only to recover a locked-out user.</>} confirmLabel="Reset 2FA" />
     </Card>
   );
 }

@@ -133,12 +133,13 @@ AGPL-3.0 is fully compatible — AGPL only requires the derivative stay open, wh
 is the intent. (If any part of the product were ever closed-source, the AGPL
 fork would have to remain a separate process, not linked code.)
 
-Build options, in order of effort:
-1. **Fork RustDesk** (recommended) — inherit capture/codecs/NAT/security; rebrand
-   and connect its signaling to this relay. Medium effort.
+Build options that were weighed (historical):
+1. **Fork RustDesk** — inherit capture/codecs/NAT/security; rebrand and connect its
+   signaling to this relay. Was the leading candidate before the homegrown engine.
 2. **WebRTC-based** viewer/agent on permissive libs — full license freedom, more
    work.
-3. **From scratch** — highest effort; only for very specific requirements.
+3. **From scratch / homegrown** — the path actually taken: a CGO-free Go engine
+   feeding the shared tile-delta codec (no AGPL, no fork, single static binary).
 
 If the native tool underperforms, remove the provider — MeshCentral remains.
 

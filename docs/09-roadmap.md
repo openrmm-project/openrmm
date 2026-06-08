@@ -31,13 +31,18 @@ Remaining Phase 2 nice-to-haves:
 
 ## ✅ Phase 3 — Remote access (done; codecs maturing)
 - MeshCentral token-login embed (turnkey in-browser sessions).
-- **Native media engine built** on top of the relay: a CGO-free sidecar
-  (`cmd/rmm-remote`) doing GDI screen capture + SendInput, in-session chat,
-  bidirectional free-path file transfer with a file manager, multi-monitor, UAC
-  handling (SYSTEM in the active session), and logoff survival. `native` is a
-  first-class provider; the viewer also opens in a browser tab.
-- **Remaining:** hardware-accelerated codecs + E2E encryption via the RustDesk
-  fork ([12-native-remote-fork](12-native-remote-fork.md)); non-Windows host capture.
+- **Native media engine built** on the relay — a **CGO-free, no-fork** sidecar
+  (`cmd/rmm-remote`) sharing a **tile-delta codec** (`encoder.go`):
+  - **Windows**: GDI capture + SendInput, in-session chat, bidirectional free-path
+    file transfer with a file manager, multi-monitor, UAC handling (SYSTEM in the
+    active session), and logoff survival.
+  - **Linux/Xorg**: pure-Go X11 capture + `/dev/uinput` input, with **seat-following**
+    (login greeter ↔ user session). Requires an **Xorg** session — Wayland blocks
+    capture (the viewer shows a notice; switch with `scripts/linux-force-xorg.sh`).
+  - `native` is a first-class provider; the viewer also opens in a browser tab.
+- **Remaining:** hardware-accelerated codecs (VP8/9/AV1) + media E2E (homegrown,
+  no fork); macOS capture; an optional Wayland backend (XDG portal + PipeWire,
+  needs CGO + a consent prompt, and still can't capture the login screen).
 
 ## ✅ Phase 4 — Frontend (done)
 React SPA (`openrmm/`) per `FRONTEND_DESIGN_BRIEF.md`, wired to the backend:

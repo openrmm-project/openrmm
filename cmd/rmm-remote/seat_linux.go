@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -143,6 +144,9 @@ func findActiveX() (display, auth string, ok bool) {
 	pick, ok := selectActive(cands, readActiveVT())
 	if !ok {
 		return "", "", false
+	}
+	if pick.xwayland {
+		log.Printf("rmm-remote: WARNING active X is Xwayland (%s) — a Wayland session can't be captured via X11; the screen will be black. Use an Xorg session/greeter.", pick.display)
 	}
 	return pick.display, pick.auth, true
 }

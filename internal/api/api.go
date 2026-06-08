@@ -136,6 +136,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/scripts", s.listScripts)
 			r.Get("/scripts/{id}", s.getScript)
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
+			r.Patch("/devices/{id}", s.updateDeviceMeta) // description + note (scope-checked)
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/{id}/approve", s.approveJob)
 			r.Post("/jobs/{id}/reject", s.rejectJob)

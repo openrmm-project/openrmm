@@ -101,3 +101,26 @@ func (s *Server) setDeviceSite(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// updateDeviceMeta sets the operator-editable identification fields: description
+// (shown in the device list) and note (a private observation, detail-only).
+func (s *Server) updateDeviceMeta(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireAgent(w, r, id) {
+		return
+	}
+	var in struct {
+		Description string `json:"description"`
+		Note        string `json:"note"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.store.SetAgentMeta(r.Context(), id, in.Description, in.Note); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out, _ := s.store.GetAgent(r.Context(), id)
+	writeJSON(w, http.StatusOK, out)
+}

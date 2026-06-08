@@ -52,6 +52,7 @@ function DevicesScreen({ navigate }) {
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
               <th className="font-semibold px-4 py-2.5">Hostname</th>
+              <th className="font-semibold px-3 py-2.5">Description</th>
               <th className="font-semibold px-3 py-2.5">OS</th>
               <th className="font-semibold px-3 py-2.5 hidden md:table-cell">Site</th>
               <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">Tags</th>
@@ -61,19 +62,17 @@ function DevicesScreen({ navigate }) {
           </thead>
           <tbody className="divide-y divide-line">
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i}><td className="px-4 py-3" colSpan={6}><Skeleton className="h-5 w-full" /></td></tr>
+              <tr key={i}><td className="px-4 py-3" colSpan={7}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
             {!devicesQ.loading && filtered.map((d) => (
               <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <span className={cx('h-2 w-2 rounded-full shrink-0', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-medium text-ink truncate group-hover:text-brandhi transition-colors">{d.hostname}</div>
-                      {d.description && <div className="text-[11px] text-faint truncate">{d.description}</div>}
-                    </div>
+                    <div className="text-[13px] font-medium text-ink truncate group-hover:text-brandhi transition-colors">{d.hostname}</div>
                   </div>
                 </td>
+                <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
                 <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]">{d.os}</span><span className="text-faint text-[11px] mono">{d.arch}</span></div></td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
@@ -121,7 +120,10 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     catch (e) { toast.error('Failed', e.message); }
   };
 
-  const setSite = async (siteId) => { await api.setDeviceSite(id, siteId); toast.success('Site updated'); };
+  const setSite = async (siteId) => {
+    try { await api.setDeviceSite(id, siteId || null); toast.success('Site updated'); devQ.refetch(); }
+    catch (e) { toast.error('Failed to set site', e.message); }
+  };
 
   return (
     <Drawer open={!!id} onClose={onClose} width="max-w-[860px]">
@@ -164,6 +166,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <div className="flex items-center gap-2">
                   <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="pin" size={13} />Site</span>
                   <Select value={d.site_id || ''} onChange={(e) => setSite(e.target.value)} className="w-auto min-w-[160px] h-8">
+                    <option value="">— Unassigned —</option>
                     {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
                   </Select>
                 </div>
@@ -171,18 +174,51 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'run', label: 'Run script' }]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'run', label: 'Run script' }, { value: 'notes', label: 'Notes' }]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
             {tab === 'jobs' && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'run' && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
+            {tab === 'notes' && <DeviceNotes device={d} />}
           </div>
         </>
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
       {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} onClose={() => setRemote(null)} />}
     </Drawer>
+  );
+}
+
+// DeviceNotes edits the device's identification fields: Description (shown in the
+// device list — e.g. the user's name) and Note (a private observation, only here).
+function DeviceNotes({ device }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const editable = can('tech');
+  const [desc, setDesc] = useState(device.description || '');
+  const [note, setNote] = useState(device.note || '');
+  const [busy, setBusy] = useState(false);
+  const dirty = desc !== (device.description || '') || note !== (device.note || '');
+
+  const save = async () => {
+    setBusy(true);
+    try { await api.updateDevice(device.id, { description: desc, note }); toast.success('Saved'); }
+    catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <Field label="Description" hint="Shown in the device list to help identify this machine — e.g. the person who uses it.">
+        <Input value={desc} onChange={(e) => setDesc(e.target.value)} disabled={!editable} placeholder="e.g. João Silva — Finance laptop" />
+      </Field>
+      <Field label="Note" hint="Private observation. Only shown here (in this tab), never in the device list.">
+        <Textarea value={note} onChange={(e) => setNote(e.target.value)} disabled={!editable} rows={8} placeholder="Internal notes about this device…" />
+      </Field>
+      {editable
+        ? <div className="flex justify-end"><Button variant="primary" loading={busy} disabled={!dirty} onClick={save}>Save</Button></div>
+        : <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Tech role needed to edit.</div>}
+    </div>
   );
 }
 
@@ -210,6 +246,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
   useEffect(() => { if (fb) setPathEdit(fb.path); }, [fb && fb.path]);
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
+  const [notice, setNotice] = useState(null); // host-side notice (e.g. Wayland can't be captured)
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
@@ -226,6 +263,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.t === 'hello') setVer(m.v);
+        else if (m.t === 'notice') { setNotice(m.text); toast.info('Remote notice', m.text); }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
@@ -290,7 +328,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
-      ws.onopen = () => { retries = 0; setStatus('streaming'); try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {} };
+      ws.onopen = () => { retries = 0; setStatus('streaming'); setNotice(null); try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {} };
       ws.onerror = () => {};
       ws.onclose = () => {
         if (stopped) return;
@@ -429,8 +467,15 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
         </div>
       )}
       <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
+        <div className="relative flex-1 flex items-center justify-center overflow-hidden p-2">
           <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
+          {notice && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
+              <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
+              <span>{notice}</span>
+              <button onClick={() => setNotice(null)} className="text-faint hover:text-ink shrink-0"><Icon name="close" size={13} /></button>
+            </div>
+          )}
         </div>
         {chatOpen && <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title="Collapse chat"><Icon name="chevright" size={16} /></button></div>

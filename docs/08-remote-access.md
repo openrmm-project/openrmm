@@ -86,8 +86,10 @@ with a `connect_url` the UI acts on.
   (`-auth`/display/`vt`) and re-attaching when the session switches (login / logout
   / lock), the Linux analogue of the Windows desktop-following (`seat_linux.go`).
   This needs the sidecar to run as **root** (it does — the agent is a system
-  service) to read the greeter's cookie. Chat / file-transfer are Windows-only for
-  now; keyboard maps DOM keyCodes to X keysyms (US layout, best-effort).
+  service) to read the greeter's cookie. **Input** is injected via **`/dev/uinput`**
+  (kernel level, `uinput_linux.go`) so it reaches the login greeter and any session
+  (XTEST alone is unreliable on the GDM greeter); it falls back to XTEST if uinput
+  isn't available. Chat / file-transfer are Windows-only for now.
 - **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
   rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
   full-motion video. The Linux engine assumes a TrueColor little-endian X server
@@ -96,6 +98,27 @@ with a `connect_url` the UI acts on.
   Xwayland, which can't capture native Wayland surfaces. macOS capture
   (CoreGraphics) needs CGO and stays a stub. End-to-end media encryption is still
   open (today the relay is the trust boundary; terminate WSS — see `07`).
+
+### Linux requires Xorg (not Wayland)
+
+Native remote on Linux needs an **Xorg** display server — for **both** the login
+greeter and the user session. On a **Wayland** session the screen is **black**
+(Wayland blocks screen capture by design; the only sanctioned path is the XDG
+portal + PipeWire, which needs CGO, a per-machine consent prompt, and still can't
+capture the login screen — so it's not used here). When the host is on Wayland the
+viewer shows a notice instead of a silent black screen.
+
+**Switch a host to Xorg** with the bundled, idempotent script
+[`scripts/linux-force-xorg.sh`](../scripts/linux-force-xorg.sh) — it sets GDM
+`WaylandEnable=false` (covers greeter + sessions), handles SDDM, leaves LightDM
+(already X11), keeps a backup, and reports to STDOUT. Push it through the RMM as a
+Script-library job (or a policy/scheduled task across the Linux fleet); a reboot
+applies it (`RMM_FORCE_REBOOT=1` to reboot automatically). After reboot, confirm
+with `echo $XDG_SESSION_TYPE` → `x11`.
+
+**VirtualBox note:** GNOME-on-Xorg can black-screen in a VirtualBox guest unless
+the graphics are right — set **Graphics Controller = VMSVGA**, **3D Acceleration
+OFF**, and install the guest X driver (`virtualbox-guest-x11`/`-utils`).
 
 ## The "own remote tool" plan (no fork)
 

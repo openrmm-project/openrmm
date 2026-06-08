@@ -41,6 +41,7 @@ type Agent struct {
 	ID          string     `json:"id"`
 	Hostname    string     `json:"hostname"`
 	Description string     `json:"description"`
+	Note        string     `json:"note"`
 	OS          string     `json:"os"`
 	Arch        string     `json:"arch"`
 	Version     string     `json:"version"`

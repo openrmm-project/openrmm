@@ -30,6 +30,16 @@ func runMedia(conn *websocket.Conn) error {
 	errc := make(chan error, 3)
 	var kfReq atomic.Bool
 
+	// Input via /dev/uinput (kernel level): works on the login greeter and any
+	// session, Xorg or Wayland. Falls back to XTEST (X11 only) if unavailable.
+	inp, uerr := newUinput()
+	if uerr != nil {
+		log.Printf("rmm-remote: uinput unavailable (%v) — input via XTEST only (X11; login screen may reject input). Try: sudo modprobe uinput", uerr)
+	} else {
+		log.Printf("rmm-remote: input via /dev/uinput (works on the login screen and any session)")
+		defer inp.close()
+	}
+
 	// single writer (gorilla forbids concurrent writes)
 	go func() {
 		for {
@@ -86,6 +96,7 @@ func runMedia(conn *websocket.Conn) error {
 		var x *x11
 		var curKey string
 		var lastEval time.Time
+		var freshAttach bool
 		defer func() {
 			if x != nil {
 				x.close()
@@ -119,6 +130,7 @@ func runMedia(conn *websocket.Conn) error {
 			}
 			x = nx
 			enc.reset()
+			freshAttach = true
 			log.Printf("rmm-remote: attached x11 %s %dx%d xtest=%v keymap=%d",
 				disp, x.width, x.height, x.xtestOp != 0, len(x.keycodeFor))
 		}
@@ -130,9 +142,7 @@ func runMedia(conn *websocket.Conn) error {
 			case <-done:
 				return
 			case data := <-inputCh:
-				if x != nil {
-					x.handleInput(data)
-				}
+				injectInput(x, inp, data)
 			case <-ticker.C:
 				// Re-evaluate the active session ~1×/s, or immediately if detached.
 				if x == nil || time.Since(lastEval) > time.Second {
@@ -151,6 +161,17 @@ func runMedia(conn *websocket.Conn) error {
 					x = nil
 					curKey = "" // reattach on the next tick (session likely switched)
 					continue
+				}
+				if freshAttach {
+					freshAttach = false
+					if allBlack(img.Pix) {
+						log.Printf("rmm-remote: WARNING first frame is entirely black — likely a Wayland session or a screen-saver/DPMS-off display. Use an Xorg session; check the display is awake.")
+						if b, e := json.Marshal(map[string]any{"t": "notice", "text": "Captured screen is black — the host is likely on a Wayland session, which can't be captured over X11. Switch the host to an Xorg session (and an Xorg greeter for the login screen)."}); e == nil {
+							out <- omsg{websocket.TextMessage, b}
+						}
+					} else {
+						log.Printf("rmm-remote: capturing OK (first frame has content)")
+					}
 				}
 				payload, err := enc.encode(img)
 				if err != nil || payload == nil {
@@ -176,6 +197,41 @@ type linInput struct {
 	Down   bool    `json:"down"`
 	DY     float64 `json:"dy"`
 	Code   int     `json:"code"`
+}
+
+// injectInput delivers one viewer event using uinput when available (works on
+// the login greeter + any session), otherwise XTEST (X11 only).
+func injectInput(x *x11, u *uinputDevice, data []byte) {
+	if u == nil {
+		if x != nil {
+			x.handleInput(data)
+		}
+		return
+	}
+	var e linInput
+	if json.Unmarshal(data, &e) != nil {
+		return
+	}
+	switch e.T {
+	case "m":
+		u.moveAbs(e.X, e.Y)
+	case "b":
+		u.moveAbs(e.X, e.Y)
+		switch e.Button {
+		case 0:
+			u.button(btnLeft, e.Down)
+		case 1:
+			u.button(btnMiddle, e.Down)
+		case 2:
+			u.button(btnRight, e.Down)
+		}
+	case "w":
+		u.wheel(e.DY < 0)
+	case "k":
+		if kc, ok := browserKeyEvdev[e.Code]; ok {
+			u.key(kc, e.Down)
+		}
+	}
 }
 
 // handleInput injects one viewer event via XTEST (runs on the capture goroutine).
@@ -211,4 +267,17 @@ func (x *x11) handleInput(data []byte) {
 			x.fakeKey(kc, e.Down)
 		}
 	}
+}
+
+// allBlack samples an RGBA buffer and reports whether every sampled pixel is
+// pure black — a strong hint of a Wayland session (X11 GetImage sees nothing)
+// or a blanked/DPMS-off display.
+func allBlack(pix []byte) bool {
+	const step = 4 * 257 // sample roughly every 257th pixel
+	for i := 0; i+2 < len(pix); i += step {
+		if pix[i] != 0 || pix[i+1] != 0 || pix[i+2] != 0 {
+			return false
+		}
+	}
+	return true
 }

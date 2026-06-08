@@ -133,6 +133,7 @@ const api = {
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
+  updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
 
   /* ---- jobs ---- */

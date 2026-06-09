@@ -3,63 +3,13 @@
 package main
 
 import (
-	"bufio"
 	"encoding/binary"
-	"image"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
-
-// TestReadLoopReplyAndDamage exercises the post-setup I/O model with a fake X
-// server over net.Pipe: a GetImage reply is framed (32-byte header + length*4
-// pixels) and converted BGRX→RGBA, and a DamageNotify event flips the flag.
-func TestReadLoopReplyAndDamage(t *testing.T) {
-	cli, srv := net.Pipe()
-	x := &x11{conn: cli, r: bufio.NewReader(cli), width: 2, height: 1, damageOK: true, damageEvt: 91}
-	x.img = image.NewRGBA(image.Rect(0, 0, 2, 1))
-	x.replies = make(chan []byte, 4)
-	x.stop = make(chan struct{})
-	go x.readLoop()
-	defer x.close()
-
-	// Fake server: read the 20-byte GetImage request, reply with 2 BGRX pixels,
-	// then push a DamageNotify event (code == damageEvt).
-	go func() {
-		io.ReadFull(srv, make([]byte, 20))
-		pix := []byte{10, 20, 30, 0, 40, 50, 60, 0} // px1 BGR=(10,20,30); px2=(40,50,60)
-		rep := make([]byte, 32)
-		rep[0] = 1 // reply
-		le.PutUint32(rep[4:], uint32(len(pix)/4))
-		srv.Write(rep)
-		srv.Write(pix)
-		ev := make([]byte, 32)
-		ev[0] = 91
-		srv.Write(ev)
-	}()
-
-	img, err := x.getImage()
-	if err != nil {
-		t.Fatalf("getImage: %v", err)
-	}
-	if got := img.Pix[:4]; got[0] != 30 || got[1] != 20 || got[2] != 10 || got[3] != 255 {
-		t.Fatalf("px1 = %v (want R30 G20 B10 A255)", got)
-	}
-	if got := img.Pix[4:8]; got[0] != 60 || got[1] != 50 || got[2] != 40 {
-		t.Fatalf("px2 = %v (want R60 G50 B40)", got)
-	}
-
-	deadline := time.Now().Add(2 * time.Second)
-	for !x.damaged.Load() {
-		if time.Now().After(deadline) {
-			t.Fatal("DamageNotify did not flip the damaged flag")
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
 
 func TestPad4(t *testing.T) {
 	for in, want := range map[int]int{0: 0, 1: 3, 2: 2, 3: 1, 4: 0, 5: 3} {

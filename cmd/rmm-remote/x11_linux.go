@@ -15,18 +15,14 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"image"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 )
 
 // X11 request opcodes / constants we use.
@@ -41,12 +37,6 @@ const (
 	evButtonPress  = 4
 	evButtonRelease = 5
 	evMotionNotify = 6
-
-	// DAMAGE extension minor opcodes + report level.
-	damageQueryVersion = 0
-	damageCreate       = 1
-	damageSubtractOp   = 2
-	damageReportNonEmpty = 3 // one event per empty->non-empty transition (cheapest)
 )
 
 var le = binary.LittleEndian
@@ -60,25 +50,7 @@ type x11 struct {
 	xtestOp            byte // XTEST major opcode (0 = unavailable)
 	keycodeFor         map[uint32]byte
 	img                *image.RGBA
-
-	xidBase, xidMask uint32 // resource-id allocation (for the DAMAGE object)
-	xidNext          uint32
-
-	// DAMAGE: when supported, the server tells us (via DamageNotify events) when
-	// the screen changes, so the capture loop can skip GetImage while it's idle.
-	damageOK  bool
-	damageOp  byte // DAMAGE major opcode
-	damageEvt byte // DamageNotify event code (first_event)
-	damageID  uint32
-	damaged   atomic.Bool
-
-	// Replies and events share the connection, so a single reader goroutine owns
-	// it after setup: replies are forwarded to the channel; DamageNotify events
-	// flip the damaged flag. Input/GetImage requests all originate from the one
-	// capture goroutine, so at most one reply is in flight at a time.
-	replies   chan []byte
-	stop      chan struct{}
-	closeOnce sync.Once
+	raw                []byte // reusable GetImage payload buffer
 }
 
 // dialX11 opens the display socket from $DISPLAY (fallback :0).
@@ -253,140 +225,7 @@ func connectX11(conn net.Conn, name, data []byte) (*x11, error) {
 	x.img = image.NewRGBA(image.Rect(0, 0, x.width, x.height))
 	x.queryXTest()
 	x.loadKeymap()
-	x.setupDamage() // inline replies — must complete before the reader goroutine starts
-
-	// From here on a single goroutine owns the connection's read side: replies go
-	// to x.replies, DamageNotify events flip x.damaged.
-	x.replies = make(chan []byte, 4)
-	x.stop = make(chan struct{})
-	go x.readLoop()
 	return x, nil
-}
-
-// newXID allocates an X resource id (for the DAMAGE object).
-func (x *x11) newXID() uint32 {
-	id := x.xidBase | (x.xidNext & x.xidMask)
-	x.xidNext++
-	return id
-}
-
-// setupDamage negotiates the DAMAGE extension and creates a damage object on the
-// root window (DamageReportNonEmpty). If anything is missing it leaves damageOK
-// false and the capture loop falls back to grabbing every frame. Uses inline
-// replies; called before the reader goroutine starts.
-func (x *x11) setupDamage() {
-	op, _, evt, ok := x.queryExtension("DAMAGE")
-	if !ok {
-		log.Printf("rmm-remote: DAMAGE extension absent — capturing every frame")
-		return
-	}
-	// DamageQueryVersion(1,1): negotiate before use.
-	ver := make([]byte, 12)
-	ver[0] = op
-	ver[1] = damageQueryVersion
-	le.PutUint16(ver[2:], 3)
-	le.PutUint32(ver[4:], 1)
-	le.PutUint32(ver[8:], 1)
-	if _, err := x.conn.Write(ver); err != nil {
-		return
-	}
-	if _, err := x.readReply(); err != nil {
-		return
-	}
-	// DamageCreate(damage, root, NonEmpty).
-	x.damageOp, x.damageEvt = op, evt
-	x.damageID = x.newXID()
-	cr := make([]byte, 16)
-	cr[0] = op
-	cr[1] = damageCreate
-	le.PutUint16(cr[2:], 4)
-	le.PutUint32(cr[4:], x.damageID)
-	le.PutUint32(cr[8:], x.root)
-	cr[12] = damageReportNonEmpty
-	if _, err := x.conn.Write(cr); err != nil {
-		return
-	}
-	x.damageOK = true
-}
-
-// queryExtension returns an extension's (major opcode, first error, first event)
-// and whether it is present.
-func (x *x11) queryExtension(name string) (major, firstErr, firstEvent byte, present bool) {
-	nlen := len(name)
-	req := make([]byte, 4+4+nlen+pad4(nlen))
-	req[0] = opQueryExtension
-	le.PutUint16(req[2:], uint16(len(req)/4))
-	le.PutUint16(req[4:], uint16(nlen))
-	copy(req[8:], name)
-	if _, err := x.conn.Write(req); err != nil {
-		return 0, 0, 0, false
-	}
-	h, err := x.readReply()
-	if err != nil || h[8] == 0 {
-		return 0, 0, 0, false
-	}
-	return h[9], h[11], h[10], true
-}
-
-// readLoop owns the connection read side after setup: it forwards replies and
-// flips the damaged flag on DamageNotify events until the connection closes.
-func (x *x11) readLoop() {
-	for {
-		h := make([]byte, 32)
-		if _, err := io.ReadFull(x.r, h); err != nil {
-			x.signalStop()
-			return
-		}
-		switch {
-		case h[0] == 1: // reply (32 bytes + length*4 trailing)
-			n := int(le.Uint32(h[4:8])) * 4
-			buf := make([]byte, 32+n)
-			copy(buf, h)
-			if n > 0 {
-				if _, err := io.ReadFull(x.r, buf[32:]); err != nil {
-					x.signalStop()
-					return
-				}
-			}
-			select {
-			case x.replies <- buf:
-			case <-x.stop:
-				return
-			}
-		case h[0] == 0: // error (e.g. a bad XTEST detail) — ignore
-		default: // event
-			if x.damageOK && h[0]&0x7f == x.damageEvt {
-				x.damaged.Store(true)
-			}
-		}
-	}
-}
-
-func (x *x11) signalStop() { x.closeOnce.Do(func() { close(x.stop) }) }
-
-// consumeDamage reports whether to capture this tick. Without DAMAGE it always
-// returns true (capture every frame). With DAMAGE it returns true only when the
-// screen changed since the last capture, re-arming the notification.
-func (x *x11) consumeDamage() bool {
-	if !x.damageOK {
-		return true
-	}
-	if !x.damaged.Swap(false) {
-		return false
-	}
-	x.damageSubtract() // empty the region so the next change notifies us again
-	return true
-}
-
-// damageSubtract empties the damage region (repair=None, parts=None), re-arming
-// the NonEmpty notification.
-func (x *x11) damageSubtract() {
-	req := make([]byte, 16)
-	req[0] = x.damageOp
-	req[1] = damageSubtractOp
-	le.PutUint16(req[2:], 4)
-	le.PutUint32(req[4:], x.damageID) // repair + parts left 0 (None)
-	x.conn.Write(req)
 }
 
 // parseSetup extracts the first screen's root window + size and the keycode
@@ -399,10 +238,10 @@ func (x *x11) parseSetup(b []byte) error {
 	u32 := func() uint32 { v := le.Uint32(b[p:]); p += 4; return v }
 	u16 := func() uint16 { v := le.Uint16(b[p:]); p += 2; return v }
 	u8 := func() byte { v := b[p]; p++; return v }
-	_ = u32()         // release number
-	x.xidBase = u32() // resource-id base
-	x.xidMask = u32() // resource-id mask
-	_ = u32()         // motion buffer size
+	_ = u32() // release number
+	_ = u32() // resource-id base
+	_ = u32() // resource-id mask
+	_ = u32() // motion buffer size
 	vlen := int(u16())
 	_ = u16() // max request length
 	_ = u8()  // number of screens
@@ -433,7 +272,6 @@ func (x *x11) parseSetup(b []byte) error {
 }
 
 func (x *x11) close() {
-	x.signalStop()
 	if x.conn != nil {
 		x.conn.Close()
 	}
@@ -454,8 +292,7 @@ func (x *x11) readReply() ([]byte, error) {
 	}
 }
 
-// getImage captures the whole root window into x.img and returns it. The reply
-// (header + pixels) is delivered by the reader goroutine over x.replies.
+// getImage captures the whole root window into x.img and returns it.
 func (x *x11) getImage() (*image.RGBA, error) {
 	req := make([]byte, 20)
 	req[0] = opGetImage
@@ -469,26 +306,20 @@ func (x *x11) getImage() (*image.RGBA, error) {
 	if _, err := x.conn.Write(req); err != nil {
 		return nil, err
 	}
-	var buf []byte
-	select {
-	case b, ok := <-x.replies:
-		if !ok {
-			return nil, errors.New("x11 connection closed")
-		}
-		buf = b
-	case <-x.stop:
-		return nil, errors.New("x11 connection closed")
+	h, err := x.readReply()
+	if err != nil {
+		return nil, err
 	}
-	if len(buf) < 32 {
-		return nil, errors.New("x11 short GetImage reply")
+	n := int(le.Uint32(h[4:8])) * 4 // image bytes follow
+	if cap(x.raw) < n {
+		x.raw = make([]byte, n)
 	}
-	n := int(le.Uint32(buf[4:8])) * 4 // image bytes after the 32-byte header
-	src := buf[32:]
-	if len(src) > n {
-		src = src[:n]
+	x.raw = x.raw[:n]
+	if _, err := io.ReadFull(x.r, x.raw); err != nil {
+		return nil, err
 	}
 	// ZPixmap depth-24/32 on LSBFirst is BGRX per pixel → convert to RGBA.
-	dst := x.img.Pix
+	src, dst := x.raw, x.img.Pix
 	px := x.width * x.height * 4
 	if len(src) < px {
 		px = len(src)

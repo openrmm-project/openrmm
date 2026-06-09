@@ -30,15 +30,24 @@ echo "  binary : $BIN"
 mkdir -p "$STATE_DIR"
 
 echo "Downloading agent..."
-curl -fsSL "${SERVER}/dl/${BIN}" -o "$DEST"
-chmod +x "$DEST"
+# Download to a temp file and move it into place atomically. A direct write over
+# $DEST fails with "Text file busy" (curl: 23) when an agent is already running
+# from that path (reinstall / update); rename replaces the directory entry while
+# the running process keeps its open inode.
+curl -fsSL "${SERVER}/dl/${BIN}" -o "${DEST}.new"
+chmod +x "${DEST}.new"
+mv -f "${DEST}.new" "$DEST"
 
-echo "Installing as a system service..."
+echo "Installing/updating the system service..."
 if "$DEST" -server "${WS}/ws/agent" -state "$STATE" -enroll-token "$TOKEN" -action install 2>/dev/null; then
   "$DEST" -action start 2>/dev/null || true
   echo "Service installed and started."
+elif "$DEST" -action restart 2>/dev/null; then
+  # Already installed: the binary was swapped above; restart to load the new one.
+  echo "Existing service updated and restarted."
 else
   echo "Service manager unavailable; starting agent in the background instead."
+  pkill -f "$DEST" 2>/dev/null || true
   nohup "$DEST" -server "${WS}/ws/agent" -state "$STATE" -enroll-token "$TOKEN" >/var/log/rmm-agent.log 2>&1 &
   echo "Agent started (logs: /var/log/rmm-agent.log)."
 fi

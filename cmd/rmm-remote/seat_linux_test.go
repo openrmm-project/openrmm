@@ -35,6 +35,38 @@ func TestParseXCmdlineGDM(t *testing.T) {
 	}
 }
 
+func TestParseXCmdlineGDMDisplayFD(t *testing.T) {
+	// Real modern GDM Xorg session: NO ":N" on the command line — the display is
+	// chosen at runtime via -displayfd, so display must be left empty for the
+	// caller to resolve from the process socket (displayFromPid).
+	s, ok := parseXCmdline("Xorg", cmd("/usr/lib/xorg/Xorg", "vt2", "-displayfd", "3", "-auth", "/run/user/1000/gdm/Xauthority", "-nolisten", "tcp", "-background", "none", "-noreset", "-keeptty", "-novtswitch", "-verbose", "3"))
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if s.display != "" {
+		t.Fatalf("display should be empty (resolved later), got %q", s.display)
+	}
+	if s.auth != "/run/user/1000/gdm/Xauthority" || s.vt != 2 || s.xwayland {
+		t.Fatalf("got %+v", s)
+	}
+}
+
+func TestDisplayNumFromSocketPath(t *testing.T) {
+	cases := map[string]int{
+		"@/tmp/.X11-unix/X1":  1,
+		"/tmp/.X11-unix/X0":   0,
+		"@/tmp/.X11-unix/X10": 10,
+		"@/tmp/.ICE-unix/123": -1,
+		"/run/some/other":     -1,
+		"@/tmp/.X11-unix/Xa":  -1,
+	}
+	for path, want := range cases {
+		if got := displayNumFromSocketPath(path); got != want {
+			t.Errorf("displayNumFromSocketPath(%q) = %d, want %d", path, got, want)
+		}
+	}
+}
+
 func TestParseXCmdlineIgnoresNonX(t *testing.T) {
 	if _, ok := parseXCmdline("bash", cmd("bash", "-c", "X :0")); ok {
 		t.Fatal("non-X process should be rejected")

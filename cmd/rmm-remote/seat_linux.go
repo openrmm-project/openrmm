@@ -23,6 +23,7 @@ import (
 )
 
 type xServer struct {
+	pid      int
 	display  string
 	auth     string
 	vt       int
@@ -67,9 +68,9 @@ func parseXCmdline(comm string, cmdline []byte) (xServer, bool) {
 			}
 		}
 	}
-	if s.display == "" {
-		s.display = ":0"
-	}
+	// NOTE: display may be "" — modern GDM launches Xorg with -displayfd (no ":N"
+	// on the command line), so the server picks the display at runtime. The caller
+	// resolves it from the process's listening socket (displayFromPid).
 	return s, true
 }
 
@@ -138,6 +139,7 @@ func findActiveX() (display, auth string, ok bool) {
 			continue
 		}
 		if s, ok := parseXCmdline(name, cmdline); ok {
+			s.pid, _ = strconv.Atoi(e.Name())
 			cands = append(cands, s)
 		}
 	}
@@ -145,8 +147,84 @@ func findActiveX() (display, auth string, ok bool) {
 	if !ok {
 		return "", "", false
 	}
+	// Resolve the display when it wasn't on the command line (GDM -displayfd):
+	// look at which /tmp/.X11-unix/Xn socket the server process actually holds.
+	if pick.display == "" {
+		if d := displayFromPid(pick.pid); d != "" {
+			pick.display = d
+		} else {
+			pick.display = ":0" // last-resort default
+		}
+	}
 	if pick.xwayland {
 		log.Printf("rmm-remote: WARNING active X is Xwayland (%s) — a Wayland session can't be captured via X11; the screen will be black. Use an Xorg session/greeter.", pick.display)
 	}
 	return pick.display, pick.auth, true
+}
+
+// displayFromPid resolves the X display number an Xorg process serves by finding
+// the /tmp/.X11-unix/Xn unix socket it holds open. Modern GDM starts Xorg with
+// -displayfd (no ":N" argument), so the display can't be read from the command
+// line; we map the process's socket inodes (/proc/<pid>/fd) to their paths via
+// /proc/net/unix and extract the display number. Returns "" if undetermined.
+func displayFromPid(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	fdDir := "/proc/" + strconv.Itoa(pid) + "/fd"
+	ents, err := os.ReadDir(fdDir)
+	if err != nil {
+		return ""
+	}
+	inodes := map[string]bool{}
+	for _, e := range ents {
+		link, err := os.Readlink(fdDir + "/" + e.Name())
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(link, "socket:[") {
+			inodes[strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")] = true
+		}
+	}
+	if len(inodes) == 0 {
+		return ""
+	}
+	data, err := os.ReadFile("/proc/net/unix")
+	if err != nil {
+		return ""
+	}
+	best := -1
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line) // ... Inode(6) Path(7)
+		if len(f) < 8 || !inodes[f[6]] {
+			continue
+		}
+		n := displayNumFromSocketPath(f[7])
+		if n >= 0 && (best < 0 || n < best) {
+			best = n
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	return ":" + strconv.Itoa(best)
+}
+
+// displayNumFromSocketPath extracts N from an X socket path like
+// "@/tmp/.X11-unix/X1" or "/tmp/.X11-unix/X1"; returns -1 if it isn't one.
+func displayNumFromSocketPath(path string) int {
+	p := strings.TrimPrefix(path, "@")
+	const pfx = "/tmp/.X11-unix/X"
+	if !strings.HasPrefix(p, pfx) {
+		return -1
+	}
+	num := p[len(pfx):]
+	if !allDigits(num) {
+		return -1
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil {
+		return -1
+	}
+	return n
 }

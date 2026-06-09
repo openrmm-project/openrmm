@@ -97,11 +97,22 @@ func runMedia(conn *websocket.Conn) error {
 		var curKey string
 		var lastEval time.Time
 		var freshAttach bool
+		var attachedAt time.Time
+		var noticeSent, loggedOK bool
 		defer func() {
 			if x != nil {
 				x.close()
 			}
 		}()
+
+		sendNotice := func(text string) {
+			if b, e := json.Marshal(map[string]any{"t": "notice", "text": text}); e == nil {
+				select {
+				case out <- omsg{websocket.TextMessage, b}:
+				case <-done:
+				}
+			}
+		}
 
 		// reattach connects to the active X server when it differs from the
 		// current one (or when we have none); a no-op while the session is stable.
@@ -164,13 +175,28 @@ func runMedia(conn *websocket.Conn) error {
 				}
 				if freshAttach {
 					freshAttach = false
-					if allBlack(img.Pix) {
-						log.Printf("rmm-remote: WARNING first frame is entirely black — likely a Wayland session or a screen-saver/DPMS-off display. Use an Xorg session; check the display is awake.")
-						if b, e := json.Marshal(map[string]any{"t": "notice", "text": "Captured screen is black — the host is likely on a Wayland session, which can't be captured over X11. Switch the host to an Xorg session (and an Xorg greeter for the login screen)."}); e == nil {
-							out <- omsg{websocket.TextMessage, b}
-						}
-					} else {
-						log.Printf("rmm-remote: capturing OK (first frame has content)")
+					attachedAt = time.Now()
+					noticeSent = false
+					loggedOK = false
+				}
+				if allBlack(img.Pix) {
+					// A black frame right after (re)attach is normal — the session
+					// or greeter is still drawing. Only warn if the screen stays
+					// black for a sustained period, which signals a real Wayland
+					// session or a blanked/DPMS-off display (not a transition).
+					if !noticeSent && time.Since(attachedAt) > 2*time.Second {
+						noticeSent = true
+						log.Printf("rmm-remote: WARNING screen black for >2s — likely a Wayland session or a blanked/DPMS-off display.")
+						sendNotice("Captured screen is black — the host is likely on a Wayland session (or the display is asleep). For Linux, use an Xorg session and an Xorg greeter.")
+					}
+				} else {
+					if !loggedOK {
+						loggedOK = true
+						log.Printf("rmm-remote: capturing OK (frame has content)")
+					}
+					if noticeSent { // content returned — clear the banner
+						noticeSent = false
+						sendNotice("")
 					}
 				}
 				payload, err := enc.encode(img)

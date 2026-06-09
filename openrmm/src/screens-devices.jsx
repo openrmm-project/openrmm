@@ -266,7 +266,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.t === 'hello') setVer(m.v);
-        else if (m.t === 'notice') { setNotice(m.text); toast.info('Remote notice', m.text); }
+        else if (m.t === 'notice') { if (m.text) { setNotice(m.text); toast.info('Remote notice', m.text); } else setNotice(null); }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }

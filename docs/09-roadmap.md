@@ -33,21 +33,36 @@ Remaining Phase 2 nice-to-haves:
 - MeshCentral token-login embed (turnkey in-browser sessions).
 - **Native media engine built** on the relay — a **CGO-free, no-fork** sidecar
   (`cmd/rmm-remote`) sharing a **tile-delta codec** (`encoder.go`):
-  - **Windows**: GDI capture + SendInput, in-session chat, bidirectional free-path
-    file transfer with a file manager, multi-monitor, UAC handling (SYSTEM in the
-    active session), and logoff survival.
-  - **Linux/Xorg**: pure-Go X11 capture + `/dev/uinput` input, with **seat-following**
-    (login greeter ↔ user session). Requires an **Xorg** session — Wayland blocks
-    capture (the viewer shows a notice; switch with `scripts/linux-force-xorg.sh`).
+  - **Windows**: GDI capture + SendInput, in-session chat, multi-monitor, UAC
+    handling (SYSTEM in the active session), and logoff survival.
+  - **Linux/Xorg**: pure-Go X11 capture (MIT-SHM when local) + `/dev/uinput` input,
+    with **seat-following** (login greeter ↔ user session). Requires an **Xorg**
+    session — Wayland blocks capture (the viewer shows a notice; switch with
+    `scripts/linux-force-xorg.sh`).
+  - **Bidirectional free-path file transfer** with a file manager on **both**
+    Windows and Linux.
   - `native` is a first-class provider; the viewer also opens in a browser tab.
+- **Elevated remote Terminal** (`terminal` provider, tech-only): a real PTY (Unix)
+  / ConPTY (Windows) shell running as the agent's service account (root/SYSTEM),
+  bridged to an xterm.js viewer.
 - **Remaining:** hardware-accelerated codecs (VP8/9/AV1) + media E2E (homegrown,
   no fork); macOS capture; an optional Wayland backend (XDG portal + PipeWire,
   needs CGO + a consent prompt, and still can't capture the login screen).
+  (XDamage-based change detection was tried and reverted — it doesn't fire under a
+  compositor like GNOME/mutter; MIT-SHM is the compositor-safe capture speedup.)
 
 ## ✅ Phase 4 — Frontend (done)
 React SPA (`openrmm/`) per `FRONTEND_DESIGN_BRIEF.md`, wired to the backend:
 dashboard, devices, device detail with remote-launch, jobs + approval queue with
 dry-run preview, AI chat (with in-chat CSV report download), audit, users/2FA/scope.
+
+## ✅ Agent self-update (done)
+Agents upgrade themselves from the server: each compares the
+`/dl/rmm-agent-<os>-<arch>` ETag with the build it last applied and, on change,
+downloads + validates + atomically swaps + reloads (re-exec on Unix; detached
+service restart on Windows). Publish with `make agent-dist`; tune with
+`RMM_AUTO_UPDATE` / `RMM_UPDATE_INTERVAL`. See
+[02-getting-started](02-getting-started.md#updating-agents-self-update).
 
 ## Cross-cutting hardening
 TLS everywhere, rate limiting, script output caps, agent revocation, signed

@@ -19,13 +19,15 @@ this project fills.
 
 ## Highlights
 
-- **Own Go agent** — single cross-platform binary (Windows/Linux/macOS), no runtime.
+- **Own Go agent** — single cross-platform binary (Windows/Linux/macOS), no runtime;
+  **self-updates** from the server (publish with `make agent-dist`).
 - **AI chat with tool-calling** — the model reads fleet state and proposes actions.
 - **Guardrails by design** — AI never executes directly; every action is a job that
   a human approves, with dry-run preview and an immutable audit log.
 - **Pluggable remote access** — `native` (built-in relay + CGO-free media sidecar,
-  tile-delta codec; Windows and Linux/Xorg incl. the login screen) and
-  `meshcentral` providers behind one interface. Swap freely.
+  tile-delta codec; Windows and Linux/Xorg incl. the login screen, with
+  cross-platform file transfer), `terminal` (an **elevated** PTY/ConPTY shell in
+  the browser, tech-only), and `meshcentral` — all behind one interface. Swap freely.
 - **BYO AI model** — any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, …).
 - **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
   monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
@@ -90,7 +92,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [05-agent-protocol](docs/05-agent-protocol.md) | The agent WebSocket protocol |
 | [06-ai-chat](docs/06-ai-chat.md) | Tool-calling loop, tools, prompts |
 | [07-guardrails-security](docs/07-guardrails-security.md) | Approval, audit, threat model |
-| [08-remote-access](docs/08-remote-access.md) | The native + MeshCentral providers + the "own tool" plan |
+| [08-remote-access](docs/08-remote-access.md) | The native (desktop + file transfer), terminal, and MeshCentral providers |
 | [09-roadmap](docs/09-roadmap.md) | Phased plan toward a complete RMM |
 | [10-monitoring-policies](docs/10-monitoring-policies.md) | Org hierarchy, RBAC, scripts, checks, tasks, policies, alerts |
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |

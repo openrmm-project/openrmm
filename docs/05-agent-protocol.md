@@ -40,7 +40,12 @@ once on connect).
 | type | data | effect |
 |------|------|--------|
 | `job` | `{ job_id, type, shell, script }` | run it, reply with `job_result` |
-| `remote_start` | `{ session_id, token, relay_url }` | connect the remote module to the relay |
+| `remote_start` | `{ session_id, token, relay_url, kind }` | connect a remote module to the relay |
+
+`kind` selects which module the agent attaches: `"desktop"` (or empty) spawns the
+media sidecar (screen + input); `"terminal"` opens an **elevated interactive
+shell** in the agent process (real PTY on Unix / ConPTY on Windows) and bridges
+it to the relay. See [08-remote-access](08-remote-access.md).
 
 ## Reliability
 
@@ -49,6 +54,14 @@ once on connect).
 - Approved jobs for an offline agent stay `pending` and are delivered on
   reconnect (`DispatchPending`).
 - The agent reconnects automatically with a 5s backoff.
+
+## Self-update
+
+The agent periodically checks `/dl/rmm-agent-<os>-<arch>` (HEAD, ETag) and, when
+the published build changes, downloads + validates it, atomically swaps the
+binary, and reloads (re-exec on Unix; a detached service restart on Windows).
+Disable with `RMM_AUTO_UPDATE=0`; tune the cadence with `RMM_UPDATE_INTERVAL`
+(default 30m). See [02-getting-started](02-getting-started.md#updating-agents-self-update).
 
 ## Script execution
 

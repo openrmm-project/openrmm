@@ -44,7 +44,10 @@ tamper-evidence in production.
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random
   secret; rotate it by issuing scoped `api_tokens` and retiring the bootstrap.
-- Users: bcrypt password hashes. Optional **two-factor (TOTP, RFC 6238)** per
+- Users: bcrypt password hashes. A user can **change their own password**
+  (`POST /api/me/password`): the current password is verified, a minimum length is
+  enforced, the change is audited (`user.password.change`), and the user's **other
+  sessions are revoked**. Optional **two-factor (TOTP, RFC 6238)** per
   user — `internal/auth/totp.go` (HMAC-SHA1, ±1 step, constant-time compare).
   Setup returns a QR/secret; once enabled, login requires a `code` and returns
   `401 {totp_required:true}` until a valid code is supplied. The TOTP secret is
@@ -65,8 +68,13 @@ tamper-evidence in production.
 
 - **Roles** `readonly < tech < admin`, enforced by chi route groups (the backend
   returns `403`, the UI also gates nav). `readonly` may view and start **remote
-  access** but cannot run/approve scripts or delete devices; `tech` approves jobs
-  and manages scripts; `admin` manages users, policies, groups, audit, and deletes.
+  desktop** (assistance/observation) but cannot run/approve scripts or delete
+  devices; `tech` approves jobs and manages scripts; `admin` manages users,
+  policies, groups, audit, and deletes.
+- The **elevated remote Terminal** (`provider:"terminal"`) opens a root/SYSTEM
+  shell — equivalent to running arbitrary scripts — so unlike read-only remote
+  desktop it requires the **tech** role (enforced in `startRemote` and gated in
+  the UI menu).
 - **Per-user access scope** (`user_scopes` table): a user is either *unrestricted*
   (sees the whole fleet) or *restricted* to one or more assignments at
   Company / Site / specific-device granularity. Scope is enforced on **both** the

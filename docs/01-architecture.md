@@ -25,7 +25,7 @@ internal/
   hub/           # registry of live agent connections (push channel per agent)
   jobs/          # job lifecycle: propose/approve/reject/dispatch/result + audit
   ai/            # OpenAI-compatible client, tool catalog, tool-calling loop
-  remote/        # RemoteProvider abstraction (native + meshcentral) + session relay
+  remote/        # RemoteProvider abstraction (native + terminal + meshcentral) + session relay
   api/           # chi router, auth middleware, REST handlers, WebSocket handlers
 ```
 

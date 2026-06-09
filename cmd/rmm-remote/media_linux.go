@@ -159,8 +159,8 @@ func runMedia(conn *websocket.Conn) error {
 			x = nx
 			enc.reset()
 			freshAttach = true
-			log.Printf("rmm-remote: attached x11 %s %dx%d xtest=%v keymap=%d",
-				disp, x.width, x.height, x.xtestOp != 0, len(x.keycodeFor))
+			log.Printf("rmm-remote: attached x11 %s %dx%d xtest=%v keymap=%d damage=%v",
+				disp, x.width, x.height, x.xtestOp != 0, len(x.keycodeFor), x.damageOK)
 		}
 
 		ticker := time.NewTicker(50 * time.Millisecond)
@@ -180,8 +180,15 @@ func runMedia(conn *websocket.Conn) error {
 				if x == nil {
 					continue
 				}
-				if kfReq.Swap(false) {
+				forceKf := kfReq.Swap(false)
+				if forceKf {
 					enc.forceKeyframe()
+				}
+				// With DAMAGE, skip the GetImage entirely while the screen is
+				// static — the big win over capturing every tick. A keyframe
+				// request or a fresh attach always captures.
+				if !(freshAttach || forceKf || x.consumeDamage()) {
+					continue
 				}
 				img, err := x.getImage()
 				if err != nil {

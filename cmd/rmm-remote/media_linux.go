@@ -16,8 +16,8 @@ import (
 // login, the user's session after — and re-attaches as that changes, so remote
 // works on the login screen and survives logout/lock (the Linux analogue of the
 // Windows desktop-following). It mirrors the Windows wire behavior (hello +
-// chVideo tile frames + {t:"kf"}) so the same viewer drives both. Chat /
-// file-transfer are Windows-only for now; on Linux those controls get no reply.
+// chVideo tile frames + {t:"kf"}) so the same viewer drives both, including file
+// transfer (transfer_linux.go). Chat is still Windows-only.
 func runMedia(conn *websocket.Conn) error {
 	type omsg struct {
 		mt int
@@ -55,6 +55,14 @@ func runMedia(conn *websocket.Conn) error {
 		}
 	}()
 
+	// File transfer rides the same relay (JSON control + [chFile][id][bytes]).
+	xfer := newFileXfer(func(mt int, b []byte) {
+		select {
+		case out <- omsg{mt, b}:
+		case <-done:
+		}
+	})
+
 	// announce the running sidecar version (viewer staleness check)
 	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
@@ -67,6 +75,13 @@ func runMedia(conn *websocket.Conn) error {
 			if err != nil {
 				errc <- err
 				return
+			}
+			if mt == websocket.BinaryMessage {
+				// viewer -> agent file upload chunk: [chFile][id][bytes]
+				if len(data) >= 2 && data[0] == chFile {
+					xfer.onChunk(data[1], data[2:])
+				}
+				continue
 			}
 			if mt != websocket.TextMessage {
 				continue
@@ -85,6 +100,8 @@ func runMedia(conn *websocket.Conn) error {
 				}
 			case "kf":
 				kfReq.Store(true)
+			default:
+				xfer.dispatch(e.T, data) // file-transfer control (fls/fget/fput/…)
 			}
 		}
 	}()

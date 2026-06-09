@@ -1,8 +1,8 @@
 # 08 — Remote Access
 
 Remote access is **pluggable**: a single `Provider` interface
-(`internal/remote`) with four implementations (`native` desktop, `terminal`
-shell, `meshcentral`). Callers never depend on a specific tool — if the native
+(`internal/remote`) with three implementations: `native` (remote desktop),
+`terminal` (elevated shell), and `meshcentral`. Callers never depend on a specific tool — if the native
 tool doesn't pan out, drop it and MeshCentral keeps working.
 
 ```go
@@ -103,11 +103,16 @@ with a `connect_url` the UI acts on.
   `[x][y][w][h][jpegLen][jpeg]` (big-endian); the viewer composites tiles onto a
   `<canvas>`. Unit-tested in `encoder_test.go` (keyframe, no-change → no send,
   changed-tile localization, forced keyframe).
+- **Bidirectional free-path file transfer** with a RustDesk-style file manager
+  (browse / create folder / copy / cut / delete / upload / download) works on
+  **both Windows and Linux** (`transfer_windows.go` / `transfer_linux.go`); the
+  browser file browser is path-aware per host OS (Windows `\`+drive list vs POSIX
+  `/`). Open it from **Remote ▸ File transfer** or the **Files** button in the
+  viewer.
 - **Windows extras:** multi-monitor selection, **in-session chat** (native dark
-  Win32 window on the host, rounded/minimizable), **bidirectional free-path file
-  transfer** with a RustDesk-style file manager (browse / create folder / copy /
-  cut / delete / upload / download), **UAC handling** (sidecar runs as SYSTEM in
-  the active console session via `CreateProcessAsUser`; `PromptOnSecureDesktop=0`),
+  Win32 window on the host, rounded/minimizable), **UAC handling** (sidecar runs
+  as SYSTEM in the active console session via `CreateProcessAsUser`;
+  `PromptOnSecureDesktop=0`),
   and **logoff survival** (desktop-following via `OpenInputDesktop`/`SetThreadDesktop`
   + viewer auto-reconnect). The agent keeps the sidecar current via an **ETag**
   check. The **Linux** engine does screen + mouse + keyboard, with **seat-following**:
@@ -119,7 +124,7 @@ with a `connect_url` the UI acts on.
   service) to read the greeter's cookie. **Input** is injected via **`/dev/uinput`**
   (kernel level, `uinput_linux.go`) so it reaches the login greeter and any session
   (XTEST alone is unreliable on the GDM greeter); it falls back to XTEST if uinput
-  isn't available. Chat / file-transfer are Windows-only for now.
+  isn't available. **In-session chat is Windows-only for now.**
 - **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
   rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
   full-motion video. The Linux engine assumes a TrueColor little-endian X server

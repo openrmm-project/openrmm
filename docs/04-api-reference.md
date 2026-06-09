@@ -50,9 +50,9 @@ here**.
 | POST | `/api/devices/{id}/remote` | Start a remote session |
 | PATCH | `/api/devices/{id}` | tech: set `{description, note}` (identification fields, scope-checked) |
 
-`POST /devices/{id}/remote` body: `{ "provider": "native" }` (or `meshcentral`;
-omitted → `RMM_REMOTE_PROVIDER`). Returns a `RemoteSession` including
-`connect_url`.
+`POST /devices/{id}/remote` body: `{ "provider": "native" }` — also `terminal`
+(an elevated shell; requires the **tech** role) or `meshcentral`; omitted →
+`RMM_REMOTE_PROVIDER`. Returns a `RemoteSession` including `connect_url`.
 
 ## Jobs
 
@@ -111,6 +111,12 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | DELETE | `/api/users/{id}` | admin | Remove a user |
 | GET | `/api/users/{id}/scopes` | admin | List a user's access-scope assignments |
 | PUT | `/api/users/{id}/scopes` | admin | Replace scope assignments (`[]` = unrestricted) |
+
+### Account
+
+| Method | Path | Role | Description |
+|--------|------|------|-------------|
+| POST | `/api/me/password` | any | `{current_password, new_password}` — change your own password (verifies current; min 8 chars; revokes your other sessions; audited `user.password.change`) |
 
 ### Two-factor (TOTP)
 

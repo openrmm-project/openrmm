@@ -30,15 +30,21 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
 - Job lifecycle: propose → **human approval** → dispatch → result, fully audited.
 - AI chat engine with a tool-calling loop and read/propose tools; reports render
   in chat with a client-side **CSV download**, never written to the endpoint.
-- Pluggable remote-access layer with two providers (native relay + built-in media
-  engine, and MeshCentral). The native sidecar does screen capture + input over a
-  CGO-free tile-delta codec on **Windows** (chat, file transfer, multi-monitor,
-  UAC, logoff survival) and **Linux/Xorg** (X11 capture + uinput input, with
-  seat-following for the login screen).
+- Pluggable remote-access layer with three providers: **native** (relay + built-in
+  media engine), **terminal** (an elevated, in-process shell), and **MeshCentral**.
+  The native sidecar does screen capture + input over a CGO-free tile-delta codec on
+  **Windows** (GDI; chat, multi-monitor, UAC, logoff survival) and **Linux/Xorg**
+  (X11 capture via MIT-SHM + uinput input, with seat-following for the login screen).
+  **File transfer** works on both Windows and Linux.
+- **Elevated remote Terminal** (tech-only): a real PTY (Unix) / ConPTY (Windows)
+  shell that runs as the agent's service account (root/SYSTEM), bridged to an
+  xterm.js viewer.
 - **RBAC** (admin/tech/readonly) + optional **TOTP 2FA** + **per-user access scope**
-  (Company/Site/device), enforced on read, write, and the AI/MCP surface.
+  (Company/Site/device), enforced on read, write, and the AI/MCP surface. Users can
+  change their own password in-app.
 - REST API, token auth, immutable audit log, encrypted runtime secrets (AES-256-GCM).
-- React frontend (`openrmm/`) wired to the backend; cross-platform Go agent.
+- React frontend (`openrmm/`) wired to the backend; cross-platform Go agent that
+  **self-updates** from the server (`/dl` ETag).
 
 ## What is intentionally NOT built yet
 

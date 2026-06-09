@@ -33,6 +33,17 @@ remote-dist:
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-linux-amd64        ./cmd/rmm-remote
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-darwin-arm64       ./cmd/rmm-remote
 
+# Publish the agent binaries to deploy/public/ so the server serves them at /dl/
+# for the agent's ETag-based SELF-UPDATE (and the install scripts). Republish here
+# and connected agents upgrade themselves within RMM_UPDATE_INTERVAL (default 30m).
+# Names must match agentDownloadName(): rmm-agent-<os>-<arch>[.exe].
+agent-dist:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-agent-windows-amd64.exe ./cmd/agent
+	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-agent-linux-amd64        ./cmd/agent
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-agent-linux-arm64        ./cmd/agent
+	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-agent-darwin-amd64       ./cmd/agent
+	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-agent-darwin-arm64       ./cmd/agent
+
 run: server
 	./bin/rmm-server
 

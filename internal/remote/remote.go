@@ -60,6 +60,7 @@ func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, me
 		meshTokenKey: meshTokenKey, meshUser: meshUser, providers: map[string]Provider{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
+	register(&terminalProvider{m: m})
 	register(&meshProvider{m: m})
 	return m
 }
@@ -94,41 +95,62 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 
 // ---------- native (built-in relay) ----------
 
-type nativeProvider struct{ m *Manager }
-
-func (p *nativeProvider) Name() string { return "native" }
-
-// StartSession brokers a relayed session: both the agent's remote module and the
+// brokerRelay sets up a relayed session: both the agent's remote module and the
 // technician's viewer connect to /ws/remote with the same token, and the server
-// pipes bytes between them (NAT-friendly, like RustDesk's hbbr relay).
-func (p *nativeProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
-	if !p.m.hub.IsOnline(agent.ID) {
+// pipes bytes between them (NAT-friendly, like RustDesk's hbbr relay). kind tells
+// the agent which module to attach (desktop sidecar vs. elevated terminal); it is
+// also recorded as the session provider so the audit/list reflect what was opened.
+func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string) (*models.RemoteSession, error) {
+	if !m.hub.IsOnline(agent.ID) {
 		return nil, fmt.Errorf("agent %s is offline", agent.ID)
 	}
 	token := auth.NewToken()
-	base := p.m.wsBase()
+	base := m.wsBase()
 	viewerURL := fmt.Sprintf("%s/ws/remote?token=%s&role=viewer", base, token)
 	agentURL := fmt.Sprintf("%s/ws/remote?token=%s&role=agent", base, token)
 
 	rs := &models.RemoteSession{
 		AgentID:    agent.ID,
-		Provider:   "native",
+		Provider:   provider,
 		Status:     "pending",
 		Token:      token,
 		ConnectURL: viewerURL,
 		CreatedBy:  createdBy,
 		ExpiresAt:  time.Now().Add(sessionTTL),
 	}
-	if err := p.m.persist(ctx, rs); err != nil {
+	if err := m.persist(ctx, rs); err != nil {
 		return nil, err
 	}
 
-	// Tell the agent to connect its remote module to the relay.
-	start := protocol.RemoteStartMsg{SessionID: rs.ID, Token: token, RelayURL: agentURL}
+	// Tell the agent to connect the requested remote module to the relay.
+	start := protocol.RemoteStartMsg{SessionID: rs.ID, Token: token, RelayURL: agentURL, Kind: kind}
 	data, _ := json.Marshal(start)
 	frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgRemoteStart, Data: data})
-	p.m.hub.Send(agent.ID, frame)
+	m.hub.Send(agent.ID, frame)
 	return rs, nil
+}
+
+type nativeProvider struct{ m *Manager }
+
+func (p *nativeProvider) Name() string { return "native" }
+
+// StartSession brokers a relayed remote-desktop session (media sidecar).
+func (p *nativeProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+	return p.m.brokerRelay(ctx, agent, createdBy, "native", protocol.RemoteKindDesktop)
+}
+
+// ---------- terminal (elevated shell over the relay) ----------
+
+type terminalProvider struct{ m *Manager }
+
+func (p *terminalProvider) Name() string { return "terminal" }
+
+// StartSession brokers a relayed session whose agent module is an interactive
+// shell on a PTY. The shell runs inside the agent process, so it inherits the
+// agent's privileges — and the agent runs as a system service (root on
+// Linux/macOS, SYSTEM on Windows), so the terminal session is elevated.
+func (p *terminalProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+	return p.m.brokerRelay(ctx, agent, createdBy, "terminal", protocol.RemoteKindTerminal)
 }
 
 // ---------- meshcentral ----------

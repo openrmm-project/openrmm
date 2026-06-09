@@ -1,9 +1,9 @@
 # 08 — Remote Access
 
 Remote access is **pluggable**: a single `Provider` interface
-(`internal/remote`) with three implementations. Callers never depend on a
-specific tool — if the native tool doesn't pan out, drop it and MeshCentral keeps
-working.
+(`internal/remote`) with four implementations (`native` desktop, `terminal`
+shell, `meshcentral`). Callers never depend on a specific tool — if the native
+tool doesn't pan out, drop it and MeshCentral keeps working.
 
 ```go
 type Provider interface {
@@ -16,6 +16,32 @@ type Provider interface {
 with a `connect_url` the UI acts on.
 
 ## Providers
+
+### `terminal` (elevated shell)
+- A built-in **interactive shell** brokered over the **same relay** as `native`:
+  `POST /api/devices/{id}/remote {"provider":"terminal"}` mints a token, pushes
+  `remote_start{kind:"terminal"}` to the agent, and returns a viewer `connect_url`.
+- Unlike the desktop media engine (a sidecar in the interactive session), the
+  shell runs **inside the agent process**, so it inherits the agent's privileges —
+  and the agent runs as a **system service (root on Linux/macOS, SYSTEM on
+  Windows)**, so the session is **elevated**. The viewer header shows a 🛡
+  *elevated* badge with the shell user when `geteuid()==0` (Unix) / the process
+  token is in the Administrators group (Windows).
+- **Unix** opens a real **PTY** (`creack/pty`, CGO-free) running `bash -i` (falls
+  back to `$SHELL`/`sh`). **Windows** opens a real **pseudo-console (ConPTY**,
+  `UserExistsError/conpty`, Windows 10 1809+**)** running PowerShell. Both give a
+  genuine terminal — echo, line editing, signals (Ctrl-C), ANSI/VT colors and
+  curses TUIs (top/vim) all work.
+- **Wire format** over the relay: viewer→agent binary = raw keystrokes, text JSON
+  `{"t":"resize",cols,rows}`; agent→viewer binary = raw shell output, text JSON
+  `{"t":"hello"|"exit"|"error"}`. The viewer is **xterm.js** (`TerminalViewer` in
+  `openrmm/src/screens-devices.jsx`, opened from the device **Remote ▸ Terminal**
+  menu).
+- **Access control:** an elevated shell is equivalent to running scripts, so
+  unlike read-only remote-desktop assistance the `terminal` provider requires the
+  **`tech`** role (enforced in `startRemote` and gated in the UI menu).
+- Verified end-to-end: broker → relay → live root/user PTY echoes a computed
+  marker back to the viewer.
 
 ### `meshcentral`
 - Builds a connect URL into a configured MeshCentral server for the agent's node.

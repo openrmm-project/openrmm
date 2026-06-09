@@ -103,6 +103,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
 
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
+  const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
   const startRemote = async (provider) => {
     if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
@@ -154,6 +155,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
+                {can('tech') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 {can('admin') && <>
                   <div className="my-1 border-t border-line" />
@@ -186,6 +188,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
       {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} onClose={() => setRemote(null)} />}
+      {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}
     </Drawer>
   );
 }
@@ -496,6 +499,106 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
     </div>
   );
 }
+
+// TerminalViewer is the native "Terminal" remote provider's viewer: an xterm.js
+// terminal bridged to an elevated shell on the endpoint. It brokers a session
+// (provider 'terminal'), connects to the relay as the viewer peer, and exchanges
+// raw bytes with the agent — keystrokes out (binary), shell output in (binary),
+// plus JSON control ({t:'resize'} out; {t:'hello'|'exit'|'error'} in). Pairs with
+// cmd/agent/terminal.go.
+function TerminalViewer({ deviceId, hostname, onClose }) {
+  const toast = useToast();
+  const elRef = useRef(null);
+  const wsRef = useRef(null);
+  const fitRef = useRef(null);
+  const [status, setStatus] = useState('connecting');
+  const [info, setInfo] = useState(null); // { shell, user, elevated, os }
+
+  useEffect(() => {
+    if (!window.Terminal) { toast.error('Terminal unavailable', 'xterm.js failed to load'); setStatus('closed'); return; }
+    const term = new window.Terminal({
+      cursorBlink: true, fontSize: 13, scrollback: 5000,
+      fontFamily: 'JetBrains Mono, ui-monospace, Menlo, Consolas, monospace',
+      theme: { background: '#0b0e14', foreground: '#d6deeb' },
+    });
+    const Fit = window.FitAddon && window.FitAddon.FitAddon;
+    const fit = Fit ? new Fit() : null;
+    if (fit) term.loadAddon(fit);
+    term.open(elRef.current);
+    const doFit = () => { if (fit) { try { fit.fit(); } catch (e) {} } };
+    doFit();
+    fitRef.current = fit;
+
+    const enc = new TextEncoder();
+    const sendResize = () => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows })); };
+    term.onData((d) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
+    term.onResize(sendResize);
+
+    let stopped = false;
+    const connect = async () => {
+      setStatus('connecting');
+      let wsUrl;
+      try {
+        const s = await api.startRemote(deviceId, 'terminal');
+        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+        wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+      } catch (e) { setStatus('closed'); toast.error('Terminal failed', e.message); return; }
+      if (stopped) return;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => { setStatus('connected'); doFit(); sendResize(); term.focus(); };
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          try {
+            const m = JSON.parse(ev.data);
+            if (m.t === 'hello') setInfo(m);
+            else if (m.t === 'exit') { term.write('\r\n\x1b[33m[session ended]\x1b[0m\r\n'); setStatus('closed'); }
+            else if (m.t === 'error') term.write('\r\n\x1b[31m' + (m.msg || 'error') + '\x1b[0m\r\n');
+          } catch (e) {}
+          return;
+        }
+        term.write(new Uint8Array(ev.data));
+      };
+      ws.onclose = () => { if (!stopped) setStatus('closed'); };
+      ws.onerror = () => {};
+    };
+
+    const onWinResize = () => doFit();
+    window.addEventListener('resize', onWinResize);
+    connect();
+    return () => {
+      stopped = true;
+      window.removeEventListener('resize', onWinResize);
+      if (wsRef.current) wsRef.current.close();
+      term.dispose();
+    };
+  }, [deviceId]);
+
+  const statusCls = status === 'connected' ? 'bg-oksoft text-ok' : status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
+  return (
+    <div className="fixed inset-0 z-[80] bg-[#0b0e14] flex flex-col">
+      <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
+        <Icon name="terminal" size={15} className="text-muted" />
+        <span className="text-[13px] font-semibold text-ink">{hostname}</span>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
+        {info && (
+          <span className="text-[10.5px] text-faint flex items-center gap-2">
+            <span className="mono">{info.shell}</span>
+            {info.elevated
+              ? <span className="text-ok inline-flex items-center gap-1"><Icon name="shield" size={11} />elevated{info.user ? ` · ${info.user}` : ''}</span>
+              : (info.user && <span>{info.user}</span>)}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
+        </div>
+      </div>
+      <div ref={elRef} className="flex-1 overflow-hidden p-2" />
+    </div>
+  );
+}
+window.TerminalViewer = TerminalViewer;
 
 // fmtSize renders a byte count compactly (KB/MB/GB).
 function fmtSize(b) {

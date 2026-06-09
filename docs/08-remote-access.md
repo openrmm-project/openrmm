@@ -82,9 +82,13 @@ with a `connect_url` the UI acts on.
   equivalent of RustDesk's `hbbr` relay.
 - **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
   agent spawns on demand. **Windows** captures via **GDI BitBlt** + **SendInput**;
-  **Linux** captures via pure-Go **X11** (`GetImage` over the display socket) +
-  **XTEST** input injection (`media_linux.go` / `x11_linux.go`) — the same native
-  technique, no fork. macOS has no CGO-free capture path yet (stub). The viewer is
+  **Linux** captures via pure-Go **X11** `GetImage` — using **MIT-SHM** (shared
+  memory) when the server is local, so the framebuffer isn't marshaled over the
+  socket each frame, with an automatic fall back to plain `GetImage` if SHM isn't
+  available — plus **uinput/XTEST** input injection (`media_linux.go` /
+  `x11_linux.go`) — the same native technique, no fork. (Unlike XDamage, MIT-SHM
+  works under a compositor such as GNOME/mutter, since it shares GetImage's
+  server-side read path.) macOS has no CGO-free capture path yet (stub). The viewer is
   a plain browser client (`openrmm/src/screens-devices.jsx`, also openable in a new
   tab). A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
   `0x02`=file chunk; JSON text for input, chat, file ops, and `{t:"kf"}` (the

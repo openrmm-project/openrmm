@@ -18,16 +18,22 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // X11 request opcodes / constants we use.
 const (
 	opQueryExtension     = 98
+	opGetInputFocus      = 43 // a tiny request with a reply — used to sync (round-trip)
 	opGetImage           = 73
 	opGetKeyboardMapping = 101
 	zPixmap              = 2
@@ -37,7 +43,17 @@ const (
 	evButtonPress  = 4
 	evButtonRelease = 5
 	evMotionNotify = 6
+
+	// MIT-SHM minor opcodes.
+	shmQueryVersion = 0
+	shmAttach       = 1
+	shmDetach       = 2
+	shmGetImage     = 4
 )
+
+// shmDisabled is set process-wide after a SHM failure so subsequent (re)attaches
+// skip SHM and use the plain-socket GetImage instead of looping on a bad path.
+var shmDisabled atomic.Bool
 
 var le = binary.LittleEndian
 
@@ -50,7 +66,19 @@ type x11 struct {
 	xtestOp            byte // XTEST major opcode (0 = unavailable)
 	keycodeFor         map[uint32]byte
 	img                *image.RGBA
-	raw                []byte // reusable GetImage payload buffer
+	raw                []byte // reusable socket GetImage payload buffer
+
+	xidBase, xidMask uint32 // resource-id allocation (for the SHM segment XID)
+	xidNext          uint32
+
+	// MIT-SHM: when available the server writes GetImage pixels into a shared
+	// memory segment instead of marshaling ~W*H*4 bytes over the socket each
+	// frame — the main cost on Linux. Falls back to the socket path on any error.
+	shmOK   bool
+	shmOp   byte   // MIT-SHM major opcode
+	shmSeg  uint32 // X resource id for the attached segment
+	shmID   int    // System V shm id
+	shmAddr []byte // the segment, mapped into our address space
 }
 
 // dialX11 opens the display socket from $DISPLAY (fallback :0).
@@ -225,7 +253,102 @@ func connectX11(conn net.Conn, name, data []byte) (*x11, error) {
 	x.img = image.NewRGBA(image.Rect(0, 0, x.width, x.height))
 	x.queryXTest()
 	x.loadKeymap()
+	x.setupShm()
 	return x, nil
+}
+
+// newXID allocates an X resource id (for the SHM segment).
+func (x *x11) newXID() uint32 {
+	id := x.xidBase | (x.xidNext & x.xidMask)
+	x.xidNext++
+	return id
+}
+
+// setupShm negotiates MIT-SHM and attaches a shared segment so the server can
+// deliver GetImage pixels via shared memory. Local connections only; any failure
+// leaves shmOK false (and the socket path is used). Synchronous: all replies are
+// immediate (no hang) — ShmAttach has no reply, so a GetInputFocus round-trip
+// confirms the server processed it before we mark the segment for cleanup.
+func (x *x11) setupShm() {
+	if shmDisabled.Load() {
+		return
+	}
+	if _, ok := x.conn.(*net.UnixConn); !ok {
+		return // SHM only works when the server is on the same machine
+	}
+	op, present := x.queryExtensionMajor("MIT-SHM")
+	if !present {
+		log.Printf("rmm-remote: MIT-SHM absent — using socket GetImage")
+		return
+	}
+	// ShmQueryVersion: confirm the extension is usable.
+	qv := []byte{op, shmQueryVersion, 1, 0}
+	if _, err := x.conn.Write(qv); err != nil {
+		return
+	}
+	if _, err := x.readReply(); err != nil {
+		return
+	}
+
+	size := x.width * x.height * 4
+	id, err := unix.SysvShmGet(unix.IPC_PRIVATE, size, unix.IPC_CREAT|0o600)
+	if err != nil {
+		log.Printf("rmm-remote: shmget failed (%v) — using socket GetImage", err)
+		return
+	}
+	addr, err := unix.SysvShmAttach(id, 0, 0)
+	if err != nil {
+		_, _ = unix.SysvShmCtl(id, unix.IPC_RMID, nil)
+		return
+	}
+	seg := x.newXID()
+	// ShmAttach(shmseg, shmid, readOnly=false) — server must be able to write.
+	at := make([]byte, 16)
+	at[0] = op
+	at[1] = shmAttach
+	le.PutUint16(at[2:], 4)
+	le.PutUint32(at[4:], seg)
+	le.PutUint32(at[8:], uint32(id))
+	// at[12] readOnly = 0
+	if _, err := x.conn.Write(at); err != nil {
+		_ = unix.SysvShmDetach(addr)
+		_, _ = unix.SysvShmCtl(id, unix.IPC_RMID, nil)
+		return
+	}
+	// Round-trip so the server has attached before we mark the segment removable.
+	foc := []byte{opGetInputFocus, 0, 1, 0}
+	if _, err := x.conn.Write(foc); err != nil {
+		_ = unix.SysvShmDetach(addr)
+		_, _ = unix.SysvShmCtl(id, unix.IPC_RMID, nil)
+		return
+	}
+	if _, err := x.readReply(); err != nil {
+		_ = unix.SysvShmDetach(addr)
+		_, _ = unix.SysvShmCtl(id, unix.IPC_RMID, nil)
+		return
+	}
+	// Mark for removal: the kernel frees it once both we and the server detach.
+	_, _ = unix.SysvShmCtl(id, unix.IPC_RMID, nil)
+	x.shmOK, x.shmOp, x.shmSeg, x.shmID, x.shmAddr = true, op, seg, id, addr
+	log.Printf("rmm-remote: MIT-SHM enabled (%d bytes shared)", size)
+}
+
+// queryExtensionMajor returns an extension's major opcode and whether present.
+func (x *x11) queryExtensionMajor(name string) (byte, bool) {
+	nlen := len(name)
+	req := make([]byte, 4+4+nlen+pad4(nlen))
+	req[0] = opQueryExtension
+	le.PutUint16(req[2:], uint16(len(req)/4))
+	le.PutUint16(req[4:], uint16(nlen))
+	copy(req[8:], name)
+	if _, err := x.conn.Write(req); err != nil {
+		return 0, false
+	}
+	h, err := x.readReply()
+	if err != nil || h[8] == 0 {
+		return 0, false
+	}
+	return h[9], true
 }
 
 // parseSetup extracts the first screen's root window + size and the keycode
@@ -238,10 +361,10 @@ func (x *x11) parseSetup(b []byte) error {
 	u32 := func() uint32 { v := le.Uint32(b[p:]); p += 4; return v }
 	u16 := func() uint16 { v := le.Uint16(b[p:]); p += 2; return v }
 	u8 := func() byte { v := b[p]; p++; return v }
-	_ = u32() // release number
-	_ = u32() // resource-id base
-	_ = u32() // resource-id mask
-	_ = u32() // motion buffer size
+	_ = u32()         // release number
+	x.xidBase = u32() // resource-id base
+	x.xidMask = u32() // resource-id mask
+	_ = u32()         // motion buffer size
 	vlen := int(u16())
 	_ = u16() // max request length
 	_ = u8()  // number of screens
@@ -272,8 +395,37 @@ func (x *x11) parseSetup(b []byte) error {
 }
 
 func (x *x11) close() {
+	if x.shmAddr != nil {
+		// Detach on the server (best-effort) then locally; the segment was already
+		// marked IPC_RMID, so the kernel frees it once both sides detach.
+		dt := make([]byte, 8)
+		dt[0] = x.shmOp
+		dt[1] = shmDetach
+		le.PutUint16(dt[2:], 2)
+		le.PutUint32(dt[4:], x.shmSeg)
+		if x.conn != nil {
+			_, _ = x.conn.Write(dt)
+		}
+		_ = unix.SysvShmDetach(x.shmAddr)
+		x.shmAddr = nil
+	}
 	if x.conn != nil {
 		x.conn.Close()
+	}
+}
+
+// convertBGRX writes an X ZPixmap (BGRX, LSBFirst) buffer into x.img as RGBA.
+func (x *x11) convertBGRX(src []byte) {
+	dst := x.img.Pix
+	px := x.width * x.height * 4
+	if len(src) < px {
+		px = len(src)
+	}
+	for i := 0; i+3 < px && i+3 < len(dst); i += 4 {
+		dst[i] = src[i+2]   // R
+		dst[i+1] = src[i+1] // G
+		dst[i+2] = src[i]   // B
+		dst[i+3] = 255      // A
 	}
 }
 
@@ -292,8 +444,52 @@ func (x *x11) readReply() ([]byte, error) {
 	}
 }
 
-// getImage captures the whole root window into x.img and returns it.
+// getImage captures the whole root window into x.img. It uses MIT-SHM when
+// available and falls back to the socket path on any SHM error (disabling SHM
+// process-wide so reattaches don't retry a broken path).
 func (x *x11) getImage() (*image.RGBA, error) {
+	if x.shmOK {
+		if err := x.getImageSHM(); err != nil {
+			log.Printf("rmm-remote: SHM capture failed (%v) — falling back to socket GetImage", err)
+			shmDisabled.Store(true)
+			x.shmOK = false
+			return nil, err // media loop reattaches; the next attach uses the socket path
+		}
+		return x.img, nil
+	}
+	return x.getImageSocket()
+}
+
+// getImageSHM asks the server to write the root window into the shared segment,
+// then reads the pixels straight from shared memory (no socket transfer). A read
+// deadline guards against a hang if the request errors instead of replying.
+func (x *x11) getImageSHM() error {
+	req := make([]byte, 32)
+	req[0] = x.shmOp
+	req[1] = shmGetImage
+	le.PutUint16(req[2:], 8)
+	le.PutUint32(req[4:], x.root) // drawable
+	// x=0, y=0 at [8],[10]
+	le.PutUint16(req[12:], uint16(x.width))
+	le.PutUint16(req[14:], uint16(x.height))
+	le.PutUint32(req[16:], 0xffffffff) // plane mask
+	req[20] = zPixmap                  // format
+	le.PutUint32(req[24:], x.shmSeg)
+	le.PutUint32(req[28:], 0) // offset
+	_ = x.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer x.conn.SetReadDeadline(time.Time{})
+	if _, err := x.conn.Write(req); err != nil {
+		return err
+	}
+	if _, err := x.readReply(); err != nil { // reply carries no pixels (they're in shm)
+		return err
+	}
+	x.convertBGRX(x.shmAddr)
+	return nil
+}
+
+// getImageSocket captures by pulling the whole framebuffer over the X socket.
+func (x *x11) getImageSocket() (*image.RGBA, error) {
 	req := make([]byte, 20)
 	req[0] = opGetImage
 	req[1] = zPixmap
@@ -318,18 +514,7 @@ func (x *x11) getImage() (*image.RGBA, error) {
 	if _, err := io.ReadFull(x.r, x.raw); err != nil {
 		return nil, err
 	}
-	// ZPixmap depth-24/32 on LSBFirst is BGRX per pixel → convert to RGBA.
-	src, dst := x.raw, x.img.Pix
-	px := x.width * x.height * 4
-	if len(src) < px {
-		px = len(src)
-	}
-	for i := 0; i+3 < px && i+3 < len(dst); i += 4 {
-		dst[i] = src[i+2]   // R
-		dst[i+1] = src[i+1] // G
-		dst[i+2] = src[i]   // B
-		dst[i+3] = 255      // A
-	}
+	x.convertBGRX(x.raw)
 	return x.img, nil
 }
 

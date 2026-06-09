@@ -1,18 +1,21 @@
 // Command rmm-remote is the native remote-desktop media sidecar.
 //
 // The RMM agent launches it on a remote_start: it dials the server relay
-// (/ws/remote?role=agent), streams the screen as JPEG frames (binary WS
-// messages), and injects the input events it receives from the viewer (text
-// WS messages, JSON). It is a SEPARATE process from the agent on purpose —
-// this is the exact integration point the RustDesk fork plugs into (docs/12):
-// swap this Go reference engine for the forked Rust binary and the agent /
-// relay / viewer are unchanged. Keeping it separate also lets it run in the
-// interactive user session (the agent runs as a session-0 service, which
-// cannot capture the user's desktop) and keeps the agent CGO-free.
+// (/ws/remote?role=agent), streams the screen as tile-delta video frames
+// (binary WS messages; see encoder.go), and injects the input events it
+// receives from the viewer (text WS messages, JSON). It is a SEPARATE process
+// from the agent on purpose — capture/encode is per-OS while everything else
+// (agent / relay / viewer) stays unchanged. Keeping it separate also lets it
+// run in the interactive user session (the agent runs as a session-0 service,
+// which cannot capture the user's desktop) and keeps the agent CGO-free.
+//
+// The video codec (encoder.go) is CGO-free and OS-agnostic: it diffs the
+// captured RGBA frame in tiles and sends only what changed, so each platform
+// only needs a native capturer (Windows GDI today, X11 next) — no fork.
 //
 // Relay wire format (both directions ride the existing relay, which just
 // pipes frames between the two peers):
-//   agent  -> viewer : binary message = a full-screen JPEG frame
+//   agent  -> viewer : binary message = a tile-delta video frame (encoder.go)
 //   viewer -> agent  : text message   = a JSON input event, one of
 //       {"t":"m","x":0.5,"y":0.5}                 mouse move (normalized 0..1)
 //       {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
@@ -55,4 +58,4 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.4.0"
+const remoteVersion = "0.5.0"

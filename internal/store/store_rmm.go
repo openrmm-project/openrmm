@@ -42,6 +42,29 @@ func (s *Store) GetUserAuth(ctx context.Context, username string) (id, role, pas
 	return id, role, passwordHash, err
 }
 
+// GetUserPasswordHash returns the bcrypt hash for a user id (for verifying the
+// current password before a self-service change).
+func (s *Store) GetUserPasswordHash(ctx context.Context, id string) (string, error) {
+	var hash string
+	err := s.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1`, id).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return hash, err
+}
+
+// UpdateUserPassword sets a new (already-hashed) password for a user id.
+func (s *Store) UpdateUserPassword(ctx context.Context, id, passwordHash string) error {
+	ct, err := s.pool.Exec(ctx, `UPDATE users SET password_hash=$2 WHERE id=$1`, id, passwordHash)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // GetUserTOTP returns a user's (encrypted) TOTP secret and whether 2FA is on.
 func (s *Store) GetUserTOTP(ctx context.Context, id string) (secret string, enabled bool, err error) {
 	var sec *string
@@ -125,6 +148,14 @@ func (s *Store) SessionPrincipal(ctx context.Context, tokenHash string) (userID,
 // DeleteSession logs out a session.
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash=$1`, tokenHash)
+	return err
+}
+
+// DeleteUserSessionsExcept revokes all of a user's sessions but the given one
+// (used after a password change so other/stale sessions can't keep the access).
+func (s *Store) DeleteUserSessionsExcept(ctx context.Context, userID, keepTokenHash string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM sessions WHERE user_id=$1 AND token_hash<>$2`, userID, keepTokenHash)
 	return err
 }
 

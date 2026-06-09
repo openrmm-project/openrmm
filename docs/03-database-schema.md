@@ -12,6 +12,8 @@ Managed endpoints.
 |--------|------|-------|
 | id | uuid PK | agent identity |
 | hostname, os, arch, version | text | reported at enrollment |
+| description | text | operator-editable label, shown in the device list (e.g. the user's name) |
+| note | text | operator-editable private observation, shown only in device detail |
 | status | text | `online` / `offline` |
 | token_hash | text | SHA-256 of the agent's auth token |
 | group_id | uuid FK → device_groups | nullable |

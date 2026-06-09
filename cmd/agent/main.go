@@ -32,7 +32,7 @@ import (
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-const agentVersion = "0.3.0"
+const agentVersion = "0.4.0"
 
 type state struct {
 	AgentID    string `json:"agent_id"`
@@ -60,8 +60,16 @@ func main() {
 	wsURL := flag.String("server", envOr("RMM_SERVER_WS", "ws://localhost:8080/ws/agent"), "server agent WebSocket URL")
 	enroll := flag.String("enroll-token", os.Getenv("RMM_ENROLL_TOKEN"), "one-time enrollment token (first run only)")
 	statePath := flag.String("state", envOr("RMM_AGENT_STATE", "agent-state.json"), "path to the agent identity file")
-	action := flag.String("action", "", "service action: install | uninstall | start | stop (empty = run)")
+	action := flag.String("action", "", "service action: install | uninstall | start | stop | restart (empty = run)")
+	printVer := flag.Bool("print-version", false, "print the agent version and exit (used to validate a self-update download)")
 	flag.Parse()
+
+	if *printVer {
+		fmt.Println(agentVersion)
+		return
+	}
+
+	cleanupOldBinary() // remove leftovers from a previous self-update
 
 	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}}
 	a.loadState()
@@ -133,6 +141,7 @@ func (a *agent) runOnce() error {
 	done := make(chan struct{})
 	go a.writePump(conn, done)
 	go a.telemetryLoop(done)
+	go a.updateLoop(done)
 
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -211,7 +220,11 @@ func (a *agent) handleFrame(raw []byte) {
 	case protocol.MsgRemoteStart:
 		var rs protocol.RemoteStartMsg
 		if json.Unmarshal(env.Data, &rs) == nil {
-			go a.startRemoteSession(rs)
+			if rs.Kind == protocol.RemoteKindTerminal {
+				go a.startTerminalSession(rs)
+			} else {
+				go a.startRemoteSession(rs)
+			}
 		}
 	}
 }

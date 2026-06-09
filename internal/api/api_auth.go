@@ -131,6 +131,49 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, models.User{ID: actor, Username: name, Role: role})
 }
 
+// changePassword lets a signed-in user change their own password after proving
+// the current one. Only real users (session principals) have a password to
+// change — the bootstrap admin token and API tokens cannot use this.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(in.NewPassword) < 8 {
+		writeErr(w, http.StatusBadRequest, "new password must be at least 8 characters")
+		return
+	}
+	userID := actorOf(r)
+	hash, err := s.store.GetUserPasswordHash(r.Context(), userID)
+	if err != nil {
+		// Synthetic principals (admin bootstrap token, API tokens) aren't users.
+		writeErr(w, http.StatusForbidden, "this login has no password to change")
+		return
+	}
+	if !auth.CheckPassword(hash, in.CurrentPassword) {
+		writeErr(w, http.StatusUnauthorized, "current password is incorrect")
+		return
+	}
+	newHash, err := auth.HashPassword(in.NewPassword)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.store.UpdateUserPassword(r.Context(), userID, newHash); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	// Drop other sessions so a changed/compromised password can't be reused
+	// elsewhere; the caller keeps this session (its token is still valid).
+	_ = s.store.DeleteUserSessionsExcept(r.Context(), userID, auth.Hash(bearer(r)))
+	_ = s.store.AddAudit(r.Context(), userID, "user.password.change", userID, nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
+}
+
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers(r.Context())
 	if err != nil {

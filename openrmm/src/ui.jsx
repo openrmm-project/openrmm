@@ -250,11 +250,53 @@ function Tip({ children, label }) {
   );
 }
 
+// copyText copies to the clipboard, falling back to a legacy execCommand path.
+// The async Clipboard API (navigator.clipboard) only exists in SECURE contexts
+// (HTTPS or localhost); when the console is served over plain HTTP on a LAN IP it
+// is undefined, so we drop to a hidden-textarea + execCommand('copy'). Returns
+// whether the copy succeeded so the UI only confirms on success.
+function copyText(value) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(value).catch(() => execCopy(value));
+      return true;
+    }
+  } catch (e) { /* fall through */ }
+  return execCopy(value);
+}
+
+function execCopy(value) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
 function CopyButton({ value, label = 'Copy', size = 'sm', variant = 'subtle' }) {
   const [done, setDone] = useState(false);
+  const toast = useToast();
+  const onCopy = () => {
+    if (copyText(value)) {
+      setDone(true);
+      setTimeout(() => setDone(false), 1500);
+    } else {
+      toast?.error?.('Could not copy', 'Select the text and copy it manually (Ctrl+C).');
+    }
+  };
   return (
-    <Button size={size} variant={variant} icon={done ? 'approve' : 'copy'}
-      onClick={() => { navigator.clipboard?.writeText(value); setDone(true); setTimeout(() => setDone(false), 1500); }}>
+    <Button size={size} variant={variant} icon={done ? 'approve' : 'copy'} onClick={onCopy}>
       {done ? 'Copied' : label}
     </Button>
   );

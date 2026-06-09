@@ -48,6 +48,7 @@ here**.
 | GET | `/api/devices/{id}` | One agent |
 | GET | `/api/devices/{id}/inventory` | Latest inventory snapshot |
 | POST | `/api/devices/{id}/remote` | Start a remote session |
+| PATCH | `/api/devices/{id}` | tech: set `{description, note}` (identification fields, scope-checked) |
 
 `POST /devices/{id}/remote` body: `{ "provider": "native" }` (or `meshcentral`;
 omitted → `RMM_REMOTE_PROVIDER`). Returns a `RemoteSession` including

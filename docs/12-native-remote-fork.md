@@ -1,5 +1,13 @@
 # 12 — Native Remote Desktop (RustDesk fork) — Architecture Plan
 
+> **⚠️ Superseded / historical.** This fork plan was **not** pursued. The project
+> instead ships a **homegrown, CGO-free media engine** (`cmd/rmm-remote`) with a
+> shared tile-delta codec — Windows (GDI/SendInput) and Linux/Xorg (X11 + uinput,
+> seat-following). See **[08-remote-access](08-remote-access.md)** for the engine
+> that actually shipped. This doc is kept only as historical context and for the
+> AGPL licensing analysis (relevant only if a fork is ever reconsidered for
+> hardware codecs / E2E).
+
 This is a **plan**, not shipped code. It describes how to build the native
 desktop-remote ("media engine") by forking RustDesk and connecting it to the
 relay that already exists in this repo (`internal/remote/relay.go`,

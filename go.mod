@@ -3,6 +3,8 @@ module github.com/p1ngu/rmm
 go 1.25.0
 
 require (
+	github.com/UserExistsError/conpty v0.1.4
+	github.com/creack/pty v1.1.24
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/go-chi/httprate v0.15.0
 	github.com/google/uuid v1.6.0
@@ -12,6 +14,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/crypto v0.27.0
+	golang.org/x/sys v0.41.0
 )
 
 require (
@@ -33,6 +36,5 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.18.0 // indirect
 )

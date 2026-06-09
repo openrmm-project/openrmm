@@ -31,8 +31,10 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
 - AI chat engine with a tool-calling loop and read/propose tools; reports render
   in chat with a client-side **CSV download**, never written to the endpoint.
 - Pluggable remote-access layer with two providers (native relay + built-in media
-  engine, and MeshCentral). The native sidecar does screen capture, input, chat,
-  bidirectional file transfer, multi-monitor, UAC handling, and logoff survival.
+  engine, and MeshCentral). The native sidecar does screen capture + input over a
+  CGO-free tile-delta codec on **Windows** (chat, file transfer, multi-monitor,
+  UAC, logoff survival) and **Linux/Xorg** (X11 capture + uinput input, with
+  seat-following for the login screen).
 - **RBAC** (admin/tech/readonly) + optional **TOTP 2FA** + **per-user access scope**
   (Company/Site/device), enforced on read, write, and the AI/MCP surface.
 - REST API, token auth, immutable audit log, encrypted runtime secrets (AES-256-GCM).
@@ -40,9 +42,11 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
 
 ## What is intentionally NOT built yet
 
-- **Hardware-accelerated codecs / E2E-encrypted media** — the native engine uses
-  JPEG today; the RustDesk-fork plan ([12-native-remote-fork](12-native-remote-fork.md))
-  is the upgrade path. Non-Windows hosts have a capture stub.
+- **Hardware-accelerated codecs / E2E-encrypted media** — the native engine uses a
+  CGO-free tile-delta JPEG codec today (homegrown, **no RustDesk fork**); hardware
+  codecs (VP8/9/AV1) and media end-to-end encryption are future work. **macOS**
+  capture is still a stub, and **Linux requires an Xorg session** (Wayland blocks
+  screen capture — see [08-remote-access](08-remote-access.md)).
 - **Rich osquery inventory, patch management, script sandboxing/signing** — see
   [09-roadmap](09-roadmap.md).
 

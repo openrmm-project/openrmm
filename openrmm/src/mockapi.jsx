@@ -110,6 +110,7 @@ const api = {
   disable2FA(code) { return POST('/api/me/2fa/disable', { code }); },
   regenRecoveryCodes(code) { return POST('/api/me/2fa/recovery-codes', { code }); },
   reset2FA(id) { return POST('/api/users/' + id + '/2fa/reset'); },
+  changePassword(currentPassword, newPassword) { return POST('/api/me/password', { current_password: currentPassword, new_password: newPassword }); },
   async bootstrap(username, password) {
     const r = await POST('/api/auth/bootstrap', { username, password });
     setSession({ token: r.token, user: r.user, role: r.role });
@@ -133,6 +134,7 @@ const api = {
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
+  updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
 
   /* ---- jobs ---- */

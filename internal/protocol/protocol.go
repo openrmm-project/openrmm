@@ -71,13 +71,22 @@ type InventoryMsg struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// RemoteStartMsg tells the agent to connect its remote-desktop module to the
-// relay using the given session token (native provider).
+// RemoteStartMsg tells the agent to connect a remote module to the relay using
+// the given session token (native provider). Kind selects which module:
+//   - "desktop" (or empty): the media sidecar (screen capture + input)
+//   - "terminal": an elevated interactive shell on a PTY, run in the agent itself
 type RemoteStartMsg struct {
 	SessionID string `json:"session_id"`
 	Token     string `json:"token"`
 	RelayURL  string `json:"relay_url"`
+	Kind      string `json:"kind,omitempty"`
 }
+
+// Remote session kinds (RemoteStartMsg.Kind).
+const (
+	RemoteKindDesktop  = "desktop"
+	RemoteKindTerminal = "terminal"
+)
 
 // RunCheckMsg asks the agent to execute a monitoring check. The agent returns a
 // raw value/output; the server applies thresholds and computes the status.

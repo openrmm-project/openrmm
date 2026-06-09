@@ -343,10 +343,55 @@ function SettingsScreen() {
     <Page>
       <PageHeader title="Users & Settings" subtitle="Manage access and review your instance configuration." />
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[{ value: 'users', label: 'Users' }, { value: 'config', label: 'Configuration' }, { value: 'enroll', label: 'Enrollment' }]} />
-      {tab === 'users' && <><TwoFactorCard /><UsersPanel canAdmin={can('admin')} /></>}
+      {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard /><UsersPanel canAdmin={can('admin')} /></>}
       {tab === 'config' && <ConfigPanel />}
       {tab === 'enroll' && <EnrollPanel canAdmin={can('admin')} />}
     </Page>
+  );
+}
+
+// ChangePasswordCard lets the CURRENT user change their own password (self-service,
+// any role). Verifies the current password server-side and enforces a minimum length.
+function ChangePasswordCard() {
+  const toast = useToast();
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const tooShort = next.length > 0 && next.length < 8;
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const canSubmit = cur && next.length >= 8 && next === confirm && !busy;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      await api.changePassword(cur, next);
+      setCur(''); setNext(''); setConfirm('');
+      toast.success('Password changed', 'Other sessions were signed out.');
+    } catch (e) { toast.error('Could not change password', e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="p-5 mb-5 max-w-2xl">
+      <div className="flex items-center gap-2.5 mb-1">
+        <Icon name="key" size={16} className="text-muted" />
+        <div className="text-[14px] font-semibold text-ink">Change password</div>
+      </div>
+      <div className="text-[12.5px] text-muted mb-3">Set a new password for your account. Minimum 8 characters; other sessions are signed out.</div>
+      <div className="space-y-2.5 max-w-md">
+        <Field label="Current password"><Input type="password" value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" placeholder="••••••••" /></Field>
+        <Field label="New password" hint={tooShort ? 'At least 8 characters' : undefined}>
+          <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" placeholder="••••••••" className={tooShort ? 'border-bad' : ''} />
+        </Field>
+        <Field label="Confirm new password" hint={mismatch ? "Passwords don't match" : undefined}>
+          <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" placeholder="••••••••"
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} className={mismatch ? 'border-bad' : ''} />
+        </Field>
+        <Button variant="primary" icon="key" loading={busy} disabled={!canSubmit} onClick={submit}>Change password</Button>
+      </div>
+    </Card>
   );
 }
 

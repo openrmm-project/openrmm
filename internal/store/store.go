@@ -67,7 +67,7 @@ func (s *Store) SetAgentSite(ctx context.Context, id string, siteID *string) err
 
 func scanAgent(row pgx.Row) (*models.Agent, error) {
 	var a models.Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.Description, &a.OS, &a.Arch, &a.Version, &a.Status,
+	err := row.Scan(&a.ID, &a.Hostname, &a.Description, &a.Note, &a.OS, &a.Arch, &a.Version, &a.Status,
 		&a.SiteID, &a.GroupID, &a.Tags, &a.RustDeskID, &a.MeshID, &a.LastSeen, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -78,7 +78,14 @@ func scanAgent(row pgx.Row) (*models.Agent, error) {
 	return &a, nil
 }
 
-const agentCols = `id, hostname, description, os, arch, version, status, site_id, group_id, tags, rustdesk_id, mesh_id, last_seen, created_at`
+const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, rustdesk_id, mesh_id, last_seen, created_at`
+
+// SetAgentMeta updates the operator-editable identification fields: description
+// (shown in the device list) and note (a private observation, detail-only).
+func (s *Store) SetAgentMeta(ctx context.Context, id, description, note string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agents SET description=$2, note=$3 WHERE id=$1`, id, description, note)
+	return err
+}
 
 // GetAgent fetches one agent by id.
 func (s *Store) GetAgent(ctx context.Context, id string) (*models.Agent, error) {

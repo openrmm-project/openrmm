@@ -91,8 +91,8 @@ omitted:
    AI-authored scripts.
 4. **Rate limiting / quotas** on the chat and job endpoints.
 5. **Relay authorization** — `/ws/remote` validates the session token; add
-   per-role checks and consider end-to-end encryption in the media layer
-   (a RustDesk fork brings this).
+   per-role checks and consider end-to-end encryption in the media layer (the
+   native engine is homegrown/CGO-free, so media E2E is future work — no fork).
 6. **Agent token rotation** and revocation (disable a compromised agent).
 7. **Output size limits** — cap stdout/stderr persisted per job.
 

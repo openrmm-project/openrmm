@@ -52,6 +52,7 @@ function DevicesScreen({ navigate }) {
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
               <th className="font-semibold px-4 py-2.5">Hostname</th>
+              <th className="font-semibold px-3 py-2.5">Description</th>
               <th className="font-semibold px-3 py-2.5">OS</th>
               <th className="font-semibold px-3 py-2.5 hidden md:table-cell">Site</th>
               <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">Tags</th>
@@ -61,19 +62,17 @@ function DevicesScreen({ navigate }) {
           </thead>
           <tbody className="divide-y divide-line">
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i}><td className="px-4 py-3" colSpan={6}><Skeleton className="h-5 w-full" /></td></tr>
+              <tr key={i}><td className="px-4 py-3" colSpan={7}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
             {!devicesQ.loading && filtered.map((d) => (
               <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <span className={cx('h-2 w-2 rounded-full shrink-0', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-medium text-ink truncate group-hover:text-brandhi transition-colors">{d.hostname}</div>
-                      {d.description && <div className="text-[11px] text-faint truncate">{d.description}</div>}
-                    </div>
+                    <div className="text-[13px] font-medium text-ink truncate group-hover:text-brandhi transition-colors">{d.hostname}</div>
                   </div>
                 </td>
+                <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
                 <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]">{d.os}</span><span className="text-faint text-[11px] mono">{d.arch}</span></div></td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
@@ -104,8 +103,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
 
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
+  const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
   const startRemote = async (provider) => {
-    if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname }); return; } // viewer brokers + reconnects
+    if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname, os: d.os }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
     try {
       const s = await api.startRemote(id, provider);
@@ -113,7 +113,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
   // Native remote in a standalone browser tab (auth is shared via localStorage).
-  const startRemoteNewTab = () => window.open(`${location.origin}/?dev=${encodeURIComponent(id)}&host=${encodeURIComponent(d.hostname)}`, '_blank');
+  const startRemoteNewTab = () => window.open(`${location.origin}/?dev=${encodeURIComponent(id)}&host=${encodeURIComponent(d.hostname)}&os=${encodeURIComponent(d.os || '')}`, '_blank');
   const linkRemote = async (field, label) => {
     const v = window.prompt('Enter the ' + label + ' for this device:');
     if (!v || !v.trim()) return;
@@ -121,7 +121,10 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     catch (e) { toast.error('Failed', e.message); }
   };
 
-  const setSite = async (siteId) => { await api.setDeviceSite(id, siteId); toast.success('Site updated'); };
+  const setSite = async (siteId) => {
+    try { await api.setDeviceSite(id, siteId || null); toast.success('Site updated'); devQ.refetch(); }
+    catch (e) { toast.error('Failed to set site', e.message); }
+  };
 
   return (
     <Drawer open={!!id} onClose={onClose} width="max-w-[860px]">
@@ -152,6 +155,8 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
+                {can('tech') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
+                {can('tech') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, files: true })}>File transfer</MenuItem>}
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 {can('admin') && <>
                   <div className="my-1 border-t border-line" />
@@ -164,6 +169,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <div className="flex items-center gap-2">
                   <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="pin" size={13} />Site</span>
                   <Select value={d.site_id || ''} onChange={(e) => setSite(e.target.value)} className="w-auto min-w-[160px] h-8">
+                    <option value="">— Unassigned —</option>
                     {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
                   </Select>
                 </div>
@@ -171,34 +177,70 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'run', label: 'Run script' }]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'run', label: 'Run script' }, { value: 'notes', label: 'Notes' }]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
             {tab === 'jobs' && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'run' && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
+            {tab === 'notes' && <DeviceNotes device={d} />}
           </div>
         </>
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
-      {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} onClose={() => setRemote(null)} />}
+      {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} openFiles={remote.files} onClose={() => setRemote(null)} />}
+      {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}
     </Drawer>
+  );
+}
+
+// DeviceNotes edits the device's identification fields: Description (shown in the
+// device list — e.g. the user's name) and Note (a private observation, only here).
+function DeviceNotes({ device }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const editable = can('tech');
+  const [desc, setDesc] = useState(device.description || '');
+  const [note, setNote] = useState(device.note || '');
+  const [busy, setBusy] = useState(false);
+  const dirty = desc !== (device.description || '') || note !== (device.note || '');
+
+  const save = async () => {
+    setBusy(true);
+    try { await api.updateDevice(device.id, { description: desc, note }); toast.success('Saved'); }
+    catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <Field label="Description" hint="Shown in the device list to help identify this machine — e.g. the person who uses it.">
+        <Input value={desc} onChange={(e) => setDesc(e.target.value)} disabled={!editable} placeholder="e.g. João Silva — Finance laptop" />
+      </Field>
+      <Field label="Note" hint="Private observation. Only shown here (in this tab), never in the device list.">
+        <Textarea value={note} onChange={(e) => setNote(e.target.value)} disabled={!editable} rows={8} placeholder="Internal notes about this device…" />
+      </Field>
+      {editable
+        ? <div className="flex justify-end"><Button variant="primary" loading={busy} disabled={!dirty} onClick={save}>Save</Button></div>
+        : <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Tech role needed to edit.</div>}
+    </div>
   );
 }
 
 // RemoteViewer is the native remote-desktop viewer: it connects to the relay as
 // the viewer peer and multiplexes video (JPEG frames), input, chat and file
 // transfer over the one socket. Pairs with cmd/rmm-remote.
-//   binary [0x01][JPEG]      screen frame   (agent -> viewer)
-//   binary [0x02][id][bytes] file chunk     (both directions)
-//   text   {"t":...}         input / chat / file control
+//   binary [0x01][tile-delta] screen frame  (agent -> viewer; see encoder.go)
+//   binary [0x02][id][bytes]  file chunk     (both directions)
+//   text   {"t":...}          input / chat / file control ({t:'kf'} = request keyframe)
 const CH_VIDEO = 0x01, CH_FILE = 0x02;
-function RemoteViewer({ deviceId, hostname, onClose }) {
+function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
   const toast = useToast();
+  const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const dlRef = useRef({});   // active downloads: id -> { name, chunks: [] }
   const tidRef = useRef(0);
+  const openedFilesRef = useRef(false);
   const fileInputRef = useRef(null);
   const [status, setStatus] = useState('connecting');
   const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
@@ -210,6 +252,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
   useEffect(() => { if (fb) setPathEdit(fb.path); }, [fb && fb.path]);
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
+  const [notice, setNotice] = useState(null); // host-side notice (e.g. Wayland can't be captured)
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
@@ -226,6 +269,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
         if (m.t === 'hello') setVer(m.v);
+        else if (m.t === 'notice') { if (m.text) { setNotice(m.text); toast.info('Remote notice', m.text); } else setNotice(null); }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
@@ -238,19 +282,35 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       }
       const bytes = new Uint8Array(ev.data);
       if (bytes[0] === CH_VIDEO) {
-        const url = URL.createObjectURL(new Blob([ev.data.slice(1)], { type: 'image/jpeg' }));
-        const img = new Image();
-        img.onload = () => {
-          if (canvasRef.current) {
-            if (cv.width !== img.naturalWidth) { cv.width = img.naturalWidth; cv.height = img.naturalHeight; }
-            cv.getContext('2d').drawImage(img, 0, 0);
-          }
-          URL.revokeObjectURL(url);
-        };
-        img.src = url;
+        drawVideo(ev.data);
       } else if (bytes[0] === CH_FILE) {
         const d = dlRef.current[bytes[1]];
         if (d) d.chunks.push(ev.data.slice(2));
+      }
+    };
+
+    // drawVideo composites a tile-delta frame (see cmd/rmm-remote/encoder.go):
+    //   [1] flags  [2] frameW  [2] frameH  [2] tileCount
+    //   per tile:  [2] x [2] y [2] w [2] h [4] jpegLen [jpeg…]
+    // Only changed tiles arrive; a keyframe carries one full-screen tile.
+    const drawVideo = (buf) => {
+      const cv2 = canvasRef.current;
+      if (!cv2 || buf.byteLength < 8) return;
+      const dv = new DataView(buf, 1);
+      const fw = dv.getUint16(1), fh = dv.getUint16(3), n = dv.getUint16(5);
+      if (cv2.width !== fw || cv2.height !== fh) { cv2.width = fw; cv2.height = fh; }
+      const ctx = cv2.getContext('2d');
+      let p = 7;
+      for (let i = 0; i < n; i++) {
+        if (p + 12 > dv.byteLength) break;
+        const x = dv.getUint16(p), y = dv.getUint16(p + 2);
+        const len = dv.getUint32(p + 8);
+        p += 12;
+        const jpg = buf.slice(1 + p, 1 + p + len);
+        p += len;
+        createImageBitmap(new Blob([jpg], { type: 'image/jpeg' }))
+          .then((bmp) => { if (canvasRef.current) ctx.drawImage(bmp, x, y); if (bmp.close) bmp.close(); })
+          .catch(() => {});
       }
     };
 
@@ -274,7 +334,12 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
-      ws.onopen = () => { retries = 0; setStatus('streaming'); };
+      ws.onopen = () => {
+        retries = 0; setStatus('streaming'); setNotice(null);
+        try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {}
+        // Opened from Remote ▸ File transfer: jump straight into the browser once.
+        if (openFiles && !openedFilesRef.current) { openedFilesRef.current = true; browse(rootPath); }
+      };
       ws.onerror = () => {};
       ws.onclose = () => {
         if (stopped) return;
@@ -313,28 +378,39 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
   // Remote file browser (RustDesk-style): navigate folders, download a file, or
-  // upload into the current folder — no path typing.
-  const winJoin = (base, name) => (!base ? name : base.endsWith('\\') ? base + name : base + '\\' + name);
-  const parentPath = (p) => {
-    if (!p) return null;            // already at "This PC" (drive list)
-    const t = p.replace(/\\+$/, '');
-    if (/^[A-Za-z]:$/.test(t)) return '';        // drive root -> drive list
-    const i = t.lastIndexOf('\\');
-    return i <= 2 ? t.slice(0, 2) + '\\' : t.slice(0, i);
+  // upload into the current folder — no path typing. Path semantics follow the
+  // host OS: Windows uses "\\" + a drive list at the root; POSIX uses "/".
+  const rootPath = isWin ? '' : '/';
+  const joinPath = (base, name) => {
+    if (isWin) return !base ? name : base.endsWith('\\') ? base + name : base + '\\' + name;
+    return !base || base === '/' ? '/' + name : base.endsWith('/') ? base + name : base + '/' + name;
   };
-  const browse = (path) => { const p = path == null ? '' : path; setFb({ path: p, entries: null }); setFbSel([]); sendJSON({ t: 'fls', id: nextId(), path: p }); };
-  const downloadEntry = (name) => sendJSON({ t: 'fget', id: nextId(), path: winJoin(fb.path, name) });
+  const parentPath = (p) => {
+    if (isWin) {
+      if (!p) return null;            // already at "This PC" (drive list)
+      const t = p.replace(/\\+$/, '');
+      if (/^[A-Za-z]:$/.test(t)) return '';        // drive root -> drive list
+      const i = t.lastIndexOf('\\');
+      return i <= 2 ? t.slice(0, 2) + '\\' : t.slice(0, i);
+    }
+    if (!p || p === '/') return null;  // already at "/"
+    const t = p.replace(/\/+$/, '');
+    const i = t.lastIndexOf('/');
+    return i <= 0 ? '/' : t.slice(0, i);
+  };
+  const browse = (path) => { const p = path == null ? rootPath : path; setFb({ path: p, entries: null }); setFbSel([]); sendJSON({ t: 'fls', id: nextId(), path: p }); };
+  const downloadEntry = (name) => sendJSON({ t: 'fget', id: nextId(), path: joinPath(fb.path, name) });
   const toggleSel = (name) => setFbSel((s) => s.includes(name) ? s.filter((x) => x !== name) : [...s, name]);
-  const doMkdir = () => { const n = window.prompt('New folder name:'); if (n) sendJSON({ t: 'fmkdir', id: nextId(), path: winJoin(fb.path, n) }); };
-  const doDelete = () => { if (fbSel.length && window.confirm('Delete ' + fbSel.length + ' item(s) on ' + hostname + '?')) { fbSel.forEach((n) => sendJSON({ t: 'fdel', id: nextId(), path: winJoin(fb.path, n) })); setFbSel([]); } };
-  const doRename = () => { if (fbSel.length !== 1) return; const old = fbSel[0]; const n = window.prompt('Rename to:', old); if (n && n !== old) { sendJSON({ t: 'frename', id: nextId(), src: winJoin(fb.path, old), dst: winJoin(fb.path, n) }); setFbSel([]); } };
+  const doMkdir = () => { const n = window.prompt('New folder name:'); if (n) sendJSON({ t: 'fmkdir', id: nextId(), path: joinPath(fb.path, n) }); };
+  const doDelete = () => { if (fbSel.length && window.confirm('Delete ' + fbSel.length + ' item(s) on ' + hostname + '?')) { fbSel.forEach((n) => sendJSON({ t: 'fdel', id: nextId(), path: joinPath(fb.path, n) })); setFbSel([]); } };
+  const doRename = () => { if (fbSel.length !== 1) return; const old = fbSel[0]; const n = window.prompt('Rename to:', old); if (n && n !== old) { sendJSON({ t: 'frename', id: nextId(), src: joinPath(fb.path, old), dst: joinPath(fb.path, n) }); setFbSel([]); } };
   const doClip = (op) => { if (fbSel.length) setFbClip({ op, base: fb.path, names: [...fbSel] }); };
-  const doPaste = () => { if (!fbClip) return; fbClip.names.forEach((n) => sendJSON({ t: fbClip.op === 'cut' ? 'fmove' : 'fcopy', id: nextId(), src: winJoin(fbClip.base, n), dst: winJoin(fb.path, n) })); if (fbClip.op === 'cut') setFbClip(null); };
+  const doPaste = () => { if (!fbClip) return; fbClip.names.forEach((n) => sendJSON({ t: fbClip.op === 'cut' ? 'fmove' : 'fcopy', id: nextId(), src: joinPath(fbClip.base, n), dst: joinPath(fb.path, n) })); if (fbClip.op === 'cut') setFbClip(null); };
   const doDownloadSel = () => fbSel.forEach((n) => { const en = (fb.entries || []).find((e) => e.name === n); if (en && !en.dir) downloadEntry(n); });
   const uploadFile = async (file) => {
     if (!file || !fb) return;
     const ws = wsRef.current; if (!ws || ws.readyState !== 1) return;
-    const dest = winJoin(fb.path, file.name);
+    const dest = joinPath(fb.path, file.name);
     const id = nextId();
     sendJSON({ t: 'fput', id, path: dest, size: file.size });
     const u8 = new Uint8Array(await file.arrayBuffer());
@@ -359,7 +435,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
         <div className="ml-auto flex items-center gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
-          <Button variant="ghost" size="sm" icon="link" onClick={() => browse('')}>Files</Button>
+          <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>
           <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
@@ -389,7 +465,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
             </div>
             {/* editable address bar */}
             <div className="px-2 h-10 flex items-center gap-2 border-b border-line shrink-0">
-              <Input value={pathEdit} onChange={(e) => setPathEdit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') browse(pathEdit.trim()); }} placeholder="Type a path, e.g. C:\Users\" className="text-[11.5px] mono h-7" />
+              <Input value={pathEdit} onChange={(e) => setPathEdit(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') browse(pathEdit.trim()); }} placeholder={isWin ? 'Type a path, e.g. C:\\Users\\' : 'Type a path, e.g. /home/'} className="text-[11.5px] mono h-7" />
               <Button variant="secondary" size="sm" icon="arrowright" onClick={() => browse(pathEdit.trim())} title="Go" />
             </div>
             {/* list */}
@@ -399,7 +475,7 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
               {fb.entries && fb.entries.map((en, i) => (
                 <div key={i} className={cx('flex items-center gap-2 px-3 py-1.5 border-b border-line/40', fbSel.includes(en.name) ? 'bg-brand/10' : 'hover:bg-elevated')}>
                   <input type="checkbox" checked={fbSel.includes(en.name)} onChange={() => toggleSel(en.name)} className="h-3.5 w-3.5 accent-brand shrink-0" />
-                  <button onClick={() => en.dir ? browse(winJoin(fb.path, en.name)) : toggleSel(en.name)} onDoubleClick={() => !en.dir && downloadEntry(en.name)} className="flex items-center gap-2 flex-1 text-left min-w-0">
+                  <button onClick={() => en.dir ? browse(joinPath(fb.path, en.name)) : toggleSel(en.name)} onDoubleClick={() => !en.dir && downloadEntry(en.name)} className="flex items-center gap-2 flex-1 text-left min-w-0">
                     <Icon name={en.dir ? 'pin' : 'script'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
                     <span className="text-[12.5px] text-ink truncate">{en.name}</span>
                   </button>
@@ -413,8 +489,15 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
         </div>
       )}
       <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
+        <div className="relative flex-1 flex items-center justify-center overflow-hidden p-2">
           <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
+          {notice && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
+              <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
+              <span>{notice}</span>
+              <button onClick={() => setNotice(null)} className="text-faint hover:text-ink shrink-0"><Icon name="close" size={13} /></button>
+            </div>
+          )}
         </div>
         {chatOpen && <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title="Collapse chat"><Icon name="chevright" size={16} /></button></div>
@@ -435,6 +518,106 @@ function RemoteViewer({ deviceId, hostname, onClose }) {
     </div>
   );
 }
+
+// TerminalViewer is the native "Terminal" remote provider's viewer: an xterm.js
+// terminal bridged to an elevated shell on the endpoint. It brokers a session
+// (provider 'terminal'), connects to the relay as the viewer peer, and exchanges
+// raw bytes with the agent — keystrokes out (binary), shell output in (binary),
+// plus JSON control ({t:'resize'} out; {t:'hello'|'exit'|'error'} in). Pairs with
+// cmd/agent/terminal.go.
+function TerminalViewer({ deviceId, hostname, onClose }) {
+  const toast = useToast();
+  const elRef = useRef(null);
+  const wsRef = useRef(null);
+  const fitRef = useRef(null);
+  const [status, setStatus] = useState('connecting');
+  const [info, setInfo] = useState(null); // { shell, user, elevated, os }
+
+  useEffect(() => {
+    if (!window.Terminal) { toast.error('Terminal unavailable', 'xterm.js failed to load'); setStatus('closed'); return; }
+    const term = new window.Terminal({
+      cursorBlink: true, fontSize: 13, scrollback: 5000,
+      fontFamily: 'JetBrains Mono, ui-monospace, Menlo, Consolas, monospace',
+      theme: { background: '#0b0e14', foreground: '#d6deeb' },
+    });
+    const Fit = window.FitAddon && window.FitAddon.FitAddon;
+    const fit = Fit ? new Fit() : null;
+    if (fit) term.loadAddon(fit);
+    term.open(elRef.current);
+    const doFit = () => { if (fit) { try { fit.fit(); } catch (e) {} } };
+    doFit();
+    fitRef.current = fit;
+
+    const enc = new TextEncoder();
+    const sendResize = () => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows })); };
+    term.onData((d) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
+    term.onResize(sendResize);
+
+    let stopped = false;
+    const connect = async () => {
+      setStatus('connecting');
+      let wsUrl;
+      try {
+        const s = await api.startRemote(deviceId, 'terminal');
+        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
+        wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+      } catch (e) { setStatus('closed'); toast.error('Terminal failed', e.message); return; }
+      if (stopped) return;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+      ws.binaryType = 'arraybuffer';
+      ws.onopen = () => { setStatus('connected'); doFit(); sendResize(); term.focus(); };
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          try {
+            const m = JSON.parse(ev.data);
+            if (m.t === 'hello') setInfo(m);
+            else if (m.t === 'exit') { term.write('\r\n\x1b[33m[session ended]\x1b[0m\r\n'); setStatus('closed'); }
+            else if (m.t === 'error') term.write('\r\n\x1b[31m' + (m.msg || 'error') + '\x1b[0m\r\n');
+          } catch (e) {}
+          return;
+        }
+        term.write(new Uint8Array(ev.data));
+      };
+      ws.onclose = () => { if (!stopped) setStatus('closed'); };
+      ws.onerror = () => {};
+    };
+
+    const onWinResize = () => doFit();
+    window.addEventListener('resize', onWinResize);
+    connect();
+    return () => {
+      stopped = true;
+      window.removeEventListener('resize', onWinResize);
+      if (wsRef.current) wsRef.current.close();
+      term.dispose();
+    };
+  }, [deviceId]);
+
+  const statusCls = status === 'connected' ? 'bg-oksoft text-ok' : status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
+  return (
+    <div className="fixed inset-0 z-[80] bg-[#0b0e14] flex flex-col">
+      <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
+        <Icon name="terminal" size={15} className="text-muted" />
+        <span className="text-[13px] font-semibold text-ink">{hostname}</span>
+        <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
+        {info && (
+          <span className="text-[10.5px] text-faint flex items-center gap-2">
+            <span className="mono">{info.shell}</span>
+            {info.elevated
+              ? <span className="text-ok inline-flex items-center gap-1"><Icon name="shield" size={11} />elevated{info.user ? ` · ${info.user}` : ''}</span>
+              : (info.user && <span>{info.user}</span>)}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
+        </div>
+      </div>
+      <div ref={elRef} className="flex-1 overflow-hidden p-2" />
+    </div>
+  );
+}
+window.TerminalViewer = TerminalViewer;
 
 // fmtSize renders a byte count compactly (KB/MB/GB).
 function fmtSize(b) {

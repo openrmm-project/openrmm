@@ -249,12 +249,13 @@ function Shell() {
 
 /* --------------------------------- Root ----------------------------------- */
 function App() {
-  // Standalone native-remote tab: ?dev=<id>&host=<name> renders just the viewer,
-  // which brokers its own session and auto-reconnects (auth shared via localStorage).
-  const remoteDev = new URLSearchParams(location.search).get('dev');
+  // Standalone native-remote tab: ?dev=<id>&host=<name>&os=<os> renders just the
+  // viewer, which brokers its own session and auto-reconnects (auth via localStorage).
+  const params = new URLSearchParams(location.search);
+  const remoteDev = params.get('dev');
   if (remoteDev) {
     const RV = window.RemoteViewer;
-    return <ToastProvider><RV deviceId={remoteDev} hostname={new URLSearchParams(location.search).get('host') || 'remote'} onClose={() => window.close()} /></ToastProvider>;
+    return <ToastProvider><RV deviceId={remoteDev} hostname={params.get('host') || 'remote'} os={params.get('os') || ''} onClose={() => window.close()} /></ToastProvider>;
   }
 
   const [auth, setAuth] = useState(undefined); // undefined=loading, null=logged out

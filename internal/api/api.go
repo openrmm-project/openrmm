@@ -105,6 +105,7 @@ func (s *Server) Router() http.Handler {
 			r.Use(s.requireRole(models.RoleReadOnly))
 			r.Post("/auth/logout", s.logout)
 			r.Get("/me", s.me)
+			r.Post("/me/password", s.changePassword)
 			r.Post("/me/2fa/setup", s.setup2FA)
 			r.Post("/me/2fa/enable", s.enable2FA)
 			r.Post("/me/2fa/disable", s.disable2FA)
@@ -136,6 +137,7 @@ func (s *Server) Router() http.Handler {
 			r.Get("/scripts", s.listScripts)
 			r.Get("/scripts/{id}", s.getScript)
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
+			r.Patch("/devices/{id}", s.updateDeviceMeta) // description + note (scope-checked)
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/{id}/approve", s.approveJob)
 			r.Post("/jobs/{id}/reject", s.rejectJob)
@@ -316,7 +318,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"api_key_set": eff.AIAPIKey != "",
 		},
 		"remote": map[string]any{
-			"providers":             []string{"native", "meshcentral"},
+			"providers":             []string{"native", "terminal", "meshcentral"},
 			"default":               eff.RemoteDefaultProvider,
 			"meshcentral_url":       eff.MeshCentralURL,
 			"meshcentral_user":      eff.MeshCentralUser,
@@ -641,6 +643,13 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 		} else {
 			in.Provider = s.cfg.DefaultRemoteProvider
 		}
+	}
+	// The terminal provider opens an elevated (root/SYSTEM) shell — equivalent to
+	// running arbitrary scripts — so it needs tech+, unlike read-only remote
+	// desktop assistance which any authenticated role may start.
+	if in.Provider == "terminal" && roleLevel(roleOf(r)) < roleLevel(models.RoleTech) {
+		writeErr(w, http.StatusForbidden, "elevated terminal requires the tech role")
+		return
 	}
 	agent, err := s.store.GetAgent(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {

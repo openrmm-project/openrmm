@@ -88,7 +88,8 @@ with a `connect_url` the UI acts on.
   available — plus **uinput/XTEST** input injection (`media_linux.go` /
   `x11_linux.go`) — the same native technique, no fork. (Unlike XDamage, MIT-SHM
   works under a compositor such as GNOME/mutter, since it shares GetImage's
-  server-side read path.) macOS has no CGO-free capture path yet (stub). The viewer is
+  server-side read path.) macOS uses an experimental CoreGraphics engine that
+  requires CGO (see *macOS engine* below). The viewer is
   a plain browser client (`openrmm/src/screens-devices.jsx`, also openable in a new
   tab). A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
   `0x02`=file chunk; JSON text for input, chat, file ops, and `{t:"kf"}` (the
@@ -152,9 +153,29 @@ with a `connect_url` the UI acts on.
   full-motion video. The Linux engine assumes a TrueColor little-endian X server
   and captures the active screen; **login-screen capture requires an Xorg greeter**
   (set GDM `WaylandEnable=false`, or use LightDM) — a Wayland greeter only exposes
-  Xwayland, which can't capture native Wayland surfaces. macOS capture
-  (CoreGraphics) needs CGO and stays a stub. End-to-end media encryption is still
-  open (today the relay is the trust boundary; terminate WSS — see `07`).
+  Xwayland, which can't capture native Wayland surfaces. End-to-end media
+  encryption is still open (today the relay is the trust boundary; terminate
+  WSS — see `07`).
+
+### macOS engine (experimental, CGO)
+
+Unlike Windows (GDI) and Linux (X11), macOS has **no CGO-free capture path** —
+screen capture (`CGDisplayCreateImage`) and input (`CGEvent`) only exist in
+Apple's C frameworks. So the macOS sidecar (`media_darwin.go`) is the **one place
+that uses CGO**, isolated by a `//go:build darwin` tag: Linux/Windows builds never
+see it and stay CGO-free and cross-compilable. It feeds the same tile-delta codec
+and shares the POSIX file transfer (`transfer_posix.go`).
+
+- **Build it on a Mac** (CGO needs Apple's frameworks/clang):
+  `make remote-dist-darwin` (`CGO_ENABLED=1`). The Linux/Windows `remote-dist`
+  no longer cross-builds darwin.
+- **Permissions** (TCC, enforced even for root): the binary needs **Screen
+  Recording** (capture) and **Accessibility** (input) granted in System Settings ▸
+  Privacy & Security. Without them, capture is blank / input is dropped.
+- **Not yet covered**: login-window capture (needs entitlements), and the
+  in-session **chat window** (needs a Cocoa window — Win32/X11 only for now).
+- **Status**: first implementation; validate capture, Retina coordinate scaling,
+  and the keycode map on real hardware.
 
 ### Linux requires Xorg (not Wayland)
 

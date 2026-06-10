@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package main
 
@@ -12,11 +12,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// File transfer for the Linux remote session — the POSIX counterpart of
+// File transfer for POSIX remote sessions (Linux + macOS) — the counterpart of
 // transfer_windows.go. It speaks the same wire protocol (JSON control messages +
-// binary [chFile][id][bytes] chunks) so the same browser viewer drives both. The
-// only difference is path semantics: there are no drive letters, so an empty path
-// lists "/". Free-path like Windows; gated by the remote session and logged.
+// binary [chFile][id][bytes] chunks) so the same browser viewer drives all
+// platforms. The only difference from Windows is path semantics: there are no
+// drive letters, so an empty path lists "/". Pure os/filepath, no OS-specific
+// syscalls, so it is shared verbatim. Free-path; gated by the remote session.
 
 const maxTransferBytes = 2 << 30 // 2 GiB guard
 

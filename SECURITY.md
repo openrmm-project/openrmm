@@ -24,6 +24,9 @@ designed defense-first. This summarizes the posture; details live in
   constant-time; no secret is logged or returned by the API.
 - **Per-IP rate limiting** on auth (10/min), MCP (60/min) and the API (120/min)
   to blunt brute-force and token-guessing.
+- **Signed agent/sidecar updates** are supported for `/dl` artifacts with
+  Ed25519 detached signatures. Roll out in `warn`, then enforce with
+  `RMM_UPDATE_VERIFY=strict`.
 - **Immutable audit log** of every sensitive action.
 
 ## Deploying securely
@@ -37,6 +40,9 @@ designed defense-first. This summarizes the posture; details live in
 - Tighten `RMM_CORS_ORIGINS` from the `*` default if you wish (safe for
   bearer-token auth, which uses no cookies).
 - Keep `RMM_ALLOW_UNAPPROVED_JOBS` unset (approval stays mandatory).
+- For production agents, publish signed `/dl` artifacts and set
+  `RMM_UPDATE_VERIFY=strict`; use `RMM_REQUIRE_TLS=1` / `-require-tls` so agents
+  only connect over WSS.
 
 ## Known limitations (tracked, not yet hardened)
 

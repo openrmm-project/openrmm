@@ -97,6 +97,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [10-monitoring-policies](docs/10-monitoring-policies.md) | Org hierarchy, RBAC, scripts, checks, tasks, policies, alerts |
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |
 | [12-native-remote-fork](docs/12-native-remote-fork.md) | Historical: the abandoned RustDesk-fork plan (superseded by the homegrown engine in 08) |
+| [13-security-rollout](docs/13-security-rollout.md) | Staged hardening: signed updates, TLS enforcement, CI checks, CSP staging |
 
 To build the frontend: [`FRONTEND_DESIGN_BRIEF.md`](FRONTEND_DESIGN_BRIEF.md).
 

@@ -85,6 +85,11 @@ func (a *agent) maybeSelfUpdate() {
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(tmp, 0o755)
 	}
+	if err := enforceArtifactSignature(src, tmp); err != nil {
+		log.Printf("update: refusing unsigned/untrusted agent build: %v", err)
+		_ = os.Remove(tmp)
+		return
+	}
 	// Guard against a truncated / corrupt / wrong-arch download bricking the host:
 	// only swap a binary that actually executes and reports a version here.
 	if err := validateBinary(tmp); err != nil {

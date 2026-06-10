@@ -53,9 +53,10 @@ Cross-compile the agent for endpoints with `make agent-all`.
 Agents **upgrade themselves**. Each connected agent periodically HEADs
 `/dl/rmm-agent-<os>-<arch>` and compares the **ETag** with the build it last
 applied (the same mechanism the remote sidecar uses). When a new binary is
-published it downloads it, validates it runs (`-print-version`), confirms it is
-not byte-identical to the running one, atomically swaps it in, and reloads
-(re-exec on Unix; a detached service restart on Windows).
+published it downloads it, verifies the detached Ed25519 signature when
+configured, validates it runs (`-print-version`), confirms it is not
+byte-identical to the running one, atomically swaps it in, and reloads (re-exec
+on Unix; a detached service restart on Windows).
 
 So a fleet-wide upgrade is just **republish to `/dl`**:
 
@@ -66,6 +67,9 @@ make agent-dist        # rebuild + publish rmm-agent-<os>-<arch> into deploy/pub
 
 - Controls (agent env): `RMM_AUTO_UPDATE=0` disables it; `RMM_UPDATE_INTERVAL`
   sets the cadence (e.g. `15m`; minimum 5m).
+- Signature controls: `RMM_UPDATE_VERIFY=warn|strict|off` and
+  `RMM_UPDATE_PUBLIC_KEY=<base64-ed25519-public-key>`. See
+  [13-security-rollout](13-security-rollout.md).
 - **Safety:** a download that fails to execute or returns no version is discarded
   and the running agent is left untouched; the previous binary is kept as
   `*.old` until the next clean start.

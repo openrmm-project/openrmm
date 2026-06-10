@@ -83,11 +83,21 @@ func (a *agent) ensureSidecar() (string, error) {
 		log.Printf("remote: sidecar changed on server; refreshing")
 	}
 	log.Printf("remote: downloading sidecar from %s", src)
-	if err := download(src, path); err != nil {
+	tmp := path + ".new"
+	_ = os.Remove(tmp)
+	if err := download(src, tmp); err != nil {
+		return "", err
+	}
+	if err := enforceArtifactSignature(src, tmp); err != nil {
+		_ = os.Remove(tmp)
 		return "", err
 	}
 	if runtime.GOOS != "windows" {
-		_ = os.Chmod(path, 0o755)
+		_ = os.Chmod(tmp, 0o755)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
 	}
 	if remoteTag != "" {
 		_ = os.WriteFile(etagPath, []byte(remoteTag), 0o644)

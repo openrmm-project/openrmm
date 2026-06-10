@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RMM-AI agent installer (Linux/macOS).
+# OpenRMM agent installer (Linux/macOS).
 # Usage:
 #   curl -fsSL http://SERVER/install.sh | sudo bash -s -- --server http://SERVER --token <ENROLL> [--site "Name"] [--require-tls]
 set -euo pipefail
@@ -32,7 +32,7 @@ if [ "$REQUIRE_TLS" = "1" ]; then
   esac
 fi
 
-echo "RMM-AI agent installer"
+echo "OpenRMM agent installer"
 echo "  server : $SERVER"
 echo "  binary : $BIN"
 mkdir -p "$STATE_DIR"

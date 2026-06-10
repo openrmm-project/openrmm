@@ -1,4 +1,4 @@
-# RMM-AI agent installer (Windows).
+# OpenRMM agent installer (Windows).
 # Usage (PowerShell as Administrator):
 #   iwr -useb http://SERVER/install.ps1 | iex                 # then it prompts, OR pass args:
 #   & ([scriptblock]::Create((iwr -useb http://SERVER/install.ps1))) -Server http://SERVER -Token <ENROLL> [-RequireTls]
@@ -31,7 +31,7 @@ if ($RequireTls -and ($Ws -notlike 'wss://*')) {
     exit 1
 }
 
-Write-Host "RMM-AI agent installer"
+Write-Host "OpenRMM agent installer"
 Write-Host "  server : $Server"
 Write-Host "  binary : $Bin"
 

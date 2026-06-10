@@ -1,4 +1,4 @@
-# RMM-AI
+# OpenRMM
 
 An **open-source, self-hosted RMM** (Remote Monitoring & Management) with a
 **native AI assistant**. Inspired by Tactical RMM and MeshCentral, but with a

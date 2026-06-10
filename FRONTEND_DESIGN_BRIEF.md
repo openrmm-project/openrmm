@@ -1,4 +1,4 @@
-# Frontend Design Brief — RMM-AI
+# Frontend Design Brief — OpenRMM
 
 Use this to design and build the web frontend (e.g. in Claude Design / Claude
 Artifacts), then wire it to the Go backend in this repo. It is self-contained:
@@ -8,7 +8,7 @@ product context, screens, design language, and the full API contract.
 
 ## 1. Product in one paragraph
 
-RMM-AI is a self-hosted **Remote Monitoring & Management** tool whose primary
+OpenRMM is a self-hosted **Remote Monitoring & Management** tool whose primary
 interface is an **AI chat**. An IT admin manages fleets of computers in natural
 language — *"install 7-zip on the finance group"*, *"set up printer X at IP Y on
 host Z"*, *"give me a report of offline devices"*. The AI inspects the fleet and

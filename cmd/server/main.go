@@ -1,4 +1,4 @@
-// Command server is the RMM-AI control plane: REST API, agent WebSocket, remote
+// Command server is the OpenRMM control plane: REST API, agent WebSocket, remote
 // relay, and the AI chat engine.
 package main
 
@@ -68,7 +68,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("RMM-AI server listening on %s (public: %s)", cfg.HTTPAddr, cfg.PublicURL)
+		log.Printf("OpenRMM server listening on %s (public: %s)", cfg.HTTPAddr, cfg.PublicURL)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}

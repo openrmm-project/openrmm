@@ -1,7 +1,7 @@
-# CLAUDE.md — RMM-AI frontend
+# CLAUDE.md — OpenRMM frontend
 
 ## O que é este projeto
-Frontend completo do **RMM-AI** (RMM self-hosted com assistente de IA), em
+Frontend completo do **OpenRMM** (RMM self-hosted com assistente de IA), em
 React. Construído conforme `FRONTEND_DESIGN_BRIEF.md`. Telas: Login, Dashboard,
 Devices (+detail), Jobs/Aprovações, AI Chat, Audit, Alerts, Checks, Tasks,
 Policies, Scripts, Clients/Sites, Users/Settings. Dark-first, com light mode.

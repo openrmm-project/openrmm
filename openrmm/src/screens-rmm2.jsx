@@ -420,7 +420,7 @@ function TwoFactorCard() {
 
   // downloadCodes saves the recovery codes as a text file (client-side).
   const downloadCodes = () => {
-    const text = 'RMM-AI two-factor recovery codes\nKeep these somewhere safe. Each code works once.\n\n' + (recovery || []).join('\n') + '\n';
+    const text = 'OpenRMM two-factor recovery codes\nKeep these somewhere safe. Each code works once.\n\n' + (recovery || []).join('\n') + '\n';
     const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = 'rmm-ai-recovery-codes.txt';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -470,7 +470,7 @@ function TwoFactorCard() {
             <div className="min-w-0 flex-1">
               <div className="text-[12px] text-muted mb-1">1. Scan the QR, or add this secret manually:</div>
               <div className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5"><span className="text-[12.5px] mono text-ink break-all flex-1">{setup.secret}</span><CopyButton value={setup.secret} size="sm" variant="ghost" /></div>
-              <div className="text-[11px] text-faint mt-1.5">Issuer: RMM-AI · 6 digits · 30s</div>
+              <div className="text-[11px] text-faint mt-1.5">Issuer: OpenRMM · 6 digits · 30s</div>
             </div>
           </div>
           <div className="flex items-end gap-2">

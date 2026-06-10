@@ -90,8 +90,8 @@ func main() {
 	}
 	svcConfig := &service.Config{
 		Name:        "rmm-agent",
-		DisplayName: "RMM-AI Agent",
-		Description: "RMM-AI endpoint agent: telemetry, jobs and monitoring checks.",
+		DisplayName: "OpenRMM Agent",
+		Description: "OpenRMM endpoint agent: telemetry, jobs and monitoring checks.",
 		Arguments:   svcArgs,
 	}
 	prg := &program{a: a}

@@ -1,5 +1,5 @@
 // Command rmm-sign generates Ed25519 signing keys and detached signatures for
-// RMM-AI agent/sidecar artifacts published under /dl.
+// OpenRMM agent/sidecar artifacts published under /dl.
 package main
 
 import (

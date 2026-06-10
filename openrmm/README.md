@@ -1,6 +1,6 @@
-# RMM-AI — Frontend (handoff para conectar ao backend)
+# OpenRMM — Frontend (handoff para conectar ao backend)
 
-Este projeto é o **frontend completo** do RMM-AI: um app React (Login, Devices,
+Este projeto é o **frontend completo** do OpenRMM: um app React (Login, Devices,
 Device detail, Jobs/Aprovações, AI Chat, Audit, Alerts, Checks, Tasks, Policies,
 Scripts, Clients/Sites, Users/Settings) construído exatamente conforme o
 `FRONTEND_DESIGN_BRIEF.md`.

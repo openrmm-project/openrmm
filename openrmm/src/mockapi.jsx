@@ -1,4 +1,4 @@
-/* mockapi.jsx — REAL fetch client for the RMM-AI Go backend.
+/* mockapi.jsx — REAL fetch client for the OpenRMM Go backend.
    (Filename kept for index.html; this is the live client, not a mock.)
 
    Exposes window.api with the exact surface the UI expects. Bearer token from

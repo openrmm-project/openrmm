@@ -1,6 +1,6 @@
 # Security
 
-RMM-AI runs scripts on managed machines and exposes an AI/MCP surface, so it is
+OpenRMM runs scripts on managed machines and exposes an AI/MCP surface, so it is
 designed defense-first. This summarizes the posture; details live in
 [`docs/07-guardrails-security.md`](docs/07-guardrails-security.md) and
 [`docs/11-mcp.md`](docs/11-mcp.md).

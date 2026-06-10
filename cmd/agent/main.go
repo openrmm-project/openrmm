@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -61,12 +62,16 @@ func main() {
 	enroll := flag.String("enroll-token", os.Getenv("RMM_ENROLL_TOKEN"), "one-time enrollment token (first run only)")
 	statePath := flag.String("state", envOr("RMM_AGENT_STATE", "agent-state.json"), "path to the agent identity file")
 	action := flag.String("action", "", "service action: install | uninstall | start | stop | restart (empty = run)")
+	requireTLS := flag.Bool("require-tls", envBool("RMM_REQUIRE_TLS"), "require a wss:// server URL")
 	printVer := flag.Bool("print-version", false, "print the agent version and exit (used to validate a self-update download)")
 	flag.Parse()
 
 	if *printVer {
 		fmt.Println(agentVersion)
 		return
+	}
+	if *requireTLS && !secureAgentURL(*wsURL) {
+		log.Fatalf("insecure server URL %q rejected: use wss:// or unset -require-tls/RMM_REQUIRE_TLS for lab use", *wsURL)
 	}
 
 	cleanupOldBinary() // remove leftovers from a previous self-update
@@ -80,10 +85,13 @@ func main() {
 		// state.json exists the agent re-auths with its token and ignores this.
 		svcArgs = append(svcArgs, "-enroll-token", *enroll)
 	}
+	if *requireTLS {
+		svcArgs = append(svcArgs, "-require-tls")
+	}
 	svcConfig := &service.Config{
 		Name:        "rmm-agent",
-		DisplayName: "RMM-AI Agent",
-		Description: "RMM-AI endpoint agent: telemetry, jobs and monitoring checks.",
+		DisplayName: "OpenRMM Agent",
+		Description: "OpenRMM endpoint agent: telemetry, jobs and monitoring checks.",
 		Arguments:   svcArgs,
 	}
 	prg := &program{a: a}
@@ -348,6 +356,20 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func secureAgentURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "wss"
 }
 
 // ---------- script execution ----------

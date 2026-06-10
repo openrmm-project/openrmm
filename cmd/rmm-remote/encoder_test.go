@@ -83,6 +83,39 @@ func TestEncoderSendsOnlyChangedTiles(t *testing.T) {
 	}
 }
 
+// TestEncoderKeyframeStripes: a tall frame's keyframe is split into horizontal
+// stripes (parallel encode + progressive paint) that exactly tile the screen.
+func TestEncoderKeyframeStripes(t *testing.T) {
+	e := newVideoEncoder(60)
+	const w, h = 320, 600 // > 2*kfStripeH → striped
+	p, err := e.encode(solid(w, h, 40, 80, 120))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, fw, fh, tiles := parseHeader(t, p)
+	want := (h + kfStripeH - 1) / kfStripeH
+	if !key || fw != w || fh != h || tiles != want {
+		t.Fatalf("keyframe=%v w=%d h=%d tiles=%d, want true/%d/%d/%d", key, fw, fh, tiles, w, h, want)
+	}
+	// Walk the tiles: contiguous full-width stripes covering 0..h.
+	off, nextY := videoHdrLen, 0
+	for i := 0; i < tiles; i++ {
+		x := int(binary.BigEndian.Uint16(p[off : off+2]))
+		y := int(binary.BigEndian.Uint16(p[off+2 : off+4]))
+		tw := int(binary.BigEndian.Uint16(p[off+4 : off+6]))
+		th := int(binary.BigEndian.Uint16(p[off+6 : off+8]))
+		jl := int(binary.BigEndian.Uint32(p[off+8 : off+12]))
+		if x != 0 || y != nextY || tw != w || jl == 0 {
+			t.Fatalf("stripe %d: x=%d y=%d w=%d jpegLen=%d, want 0/%d/%d/>0", i, x, y, tw, jl, nextY, w)
+		}
+		nextY += th
+		off += tileHdrLen + jl
+	}
+	if nextY != h || off != len(p) {
+		t.Fatalf("stripes cover %d px and %d payload bytes, want %d/%d", nextY, off, h, len(p))
+	}
+}
+
 func TestEncoderForceKeyframe(t *testing.T) {
 	e := newVideoEncoder(60)
 	img := solid(128, 128, 7, 7, 7)

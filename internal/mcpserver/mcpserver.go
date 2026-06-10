@@ -39,7 +39,7 @@ func Handler(st *store.Store, js *jobs.Service, identify IdentifyFunc) http.Hand
 func buildServer(st *store.Store, js *jobs.Service, actor, scopeUser string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "rmm-ai",
-		Title:   "RMM-AI",
+		Title:   "OpenRMM",
 		Version: serverVersion,
 	}, nil)
 

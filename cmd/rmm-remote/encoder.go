@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"image"
 	"image/jpeg"
+	"runtime"
+	"sync"
 	"sync/atomic"
 )
 
@@ -17,6 +19,7 @@ import (
 // magnitude (and lets the frame rate rise without saturating the link).
 //
 // chVideo payload (after the 1-byte channel tag):
+//
 //	[1] flags       bit0 = keyframe
 //	[2] frameW      uint16 BE (full virtual-desktop width)
 //	[2] frameH      uint16 BE
@@ -45,13 +48,14 @@ type videoEncoder struct {
 	prev    []byte // previous frame pixels (copy), nil until first frame
 	w, h    int
 	quality int
+	tile    int // delta-tile edge, px (RMM_REMOTE_TILE; default tileSize)
 	force   atomic.Bool
 	out     bytes.Buffer
 	jbuf    bytes.Buffer
 }
 
 func newVideoEncoder(quality int) *videoEncoder {
-	e := &videoEncoder{quality: quality}
+	e := &videoEncoder{quality: quality, tile: encoderTileSize()}
 	e.force.Store(true)
 	return e
 }
@@ -81,12 +85,13 @@ func (e *videoEncoder) encode(img *image.RGBA) ([]byte, error) {
 
 	var tiles []tileRect
 	if key {
-		tiles = []tileRect{{0, 0, w, h}}
+		tiles = keyframeStripes(w, h)
 	} else {
-		for ty := 0; ty < h; ty += tileSize {
-			th := min(tileSize, h-ty)
-			for tx := 0; tx < w; tx += tileSize {
-				tw := min(tileSize, w-tx)
+		ts := e.tile
+		for ty := 0; ty < h; ty += ts {
+			th := min(ts, h-ty)
+			for tx := 0; tx < w; tx += ts {
+				tw := min(ts, w-tx)
 				if e.tileChanged(pix, stride, tx, ty, tw, th) {
 					tiles = append(tiles, tileRect{tx, ty, tw, th})
 				}
@@ -100,6 +105,11 @@ func (e *videoEncoder) encode(img *image.RGBA) ([]byte, error) {
 		return nil, nil
 	}
 
+	jpegs, err := e.encodeJPEGs(img, tiles)
+	if err != nil {
+		return nil, err
+	}
+
 	e.out.Reset()
 	var hdr [videoHdrLen]byte
 	if key {
@@ -111,22 +121,82 @@ func (e *videoEncoder) encode(img *image.RGBA) ([]byte, error) {
 	e.out.Write(hdr[:])
 
 	var th [tileHdrLen]byte
-	for _, t := range tiles {
-		min0 := img.Rect.Min
-		sub := img.SubImage(image.Rect(min0.X+t.x, min0.Y+t.y, min0.X+t.x+t.w, min0.Y+t.y+t.h))
-		e.jbuf.Reset()
-		if err := jpeg.Encode(&e.jbuf, sub, &jpeg.Options{Quality: e.quality}); err != nil {
-			return nil, err
-		}
+	for i, t := range tiles {
 		binary.BigEndian.PutUint16(th[0:2], uint16(t.x))
 		binary.BigEndian.PutUint16(th[2:4], uint16(t.y))
 		binary.BigEndian.PutUint16(th[4:6], uint16(t.w))
 		binary.BigEndian.PutUint16(th[6:8], uint16(t.h))
-		binary.BigEndian.PutUint32(th[8:12], uint32(e.jbuf.Len()))
+		binary.BigEndian.PutUint32(th[8:12], uint32(len(jpegs[i])))
 		e.out.Write(th[:])
-		e.out.Write(e.jbuf.Bytes())
+		e.out.Write(jpegs[i])
 	}
 	return e.out.Bytes(), nil
+}
+
+// keyframeStripes splits a full-frame keyframe into horizontal stripes so the
+// JPEG work spreads across cores (encodeJPEGs) and the viewer paints
+// progressively instead of waiting on one whole-screen encode — the single
+// biggest stall in the old pipeline. Small frames stay a single tile.
+const kfStripeH = 128
+
+func keyframeStripes(w, h int) []tileRect {
+	if h <= 2*kfStripeH {
+		return []tileRect{{0, 0, w, h}}
+	}
+	tiles := make([]tileRect, 0, (h+kfStripeH-1)/kfStripeH)
+	for y := 0; y < h; y += kfStripeH {
+		tiles = append(tiles, tileRect{0, y, w, min(kfStripeH, h-y)})
+	}
+	return tiles
+}
+
+// encodeJPEGs JPEG-encodes the tiles — in parallel when there are several (a
+// keyframe's stripes, or a high-motion frame with many changed tiles). Result
+// order matches tiles; the wire format is assembled by the caller.
+func (e *videoEncoder) encodeJPEGs(img *image.RGBA, tiles []tileRect) ([][]byte, error) {
+	min0 := img.Rect.Min
+	sub := func(t tileRect) image.Image {
+		return img.SubImage(image.Rect(min0.X+t.x, min0.Y+t.y, min0.X+t.x+t.w, min0.Y+t.y+t.h))
+	}
+	out := make([][]byte, len(tiles))
+	if len(tiles) == 1 {
+		e.jbuf.Reset()
+		if err := jpeg.Encode(&e.jbuf, sub(tiles[0]), &jpeg.Options{Quality: e.quality}); err != nil {
+			return nil, err
+		}
+		out[0] = e.jbuf.Bytes() // valid until the next encode() — consumed immediately
+		return out, nil
+	}
+	workers := min(runtime.NumCPU(), len(tiles), 8)
+	idx := make(chan int)
+	errs := make([]error, len(tiles))
+	var wg sync.WaitGroup
+	for n := 0; n < workers; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var buf bytes.Buffer
+			for i := range idx {
+				buf.Reset()
+				if err := jpeg.Encode(&buf, sub(tiles[i]), &jpeg.Options{Quality: e.quality}); err != nil {
+					errs[i] = err
+					continue
+				}
+				out[i] = append([]byte(nil), buf.Bytes()...)
+			}
+		}()
+	}
+	for i := range tiles {
+		idx <- i
+	}
+	close(idx)
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // tileChanged reports whether any row of the tile differs from the prev frame.

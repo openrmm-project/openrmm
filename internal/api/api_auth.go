@@ -263,7 +263,7 @@ func (s *Server) setup2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"secret": secret,
-		"uri":    auth.TOTPURI("RMM-AI", user.Username, secret),
+		"uri":    auth.TOTPURI("OpenRMM", user.Username, secret),
 	})
 }
 

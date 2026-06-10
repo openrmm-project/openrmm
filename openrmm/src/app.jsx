@@ -40,7 +40,7 @@ function LoginScreen({ onAuthed }) {
         <div className="flex items-center gap-2.5 mb-7">
           <BrandMark size={34} />
           <div>
-            <div className="text-[17px] font-semibold text-ink tracking-tight">RMM-AI</div>
+            <div className="text-[17px] font-semibold text-ink tracking-tight">OpenRMM</div>
             <div className="text-[12px] text-faint -mt-0.5">Remote Monitoring & Management</div>
           </div>
         </div>
@@ -137,7 +137,7 @@ function Sidebar({ route, navigate }) {
       <div className="h-14 flex items-center gap-2.5 px-4 border-b border-line">
         <BrandMark size={28} />
         <div className="min-w-0">
-          <div className="text-[14px] font-semibold text-ink tracking-tight leading-none">RMM-AI</div>
+          <div className="text-[14px] font-semibold text-ink tracking-tight leading-none">OpenRMM</div>
           <div className="text-[10.5px] text-faint mt-0.5">console</div>
         </div>
       </div>

@@ -9,10 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/p1ngu/rmm/internal/protocol"
 )
+
+// sidecarRefresh serializes background sidecar refreshes so two near-simultaneous
+// sessions don't race on the temp file.
+var sidecarRefresh sync.Mutex
 
 // startRemoteSession launches the media sidecar (cmd/rmm-remote) for a remote
 // session. The sidecar — not the agent — captures the screen and injects input,
@@ -58,6 +63,13 @@ func sidecarName() string {
 
 // ensureSidecar returns the sidecar path, downloading it next to the agent
 // binary from the server's /dl endpoint if it is not already present.
+//
+// When a cached sidecar already exists on Linux, it returns immediately and
+// checks for a newer build in the BACKGROUND (applied to the next session) —
+// keeping the ETag HEAD round-trip and any ~8 MB re-download OFF the
+// session-start critical path, which is the dominant "time to first frame" on
+// Linux. (Renaming over a running binary is fine on Linux; on Windows a running
+// .exe is locked, so there we keep the synchronous check before launch.)
 func (a *agent) ensureSidecar() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -69,30 +81,72 @@ func (a *agent) ensureSidecar() (string, error) {
 		dlName += ".exe"
 	}
 	src := a.httpBase() + "/dl/" + dlName
-
-	// Keep the cached sidecar only if it matches the server's current build.
-	// We compare the ETag (changes on any content change — unlike size, which can
-	// collide between builds) stored alongside the binary. If the HEAD fails we
-	// keep whatever is on disk.
 	etagPath := path + ".etag"
-	remoteTag := remoteETag(src)
+
 	if _, err := os.Stat(path); err == nil {
+		if runtime.GOOS == "linux" {
+			go a.refreshSidecar(src, path, etagPath)
+			return path, nil
+		}
+		// Windows/macOS: verify the cached build synchronously before launch.
+		remoteTag := remoteETag(src)
 		if remoteTag == "" || remoteTag == readETag(etagPath) {
 			return path, nil
 		}
 		log.Printf("remote: sidecar changed on server; refreshing")
+		if err := a.fetchSidecar(src, path, etagPath, remoteTag); err != nil {
+			return "", err
+		}
+		return path, nil
 	}
+	// No cached sidecar (first session): must download before we can launch.
 	log.Printf("remote: downloading sidecar from %s", src)
-	if err := download(src, path); err != nil {
+	if err := a.fetchSidecar(src, path, etagPath, remoteETag(src)); err != nil {
 		return "", err
 	}
+	return path, nil
+}
+
+// refreshSidecar updates the cached sidecar when the server has a newer build.
+// It runs off the session-start path; at most one refresh runs at a time.
+func (a *agent) refreshSidecar(src, path, etagPath string) {
+	if !sidecarRefresh.TryLock() {
+		return // a refresh is already in flight
+	}
+	defer sidecarRefresh.Unlock()
+	remoteTag := remoteETag(src)
+	if remoteTag == "" || remoteTag == readETag(etagPath) {
+		return // server unreachable, or the cached sidecar is already current
+	}
+	log.Printf("remote: sidecar changed on server; refreshing for next session")
+	if err := a.fetchSidecar(src, path, etagPath, remoteTag); err != nil {
+		log.Printf("remote: sidecar refresh failed: %v", err)
+	}
+}
+
+// fetchSidecar downloads, signature-verifies, and atomically installs the
+// sidecar, recording its ETag for the cache comparison above.
+func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
+	tmp := path + ".new"
+	_ = os.Remove(tmp)
+	if err := download(src, tmp); err != nil {
+		return err
+	}
+	if err := enforceArtifactSignature(src, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	if runtime.GOOS != "windows" {
-		_ = os.Chmod(path, 0o755)
+		_ = os.Chmod(tmp, 0o755)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	if remoteTag != "" {
 		_ = os.WriteFile(etagPath, []byte(remoteTag), 0o644)
 	}
-	return path, nil
+	return nil
 }
 
 // remoteETag returns the ETag of a URL via HEAD, or "" if unknown.

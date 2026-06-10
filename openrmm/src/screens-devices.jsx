@@ -292,15 +292,18 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
     // drawVideo composites a tile-delta frame (see cmd/rmm-remote/encoder.go):
     //   [1] flags  [2] frameW  [2] frameH  [2] tileCount
     //   per tile:  [2] x [2] y [2] w [2] h [4] jpegLen [jpeg…]
-    // Only changed tiles arrive; a keyframe carries one full-screen tile.
+    // Only changed tiles arrive; a keyframe covers the whole screen (one tile,
+    // or horizontal stripes). Tiles DECODE in parallel but PAINT in frame order
+    // (drawChain): a slow whole-screen keyframe decode must never finish after —
+    // and overwrite — newer delta tiles, or fresh content (e.g. a login field
+    // that was just clicked/typed into) "vanishes" under the stale keyframe.
+    let drawChain = Promise.resolve();
     const drawVideo = (buf) => {
-      const cv2 = canvasRef.current;
-      if (!cv2 || buf.byteLength < 8) return;
+      if (buf.byteLength < 8) return;
       const dv = new DataView(buf, 1);
       const fw = dv.getUint16(1), fh = dv.getUint16(3), n = dv.getUint16(5);
-      if (cv2.width !== fw || cv2.height !== fh) { cv2.width = fw; cv2.height = fh; }
-      const ctx = cv2.getContext('2d');
       let p = 7;
+      const jobs = [];
       for (let i = 0; i < n; i++) {
         if (p + 12 > dv.byteLength) break;
         const x = dv.getUint16(p), y = dv.getUint16(p + 2);
@@ -308,10 +311,17 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
         p += 12;
         const jpg = buf.slice(1 + p, 1 + p + len);
         p += len;
-        createImageBitmap(new Blob([jpg], { type: 'image/jpeg' }))
-          .then((bmp) => { if (canvasRef.current) ctx.drawImage(bmp, x, y); if (bmp.close) bmp.close(); })
-          .catch(() => {});
+        jobs.push(createImageBitmap(new Blob([jpg], { type: 'image/jpeg' }))
+          .then((bmp) => ({ x, y, bmp })).catch(() => null));
       }
+      const decoded = Promise.all(jobs); // decode starts now, in parallel
+      drawChain = drawChain.then(() => decoded).then((tiles) => {
+        const cv2 = canvasRef.current;
+        if (!cv2) return;
+        if (cv2.width !== fw || cv2.height !== fh) { cv2.width = fw; cv2.height = fh; }
+        const ctx = cv2.getContext('2d');
+        for (const t of tiles) { if (t) { ctx.drawImage(t.bmp, t.x, t.y); if (t.bmp.close) t.bmp.close(); } }
+      }).catch(() => {});
     };
 
     // Broker a session and connect. On drop (e.g. user logoff tears the session

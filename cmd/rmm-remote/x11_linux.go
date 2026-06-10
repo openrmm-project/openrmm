@@ -38,11 +38,11 @@ const (
 	opGetKeyboardMapping = 101
 	zPixmap              = 2
 
-	evKeyPress     = 2
-	evKeyRelease   = 3
-	evButtonPress  = 4
+	evKeyPress      = 2
+	evKeyRelease    = 3
+	evButtonPress   = 4
 	evButtonRelease = 5
-	evMotionNotify = 6
+	evMotionNotify  = 6
 
 	// MIT-SHM minor opcodes.
 	shmQueryVersion = 0
@@ -51,22 +51,27 @@ const (
 	shmGetImage     = 4
 )
 
-// shmDisabled is set process-wide after a SHM failure so subsequent (re)attaches
-// skip SHM and use the plain-socket GetImage instead of looping on a bad path.
-var shmDisabled atomic.Bool
+// After a SHM failure, (re)attaches skip SHM for a cooldown window instead of
+// forever: retrying immediately would loop on a genuinely broken path (the
+// reason this guard exists), but a single transient failure — e.g. mid
+// session-switch — shouldn't condemn the rest of a long session to the slow
+// socket GetImage either.
+var shmFailedAt atomic.Int64 // UnixNano of the last SHM failure (0 = never)
+
+const shmRetryAfter = 5 * time.Minute
 
 var le = binary.LittleEndian
 
 type x11 struct {
-	conn               net.Conn
-	r                  *bufio.Reader
-	root               uint32
-	width, height      int
-	minKey, maxKey     int
-	xtestOp            byte // XTEST major opcode (0 = unavailable)
-	keycodeFor         map[uint32]byte
-	img                *image.RGBA
-	raw                []byte // reusable socket GetImage payload buffer
+	conn           net.Conn
+	r              *bufio.Reader
+	root           uint32
+	width, height  int
+	minKey, maxKey int
+	xtestOp        byte // XTEST major opcode (0 = unavailable)
+	keycodeFor     map[uint32]byte
+	img            *image.RGBA
+	raw            []byte // reusable socket GetImage payload buffer
 
 	xidBase, xidMask uint32 // resource-id allocation (for the SHM segment XID)
 	xidNext          uint32
@@ -270,8 +275,8 @@ func (x *x11) newXID() uint32 {
 // immediate (no hang) — ShmAttach has no reply, so a GetInputFocus round-trip
 // confirms the server processed it before we mark the segment for cleanup.
 func (x *x11) setupShm() {
-	if shmDisabled.Load() {
-		return
+	if t := shmFailedAt.Load(); t != 0 && time.Since(time.Unix(0, t)) < shmRetryAfter {
+		return // recent SHM failure — stay on the socket path for the cooldown
 	}
 	if _, ok := x.conn.(*net.UnixConn); !ok {
 		return // SHM only works when the server is on the same machine
@@ -451,9 +456,9 @@ func (x *x11) getImage() (*image.RGBA, error) {
 	if x.shmOK {
 		if err := x.getImageSHM(); err != nil {
 			log.Printf("rmm-remote: SHM capture failed (%v) — falling back to socket GetImage", err)
-			shmDisabled.Store(true)
+			shmFailedAt.Store(time.Now().UnixNano())
 			x.shmOK = false
-			return nil, err // media loop reattaches; the next attach uses the socket path
+			return nil, err // media loop reattaches; that attach uses the socket path (cooldown)
 		}
 		return x.img, nil
 	}
@@ -603,7 +608,7 @@ func (x *x11) fakeInput(typ, detail byte, rootX, rootY int) {
 	x.conn.Write(req)
 }
 
-func (x *x11) fakeMotion(px, py int)        { x.fakeInput(evMotionNotify, 0, px, py) }
+func (x *x11) fakeMotion(px, py int) { x.fakeInput(evMotionNotify, 0, px, py) }
 func (x *x11) fakeButton(button byte, down bool) {
 	x.fakeInput(btnEvent(down), button, 0, 0)
 }

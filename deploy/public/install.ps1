@@ -1,11 +1,12 @@
-# RMM-AI agent installer (Windows).
+# OpenRMM agent installer (Windows).
 # Usage (PowerShell as Administrator):
 #   iwr -useb http://SERVER/install.ps1 | iex                 # then it prompts, OR pass args:
-#   & ([scriptblock]::Create((iwr -useb http://SERVER/install.ps1))) -Server http://SERVER -Token <ENROLL>
+#   & ([scriptblock]::Create((iwr -useb http://SERVER/install.ps1))) -Server http://SERVER -Token <ENROLL> [-RequireTls]
 param(
     [string]$Server,
     [string]$Token,
-    [string]$Site  # accepted for parity; site binding actually comes from the enroll token
+    [string]$Site,  # accepted for parity; site binding actually comes from the enroll token
+    [switch]$RequireTls
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,8 +26,12 @@ $Exe   = Join-Path $Dir "rmm-agent.exe"
 $State = Join-Path $Dir "state.json"
 $Bin   = "rmm-agent-windows-amd64.exe"
 $Ws    = $Server -replace '^https','wss' -replace '^http','ws'
+if ($RequireTls -and ($Ws -notlike 'wss://*')) {
+    Write-Error "-RequireTls needs an https:// server URL"
+    exit 1
+}
 
-Write-Host "RMM-AI agent installer"
+Write-Host "OpenRMM agent installer"
 Write-Host "  server : $Server"
 Write-Host "  binary : $Bin"
 
@@ -68,7 +73,10 @@ if ($existing) {
     Write-Host "Existing service updated and restarted."
 } else {
     Write-Host "Installing as a Windows service..."
-    Invoke-Agent -server "$Ws/ws/agent" -state $State -enroll-token $Token -action install | Out-Null
+    $InstallArgs = @("-server", "$Ws/ws/agent", "-state", $State, "-enroll-token", $Token)
+    if ($RequireTls) { $InstallArgs += "-require-tls" }
+    $InstallArgs += @("-action", "install")
+    Invoke-Agent @InstallArgs | Out-Null
     Invoke-Agent -action start | Out-Null
 }
 

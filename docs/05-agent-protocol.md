@@ -58,10 +58,13 @@ it to the relay. See [08-remote-access](08-remote-access.md).
 ## Self-update
 
 The agent periodically checks `/dl/rmm-agent-<os>-<arch>` (HEAD, ETag) and, when
-the published build changes, downloads + validates it, atomically swaps the
-binary, and reloads (re-exec on Unix; a detached service restart on Windows).
-Disable with `RMM_AUTO_UPDATE=0`; tune the cadence with `RMM_UPDATE_INTERVAL`
-(default 30m). See [02-getting-started](02-getting-started.md#updating-agents-self-update).
+the published build changes, downloads it, verifies its detached Ed25519
+signature when configured, validates it, atomically swaps the binary, and reloads
+(re-exec on Unix; a detached service restart on Windows). Disable with
+`RMM_AUTO_UPDATE=0`; tune the cadence with `RMM_UPDATE_INTERVAL` (default 30m).
+Use `RMM_UPDATE_VERIFY=strict` and `RMM_UPDATE_PUBLIC_KEY` for production. See
+[02-getting-started](02-getting-started.md#updating-agents-self-update) and
+[13-security-rollout](13-security-rollout.md).
 
 ## Script execution
 

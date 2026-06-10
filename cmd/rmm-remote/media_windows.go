@@ -20,26 +20,26 @@ import (
 // ---- Win32 bindings (CGO-free, via lazy DLLs) ----
 
 var (
-	user32             = syscall.NewLazyDLL("user32.dll")
-	gdi32              = syscall.NewLazyDLL("gdi32.dll")
-	procGetDC            = user32.NewProc("GetDC")
-	procReleaseDC        = user32.NewProc("ReleaseDC")
-	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
-	procSendInput        = user32.NewProc("SendInput")
-	procSetDPIAware      = user32.NewProc("SetProcessDPIAware")
-	procGetCursorInfo    = user32.NewProc("GetCursorInfo")
-	procGetIconInfo      = user32.NewProc("GetIconInfo")
-	procDrawIconEx       = user32.NewProc("DrawIconEx")
-	procOpenInputDesktop = user32.NewProc("OpenInputDesktop")
-	procSetThreadDesktop = user32.NewProc("SetThreadDesktop")
-	procCloseDesktop     = user32.NewProc("CloseDesktop")
+	user32                = syscall.NewLazyDLL("user32.dll")
+	gdi32                 = syscall.NewLazyDLL("gdi32.dll")
+	procGetDC             = user32.NewProc("GetDC")
+	procReleaseDC         = user32.NewProc("ReleaseDC")
+	procGetSystemMetrics  = user32.NewProc("GetSystemMetrics")
+	procSendInput         = user32.NewProc("SendInput")
+	procSetDPIAware       = user32.NewProc("SetProcessDPIAware")
+	procGetCursorInfo     = user32.NewProc("GetCursorInfo")
+	procGetIconInfo       = user32.NewProc("GetIconInfo")
+	procDrawIconEx        = user32.NewProc("DrawIconEx")
+	procOpenInputDesktop  = user32.NewProc("OpenInputDesktop")
+	procSetThreadDesktop  = user32.NewProc("SetThreadDesktop")
+	procCloseDesktop      = user32.NewProc("CloseDesktop")
 	procGetUserObjectInfo = user32.NewProc("GetUserObjectInformationW")
-	procCreateDC         = gdi32.NewProc("CreateCompatibleDC")
-	procCreateDIB        = gdi32.NewProc("CreateDIBSection")
-	procSelectObject     = gdi32.NewProc("SelectObject")
-	procBitBlt           = gdi32.NewProc("BitBlt")
-	procDeleteObject     = gdi32.NewProc("DeleteObject")
-	procDeleteDC         = gdi32.NewProc("DeleteDC")
+	procCreateDC          = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIB         = gdi32.NewProc("CreateDIBSection")
+	procSelectObject      = gdi32.NewProc("SelectObject")
+	procBitBlt            = gdi32.NewProc("BitBlt")
+	procDeleteObject      = gdi32.NewProc("DeleteObject")
+	procDeleteDC          = gdi32.NewProc("DeleteDC")
 )
 
 const (
@@ -57,15 +57,15 @@ const (
 	inputMouse    = 0
 	inputKeyboard = 1
 
-	mvMove      = 0x0001
-	mvLeftDown  = 0x0002
-	mvLeftUp    = 0x0004
-	mvRightDown = 0x0008
-	mvRightUp   = 0x0010
-	mvMidDown   = 0x0020
-	mvMidUp     = 0x0040
-	mvWheel     = 0x0800
-	mvAbsolute  = 0x8000
+	mvMove        = 0x0001
+	mvLeftDown    = 0x0002
+	mvLeftUp      = 0x0004
+	mvRightDown   = 0x0008
+	mvRightUp     = 0x0010
+	mvMidDown     = 0x0020
+	mvMidUp       = 0x0040
+	mvWheel       = 0x0800
+	mvAbsolute    = 0x8000
 	mvVirtualDesk = 0x4000
 
 	keyUp = 0x0002
@@ -345,7 +345,7 @@ func runMedia(conn *websocket.Conn) error {
 	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
 		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}}
 	defer close(s.done)
-	s.chat = newChatWindow("RMM-AI — Chat with technician", func(text string) {
+	s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
 		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
 	})
 	defer func() {
@@ -407,7 +407,8 @@ func (s *session) desktopWorker() {
 	var cap *capturer
 	var curDesk uintptr
 	var curName string
-	enc := newVideoEncoder(65)
+	enc := newVideoEncoder(jpegQuality())
+	pace := newPacer()
 	defer func() {
 		if cap != nil {
 			cap.close()
@@ -447,21 +448,30 @@ func (s *session) desktopWorker() {
 		curDesk, curName = h, name
 	}
 
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(pace.active)
 	defer ticker.Stop()
+	curInterval := pace.active
 	for {
 		select {
 		case <-s.done:
 			return
 		case data := <-s.inputCh:
+			pace.markActivity()
 			ensure(false)
 			handleInput(data)
 		case <-ticker.C:
+			// Backpressure: skip the tick before capture/encode when the writer
+			// hasn't drained the queue — the tile diff folds the change into the
+			// next frame, so skipping costs nothing but latency (see tunables.go).
+			if len(s.out) >= videoBacklog {
+				continue
+			}
 			ensure(false)
 			if cap == nil {
 				continue
 			}
 			if s.kfReq.Swap(false) {
+				pace.markActivity() // viewer (re)connected — resume the active rate
 				enc.forceKeyframe()
 			}
 			img, err := cap.frame()
@@ -470,13 +480,20 @@ func (s *session) desktopWorker() {
 				continue
 			}
 			payload, err := enc.encode(img)
-			if err != nil || payload == nil {
-				continue // encode error, or nothing changed since last frame
+			sent := false
+			if err == nil && payload != nil {
+				select {
+				case s.out <- wsMsg{websocket.BinaryMessage, append([]byte{chVideo}, payload...)}:
+					sent = true
+				case <-s.done:
+					return
+				}
 			}
-			select {
-			case s.out <- wsMsg{websocket.BinaryMessage, append([]byte{chVideo}, payload...)}:
-			case <-s.done:
-				return
+			// Adaptive cadence: idle screens capture at the idle rate; a sent
+			// frame or input restores the active rate.
+			if iv := pace.interval(sent); iv != curInterval {
+				curInterval = iv
+				ticker.Reset(iv)
 			}
 		}
 	}

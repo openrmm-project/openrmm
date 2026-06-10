@@ -15,12 +15,13 @@
 //
 // Relay wire format (both directions ride the existing relay, which just
 // pipes frames between the two peers):
-//   agent  -> viewer : binary message = a tile-delta video frame (encoder.go)
-//   viewer -> agent  : text message   = a JSON input event, one of
-//       {"t":"m","x":0.5,"y":0.5}                 mouse move (normalized 0..1)
-//       {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
-//       {"t":"w","dy":120}                        wheel (browser deltaY)
-//       {"t":"k","code":65,"down":true}           key (browser keyCode ~= VK)
+//
+//	agent  -> viewer : binary message = a tile-delta video frame (encoder.go)
+//	viewer -> agent  : text message   = a JSON input event, one of
+//	    {"t":"m","x":0.5,"y":0.5}                 mouse move (normalized 0..1)
+//	    {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
+//	    {"t":"w","dy":120}                        wheel (browser deltaY)
+//	    {"t":"k","code":65,"down":true}           key (browser keyCode ~= VK)
 package main
 
 import (
@@ -37,6 +38,9 @@ func main() {
 	flag.Parse()
 	// The sidecar is launched with CREATE_NO_WINDOW, so log to a file next to the
 	// binary for diagnostics (why a session ends, capture errors, ...).
+	// Microsecond timestamps make the startup breakdown (dial → X11 attach →
+	// first frame) legible when chasing "time to first frame".
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	if exe, err := os.Executable(); err == nil {
 		if f, e := os.OpenFile(filepath.Join(filepath.Dir(exe), "rmm-remote.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); e == nil {
 			log.SetOutput(f)
@@ -58,4 +62,4 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.5.0"
+const remoteVersion = "0.6.0"

@@ -17,18 +17,22 @@ import (
 // works on the login screen and survives logout/lock (the Linux analogue of the
 // Windows desktop-following). It mirrors the Windows wire behavior (hello +
 // chVideo tile frames + {t:"kf"}) so the same viewer drives both, including file
-// transfer (transfer_linux.go). Chat is still Windows-only.
+// transfer (transfer_linux.go) and in-session chat (a native X11 window,
+// chat_linux.go).
 func runMedia(conn *websocket.Conn) error {
 	type omsg struct {
 		mt int
 		b  []byte
 	}
 	out := make(chan omsg, 64)
+	fileOut := make(chan omsg, 16)
 	inputCh := make(chan []byte, 256)
+	chatInbox := make(chan string, 32) // tech → host chat messages
 	done := make(chan struct{})
 	defer close(done)
 	errc := make(chan error, 3)
 	var kfReq atomic.Bool
+	pace := newPacer()
 
 	// Input via /dev/uinput (kernel level): works on the login greeter and any
 	// session, Xorg or Wayland. Falls back to XTEST (X11 only) if unavailable.
@@ -40,25 +44,68 @@ func runMedia(conn *websocket.Conn) error {
 		defer inp.close()
 	}
 
-	// single writer (gorilla forbids concurrent writes)
+	// With uinput, inject input on its own goroutine: uinput writes never touch
+	// the X socket, so the cursor keeps moving even while the capture goroutine
+	// is busy inside a JPEG encode (this was the main source of input freezes).
+	// The XTEST fallback shares the X connection and must stay on the capture
+	// goroutine — xtestCh is nil (never selected) when uinput owns the input.
+	xtestCh := inputCh
+	if inp != nil {
+		xtestCh = nil
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				case data := <-inputCh:
+					pace.markActivity()
+					injectInput(nil, inp, data)
+				}
+			}
+		}()
+	}
+
+	// single writer (gorilla forbids concurrent writes). Video/control frames
+	// (out) take strict priority over file-transfer traffic (fileOut), so a bulk
+	// download can't queue ahead of the screen and freeze the session.
+	write := func(m omsg) bool {
+		if err := conn.WriteMessage(m.mt, m.b); err != nil {
+			errc <- err
+			return false
+		}
+		return true
+	}
 	go func() {
 		for {
 			select {
 			case <-done:
 				return
 			case m := <-out:
-				if err := conn.WriteMessage(m.mt, m.b); err != nil {
-					errc <- err
+				if !write(m) {
 					return
+				}
+			default:
+				select {
+				case <-done:
+					return
+				case m := <-out:
+					if !write(m) {
+						return
+					}
+				case m := <-fileOut:
+					if !write(m) {
+						return
+					}
 				}
 			}
 		}
 	}()
 
-	// File transfer rides the same relay (JSON control + [chFile][id][bytes]).
+	// File transfer rides the same relay (JSON control + [chFile][id][bytes])
+	// but queues on its own lane (see the writer above).
 	xfer := newFileXfer(func(mt int, b []byte) {
 		select {
-		case out <- omsg{mt, b}:
+		case fileOut <- omsg{mt, b}:
 		case <-done:
 		}
 	})
@@ -100,30 +147,61 @@ func runMedia(conn *websocket.Conn) error {
 				}
 			case "kf":
 				kfReq.Store(true)
+				pace.markActivity() // viewer (re)connected — resume the active rate
+			case "chat":
+				var cm struct {
+					From string `json:"from"`
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(data, &cm) == nil && cm.From == "tech" && cm.Text != "" {
+					select {
+					case chatInbox <- cm.Text:
+					default:
+					}
+				}
 			default:
 				xfer.dispatch(e.T, data) // file-transfer control (fls/fget/fput/…)
 			}
 		}
 	}()
 
-	// Capture + input + seat-following on one goroutine so all X11 socket access
-	// is serialized and the connection can be swapped on a session change.
+	// Capture + seat-following on one goroutine so all X11 socket access is
+	// serialized and the connection can be swapped on a session change. XTEST
+	// input (the no-uinput fallback) also lands here for the same reason.
 	go func() {
-		enc := newVideoEncoder(65)
+		enc := newVideoEncoder(jpegQuality())
 		var x *x11
 		var curKey string
 		var lastEval time.Time
 		var freshAttach bool
 		var attachedAt time.Time
 		var noticeSent, loggedOK bool
+		startedAt := time.Now()       // for the "time to first frame" log
+		var chat *chatLinux           // native in-session chat window (per X session)
+		var chatDisp, chatAuth string // active X display/auth, for reopening the chat
+		const chatTitle = "OpenRMM - Chat with technician"
 		defer func() {
 			if x != nil {
 				x.close()
+			}
+			if chat != nil {
+				chat.close()
 			}
 		}()
 
 		sendNotice := func(text string) {
 			if b, e := json.Marshal(map[string]any{"t": "notice", "text": text}); e == nil {
+				select {
+				case out <- omsg{websocket.TextMessage, b}:
+				case <-done:
+				}
+			}
+		}
+
+		// sendChat hands a host-typed reply back to the viewer over the relay's
+		// priority lane (out), mirroring the Windows chat window.
+		sendChat := func(text string) {
+			if b, e := json.Marshal(map[string]any{"t": "chat", "from": "user", "text": text}); e == nil {
 				select {
 				case out <- omsg{websocket.TextMessage, b}:
 				case <-done:
@@ -161,17 +239,46 @@ func runMedia(conn *websocket.Conn) error {
 			freshAttach = true
 			log.Printf("rmm-remote: attached x11 %s %dx%d xtest=%v keymap=%d",
 				disp, x.width, x.height, x.xtestOp != 0, len(x.keycodeFor))
+			// Open a fresh chat window on the new X server (the old one died with
+			// the previous session). Best-effort — nil if the handshake fails.
+			chatDisp, chatAuth = disp, auth
+			if chat != nil {
+				chat.close()
+			}
+			chat = newChatWindowLinux(disp, auth, chatTitle, sendChat)
 		}
 
-		ticker := time.NewTicker(50 * time.Millisecond)
+		ticker := time.NewTicker(pace.active)
 		defer ticker.Stop()
+		curInterval := pace.active
 		for {
 			select {
 			case <-done:
 				return
-			case data := <-inputCh:
+			case data := <-xtestCh:
+				pace.markActivity()
 				injectInput(x, inp, data)
+			case msg := <-chatInbox:
+				// Reopen the window if the host user closed it (the WM kills the
+				// client, so a new tech message brings it back).
+				if (chat == nil || chat.isClosed()) && chatDisp != "" {
+					if chat != nil {
+						chat.close()
+					}
+					chat = newChatWindowLinux(chatDisp, chatAuth, chatTitle, sendChat)
+				}
+				if chat != nil {
+					chat.append("Tech: " + msg)
+				}
 			case <-ticker.C:
+				// Backpressure: if the writer hasn't drained what we already
+				// queued, skip this tick BEFORE paying for capture+encode. The
+				// tile diff folds the skipped change into the next frame, so
+				// nothing is lost — only latency. (See videoBacklog in
+				// tunables.go for why dropping after encode would be wrong.)
+				if len(out) >= videoBacklog {
+					continue
+				}
 				// Re-evaluate the active session ~1×/s, or immediately if detached.
 				if x == nil || time.Since(lastEval) > time.Second {
 					lastEval = time.Now()
@@ -209,7 +316,7 @@ func runMedia(conn *websocket.Conn) error {
 				} else {
 					if !loggedOK {
 						loggedOK = true
-						log.Printf("rmm-remote: capturing OK (frame has content)")
+						log.Printf("rmm-remote: capturing OK (frame has content) — first content %dms after media start", time.Since(startedAt).Milliseconds())
 					}
 					if noticeSent { // content returned — clear the banner
 						noticeSent = false
@@ -217,13 +324,22 @@ func runMedia(conn *websocket.Conn) error {
 					}
 				}
 				payload, err := enc.encode(img)
-				if err != nil || payload == nil {
-					continue
+				sent := false
+				if err == nil && payload != nil {
+					select {
+					case out <- omsg{websocket.BinaryMessage, append([]byte{chVideo}, payload...)}:
+						sent = true
+					case <-done:
+						return
+					}
 				}
-				select {
-				case out <- omsg{websocket.BinaryMessage, append([]byte{chVideo}, payload...)}:
-				case <-done:
-					return
+				// Adaptive cadence: drop to the idle rate once the session has
+				// been quiet for a while; any sent frame or input restores the
+				// active rate (input may arrive on the uinput goroutine, hence
+				// the pacer's atomic clock).
+				if iv := pace.interval(sent); iv != curInterval {
+					curInterval = iv
+					ticker.Reset(iv)
 				}
 			}
 		}

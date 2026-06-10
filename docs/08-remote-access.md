@@ -95,14 +95,32 @@ with a `connect_url` the UI acts on.
   viewer asks for a keyframe on (re)connect).
 - **Codec — tile-delta (CGO-free, OS-agnostic):** `encoder.go` splits each
   captured RGBA frame into a grid of 64-px tiles and JPEG-encodes only the tiles
-  that changed since the previous frame; a keyframe sends the whole screen as one
-  JPEG. Idle/static screens cost almost nothing on the wire, so the frame rate
-  rises (20 fps) without saturating the link. Because the encoder works purely on
-  the pixel buffer, **any per-OS capturer feeds the same codec** — no fork. The
-  payload is `[flags][frameW][frameH][tileCount]` then per tile
-  `[x][y][w][h][jpegLen][jpeg]` (big-endian); the viewer composites tiles onto a
-  `<canvas>`. Unit-tested in `encoder_test.go` (keyframe, no-change → no send,
-  changed-tile localization, forced keyframe).
+  that changed since the previous frame; a keyframe sends the whole screen as
+  horizontal **stripes** (parallel-encoded across cores, painted progressively —
+  no whole-screen single-JPEG stall). High-motion frames with many changed tiles
+  also encode in parallel. Idle/static screens cost almost nothing on the wire,
+  so the frame rate rises (20 fps) without saturating the link. Because the
+  encoder works purely on the pixel buffer, **any per-OS capturer feeds the same
+  codec** — no fork. The payload is `[flags][frameW][frameH][tileCount]` then per
+  tile `[x][y][w][h][jpegLen][jpeg]` (big-endian); the viewer composites tiles
+  onto a `<canvas>`. Unit-tested in `encoder_test.go` (keyframe, no-change → no
+  send, changed-tile localization, forced keyframe, keyframe striping).
+- **Latency control (both OSes):** the capture loop is **adaptive** — it runs at
+  the active rate while the screen changes or input arrives and drops to an idle
+  rate after ~2s of quiet, restoring instantly on activity. When the link can't
+  drain the outbound queue, capture ticks are **skipped before encode**
+  (backpressure) so latency never accumulates — a skipped tick just folds into
+  the next tile diff. On Linux, **input is injected on its own goroutine** when
+  `/dev/uinput` is available, so the cursor keeps responding even during a heavy
+  encode; file-transfer chunks queue on a **separate lane with lower priority**
+  than video, so a bulk download can't freeze the screen. Tunables (env of the
+  **agent**, inherited by the sidecar): `RMM_REMOTE_FPS` (default 20),
+  `RMM_REMOTE_IDLE_FPS` (4), `RMM_REMOTE_QUALITY` (65), `RMM_REMOTE_TILE` (64) —
+  e.g. WAN profile `RMM_REMOTE_FPS=12 RMM_REMOTE_QUALITY=50`.
+- **MIT-SHM resilience:** a SHM capture failure no longer disables SHM for the
+  process lifetime — it falls back to socket `GetImage` for a 5-minute cooldown
+  and then retries, so a transient failure (e.g. during a session switch) doesn't
+  condemn a long session to the slow path.
 - **Bidirectional free-path file transfer** with a RustDesk-style file manager
   (browse / create folder / copy / cut / delete / upload / download) works on
   **both Windows and Linux** (`transfer_windows.go` / `transfer_linux.go`); the
@@ -124,7 +142,11 @@ with a `connect_url` the UI acts on.
   service) to read the greeter's cookie. **Input** is injected via **`/dev/uinput`**
   (kernel level, `uinput_linux.go`) so it reaches the login greeter and any session
   (XTEST alone is unreliable on the GDM greeter); it falls back to XTEST if uinput
-  isn't available. **In-session chat is Windows-only for now.**
+  isn't available. **In-session chat** also works on Linux via a **native X11
+  window** (`chat_linux.go`) — a CGO-free, toolkit-free window drawn with core-X
+  requests on its own X connection, so it works on any X server the sidecar
+  reaches (the user session and the display-manager greeter), mirroring the
+  Win32 chat window.
 - **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
   rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
   full-motion video. The Linux engine assumes a TrueColor little-endian X server

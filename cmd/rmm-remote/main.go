@@ -35,6 +35,7 @@ import (
 
 func main() {
 	relay := flag.String("relay", os.Getenv("RMM_RELAY_URL"), "relay WebSocket URL (role=agent)")
+	filesOnly := flag.Bool("files", false, "file-transfer-only mode: no screen capture/streaming")
 	flag.Parse()
 	// The sidecar is launched with CREATE_NO_WINDOW, so log to a file next to the
 	// binary for diagnostics (why a session ends, capture errors, ...).
@@ -57,8 +58,12 @@ func main() {
 	}
 	defer conn.Close()
 
-	if err := runMedia(conn); err != nil {
-		log.Printf("rmm-remote: media session ended: %v", err)
+	run := runMedia
+	if *filesOnly {
+		run = runFilesOnly // file transfer without screen capture
+	}
+	if err := run(conn); err != nil {
+		log.Printf("rmm-remote: session ended: %v", err)
 	}
 }
 

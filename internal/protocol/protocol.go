@@ -74,6 +74,7 @@ type InventoryMsg struct {
 // RemoteStartMsg tells the agent to connect a remote module to the relay using
 // the given session token (native provider). Kind selects which module:
 //   - "desktop" (or empty): the media sidecar (screen capture + input)
+//   - "files": the media sidecar in file-transfer-only mode — NO screen capture
 //   - "terminal": an elevated interactive shell on a PTY, run in the agent itself
 type RemoteStartMsg struct {
 	SessionID string `json:"session_id"`
@@ -85,6 +86,7 @@ type RemoteStartMsg struct {
 // Remote session kinds (RemoteStartMsg.Kind).
 const (
 	RemoteKindDesktop  = "desktop"
+	RemoteKindFiles    = "files"
 	RemoteKindTerminal = "terminal"
 )
 

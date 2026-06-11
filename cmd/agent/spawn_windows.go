@@ -36,16 +36,16 @@ var (
 )
 
 const (
-	maximumAllowed         = 0x02000000
-	securityImpersonation  = 2
-	tokenPrimary           = 1
-	createUnicodeEnv       = 0x00000400
-	createNoWindow         = 0x08000000
-	invalidSessionID       = 0xFFFFFFFF
-	tokenLinkedToken       = 19 // TOKEN_INFORMATION_CLASS
-	tokenSessionID         = 12 // TokenSessionId
-	tokenDuplicate         = 0x0002
-	tokenQuery             = 0x0008
+	maximumAllowed        = 0x02000000
+	securityImpersonation = 2
+	tokenPrimary          = 1
+	createUnicodeEnv      = 0x00000400
+	createNoWindow        = 0x08000000
+	invalidSessionID      = 0xFFFFFFFF
+	tokenLinkedToken      = 19 // TOKEN_INFORMATION_CLASS
+	tokenSessionID        = 12 // TokenSessionId
+	tokenDuplicate        = 0x0002
+	tokenQuery            = 0x0008
 )
 
 type startupInfoW struct {
@@ -77,10 +77,10 @@ type processInformation struct {
 	dwThreadID  uint32
 }
 
-func launchSidecar(bin, relay string) error {
-	if err := launchInUserSession(bin, relay); err != nil {
+func launchSidecar(bin, relay string, extra ...string) error {
+	if err := launchInUserSession(bin, relay, extra); err != nil {
 		log.Printf("remote: user-session launch failed (%v); falling back to direct launch", err)
-		cmd := exec.Command(bin, "-relay", relay)
+		cmd := exec.Command(bin, append([]string{"-relay", relay}, extra...)...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if e := cmd.Start(); e != nil {
 			return e
@@ -90,7 +90,7 @@ func launchSidecar(bin, relay string) error {
 	return nil
 }
 
-func launchInUserSession(bin, relay string) error {
+func launchInUserSession(bin, relay string, extra []string) error {
 	sid, _, _ := procWTSGetActiveSession.Call()
 	if sid == invalidSessionID {
 		return fmt.Errorf("no active console session")
@@ -125,7 +125,11 @@ func launchInUserSession(bin, relay string) error {
 		defer procDestroyEnvironmentBlock.Call(env)
 	}
 
-	cmdline, _ := syscall.UTF16PtrFromString(fmt.Sprintf("\"%s\" -relay %s", bin, relay))
+	args := fmt.Sprintf("\"%s\" -relay %s", bin, relay)
+	for _, a := range extra {
+		args += " " + a
+	}
+	cmdline, _ := syscall.UTF16PtrFromString(args)
 	desktop, _ := syscall.UTF16PtrFromString("winsta0\\default")
 	si := startupInfoW{lpDesktop: uintptr(unsafe.Pointer(desktop))}
 	si.cb = uint32(unsafe.Sizeof(si))

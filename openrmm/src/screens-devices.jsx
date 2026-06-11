@@ -156,7 +156,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 {can('tech') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
-                {can('tech') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, files: true })}>File transfer</MenuItem>}
+                {can('tech') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
                 <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
                 {can('admin') && <>
                   <div className="my-1 border-t border-line" />
@@ -188,7 +188,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
         </>
       )}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
-      {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} openFiles={remote.files} onClose={() => setRemote(null)} />}
+      {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} filesOnly={remote.filesOnly} onClose={() => setRemote(null)} />}
       {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}
     </Drawer>
   );
@@ -233,7 +233,7 @@ function DeviceNotes({ device }) {
 //   binary [0x02][id][bytes]  file chunk     (both directions)
 //   text   {"t":...}          input / chat / file control ({t:'kf'} = request keyframe)
 const CH_VIDEO = 0x01, CH_FILE = 0x02;
-function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
+function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const toast = useToast();
   const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
   const canvasRef = useRef(null);
@@ -332,7 +332,7 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
       setStatus(retries ? 'reconnecting' : 'connecting');
       let wsUrl;
       try {
-        const s = await api.startRemote(deviceId, 'native');
+        const s = await api.startRemote(deviceId, filesOnly ? 'files' : 'native');
         const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
         wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
       } catch (e) {
@@ -345,10 +345,14 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
-        retries = 0; setStatus('streaming'); setNotice(null);
-        try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {}
-        // Opened from Remote ▸ File transfer: jump straight into the browser once.
-        if (openFiles && !openedFilesRef.current) { openedFilesRef.current = true; browse(rootPath); }
+        retries = 0; setStatus(filesOnly ? 'connected' : 'streaming'); setNotice(null);
+        // File-transfer-only sessions never stream the screen, so don't ask for a
+        // keyframe; jump straight into the browser. Desktop sessions request a frame.
+        if (filesOnly) {
+          if (!openedFilesRef.current) { openedFilesRef.current = true; browse(rootPath); }
+        } else {
+          try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {}
+        }
       };
       ws.onerror = () => {};
       ws.onclose = () => {
@@ -370,13 +374,16 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
     const onCtx = (e) => e.preventDefault();
     const kd = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
     const ku = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
-    cv.addEventListener('mousemove', onMove);
-    cv.addEventListener('mousedown', onDown);
-    cv.addEventListener('mouseup', onUp);
-    cv.addEventListener('wheel', onWheel, { passive: false });
-    cv.addEventListener('contextmenu', onCtx);
-    window.addEventListener('keydown', kd);
-    window.addEventListener('keyup', ku);
+    // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
+    if (!filesOnly && cv) {
+      cv.addEventListener('mousemove', onMove);
+      cv.addEventListener('mousedown', onDown);
+      cv.addEventListener('mouseup', onUp);
+      cv.addEventListener('wheel', onWheel, { passive: false });
+      cv.addEventListener('contextmenu', onCtx);
+      window.addEventListener('keydown', kd);
+      window.addEventListener('keyup', ku);
+    }
     connect();
     return () => {
       stopped = true;
@@ -438,25 +445,27 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
   return (
     <div className="fixed inset-0 z-[80] bg-black flex flex-col">
       <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
-        <Icon name="remote" size={15} className="text-muted" />
-        <span className="text-[13px] font-semibold text-ink">{hostname}</span>
+        <Icon name={filesOnly ? 'devices' : 'remote'} size={15} className="text-muted" />
+        <span className="text-[13px] font-semibold text-ink">{filesOnly ? `File transfer · ${hostname}` : hostname}</span>
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
         {ver && <span className="text-[10px] text-faint">sidecar v{ver}</span>}
         <div className="ml-auto flex items-center gap-2">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
-          <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
-          <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>
-          <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
+          {!filesOnly && <>
+            <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
+            <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>
+            <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
+          </>}
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
       </div>
       {fb && (
-        <div className="absolute inset-0 z-[5] bg-black/55 flex items-center justify-center" onClick={() => setFb(null)}>
+        <div className="absolute inset-0 z-[5] bg-black/55 flex items-center justify-center" onClick={() => filesOnly ? onClose() : setFb(null)}>
           <div className="w-[760px] h-[80vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
               <Icon name="devices" size={15} className="text-muted" />
               <span className="text-[12.5px] font-semibold text-ink">File transfer · {hostname}</span>
-              <button onClick={() => setFb(null)} className="ml-auto text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
+              <button onClick={() => filesOnly ? onClose() : setFb(null)} className="ml-auto text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
             </div>
             {/* toolbar */}
             <div className="flex items-center gap-0.5 px-2 h-10 border-b border-line bg-elevated/40 flex-wrap">
@@ -499,6 +508,11 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
         </div>
       )}
       <div className="flex-1 flex overflow-hidden">
+        {filesOnly ? (
+          <div className="flex-1 flex items-center justify-center text-faint text-[12.5px]">
+            {fb ? 'File transfer session' : 'Opening file browser…'}
+          </div>
+        ) : (<>
         <div className="relative flex-1 flex items-center justify-center overflow-hidden p-2">
           <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
           {notice && (
@@ -524,6 +538,7 @@ function RemoteViewer({ deviceId, hostname, os, openFiles, onClose }) {
             <Button variant="primary" size="sm" icon="send" onClick={sendChat} disabled={!draft.trim()} />
           </div>
         </div>}
+        </>)}
       </div>
     </div>
   );

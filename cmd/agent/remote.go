@@ -32,11 +32,19 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 		log.Printf("remote: sidecar unavailable: %v", err)
 		return
 	}
-	log.Printf("remote: launching media sidecar for session %s", rs.SessionID)
+	// Kind "files" runs the sidecar in file-transfer-only mode (no screen
+	// capture); "desktop" (or empty) is the full media engine.
+	var extra []string
+	if rs.Kind == protocol.RemoteKindFiles {
+		extra = append(extra, "-files")
+		log.Printf("remote: launching sidecar (file-transfer only) for session %s", rs.SessionID)
+	} else {
+		log.Printf("remote: launching media sidecar for session %s", rs.SessionID)
+	}
 	// launchSidecar is per-OS: on Windows it spawns into the interactive user
 	// session (CreateProcessAsUser) so a session-0 service can still capture the
 	// desktop, falling back to a direct launch; elsewhere it's a plain exec.
-	if err := launchSidecar(bin, relay); err != nil {
+	if err := launchSidecar(bin, relay, extra...); err != nil {
 		log.Printf("remote: failed to start sidecar: %v", err)
 	}
 }

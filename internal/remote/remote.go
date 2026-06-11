@@ -60,6 +60,7 @@ func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, me
 		meshTokenKey: meshTokenKey, meshUser: meshUser, providers: map[string]Provider{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
+	register(&filesProvider{m: m})
 	register(&terminalProvider{m: m})
 	register(&meshProvider{m: m})
 	return m
@@ -137,6 +138,21 @@ func (p *nativeProvider) Name() string { return "native" }
 // StartSession brokers a relayed remote-desktop session (media sidecar).
 func (p *nativeProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
 	return p.m.brokerRelay(ctx, agent, createdBy, "native", protocol.RemoteKindDesktop)
+}
+
+// ---------- files (file transfer only — no screen capture) ----------
+
+type filesProvider struct{ m *Manager }
+
+func (p *filesProvider) Name() string { return "files" }
+
+// StartSession brokers a relayed session whose agent module is the media sidecar
+// in file-transfer-only mode: it serves the file browser without capturing or
+// streaming the screen. Opening "Remote ▸ File transfer" must NOT start a remote
+// desktop session — only this. (A desktop session can still open the file
+// browser in-band via the Files button, which stays the native provider.)
+func (p *filesProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+	return p.m.brokerRelay(ctx, agent, createdBy, "files", protocol.RemoteKindFiles)
 }
 
 // ---------- terminal (elevated shell over the relay) ----------

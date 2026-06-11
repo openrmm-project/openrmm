@@ -646,9 +646,10 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 	}
 	// The terminal provider opens an elevated (root/SYSTEM) shell — equivalent to
 	// running arbitrary scripts — so it needs tech+, unlike read-only remote
-	// desktop assistance which any authenticated role may start.
-	if in.Provider == "terminal" && roleLevel(roleOf(r)) < roleLevel(models.RoleTech) {
-		writeErr(w, http.StatusForbidden, "elevated terminal requires the tech role")
+	// desktop assistance which any authenticated role may start. File transfer
+	// reads and writes arbitrary endpoint files, so it is tech+ as well.
+	if (in.Provider == "terminal" || in.Provider == "files") && roleLevel(roleOf(r)) < roleLevel(models.RoleTech) {
+		writeErr(w, http.StatusForbidden, "this remote session requires the tech role")
 		return
 	}
 	agent, err := s.store.GetAgent(r.Context(), chi.URLParam(r, "id"))

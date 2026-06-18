@@ -69,7 +69,7 @@ socket nas mesmas query keys.
 ```
 POST /api/jobs
   { agent_id, shell: "bash"|"sh"|"powershell"|"cmd", script, description, require_approval }
-POST /api/devices/{id}/remote      { provider: "native"|"meshcentral"|"rustdesk" } -> { connect_url, ... }
+POST /api/devices/{id}/remote      { provider: "native"|"terminal"|"meshcentral" } -> { connect_url, ... }
 PATCH /api/devices/{id}/site       { site_id }
 POST /api/enroll-tokens            { description, uses, ttl_hours, site_id? } -> { token }  (mostrar 1x)
 POST /api/chat/sessions/{id}/messages  { content } -> { content, created_job_ids: string[] }

@@ -52,7 +52,7 @@ Remaining Phase 2 nice-to-haves:
   compositor like GNOME/mutter; MIT-SHM is the compositor-safe capture speedup.)
 
 ## ✅ Phase 4 — Frontend (done)
-React SPA (`openrmm/`) per `FRONTEND_DESIGN_BRIEF.md`, wired to the backend:
+React SPA (`openrmm/`) per [`14-frontend-design-brief.md`](14-frontend-design-brief.md), wired to the backend:
 dashboard, devices, device detail with remote-launch, jobs + approval queue with
 dry-run preview, AI chat (with in-chat CSV report download), audit, users/2FA/scope.
 

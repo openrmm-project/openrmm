@@ -16,9 +16,10 @@ Managed endpoints.
 | note | text | operator-editable private observation, shown only in device detail |
 | status | text | `online` / `offline` |
 | token_hash | text | SHA-256 of the agent's auth token |
+| site_id | uuid FK → sites | nullable; the agent's place in the org hierarchy |
 | group_id | uuid FK → device_groups | nullable |
 | tags | text[] | free-form labels |
-| rustdesk_id, mesh_id | text | remote-provider identifiers (nullable) |
+| mesh_id | text | MeshCentral node id (nullable) |
 | last_seen | timestamptz | heartbeat |
 | created_at | timestamptz | |
 
@@ -67,6 +68,7 @@ Units of work targeted at an agent.
 | requires_approval | bool | true for AI proposals |
 | created_by | text | actor (`admin`, `api`, `ai:<actor>`) |
 | approved_by | text | nullable |
+| task_id | uuid | set when the job was produced by a scheduled task (nullable) |
 | exit_code | int | nullable until finished |
 | stdout, stderr | text | result output |
 | created_at, updated_at | timestamptz | |
@@ -89,11 +91,98 @@ to its creator). `chat_messages` stores `role`, `content`, `tool_calls` (jsonb),
 `tool_call_id`, `name` — mirroring the OpenAI-compatible schema so history can be
 replayed to the model verbatim.
 
+### `clients` / `sites`
+The org hierarchy. `clients` (id, name, created_at) is a customer/organization;
+`sites` (id, `client_id` FK → clients, name, created_at) is a location under a
+client. An agent's `site_id` places it in this tree; deleting a client cascades
+to its sites, and a deleted site nulls the agents'/enroll-tokens' `site_id`.
+
+### `scripts`
+Reusable script library: `id`, `name`, `description`, `category`,
+`shell` (`bash`/`sh`/`powershell`/`cmd`), `body`, `default_args`, `created_at`,
+`updated_at`. Run on a device via `/run-script`, which creates a job.
+
+### `policies` / `policy_assignments`
+A **policy** (id, name, description) bundles checks and tasks.
+`policy_assignments` attaches a policy to a scope: `scope_type`
+(`client`/`site`/`agent`) + `scope_id`. An agent inherits every policy whose
+scope covers it (its own id, its site, or its client).
+
+### `checks`
+A monitoring check, owned **either** by an agent **or** a policy — exactly one of
+`agent_id` / `policy_id` is set.
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| agent_id | uuid FK → agents | nullable (direct check) |
+| policy_id | uuid FK → policies | nullable (inherited check) |
+| type | text | `diskspace`/`memory`/`cpuload`/`ping`/`winservice`/`script` |
+| name | text | |
+| config | jsonb | type-specific (path / host / service / inline script) |
+| warn_threshold, err_threshold | double | nullable |
+| interval_sec | int | run cadence (default 300) |
+| enabled | bool | default true |
+| created_at | timestamptz | |
+
+### `check_results`
+Latest status + history per (check, agent): `id`, `check_id` FK → checks,
+`agent_id` FK → agents, `status` (`passing`/`warning`/`failing`), `value` (double,
+nullable), `output`, `ran_at`. Indexed by (check_id, agent_id, ran_at desc).
+
+### `tasks`
+Scheduled automation, owned by an agent or a policy (like checks).
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| agent_id / policy_id | uuid | exactly one set |
+| name | text | |
+| script_id | uuid FK → scripts | nullable; inline `shell`+`script` is the fallback |
+| shell, script | text | inline source when no `script_id` |
+| schedule_kind | text | `interval` / `daily` |
+| interval_sec | int | for `interval` |
+| run_at_minute | int | for `daily`: minutes since midnight (UTC) |
+| enabled | bool | default true |
+| created_at | timestamptz | |
+
+Each dispatched run links back via `jobs.task_id`.
+
+### `alerts`
+Raised by a failing/warning check or an offline agent.
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| agent_id | uuid FK → agents | nullable |
+| source_type | text | `check` / `task` / `agent` |
+| source_id | uuid | the check/task id (nullable) |
+| severity | text | `info` / `warning` / `error` |
+| message | text | |
+| status | text | `new` / `acked` / `resolved` |
+| created_at, resolved_at | timestamptz | |
+
+A partial unique index (`uq_alert_open` on `source_type, source_id, agent_id`
+where `status <> 'resolved'`) guarantees **at most one open alert per source**.
+
+### `sessions`
+Browser login sessions (id, `user_id` FK → users, `token_hash` unique,
+`expires_at`, created_at). A bearer login token from `POST /api/auth/login` maps
+to a row here; logout / password-change revoke them.
+
+### `app_settings`
+Editable runtime configuration as key/value (`key` PK, `value`, `is_secret`,
+`updated_at`). Secret values (AI API key, MeshCentral token key, TOTP secrets) are
+encrypted (`enc:v1:`) before storage and never returned by the API.
+
 ## Relationships
 
 ```
-device_groups 1───* agents 1───* jobs
-                     agents 1───1 inventory
-                     agents 1───* remote_sessions
+clients 1───* sites 1───* agents
+device_groups 1───* agents
+policies 1───* policy_assignments   (scope: client | site | agent)
+policies 1───* checks / tasks        (or owned directly by an agent)
+agents 1───* jobs 0..1───* tasks     (jobs.task_id, for scheduled runs)
+agents 1───1 inventory
+agents 1───* check_results / alerts / remote_sessions
+checks 1───* check_results
+users 1───* sessions / user_scopes / user_recovery_codes
 chat_sessions 1───* chat_messages
 ```

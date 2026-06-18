@@ -100,6 +100,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   useEffect(() => { setTab('inventory'); }, [id]);
   const devQ = useQuery([id, 'dev'], () => id ? api.getDevice(id) : Promise.resolve(null), { invalidateOn: ['devices'] });
   const d = devQ.data;
+  const cfgQ = useQuery(['config'], () => api.getConfig(), {});
+  const rustdeskEnabled = !!cfgQ.data?.remote?.rustdesk_enabled;
+  const meshEnabled = cfgQ.data?.remote?.meshcentral_enabled !== false;
 
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
@@ -157,8 +160,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 {can('tech') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
                 {can('tech') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
-                <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
-                {can('admin') && <>
+                {meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>}
+                {rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
+                {can('admin') && meshEnabled && <>
                   <div className="my-1 border-t border-line" />
                   <MenuItem icon="external" onClick={() => linkRemote('mesh_id', 'MeshCentral node id')}>Link MeshCentral node…</MenuItem>
                 </>}
@@ -394,7 +398,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   }, [deviceId]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
-  // Remote file browser (RustDesk-style): navigate folders, download a file, or
+  // Remote file browser: navigate folders, download a file, or
   // upload into the current folder — no path typing. Path semantics follow the
   // host OS: Windows uses "\\" + a drive list at the root; POSIX uses "/".
   const rootPath = isWin ? '' : '/';

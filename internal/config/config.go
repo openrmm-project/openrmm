@@ -33,6 +33,13 @@ type Config struct {
 	// MeshCentralUser is the MeshCentral username the login token authenticates
 	// as (default "admin"); the userid becomes "user//<user>".
 	MeshCentralUser string
+	// MeshCentralEnabled toggles the MeshCentral remote provider. On by default;
+	// set RMM_MESHCENTRAL_ENABLED=false (or the Settings toggle) to hide it.
+	MeshCentralEnabled bool
+	// RustDeskEnabled turns on the RustDesk remote provider. The RustDesk client
+	// is installed out-of-band; the agent only reads its id on demand and the UI
+	// opens rustdesk://<id>. Off by default.
+	RustDeskEnabled bool
 
 	// Security.
 	// MCPAllowedIPs is an optional allowlist (comma-separated IPs/CIDRs) for the
@@ -75,6 +82,8 @@ func Load() (*Config, error) {
 		MeshCentralURL:        os.Getenv("RMM_MESHCENTRAL_URL"),
 		MeshCentralTokenKey:   os.Getenv("RMM_MESHCENTRAL_TOKEN_KEY"),
 		MeshCentralUser:       env("RMM_MESHCENTRAL_USER", "admin"),
+		MeshCentralEnabled:    os.Getenv("RMM_MESHCENTRAL_ENABLED") != "false",
+		RustDeskEnabled:       os.Getenv("RMM_RUSTDESK_ENABLED") == "true",
 		MCPAllowedIPs:         splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:   os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:     os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",

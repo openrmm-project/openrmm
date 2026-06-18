@@ -48,8 +48,9 @@ runs code on real machines, so destructive/AI actions must feel deliberate.
 - Filters: OS, status, group, tags. Search by hostname.
 - Row click → **Device detail** drawer/page:
   - Header: hostname, OS, status, last seen; **Remote** button (provider dropdown:
-    native / meshcentral / rustdesk) → calls remote API, then opens `connect_url`
-    (native/meshcentral: open URL; rustdesk: trigger the `rustdesk://` URI).
+    native / terminal / meshcentral) → calls remote API, then opens the returned
+    `connect_url` (`terminal` is an elevated, tech-only shell — see
+    [`08-remote-access.md`](08-remote-access.md)).
   - Tabs: **Inventory** (pretty-print the JSON), **Jobs** (this device's history),
     **Run script** (manual: shell selector + editor → creates an approval-gated job).
 
@@ -99,67 +100,23 @@ Content-Type: application/json
 ```
 
 ### Auth model (frontend)
-For the MVP, the user pastes the admin token (or an issued API token) into a
-login screen; store it in memory/localStorage and attach as the bearer. (Proper
-login/session is a backend roadmap item.)
+Username + password → `POST /api/auth/login` returns `{token, role}`; store it in
+`localStorage` and attach as the bearer on every `/api/*` call. See §9 for roles
+and first-run bootstrap. TOTP 2FA and per-user access scope are backend-enforced —
+the UI just surfaces them.
 
-### Endpoints
+### Endpoints & types — canonical sources
 
-| Action | Method & path | Body / notes |
-|--------|---------------|--------------|
-| Health | `GET /healthz` | → `ok` |
-| List devices | `GET /api/devices` | → `{ devices: Agent[] }` |
-| Get device | `GET /api/devices/{id}` | → `Agent` |
-| Device inventory | `GET /api/devices/{id}/inventory` | → `{ agent_id, data, collected_at }` |
-| Start remote | `POST /api/devices/{id}/remote` | `{ provider }` → `RemoteSession` (use `connect_url`) |
-| List jobs | `GET /api/jobs?agent_id=&limit=` | → `{ jobs: Job[] }` |
-| Create job | `POST /api/jobs` | `{ agent_id, shell, script, description, require_approval }` → `Job` |
-| Get job | `GET /api/jobs/{id}` | → `Job` |
-| Approve job | `POST /api/jobs/{id}/approve` | → `Job` |
-| Reject job | `POST /api/jobs/{id}/reject` | → `Job` |
-| Audit | `GET /api/audit?limit=` | → `{ entries: AuditEntry[] }` |
-| Enroll token | `POST /api/enroll-tokens` | `{ description, uses, ttl_hours }` → token (shown once) |
-| Chat sessions | `GET /api/chat/sessions` | → `{ sessions: ChatSession[] }` |
-| New session | `POST /api/chat/sessions` | `{ title }` → `ChatSession` |
-| Messages | `GET /api/chat/sessions/{id}/messages` | → `{ messages: ChatMessage[] }` |
-| Send message | `POST /api/chat/sessions/{id}/messages` | `{ content }` → `{ content, created_job_ids }` |
+To avoid drift, this brief no longer inlines the endpoint list or the TypeScript
+shapes. Use the single sources of truth:
 
-### Shapes (TypeScript)
+- **Full REST contract** → [`04-api-reference.md`](04-api-reference.md).
+- **TypeScript types** (kept in sync with the running UI) →
+  [`../openrmm/handoff/apiClient.ts`](../openrmm/handoff/apiClient.ts).
 
-```ts
-type Agent = {
-  id: string; hostname: string; os: string; arch: string; version: string;
-  status: "online" | "offline"; group_id?: string; tags: string[];
-  rustdesk_id?: string; mesh_id?: string; last_seen?: string; created_at: string;
-};
-
-type Job = {
-  id: string; agent_id: string; type: "run_script"; description: string;
-  shell: "bash" | "sh" | "powershell" | "cmd"; script: string;
-  status: "awaiting_approval" | "pending" | "sent" | "running" | "completed" | "failed" | "rejected";
-  requires_approval: boolean; created_by: string; approved_by?: string;
-  exit_code?: number; stdout: string; stderr: string;
-  created_at: string; updated_at: string;
-};
-
-type RemoteSession = {
-  id: string; agent_id: string; provider: "native" | "meshcentral" | "rustdesk";
-  status: string; connect_url: string; expires_at: string;
-};
-
-type AuditEntry = {
-  id: string; actor: string; action: string; target: string;
-  detail: Record<string, unknown>; created_at: string;
-};
-
-type ChatSession = { id: string; title: string; created_at: string };
-
-type ChatMessage = {
-  id: string; session_id: string;
-  role: "user" | "assistant" | "tool" | "system"; content: string;
-  tool_calls?: unknown; tool_call_id?: string; name?: string; created_at: string;
-};
-```
+Remote providers are `native`, `terminal`, `meshcentral`, and an optional
+`rustdesk` (off by default; enable in Settings) — see
+[`08-remote-access.md`](08-remote-access.md).
 
 ### Status → color map
 
@@ -263,69 +220,19 @@ ChatGPT. Explain that the token is role-scoped (`tech`) and revocable.
 - Approval is mandatory for every script run; the UI never offers a
   "run without approval" path unless the backend reports it is enabled.
 
-## 11. Additional API (full reference: docs/04-api-reference.md)
+## 11. Additional API & types — canonical sources
 
-| Area | Key calls |
-|------|-----------|
-| Auth | `POST /api/auth/login`, `/bootstrap`, `/logout`; `GET /api/me` |
-| Users | `GET/POST /api/users`, `DELETE /api/users/{id}` |
-| Org | `GET/POST /api/clients`, `GET/POST /api/sites?client_id=`, `PATCH /api/devices/{id}/site` |
-| Scripts | `GET/POST/PUT/DELETE /api/scripts`, `POST /api/devices/{id}/run-script` |
-| Checks | `GET/POST/PUT/DELETE /api/checks`, `GET /api/checks/{id}/results?agent_id=` |
-| Tasks | `GET/POST/PUT/DELETE /api/tasks` |
-| Policies | `GET/POST/DELETE /api/policies`, `GET/POST /api/policies/{id}/assignments`, `DELETE /api/policies/assignments/{aid}` |
-| Alerts | `GET /api/alerts?status=`, `POST /api/alerts/{id}/ack`, `/resolve` |
+The "classic RMM" endpoints (auth, users, org, scripts, checks, tasks, policies,
+alerts) are documented in full in [`04-api-reference.md`](04-api-reference.md),
+with the semantics in [`10-monitoring-policies.md`](10-monitoring-policies.md) —
+not duplicated here.
 
-## 12. Additional TypeScript shapes
-
-```ts
-type Role = "admin" | "tech" | "readonly";
-type User = { id: string; username: string; role: Role; created_at: string };
-type Client = { id: string; name: string; created_at: string };
-type Site = { id: string; client_id: string; name: string; created_at: string };
-
-type Script = {
-  id: string; name: string; description: string; category: string;
-  shell: "bash" | "sh" | "powershell" | "cmd"; body: string;
-  default_args: string; created_at: string; updated_at: string;
-};
-
-type CheckType = "diskspace" | "memory" | "cpuload" | "ping" | "winservice" | "script";
-type Check = {
-  id: string; agent_id?: string; policy_id?: string; type: CheckType;
-  name: string; config: Record<string, unknown>;
-  warn_threshold?: number; err_threshold?: number;
-  interval_sec: number; enabled: boolean; created_at: string;
-};
-type CheckResult = {
-  id: string; check_id: string; agent_id: string;
-  status: "passing" | "warning" | "failing"; value?: number;
-  output: string; ran_at: string;
-};
-
-type Task = {
-  id: string; agent_id?: string; policy_id?: string; name: string;
-  script_id?: string; shell: string; script: string;
-  schedule_kind: "interval" | "daily"; interval_sec: number;
-  run_at_minute: number; enabled: boolean; created_at: string;
-};
-
-type Policy = { id: string; name: string; description: string; created_at: string };
-type PolicyAssignment = {
-  id: string; policy_id: string;
-  scope_type: "client" | "site" | "agent"; scope_id: string; created_at: string;
-};
-
-type Alert = {
-  id: string; agent_id?: string;
-  source_type: "check" | "task" | "agent"; source_id?: string;
-  severity: "info" | "warning" | "error";
-  message: string; status: "new" | "acked" | "resolved";
-  created_at: string; resolved_at?: string;
-};
-```
-
-The `Agent` type also gains `site_id?: string` and `description: string`.
+All request/response **TypeScript types** (`User`, `Client`, `Site`, `Script`,
+`Check`, `CheckResult`, `Task`, `Policy`, `PolicyAssignment`, `Alert`, plus
+`Agent.site_id` / `Agent.description`) live in
+[`../openrmm/handoff/apiClient.ts`](../openrmm/handoff/apiClient.ts), kept in sync
+with the running UI. Use that as the source of truth rather than copying types
+into this brief.
 
 ## 13. Recommended IA / navigation
 

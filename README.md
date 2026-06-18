@@ -98,12 +98,13 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |
 | [12-native-remote-fork](docs/12-native-remote-fork.md) | Historical: the abandoned RustDesk-fork plan (superseded by the homegrown engine in 08) |
 | [13-security-rollout](docs/13-security-rollout.md) | Staged hardening: signed updates, TLS enforcement, CI checks, CSP staging |
+| [14-frontend-design-brief](docs/14-frontend-design-brief.md) | Frontend brief: product context, screens, design language, full API contract |
 
-To build the frontend: [`FRONTEND_DESIGN_BRIEF.md`](FRONTEND_DESIGN_BRIEF.md).
+To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 
 ## License
 
-This project is intended to be released as open source. If you bundle a fork of
-RustDesk (AGPL-3.0) as the native remote tool, the combined distribution must be
-AGPL-3.0 — which is compatible with shipping this open source. See
-[`docs/08-remote-access.md`](docs/08-remote-access.md) for the licensing notes.
+This project is intended to be released as open source. The native remote engine
+is a homegrown, CGO-free implementation (no third-party fork), so it adds no extra
+licensing constraints. See [`docs/08-remote-access.md`](docs/08-remote-access.md)
+for the engine notes.

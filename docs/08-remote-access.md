@@ -51,6 +51,10 @@ with a `connect_url` the UI acts on.
   Without the key it falls back to a deep link that works once you're logged into
   MeshCentral.
 - License: MeshCentral is **Apache-2.0** — no constraints on bundling.
+- **Enable/disable toggle:** on by default; set `RMM_MESHCENTRAL_ENABLED=false`
+  (or the toggle in Settings ▸ Remote access) to turn it off. When disabled the
+  provider refuses to start and the MeshCentral item is hidden from the device
+  Remote menu — symmetric with the optional `rustdesk` provider.
 
 #### Setup (to test MeshCentral)
 1. Run a MeshCentral server. In its `config.json`, enable:
@@ -73,13 +77,33 @@ with a `connect_url` the UI acts on.
 > but the exact payload acceptance can only be confirmed against a live server —
 > validate on your instance; the deep-link mode works regardless.
 
+### `rustdesk` (optional, on-demand id)
+
+An optional, **thin** provider for operators who already run RustDesk. The
+RustDesk **client is installed out-of-band** (your own script/MDM, not the RMM
+agent), and the RMM never touches RustDesk's servers — the media path goes
+endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's viewer.
+
+- **Enable it** with `RMM_RUSTDESK_ENABLED=true` or the toggle in Settings ▸
+  Remote access. When off, no RustDesk item shows in the device Remote menu.
+- **On-demand id read:** clicking *Remote ▸ RustDesk* makes the server send an
+  on-demand `remote_query` to the agent, which runs `rustdesk --get-id` and
+  replies (`internal/protocol` `RemoteQueryMsg`/`RemoteQueryResultMsg`, correlated
+  by request id in `remote.Manager`). The provider then returns a
+  `rustdesk://<id>` deep link the UI opens — no id is stored ahead of time.
+- **Password:** RustDesk's permanent password is **not** read back (it is not
+  recoverable from the client). Supply it from whatever set it (your install
+  script), or use RustDesk's attended / one-time-password flow.
+- Not brokered by the relay; the RMM only hands off the id. See the provider in
+  `internal/remote/remote.go` (`rustdeskProvider`).
+
 ### `native` (built-in)
 - A session **broker + relay** built into the server (`internal/remote/relay.go`).
   On `StartSession` it mints a token, pushes `remote_start{token, relay_url}` to
   the agent, and returns a viewer `connect_url`.
 - Both peers connect to `/ws/remote?token=...&role=agent|viewer`; the relay pairs
-  them by token and pipes frames. This is the **transport plane** — the
-  equivalent of RustDesk's `hbbr` relay.
+  them by token and pipes frames. This is the **transport plane** — a
+  NAT-friendly relay (hbbr-equivalent).
 - **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
   agent spawns on demand. **Windows** captures via **GDI BitBlt** + **SendInput**;
   **Linux** captures via pure-Go **X11** `GetImage` — using **MIT-SHM** (shared
@@ -122,7 +146,7 @@ with a `connect_url` the UI acts on.
   process lifetime — it falls back to socket `GetImage` for a 5-minute cooldown
   and then retries, so a transient failure (e.g. during a session switch) doesn't
   condemn a long session to the slow path.
-- **Bidirectional free-path file transfer** with a RustDesk-style file manager
+- **Bidirectional free-path file transfer** with a two-pane file manager
   (browse / create folder / copy / cut / delete / upload / download) works on
   **both Windows and Linux** (`transfer_windows.go` / `transfer_linux.go`); the
   browser file browser is path-aware per host OS (Windows `\`+drive list vs POSIX
@@ -198,26 +222,16 @@ with `echo $XDG_SESSION_TYPE` → `x11`.
 the graphics are right — set **Graphics Controller = VMSVGA**, **3D Acceleration
 OFF**, and install the guest X driver (`virtualbox-guest-x11`/`-utils`).
 
-## The "own remote tool" plan (no fork)
+## The "own remote tool" plan
 
 The chosen direction is a **homegrown, CGO-free engine**: native per-OS capture
 (Windows GDI + Linux X11 today) + input injection feeding one shared tile-delta
-codec (`encoder.go`). A RustDesk fork is **explicitly not** pursued; the notes
-below are kept only as historical context for the licensing analysis.
+codec (`encoder.go`) — a single static binary with no third-party fork and no
+extra licensing constraints (the project ships open source).
 
-**Licensing — why a fork is now clean:** RustDesk is AGPL-3.0. Because this
-project ships as **open source**, distributing a RustDesk-derived module under
-AGPL-3.0 is fully compatible — AGPL only requires the derivative stay open, which
-is the intent. (If any part of the product were ever closed-source, the AGPL
-fork would have to remain a separate process, not linked code.)
-
-Build options that were weighed (historical):
-1. **Fork RustDesk** — inherit capture/codecs/NAT/security; rebrand and connect its
-   signaling to this relay. Was the leading candidate before the homegrown engine.
-2. **WebRTC-based** viewer/agent on permissive libs — full license freedom, more
-   work.
-3. **From scratch / homegrown** — the path actually taken: a CGO-free Go engine
-   feeding the shared tile-delta codec (no AGPL, no fork, single static binary).
+The earlier (abandoned) plan to fork an existing remote tool, and its licensing
+analysis, are kept only as historical context in
+[`12-native-remote-fork.md`](12-native-remote-fork.md).
 
 If the native tool underperforms, remove the provider — MeshCentral remains.
 

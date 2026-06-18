@@ -138,6 +138,11 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, raw []byt
 				log.Printf("check result error: %v", err)
 			}
 		}
+	case protocol.MsgRemoteQueryResult:
+		var res protocol.RemoteQueryResultMsg
+		if json.Unmarshal(env.Data, &res) == nil {
+			s.remote.ResolveQuery(res)
+		}
 	case protocol.MsgRemoteStatus:
 		// Reserved for native remote-session state updates from the agent.
 	}

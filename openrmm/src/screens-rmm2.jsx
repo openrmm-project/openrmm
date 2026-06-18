@@ -742,6 +742,8 @@ function ConfigPanel() {
       meshcentral_url: c.remote.meshcentral_url || '',
       meshcentral_user: c.remote.meshcentral_user || 'admin',
       meshcentral_token_key: '',
+      meshcentral_enabled: c.remote.meshcentral_enabled !== false,
+      rustdesk_enabled: !!c.remote.rustdesk_enabled,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -750,7 +752,7 @@ function ConfigPanel() {
     try {
       await api.updateConfig({
         ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key },
-        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key },
+        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled },
       });
       set('ai_api_key', ''); set('meshcentral_token_key', '');
       toast.success('Configuration saved', 'Runtime settings updated without exposing secrets.');
@@ -774,9 +776,11 @@ function ConfigPanel() {
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="remote" size={15} /></div><div className="text-[13px] font-semibold text-ink">Remote access</div></div>
         <div className="space-y-3">
           <Field label="Default provider"><Select value={form.remote_default} disabled={!can('admin')} onChange={(e) => set('remote_default', e.target.value)}>{c.remote.providers.map((p) => <option key={p} value={p}>{p}</option>)}</Select></Field>
+          <Field label="MeshCentral" hint="When disabled, the MeshCentral option is hidden from the device Remote menu."><Select value={form.meshcentral_enabled ? 'on' : 'off'} disabled={!can('admin')} onChange={(e) => set('meshcentral_enabled', e.target.value === 'on')}><option value="on">Enabled</option><option value="off">Disabled</option></Select></Field>
           <Field label="MeshCentral URL"><Input className="mono" value={form.meshcentral_url} disabled={!can('admin')} onChange={(e) => set('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
           <Field label="MeshCentral user"><Input value={form.meshcentral_user} disabled={!can('admin')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>
           <Field label="MeshCentral token key" hint={c.remote.meshcentral_token_set ? 'Already set. Leave blank to keep it.' : 'Optional write-only secret for login-token embedding.'}><Input type="password" value={form.meshcentral_token_key} disabled={!can('admin')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>
+          <Field label="RustDesk" hint="Shows a RustDesk option in the device Remote menu; reads the device id on demand and opens rustdesk://<id>. The RustDesk client is installed out-of-band."><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('admin')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">Disabled</option><option value="on">Enabled</option></Select></Field>
         </div>
       </Card>
       <Card className="p-4 md:col-span-2">

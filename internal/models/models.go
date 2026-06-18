@@ -49,7 +49,6 @@ type Agent struct {
 	SiteID      *string    `json:"site_id,omitempty"`
 	GroupID     *string    `json:"group_id,omitempty"`
 	Tags        []string   `json:"tags"`
-	RustDeskID  *string    `json:"rustdesk_id,omitempty"`
 	MeshID      *string    `json:"mesh_id,omitempty"`
 	LastSeen    *time.Time `json:"last_seen,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`

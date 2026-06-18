@@ -51,8 +51,10 @@ here**.
 | PATCH | `/api/devices/{id}` | tech: set `{description, note}` (identification fields, scope-checked) |
 
 `POST /devices/{id}/remote` body: `{ "provider": "native" }` — also `terminal`
-(an elevated shell; requires the **tech** role) or `meshcentral`; omitted →
-`RMM_REMOTE_PROVIDER`. Returns a `RemoteSession` including `connect_url`.
+(an elevated shell; requires the **tech** role), `meshcentral`, or `rustdesk`
+(optional, off by default; reads the device's RustDesk id on demand and returns a
+`rustdesk://<id>` deep link — see [08-remote-access](08-remote-access.md)); omitted
+→ `RMM_REMOTE_PROVIDER`. Returns a `RemoteSession` including `connect_url`.
 
 ## Jobs
 
@@ -155,7 +157,9 @@ recovery does not require admin if the user kept their codes.
     "default": "native",
     "meshcentral_url": "https://mesh.example.com",
     "meshcentral_user": "admin",
-    "meshcentral_token_key": "hex-login-token-key"
+    "meshcentral_token_key": "hex-login-token-key",
+    "meshcentral_enabled": true,
+    "rustdesk_enabled": false
   }
 }
 ```

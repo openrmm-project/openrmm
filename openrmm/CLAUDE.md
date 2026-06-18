@@ -2,7 +2,7 @@
 
 ## O que é este projeto
 Frontend completo do **OpenRMM** (RMM self-hosted com assistente de IA), em
-React. Construído conforme `FRONTEND_DESIGN_BRIEF.md`. Telas: Login, Dashboard,
+React. Construído conforme `../docs/14-frontend-design-brief.md`. Telas: Login, Dashboard,
 Devices (+detail), Jobs/Aprovações, AI Chat, Audit, Alerts, Checks, Tasks,
 Policies, Scripts, Clients/Sites, Users/Settings. Dark-first, com light mode.
 

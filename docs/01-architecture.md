@@ -4,7 +4,7 @@
 
 | Component | Where | Role |
 |-----------|-------|------|
-| **Control plane** | `cmd/server` | HTTP/REST API, agent WebSocket, remote relay, AI engine |
+| **Control plane** | `cmd/server` | HTTP/REST API, agent WebSocket, remote relay, AI engine, MCP server, check/task scheduler |
 | **Agent** | `cmd/agent` | Runs on each endpoint: enroll, heartbeat, inventory, run jobs |
 | **PostgreSQL** | external | All state: agents, jobs, inventory, audit, chat, sessions |
 | **AI provider** | external | Any OpenAI-compatible `/chat/completions` endpoint |
@@ -18,13 +18,16 @@ cmd/
   agent/         # endpoint agent entrypoint
 internal/
   config/        # env-based configuration
+  settings/      # merges env config with editable DB-backed runtime settings (secrets encrypted)
   models/        # domain types + status/shell constants
   protocol/      # agent <-> server WebSocket message types
   store/         # PostgreSQL persistence (pgx) + embedded schema
-  auth/          # token generation, hashing, constant-time compare
+  auth/          # token generation, hashing, constant-time compare, TOTP 2FA
   hub/           # registry of live agent connections (push channel per agent)
   jobs/          # job lifecycle: propose/approve/reject/dispatch/result + audit
+  scheduler/     # dispatches due checks/tasks, evaluates results, raises/resolves alerts
   ai/            # OpenAI-compatible client, tool catalog, tool-calling loop
+  mcpserver/     # exposes the AI tool catalog as an MCP server (Streamable HTTP) for external AI
   remote/        # RemoteProvider abstraction (native + terminal + meshcentral) + session relay
   api/           # chi router, auth middleware, REST handlers, WebSocket handlers
 ```

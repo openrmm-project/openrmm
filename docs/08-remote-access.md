@@ -73,6 +73,26 @@ with a `connect_url` the UI acts on.
 > but the exact payload acceptance can only be confirmed against a live server —
 > validate on your instance; the deep-link mode works regardless.
 
+### `rustdesk` (optional, on-demand id)
+
+An optional, **thin** provider for operators who already run RustDesk. The
+RustDesk **client is installed out-of-band** (your own script/MDM, not the RMM
+agent), and the RMM never touches RustDesk's servers — the media path goes
+endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's viewer.
+
+- **Enable it** with `RMM_RUSTDESK_ENABLED=true` or the toggle in Settings ▸
+  Remote access. When off, no RustDesk item shows in the device Remote menu.
+- **On-demand id read:** clicking *Remote ▸ RustDesk* makes the server send an
+  on-demand `remote_query` to the agent, which runs `rustdesk --get-id` and
+  replies (`internal/protocol` `RemoteQueryMsg`/`RemoteQueryResultMsg`, correlated
+  by request id in `remote.Manager`). The provider then returns a
+  `rustdesk://<id>` deep link the UI opens — no id is stored ahead of time.
+- **Password:** RustDesk's permanent password is **not** read back (it is not
+  recoverable from the client). Supply it from whatever set it (your install
+  script), or use RustDesk's attended / one-time-password flow.
+- Not brokered by the relay; the RMM only hands off the id. See the provider in
+  `internal/remote/remote.go` (`rustdeskProvider`).
+
 ### `native` (built-in)
 - A session **broker + relay** built into the server (`internal/remote/relay.go`).
   On `StartSession` it mints a token, pushes `remote_start{token, relay_url}` to

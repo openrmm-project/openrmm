@@ -114,8 +114,9 @@ shapes. Use the single sources of truth:
 - **TypeScript types** (kept in sync with the running UI) →
   [`../openrmm/handoff/apiClient.ts`](../openrmm/handoff/apiClient.ts).
 
-Remote providers are `native`, `terminal`, and `meshcentral` (the `rustdesk`
-provider was dropped — see [`08-remote-access.md`](08-remote-access.md)).
+Remote providers are `native`, `terminal`, `meshcentral`, and an optional
+`rustdesk` (off by default; enable in Settings) — see
+[`08-remote-access.md`](08-remote-access.md).
 
 ### Status → color map
 

@@ -234,6 +234,11 @@ func (a *agent) handleFrame(raw []byte) {
 				go a.startRemoteSession(rs)
 			}
 		}
+	case protocol.MsgRemoteQuery:
+		var q protocol.RemoteQueryMsg
+		if json.Unmarshal(env.Data, &q) == nil {
+			go a.handleRemoteQuery(q)
+		}
 	}
 }
 

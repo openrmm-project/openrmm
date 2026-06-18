@@ -32,7 +32,7 @@ export type Job = {
 };
 
 export type RemoteSession = {
-  id: string; agent_id: string; provider: "native" | "terminal" | "meshcentral";
+  id: string; agent_id: string; provider: "native" | "terminal" | "meshcentral" | "rustdesk";
   status: string; connect_url: string; expires_at: string;
 };
 

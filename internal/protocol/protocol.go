@@ -16,6 +16,9 @@ const (
 	MsgJobResult    = "job_result"    // agent -> server
 	MsgRemoteStart  = "remote_start"  // server -> agent: open a remote session
 	MsgRemoteStatus = "remote_status" // agent -> server: remote session state
+
+	MsgRemoteQuery       = "remote_query"        // server -> agent: read a remote-provider value on demand
+	MsgRemoteQueryResult = "remote_query_result" // agent -> server: reply to a remote_query
 	MsgRunCheck     = "run_check"     // server -> agent: execute a monitoring check
 	MsgCheckResult  = "check_result"  // agent -> server: raw check outcome
 )
@@ -89,6 +92,27 @@ const (
 	RemoteKindFiles    = "files"
 	RemoteKindTerminal = "terminal"
 )
+
+// Remote query kinds (RemoteQueryMsg.Kind).
+const (
+	RemoteQueryRustDeskID = "rustdesk_id" // read the locally-installed RustDesk peer id
+)
+
+// RemoteQueryMsg asks the agent to read a remote-provider value on demand (e.g.
+// the RustDesk peer id when a technician clicks "Open with RustDesk"). The agent
+// replies with a RemoteQueryResultMsg carrying the same RequestID.
+type RemoteQueryMsg struct {
+	RequestID string `json:"request_id"`
+	Kind      string `json:"kind"`
+}
+
+// RemoteQueryResultMsg is the agent's reply to a RemoteQueryMsg. Exactly one of
+// Value / Error is meaningful.
+type RemoteQueryResultMsg struct {
+	RequestID string `json:"request_id"`
+	Value     string `json:"value,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
 
 // RunCheckMsg asks the agent to execute a monitoring check. The agent returns a
 // raw value/output; the server applies thresholds and computes the status.

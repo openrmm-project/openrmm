@@ -47,7 +47,7 @@ func main() {
 
 	h := hub.New()
 	jobSvc := jobs.New(st, h)
-	remoteMgr := remote.NewManager(st, h, cfg.PublicURL, cfg.MeshCentralURL, cfg.MeshCentralTokenKey, cfg.MeshCentralUser)
+	remoteMgr := remote.NewManager(st, h, cfg.PublicURL, cfg.MeshCentralURL, cfg.MeshCentralTokenKey, cfg.MeshCentralUser, cfg.RustDeskEnabled)
 	relay := remote.NewRelay()
 	aiClient := ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	chat := ai.NewEngine(aiClient, st, jobSvc)

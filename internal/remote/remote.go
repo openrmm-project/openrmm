@@ -35,14 +35,19 @@ type Provider interface {
 
 // Manager holds the configured providers and shared dependencies.
 type Manager struct {
-	mu           sync.RWMutex
-	store        *store.Store
-	hub          *hub.Hub
-	publicURL    string
-	meshURL      string
-	meshTokenKey string
-	meshUser     string
-	providers    map[string]Provider
+	mu              sync.RWMutex
+	store           *store.Store
+	hub             *hub.Hub
+	publicURL       string
+	meshURL         string
+	meshTokenKey    string
+	meshUser        string
+	rustdeskEnabled bool
+	providers       map[string]Provider
+
+	// pending correlates on-demand remote_query requests with their replies.
+	pendingMu sync.Mutex
+	pending   map[string]chan protocol.RemoteQueryResultMsg
 }
 
 // UpdateMeshConfig swaps MeshCentral settings without rebuilding the server.
@@ -54,16 +59,80 @@ func (m *Manager) UpdateMeshConfig(meshURL, meshTokenKey, meshUser string) {
 	m.meshUser = meshUser
 }
 
+// SetRustDeskEnabled toggles the RustDesk provider at runtime.
+func (m *Manager) SetRustDeskEnabled(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rustdeskEnabled = enabled
+}
+
 // NewManager wires up all providers.
-func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, meshUser string) *Manager {
+func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, meshUser string, rustdeskEnabled bool) *Manager {
 	m := &Manager{store: s, hub: h, publicURL: publicURL, meshURL: meshURL,
-		meshTokenKey: meshTokenKey, meshUser: meshUser, providers: map[string]Provider{}}
+		meshTokenKey: meshTokenKey, meshUser: meshUser, rustdeskEnabled: rustdeskEnabled,
+		providers: map[string]Provider{}, pending: map[string]chan protocol.RemoteQueryResultMsg{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
 	register(&filesProvider{m: m})
 	register(&terminalProvider{m: m})
 	register(&meshProvider{m: m})
+	register(&rustdeskProvider{m: m})
 	return m
+}
+
+// queryAgent sends an on-demand remote_query to an online agent and waits for the
+// reply (bounded). It is how the RustDesk provider reads the peer id at click time.
+func (m *Manager) queryAgent(ctx context.Context, agentID, kind string) (string, error) {
+	if !m.hub.IsOnline(agentID) {
+		return "", fmt.Errorf("agent %s is offline", agentID)
+	}
+	reqID := auth.NewToken()
+	ch := make(chan protocol.RemoteQueryResultMsg, 1)
+	m.pendingMu.Lock()
+	m.pending[reqID] = ch
+	m.pendingMu.Unlock()
+	defer func() {
+		m.pendingMu.Lock()
+		delete(m.pending, reqID)
+		m.pendingMu.Unlock()
+	}()
+
+	q := protocol.RemoteQueryMsg{RequestID: reqID, Kind: kind}
+	data, _ := json.Marshal(q)
+	frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgRemoteQuery, Data: data})
+	if !m.hub.Send(agentID, frame) {
+		return "", fmt.Errorf("agent %s is offline", agentID)
+	}
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(10 * time.Second):
+		return "", fmt.Errorf("the agent did not respond in time")
+	case res := <-ch:
+		if res.Error != "" {
+			return "", fmt.Errorf("%s", res.Error)
+		}
+		if res.Value == "" {
+			return "", fmt.Errorf("the agent returned an empty value")
+		}
+		return res.Value, nil
+	}
+}
+
+// ResolveQuery delivers an agent's remote_query reply to the waiting caller. It is
+// invoked from the agent WebSocket read loop. Unknown/expired request ids are
+// dropped (the caller may have already timed out).
+func (m *Manager) ResolveQuery(res protocol.RemoteQueryResultMsg) {
+	m.pendingMu.Lock()
+	ch, ok := m.pending[res.RequestID]
+	m.pendingMu.Unlock()
+	if ok {
+		select {
+		case ch <- res:
+		default:
+		}
+	}
 }
 
 // Start opens a session using the named provider (or the agent's best default).
@@ -205,6 +274,42 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 		Status:     "ready",
 		Token:      auth.NewToken(),
 		ConnectURL: connect,
+		CreatedBy:  createdBy,
+		ExpiresAt:  time.Now().Add(sessionTTL),
+	}
+	if err := p.m.persist(ctx, rs); err != nil {
+		return nil, err
+	}
+	return rs, nil
+}
+
+// ---------- rustdesk (on-demand id read; client installed out-of-band) ----------
+
+type rustdeskProvider struct{ m *Manager }
+
+func (p *rustdeskProvider) Name() string { return "rustdesk" }
+
+// StartSession reads the device's RustDesk peer id on demand from the agent (the
+// RustDesk client is installed separately, not by this RMM) and returns a
+// rustdesk://<id> deep link the technician's RustDesk viewer opens. The media path
+// goes through the operator's RustDesk server (hbbs/hbbr), never through OpenRMM.
+func (p *rustdeskProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+	p.m.mu.RLock()
+	enabled := p.m.rustdeskEnabled
+	p.m.mu.RUnlock()
+	if !enabled {
+		return nil, fmt.Errorf("the RustDesk provider is disabled")
+	}
+	id, err := p.m.queryAgent(ctx, agent.ID, protocol.RemoteQueryRustDeskID)
+	if err != nil {
+		return nil, fmt.Errorf("read RustDesk id: %w", err)
+	}
+	rs := &models.RemoteSession{
+		AgentID:    agent.ID,
+		Provider:   "rustdesk",
+		Status:     "ready",
+		Token:      auth.NewToken(),
+		ConnectURL: "rustdesk://" + id,
 		CreatedBy:  createdBy,
 		ExpiresAt:  time.Now().Add(sessionTTL),
 	}

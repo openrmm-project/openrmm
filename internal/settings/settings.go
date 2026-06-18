@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/p1ngu/rmm/internal/config"
@@ -27,6 +28,7 @@ const (
 	KeyMeshCentralURL        = "remote.meshcentral_url"
 	KeyMeshCentralUser       = "remote.meshcentral_user"
 	KeyMeshCentralTokenKey   = "remote.meshcentral_token_key"
+	KeyRustDeskEnabled       = "remote.rustdesk_enabled"
 )
 
 var publicKeys = map[string]bool{
@@ -36,6 +38,7 @@ var publicKeys = map[string]bool{
 	KeyRemoteDefaultProvider: true,
 	KeyMeshCentralURL:        true,
 	KeyMeshCentralUser:       true,
+	KeyRustDeskEnabled:       true,
 }
 
 // Editable is the effective runtime subset that can be edited from the UI.
@@ -48,6 +51,7 @@ type Editable struct {
 	MeshCentralURL        string
 	MeshCentralUser       string
 	MeshCentralTokenKey   string
+	RustDeskEnabled       bool
 }
 
 // FromConfig builds the env-only baseline.
@@ -61,6 +65,7 @@ func FromConfig(cfg *config.Config) Editable {
 		MeshCentralURL:        cfg.MeshCentralURL,
 		MeshCentralUser:       cfg.MeshCentralUser,
 		MeshCentralTokenKey:   cfg.MeshCentralTokenKey,
+		RustDeskEnabled:       cfg.RustDeskEnabled,
 	}
 }
 
@@ -74,6 +79,7 @@ func (e Editable) ApplyToConfig(cfg *config.Config) {
 	cfg.MeshCentralURL = e.MeshCentralURL
 	cfg.MeshCentralUser = e.MeshCentralUser
 	cfg.MeshCentralTokenKey = e.MeshCentralTokenKey
+	cfg.RustDeskEnabled = e.RustDeskEnabled
 }
 
 // Effective returns env config overlaid with DB settings.
@@ -102,7 +108,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyRustDeskEnabled} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -127,6 +133,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.MeshCentralUser = v
 		case KeyMeshCentralTokenKey:
 			out.MeshCentralTokenKey = v
+		case KeyRustDeskEnabled:
+			out.RustDeskEnabled = v == "true"
 		}
 	}
 	return out, nil
@@ -145,6 +153,7 @@ type SaveRequest struct {
 		MeshCentralURL  string `json:"meshcentral_url"`
 		MeshCentralUser string `json:"meshcentral_user"`
 		MeshTokenKey    string `json:"meshcentral_token_key"`
+		RustDeskEnabled *bool  `json:"rustdesk_enabled"` // nil = preserve current
 	} `json:"remote"`
 }
 
@@ -187,6 +196,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		in.Remote.MeshCentralUser = current.MeshCentralUser
 	}
 
+	rustdesk := current.RustDeskEnabled
+	if in.Remote.RustDeskEnabled != nil {
+		rustdesk = *in.Remote.RustDeskEnabled
+	}
 	for _, op := range []struct{ key, value string }{
 		{KeyAIProvider, in.AI.Provider},
 		{KeyAIBaseURL, in.AI.BaseURL},
@@ -194,6 +207,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyRemoteDefaultProvider, in.Remote.DefaultProvider},
 		{KeyMeshCentralURL, in.Remote.MeshCentralURL},
 		{KeyMeshCentralUser, in.Remote.MeshCentralUser},
+		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
 	} {
 		if err := writePublic(op.key, op.value); err != nil {
 			return current, err

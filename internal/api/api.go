@@ -323,6 +323,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"meshcentral_url":       eff.MeshCentralURL,
 			"meshcentral_user":      eff.MeshCentralUser,
 			"meshcentral_token_set": eff.MeshCentralTokenKey != "",
+			"rustdesk_enabled":      eff.RustDeskEnabled,
 		},
 		"server": map[string]any{
 			"version":               "0.2.1",
@@ -356,6 +357,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	// already overlays DB values on top of it, so reads stay race-free.
 	s.chat.UpdateProvider(eff.AIBaseURL, eff.AIAPIKey, eff.AIModel)
 	s.remote.UpdateMeshConfig(eff.MeshCentralURL, eff.MeshCentralTokenKey, eff.MeshCentralUser)
+	s.remote.SetRustDeskEnabled(eff.RustDeskEnabled)
 
 	changed := changedSettings(before, eff, in)
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.update", "app_settings", settings.AuditDetail(changed))
@@ -386,6 +388,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.meshcentral_url", before.MeshCentralURL != after.MeshCentralURL)
 	add("remote.meshcentral_user", before.MeshCentralUser != after.MeshCentralUser)
 	add("remote.meshcentral_token_key", strings.TrimSpace(in.Remote.MeshTokenKey) != "")
+	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
 	return out
 }
 

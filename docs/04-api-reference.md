@@ -158,6 +158,7 @@ recovery does not require admin if the user kept their codes.
     "meshcentral_url": "https://mesh.example.com",
     "meshcentral_user": "admin",
     "meshcentral_token_key": "hex-login-token-key",
+    "meshcentral_enabled": true,
     "rustdesk_enabled": false
   }
 }

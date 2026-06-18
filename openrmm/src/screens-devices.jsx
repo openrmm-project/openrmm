@@ -102,6 +102,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const d = devQ.data;
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
   const rustdeskEnabled = !!cfgQ.data?.remote?.rustdesk_enabled;
+  const meshEnabled = cfgQ.data?.remote?.meshcentral_enabled !== false;
 
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
@@ -159,9 +160,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
                 {can('tech') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
                 {can('tech') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
-                <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>
+                {meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>}
                 {rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
-                {can('admin') && <>
+                {can('admin') && meshEnabled && <>
                   <div className="my-1 border-t border-line" />
                   <MenuItem icon="external" onClick={() => linkRemote('mesh_id', 'MeshCentral node id')}>Link MeshCentral node…</MenuItem>
                 </>}

@@ -42,6 +42,7 @@ type Manager struct {
 	meshURL         string
 	meshTokenKey    string
 	meshUser        string
+	meshEnabled     bool
 	rustdeskEnabled bool
 	providers       map[string]Provider
 
@@ -51,12 +52,13 @@ type Manager struct {
 }
 
 // UpdateMeshConfig swaps MeshCentral settings without rebuilding the server.
-func (m *Manager) UpdateMeshConfig(meshURL, meshTokenKey, meshUser string) {
+func (m *Manager) UpdateMeshConfig(meshURL, meshTokenKey, meshUser string, enabled bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.meshURL = meshURL
 	m.meshTokenKey = meshTokenKey
 	m.meshUser = meshUser
+	m.meshEnabled = enabled
 }
 
 // SetRustDeskEnabled toggles the RustDesk provider at runtime.
@@ -67,9 +69,9 @@ func (m *Manager) SetRustDeskEnabled(enabled bool) {
 }
 
 // NewManager wires up all providers.
-func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, meshUser string, rustdeskEnabled bool) *Manager {
+func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, meshUser string, meshEnabled, rustdeskEnabled bool) *Manager {
 	m := &Manager{store: s, hub: h, publicURL: publicURL, meshURL: meshURL,
-		meshTokenKey: meshTokenKey, meshUser: meshUser, rustdeskEnabled: rustdeskEnabled,
+		meshTokenKey: meshTokenKey, meshUser: meshUser, meshEnabled: meshEnabled, rustdeskEnabled: rustdeskEnabled,
 		providers: map[string]Provider{}, pending: map[string]chan protocol.RemoteQueryResultMsg{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
@@ -250,8 +252,11 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 // that works once the technician is logged into MeshCentral.
 func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
 	p.m.mu.RLock()
-	meshURL, meshTokenKey, meshUser := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser
+	meshURL, meshTokenKey, meshUser, enabled := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled
 	p.m.mu.RUnlock()
+	if !enabled {
+		return nil, fmt.Errorf("the MeshCentral provider is disabled")
+	}
 	if meshURL == "" {
 		return nil, fmt.Errorf("MeshCentral URL not configured (RMM_MESHCENTRAL_URL)")
 	}

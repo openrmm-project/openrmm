@@ -98,8 +98,9 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |
 | [12-native-remote-fork](docs/12-native-remote-fork.md) | Historical: the abandoned RustDesk-fork plan (superseded by the homegrown engine in 08) |
 | [13-security-rollout](docs/13-security-rollout.md) | Staged hardening: signed updates, TLS enforcement, CI checks, CSP staging |
+| [14-frontend-design-brief](docs/14-frontend-design-brief.md) | Frontend brief: product context, screens, design language, full API contract |
 
-To build the frontend: [`FRONTEND_DESIGN_BRIEF.md`](FRONTEND_DESIGN_BRIEF.md).
+To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 
 ## License
 

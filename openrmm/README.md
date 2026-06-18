@@ -3,30 +3,31 @@
 Este projeto é o **frontend completo** do OpenRMM: um app React (Login, Devices,
 Device detail, Jobs/Aprovações, AI Chat, Audit, Alerts, Checks, Tasks, Policies,
 Scripts, Clients/Sites, Users/Settings) construído exatamente conforme o
-`FRONTEND_DESIGN_BRIEF.md`.
+[`../docs/14-frontend-design-brief.md`](../docs/14-frontend-design-brief.md).
 
-Hoje ele roda contra uma **camada de API simulada** (mock) que espelha 1:1 os
-endpoints, os tipos TypeScript e o mapa de status→cor do brief. Para colocar em
-produção, você só precisa **trocar essa camada por chamadas `fetch` reais** ao
-seu backend Go. Já deixei o cliente real escrito em `handoff/apiClient.ts`.
+Ele **já está conectado ao backend Go**: `src/mockapi.jsx` deixou de ser mock e
+hoje é o cliente `fetch` real (`window.api`) que fala com a API (bearer token +
+CORS); os dados simulados foram removidos. O cliente em `handoff/apiClient.ts` é a
+versão TypeScript do mesmo contrato, para um futuro projeto Vite/TS. Como rodar
+(backend + bootstrap + servir o front): ver `RUNNING.md`.
 
 ---
 
-## TL;DR — como conectar ao backend
+## TL;DR — como rodar
 
 1. Suba o backend Go (default `http://localhost:8080`).
-2. Aponte a base da API (variável `__API_BASE__` no protótipo, ou `VITE_API_BASE`
-   num projeto Vite — veja abaixo).
-3. Substitua o objeto `window.api` (em `src/mockapi.jsx`) pelo cliente real de
-   `handoff/apiClient.ts`. **Só esse arquivo muda.** Toda a UI consome `api.*` e
-   não sabe se a origem é mock ou real.
-4. A autenticação por bearer token já está implementada: o token de
-   `POST /api/auth/login` é guardado em `localStorage` e anexado em todo
-   `/api/*`. O gating por papel (`admin`/`tech`/`readonly`) também já existe.
+2. Aponte a base da API se não for o default: `<script>window.__API_BASE__ =
+   "http://..."</script>` antes dos scripts em `index.html`.
+3. Sirva o front (HTML estático) — veja `RUNNING.md` para o fluxo completo
+   (backend + bootstrap do primeiro admin + servir).
+4. Autenticação por bearer já implementada: o token de `POST /api/auth/login` é
+   guardado em `localStorage` e anexado em todo `/api/*`; o gating por papel
+   (`admin`/`tech`/`readonly`) também já existe.
 
-> **Abrindo no Claude Code?** Há um `CLAUDE.md` na raiz com o contexto da tarefa.
-> Peça: *"troque a camada mock (src/mockapi.jsx) pelo cliente real de
-> handoff/apiClient.ts e remova os dados simulados"* — está tudo mapeado.
+> Toda a UI consome `api.*` (em `src/mockapi.jsx`, hoje o cliente `fetch` real) e
+> não sabe se a origem é mock ou real — por isso a camada de dados fica isolada num
+> único arquivo. `handoff/apiClient.ts` é a versão TypeScript do mesmo contrato,
+> para um futuro projeto Vite/TS.
 
 ---
 
@@ -36,7 +37,7 @@ seu backend Go. Já deixei o cliente real escrito em `handoff/apiClient.ts`.
 index.html              # shell: Tailwind config, tokens de tema, ordem dos scripts
 src/
   icons.jsx             # ícones (SVG inline)
-  mockapi.jsx           # ⬅️ ÚNICA camada a trocar. Expõe window.api (todos os endpoints)
+  mockapi.jsx           # camada de dados isolada: cliente fetch REAL, expõe window.api
   ui.jsx                # primitivos (Button, Pill, Drawer, Modal, Toast, CodeBlock, hooks)
   app.jsx               # auth, sidebar, router, gating por papel, monta o React
   screens-core.jsx      # Dashboard + helpers de layout
@@ -46,7 +47,7 @@ src/
   screens-rmm.jsx       # Alerts, Checks, Scheduled tasks
   screens-rmm2.jsx      # Scripts, Policies, Clients/Sites, Users/Settings
 handoff/
-  apiClient.ts          # ⬅️ cliente fetch REAL (pronto), espelha mockapi.jsx
+  apiClient.ts          # versão TypeScript do mesmo cliente (para um futuro projeto Vite/TS)
   INTEGRATION.md        # passo a passo + tabela de endpoints + papéis
 ```
 
@@ -59,11 +60,11 @@ fiel. Se preferir, dá para portar quase direto: a UI já é React e os hooks
 
 ---
 
-## Camada de dados (o que trocar)
+## Camada de dados
 
-`src/mockapi.jsx` define `window.api` com **exatamente** estes métodos (todos
-retornam Promises). O cliente real em `handoff/apiClient.ts` tem a mesma
-assinatura:
+`src/mockapi.jsx` (o cliente `fetch` real) define `window.api` com **exatamente**
+estes métodos (todos retornam Promises). `handoff/apiClient.ts` tem a mesma
+assinatura, em TypeScript:
 
 | Método (`api.*`) | Vira a chamada HTTP |
 |---|---|
@@ -107,9 +108,10 @@ A tabela completa com bodies e shapes está em `handoff/INTEGRATION.md`.
 
 ---
 
-## Rodando o protótipo (como está, com mock)
+## Rodando o protótipo
 
-É HTML estático — abra `index.html` num servidor estático qualquer:
+É HTML estático — abra `index.html` num servidor estático qualquer (e suba o
+backend Go antes; fluxo completo em `RUNNING.md`):
 
 ```bash
 npx serve .        # ou: python3 -m http.server
@@ -120,5 +122,3 @@ Para apontar a base da API sem mudar código, antes dos scripts em `index.html`:
 ```html
 <script>window.__API_BASE__ = "http://localhost:8080";</script>
 ```
-
-Para resetar os dados simulados: no console do browser, `window.__resetDB()`.

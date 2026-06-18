@@ -51,6 +51,10 @@ with a `connect_url` the UI acts on.
   Without the key it falls back to a deep link that works once you're logged into
   MeshCentral.
 - License: MeshCentral is **Apache-2.0** — no constraints on bundling.
+- **Enable/disable toggle:** on by default; set `RMM_MESHCENTRAL_ENABLED=false`
+  (or the toggle in Settings ▸ Remote access) to turn it off. When disabled the
+  provider refuses to start and the MeshCentral item is hidden from the device
+  Remote menu — symmetric with the optional `rustdesk` provider.
 
 #### Setup (to test MeshCentral)
 1. Run a MeshCentral server. In its `config.json`, enable:

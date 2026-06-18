@@ -96,9 +96,9 @@ function LoginScreen({ onAuthed }) {
 
 function BrandMark({ size = 32 }) {
   return (
-    <div className="rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-brand/20" style={{ width: size, height: size, background: 'linear-gradient(140deg, var(--brandhi), var(--brand))' }}>
-      <Icon name="shield" size={size * 0.56} className="text-white" fill={false} strokeWidth={1.9} />
-    </div>
+    <img src="assets/icone_openrmm.png" alt="OpenRMM" width={size} height={size}
+      className="rounded-xl shrink-0 shadow-lg shadow-brand/20 object-cover"
+      style={{ width: size, height: size }} />
   );
 }
 

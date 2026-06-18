@@ -2,7 +2,7 @@
 // WebSocket to the server, sends heartbeats + rich inventory, runs approved jobs,
 // and executes monitoring checks. It can install itself as a system service.
 //
-// Remote desktop (native provider / RustDesk fork) is a separate module that
+// Remote desktop (the native provider's media sidecar) is a separate module that
 // rides on the relay; this agent handles enrollment, telemetry, jobs and checks.
 package main
 

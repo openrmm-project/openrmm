@@ -23,8 +23,8 @@ var sidecarRefresh sync.Mutex
 // session. The sidecar — not the agent — captures the screen and injects input,
 // so it runs as a separate process (and can live in the interactive user
 // session; the agent runs as a session-0 service, which cannot capture the
-// desktop). This is the integration point the RustDesk fork replaces: swap the
-// sidecar binary and nothing here changes. See docs/12.
+// desktop). This is a swappable integration point: replace the sidecar binary
+// and nothing here changes.
 func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	relay := a.relayURL(rs.Token)
 	bin, err := a.ensureSidecar()

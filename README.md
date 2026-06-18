@@ -104,7 +104,7 @@ To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-des
 
 ## License
 
-This project is intended to be released as open source. If you bundle a fork of
-RustDesk (AGPL-3.0) as the native remote tool, the combined distribution must be
-AGPL-3.0 — which is compatible with shipping this open source. See
-[`docs/08-remote-access.md`](docs/08-remote-access.md) for the licensing notes.
+This project is intended to be released as open source. The native remote engine
+is a homegrown, CGO-free implementation (no third-party fork), so it adds no extra
+licensing constraints. See [`docs/08-remote-access.md`](docs/08-remote-access.md)
+for the engine notes.

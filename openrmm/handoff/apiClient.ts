@@ -18,7 +18,7 @@ export type User = { id: string; username: string; role: Role; created_at: strin
 export type Agent = {
   id: string; hostname: string; os: string; arch: string; version: string;
   status: "online" | "offline"; group_id?: string; tags: string[];
-  rustdesk_id?: string; mesh_id?: string; last_seen?: string; created_at: string;
+  mesh_id?: string; last_seen?: string; created_at: string;
   site_id?: string; description: string;
 };
 
@@ -32,7 +32,7 @@ export type Job = {
 };
 
 export type RemoteSession = {
-  id: string; agent_id: string; provider: "native" | "meshcentral" | "rustdesk";
+  id: string; agent_id: string; provider: "native" | "terminal" | "meshcentral";
   status: string; connect_url: string; expires_at: string;
 };
 

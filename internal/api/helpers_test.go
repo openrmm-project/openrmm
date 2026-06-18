@@ -12,8 +12,8 @@ func TestOneOf(t *testing.T) {
 	if !oneOf("native", "native", "meshcentral") {
 		t.Error("oneOf should accept a listed value")
 	}
-	if oneOf("rustdesk", "native", "meshcentral") {
-		t.Error("oneOf should reject an unlisted value (rustdesk was removed)")
+	if oneOf("vnc", "native", "meshcentral") {
+		t.Error("oneOf should reject an unlisted value")
 	}
 	if oneOf("", "native") {
 		t.Error("oneOf should reject empty when not listed")

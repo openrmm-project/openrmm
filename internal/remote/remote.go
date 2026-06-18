@@ -98,7 +98,7 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 
 // brokerRelay sets up a relayed session: both the agent's remote module and the
 // technician's viewer connect to /ws/remote with the same token, and the server
-// pipes bytes between them (NAT-friendly, like RustDesk's hbbr relay). kind tells
+// pipes bytes between them (NAT-friendly relay, hbbr-equivalent). kind tells
 // the agent which module to attach (desktop sidecar vs. elevated terminal); it is
 // also recorded as the session provider so the audit/list reflect what was opened.
 func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string) (*models.RemoteSession, error) {

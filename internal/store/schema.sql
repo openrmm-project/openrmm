@@ -101,7 +101,6 @@ CREATE TABLE IF NOT EXISTS agents (
     site_id      UUID REFERENCES sites(id) ON DELETE SET NULL,
     group_id     UUID REFERENCES device_groups(id) ON DELETE SET NULL,
     tags         TEXT[] NOT NULL DEFAULT '{}',
-    rustdesk_id  TEXT,
     mesh_id      TEXT,
     last_seen    TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -110,6 +109,8 @@ CREATE TABLE IF NOT EXISTS agents (
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE SET NULL;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS note        TEXT NOT NULL DEFAULT '';
+-- The RustDesk provider was dropped; remove its column from existing installs.
+ALTER TABLE agents DROP COLUMN IF EXISTS rustdesk_id;
 
 CREATE TABLE IF NOT EXISTS enroll_tokens (
     id          UUID PRIMARY KEY,

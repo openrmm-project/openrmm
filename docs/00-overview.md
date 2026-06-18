@@ -49,7 +49,7 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
 ## What is intentionally NOT built yet
 
 - **Hardware-accelerated codecs / E2E-encrypted media** — the native engine uses a
-  CGO-free tile-delta JPEG codec today (homegrown, **no RustDesk fork**); hardware
+  CGO-free tile-delta JPEG codec today (homegrown, **no third-party fork**); hardware
   codecs (VP8/9/AV1) and media end-to-end encryption are future work. **macOS**
   capture is still a stub, and **Linux requires an Xorg session** (Wayland blocks
   screen capture — see [08-remote-access](08-remote-access.md)).

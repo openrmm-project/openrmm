@@ -19,7 +19,7 @@ Managed endpoints.
 | site_id | uuid FK → sites | nullable; the agent's place in the org hierarchy |
 | group_id | uuid FK → device_groups | nullable |
 | tags | text[] | free-form labels |
-| rustdesk_id, mesh_id | text | remote-provider identifiers (nullable) |
+| mesh_id | text | MeshCentral node id (nullable) |
 | last_seen | timestamptz | heartbeat |
 | created_at | timestamptz | |
 

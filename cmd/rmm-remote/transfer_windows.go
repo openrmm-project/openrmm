@@ -41,7 +41,7 @@ type fsEntry struct {
 }
 
 // onList answers a remote directory listing (empty path => drive roots), so the
-// viewer can offer a RustDesk-style file browser instead of typing paths.
+// viewer can offer a two-pane file browser instead of typing paths.
 func (s *session) onList(data []byte) {
 	var r getReq
 	if json.Unmarshal(data, &r) != nil {

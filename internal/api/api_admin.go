@@ -111,18 +111,17 @@ func (s *Server) setDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// setDeviceRemoteIDs maps a device to its remote-provider identifiers
-// (MeshCentral node id / RustDesk id) so the remote providers can target it.
+// setDeviceRemoteIDs maps a device to its MeshCentral node id so the
+// MeshCentral remote provider can target it.
 func (s *Server) setDeviceRemoteIDs(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		MeshID     *string `json:"mesh_id"`
-		RustDeskID *string `json:"rustdesk_id"`
+		MeshID *string `json:"mesh_id"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.store.SetRemoteIDs(r.Context(), chi.URLParam(r, "id"), in.RustDeskID, in.MeshID); err != nil {
+	if err := s.store.SetRemoteIDs(r.Context(), chi.URLParam(r, "id"), in.MeshID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

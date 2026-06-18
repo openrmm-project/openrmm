@@ -78,8 +78,8 @@ with a `connect_url` the UI acts on.
   On `StartSession` it mints a token, pushes `remote_start{token, relay_url}` to
   the agent, and returns a viewer `connect_url`.
 - Both peers connect to `/ws/remote?token=...&role=agent|viewer`; the relay pairs
-  them by token and pipes frames. This is the **transport plane** — the
-  equivalent of RustDesk's `hbbr` relay.
+  them by token and pipes frames. This is the **transport plane** — a
+  NAT-friendly relay (hbbr-equivalent).
 - **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
   agent spawns on demand. **Windows** captures via **GDI BitBlt** + **SendInput**;
   **Linux** captures via pure-Go **X11** `GetImage` — using **MIT-SHM** (shared
@@ -122,7 +122,7 @@ with a `connect_url` the UI acts on.
   process lifetime — it falls back to socket `GetImage` for a 5-minute cooldown
   and then retries, so a transient failure (e.g. during a session switch) doesn't
   condemn a long session to the slow path.
-- **Bidirectional free-path file transfer** with a RustDesk-style file manager
+- **Bidirectional free-path file transfer** with a two-pane file manager
   (browse / create folder / copy / cut / delete / upload / download) works on
   **both Windows and Linux** (`transfer_windows.go` / `transfer_linux.go`); the
   browser file browser is path-aware per host OS (Windows `\`+drive list vs POSIX
@@ -198,26 +198,16 @@ with `echo $XDG_SESSION_TYPE` → `x11`.
 the graphics are right — set **Graphics Controller = VMSVGA**, **3D Acceleration
 OFF**, and install the guest X driver (`virtualbox-guest-x11`/`-utils`).
 
-## The "own remote tool" plan (no fork)
+## The "own remote tool" plan
 
 The chosen direction is a **homegrown, CGO-free engine**: native per-OS capture
 (Windows GDI + Linux X11 today) + input injection feeding one shared tile-delta
-codec (`encoder.go`). A RustDesk fork is **explicitly not** pursued; the notes
-below are kept only as historical context for the licensing analysis.
+codec (`encoder.go`) — a single static binary with no third-party fork and no
+extra licensing constraints (the project ships open source).
 
-**Licensing — why a fork is now clean:** RustDesk is AGPL-3.0. Because this
-project ships as **open source**, distributing a RustDesk-derived module under
-AGPL-3.0 is fully compatible — AGPL only requires the derivative stay open, which
-is the intent. (If any part of the product were ever closed-source, the AGPL
-fork would have to remain a separate process, not linked code.)
-
-Build options that were weighed (historical):
-1. **Fork RustDesk** — inherit capture/codecs/NAT/security; rebrand and connect its
-   signaling to this relay. Was the leading candidate before the homegrown engine.
-2. **WebRTC-based** viewer/agent on permissive libs — full license freedom, more
-   work.
-3. **From scratch / homegrown** — the path actually taken: a CGO-free Go engine
-   feeding the shared tile-delta codec (no AGPL, no fork, single static binary).
+The earlier (abandoned) plan to fork an existing remote tool, and its licensing
+analysis, are kept only as historical context in
+[`12-native-remote-fork.md`](12-native-remote-fork.md).
 
 If the native tool underperforms, remove the provider — MeshCentral remains.
 

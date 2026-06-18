@@ -8,7 +8,7 @@
 | **Agent** | `cmd/agent` | Runs on each endpoint: enroll, heartbeat, inventory, run jobs |
 | **PostgreSQL** | external | All state: agents, jobs, inventory, audit, chat, sessions |
 | **AI provider** | external | Any OpenAI-compatible `/chat/completions` endpoint |
-| **Remote client** | technician side | MeshCentral web/native, RustDesk client, or native viewer |
+| **Remote client** | technician side | MeshCentral web/native, or the native browser viewer |
 
 ## Package layout
 

@@ -394,7 +394,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   }, [deviceId]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
-  // Remote file browser (RustDesk-style): navigate folders, download a file, or
+  // Remote file browser: navigate folders, download a file, or
   // upload into the current folder — no path typing. Path semantics follow the
   // host OS: Windows uses "\\" + a drive list at the root; POSIX uses "/".
   const rootPath = isWin ? '' : '/';

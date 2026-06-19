@@ -218,6 +218,7 @@ function ClientsScreen() {
   const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
   const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState(null); // site id
+  const [selDept, setSelDept] = useState(null); // department id within the selected site
   const [creatingClient, setCreatingClient] = useState(false);
   const [name, setName] = useState('');
   const [q, setQ] = useState('');
@@ -253,17 +254,17 @@ function ClientsScreen() {
             <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client, site or device…" className="pl-9 h-9" />
           </div>
-          {visibleClients.map((c) => <ClientNode key={c.id} client={c} sites={sitesFor(c)} groups={groups} devices={devices} sel={sel} setSel={setSel} siteCount={siteCount} clientCount={clientCount} />)}
+          {visibleClients.map((c) => <ClientNode key={c.id} client={c} sites={sitesFor(c)} groups={groups} devices={devices} sel={sel} setSel={setSel} selDept={selDept} setSelDept={setSelDept} siteCount={siteCount} clientCount={clientCount} />)}
           {visibleClients.length === 0 && <Card><EmptyState icon="building" title={ql ? 'No matches' : 'No clients'} /></Card>}
         </div>
-        <div>{selSite ? <SiteDetail site={selSite} client={selClient} devices={selDevices} clients={clients} sites={sites} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
+        <div>{selSite ? <SiteDetail site={selSite} client={selClient} devices={selDevices} clients={clients} sites={sites} query={ql} focusDept={selDept} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
       </div>
       <Modal open={creatingClient} onClose={() => setCreatingClient(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">New client</div><Field label="Client name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind Trading" autoFocus /></Field><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreatingClient(false)}>Cancel</Button><Button variant="primary" onClick={addClient} disabled={!name}>Create</Button></div></div></Modal>
     </Page>
   );
 }
 
-function ClientNode({ client, sites, groups, devices, sel, setSel, siteCount, clientCount }) {
+function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setSelDept, siteCount, clientCount }) {
   const { can } = useAuth();
   const toast = useToast();
   const [open, setOpen] = useState(true);
@@ -300,18 +301,21 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, siteCount, cl
             const siteDepts = (groups || []).filter((g) => g.site_id === s.id);
             return (
               <div key={s.id} className="border-b border-line/60 last:border-0">
-                <button onClick={() => setSel(s.id)} className={cx('w-full flex items-center gap-2.5 pl-10 pr-3.5 py-2.5 transition text-left', sel === s.id ? 'bg-brandsoft' : 'hover:bg-elevated/40')}>
-                  <Icon name="pin" size={13} className={sel === s.id ? 'text-brandhi' : 'text-faint'} />
-                  <span className={cx('flex-1 text-[12.5px]', sel === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.name}</span>
+                <button onClick={() => { setSel(s.id); setSelDept && setSelDept(null); }} className={cx('w-full flex items-center gap-2.5 pl-10 pr-3.5 py-2.5 transition text-left', sel === s.id && !selDept ? 'bg-brandsoft' : 'hover:bg-elevated/40')}>
+                  <Icon name="pin" size={13} className={sel === s.id && !selDept ? 'text-brandhi' : 'text-faint'} />
+                  <span className={cx('flex-1 text-[12.5px]', sel === s.id && !selDept ? 'text-ink font-medium' : 'text-muted')}>{s.name}</span>
                   <span className="text-[11px] text-faint tabular">{siteCount(s.id)}</span>
                 </button>
-                {siteDepts.map((g) => (
-                  <button key={g.id} onClick={() => setSel(s.id)} className="w-full flex items-center gap-2 pl-[3.4rem] pr-3.5 py-1.5 hover:bg-elevated/30 transition text-left">
-                    <Icon name="building" size={11} className="text-faint/70" />
-                    <span className="flex-1 text-[11.5px] text-faint truncate">{g.name}</span>
-                    <span className="text-[10.5px] text-faint/70 tabular">{(devices || []).filter((d) => d.group_id === g.id).length}</span>
-                  </button>
-                ))}
+                {siteDepts.map((g) => {
+                  const active = sel === s.id && selDept === g.id;
+                  return (
+                    <button key={g.id} onClick={() => { setSel(s.id); setSelDept && setSelDept(g.id); }} className={cx('w-full flex items-center gap-2 pl-[3.4rem] pr-3.5 py-1.5 transition text-left', active ? 'bg-brandsoft' : 'hover:bg-elevated/30')}>
+                      <Icon name="building" size={11} className={active ? 'text-brandhi' : 'text-faint/70'} />
+                      <span className={cx('flex-1 text-[11.5px] truncate', active ? 'text-ink font-medium' : 'text-faint')}>{g.name}</span>
+                      <span className="text-[10.5px] text-faint/70 tabular">{(devices || []).filter((d) => d.group_id === g.id).length}</span>
+                    </button>
+                  );
+                })}
               </div>
             );
           })}
@@ -354,7 +358,7 @@ function EnrollCommands({ token, site }) {
   );
 }
 
-function SiteDetail({ site, client, devices, clients, sites }) {
+function SiteDetail({ site, client, devices, clients, sites, query, focusDept }) {
   const { can } = useAuth();
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
@@ -438,29 +442,40 @@ function SiteDetail({ site, client, devices, clients, sites }) {
             <Button size="sm" variant="ghost" onClick={() => { setCreatingDept(false); setNewDept(''); }}>Cancel</Button>
           </div>
         )}
-        {devices.length === 0 && depts.length === 0 ? (
-          <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>
-        ) : (
-          <div className="space-y-3.5">
-            <div className="space-y-1.5">
-              <div className="text-[11px] uppercase tracking-wide text-faint font-semibold px-0.5">No department <span className="font-normal text-faint/70">· {unassigned.length}</span></div>
-              {unassigned.length ? unassigned.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">—</div>}
-            </div>
-            {depts.map((g) => {
-              const items = devices.filter((d) => d.group_id === g.id);
-              return (
-                <div key={g.id} className="space-y-1.5">
-                  <div className="flex items-center gap-1.5 px-0.5">
-                    <Icon name="building" size={12} className="text-faint" />
-                    <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
-                    {can('admin') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
-                  </div>
-                  {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
+        {(() => {
+          const filtering = !!query;
+          // Focus a single department when one is clicked in the tree; otherwise
+          // show all. When filtering by device, hide departments with no match.
+          const groupsToShow = focusDept ? depts.filter((g) => g.id === focusDept) : depts;
+          const visibleDepts = groupsToShow.filter((g) => focusDept || !filtering || devices.some((d) => d.group_id === g.id));
+          const showUnassigned = !focusDept && (!filtering || unassigned.length > 0);
+          if (!showUnassigned && visibleDepts.length === 0) {
+            return <div className="text-[12.5px] text-faint py-3 text-center">{filtering || focusDept ? 'No devices here.' : 'No devices yet.'}</div>;
+          }
+          return (
+            <div className="space-y-3.5">
+              {showUnassigned && (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] uppercase tracking-wide text-faint font-semibold px-0.5">No department <span className="font-normal text-faint/70">· {unassigned.length}</span></div>
+                  {unassigned.length ? unassigned.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">—</div>}
                 </div>
-              );
-            })}
-          </div>
-        )}
+              )}
+              {visibleDepts.map((g) => {
+                const items = devices.filter((d) => d.group_id === g.id);
+                return (
+                  <div key={g.id} className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 px-0.5">
+                      <Icon name="building" size={12} className="text-faint" />
+                      <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                      {can('admin') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
+                    </div>
+                    {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
       {can('admin') && (
         <div>

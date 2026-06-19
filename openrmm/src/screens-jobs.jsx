@@ -18,6 +18,10 @@ function JobsScreen({ route }) {
   const jobs = jobsQ.data?.jobs || [];
   const awaiting = jobs.filter((j) => j.status === 'awaiting_approval');
   const list = tab === 'awaiting' ? awaiting : jobs;
+  // Group jobs that share a batch_id (a bulk deployment) into one card.
+  const byBatch = {};
+  list.forEach((j) => { if (j.batch_id) (byBatch[j.batch_id] = byBatch[j.batch_id] || []).push(j); });
+  const seenBatch = new Set();
 
   return (
     <Page wide>
@@ -40,9 +44,14 @@ function JobsScreen({ route }) {
         {!jobsQ.loading && list.length === 0 && (
           <Card><EmptyState icon={tab === 'awaiting' ? 'approve' : 'flash'} title={tab === 'awaiting' ? 'Approval queue is clear' : 'No jobs yet'} msg={tab === 'awaiting' ? 'Nothing is waiting on you right now.' : 'Jobs created manually or by the AI will appear here.'} /></Card>
         )}
-        {!jobsQ.loading && list.map((j) => (
-          <JobCard key={j.id} job={j} device={devMap[j.agent_id]} defaultOpen={tab === 'awaiting' || focus === j.id} focused={focus === j.id} />
-        ))}
+        {!jobsQ.loading && list.map((j) => {
+          if (j.batch_id) {
+            if (seenBatch.has(j.batch_id)) return null;
+            seenBatch.add(j.batch_id);
+            return <BatchCard key={'b-' + j.batch_id} jobs={byBatch[j.batch_id]} devMap={devMap} defaultOpen={tab === 'awaiting'} />;
+          }
+          return <JobCard key={j.id} job={j} device={devMap[j.agent_id]} defaultOpen={tab === 'awaiting' || focus === j.id} focused={focus === j.id} />;
+        })}
       </div>
     </Page>
   );
@@ -138,6 +147,99 @@ function JobCard({ job, device, defaultOpen, focused }) {
 
       <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approve} danger requireType="RUN" confirmLabel="Approve & run"
         title="This script looks destructive" body={<>It matches patterns that modify or remove data on <b>{device?.hostname}</b>. Re-read the script above, then type <b>RUN</b> to confirm you want to execute it.</>} />
+    </Card>
+  );
+}
+
+// BatchCard groups the jobs of one bulk deployment (shared batch_id): one script,
+// many targets, one approval. The review/approve flow — drop targets, then approve
+// once for all remaining.
+function BatchCard({ jobs, devMap, defaultOpen }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const [open, setOpen] = useState(defaultOpen);
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const head = jobs[0];
+  const batchId = head.batch_id;
+  const ai = head.created_by.startsWith('ai:');
+  const destructive = DESTRUCTIVE.test(head.script);
+  const awaiting = jobs.filter((j) => j.status === 'awaiting_approval');
+  const isAwaiting = awaiting.length > 0;
+  const counts = jobs.reduce((a, j) => { a[j.status] = (a[j.status] || 0) + 1; return a; }, {});
+
+  const approveAll = async () => {
+    setBusy(true);
+    try { const r = await api.approveBatch(batchId); toast.success('Deployment approved', (r.approved ?? awaiting.length) + ' job(s) dispatching'); }
+    catch (e) { toast.error('Could not approve', e.message); } finally { setBusy(false); }
+  };
+  const rejectAll = async () => {
+    setBusy(true);
+    try { const r = await api.rejectBatch(batchId); toast.info('Deployment rejected', (r.rejected ?? awaiting.length) + ' job(s) discarded'); }
+    catch (e) { toast.error('Could not reject', e.message); } finally { setBusy(false); }
+  };
+  const removeOne = async (j) => {
+    try { await api.rejectJob(j.id); toast.info('Target removed', (devMap[j.agent_id]?.hostname || j.agent_id) + ' dropped from the deployment'); }
+    catch (e) { toast.error('Failed', e.message); }
+  };
+
+  return (
+    <Card className={cx('overflow-hidden transition-all', isAwaiting && 'border-warn/30')}>
+      <div className="flex items-start gap-3 p-4">
+        <div className={cx('h-9 w-9 rounded-xl flex items-center justify-center shrink-0 border', ai ? 'bg-brandsoft border-brand/30 text-brandhi' : 'bg-elevated border-line text-muted')}>
+          <Icon name="devices" size={17} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[14px] font-semibold text-ink">{head.description || 'Bulk deployment'}</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-elevated border border-line text-muted px-1.5 py-0.5 text-[10px] font-semibold">Bulk · {jobs.length} device{jobs.length > 1 ? 's' : ''}</span>
+            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">AI-proposed</span>}
+            {destructive && isAwaiting && <span className="inline-flex items-center gap-1 rounded-md bg-badsoft border border-bad/25 text-bad px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="alert" size={10} />Destructive</span>}
+          </div>
+          <div className="text-[12px] text-faint mt-1 flex items-center gap-1.5 flex-wrap">
+            <span className="mono">{head.shell}</span><span>·</span>
+            <span>by {ai ? <span className="text-brandhi">AI assistant</span> : head.created_by}</span><span>·</span>
+            <span>{timeAgo(head.created_at)}</span>
+            {Object.entries(counts).map(([s, n]) => <span key={s} className="inline-flex items-center gap-1"><span>·</span><StatusPill status={s} size="sm" /> {n}</span>)}
+          </div>
+        </div>
+        <button onClick={() => setOpen((o) => !o)} className="text-faint hover:text-ink p-1 transition shrink-0"><Icon name={open ? 'chevdown' : 'chevright'} size={16} /></button>
+      </div>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-3 animate-fade-in">
+          <CodeBlock code={head.script} shell={head.shell} dryRun={isAwaiting} maxHeight={240} />
+          <div className="rounded-xl border border-line divide-y divide-line">
+            {jobs.map((j) => (
+              <div key={j.id} className="flex items-center gap-2 px-3 py-2 text-[12.5px]">
+                <OsIcon os={devMap[j.agent_id]?.os} size={13} />
+                <span className="text-ink truncate flex-1">{devMap[j.agent_id]?.hostname || j.agent_id}</span>
+                <StatusPill status={j.status} size="sm" />
+                {j.status === 'awaiting_approval' && can('tech') && <button onClick={() => removeOne(j)} title="Remove from deployment" className="text-faint hover:text-bad p-0.5"><Icon name="close" size={14} /></button>}
+              </div>
+            ))}
+          </div>
+          {isAwaiting && (
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — review the targets, then approve once for all {awaiting.length}.</div>
+              <div className="flex items-center gap-2">
+                {can('tech') ? (
+                  <>
+                    <Button variant="danger" icon="reject" onClick={rejectAll} disabled={busy}>Reject all</Button>
+                    <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approveAll()}>Approve {awaiting.length}</Button>
+                  </>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-[12px] text-faint"><Icon name="shield" size={13} />Approval requires the tech role</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approveAll} danger requireType="RUN" confirmLabel={'Approve ' + awaiting.length}
+        title="This deployment looks destructive" body={<>It will run on <b>{awaiting.length} device(s)</b> and matches patterns that modify or remove data. Re-read the script, then type <b>RUN</b> to confirm.</>} />
     </Card>
   );
 }

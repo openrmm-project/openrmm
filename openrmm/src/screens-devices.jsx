@@ -9,6 +9,8 @@ function DevicesScreen({ navigate }) {
   const [statusF, setStatusF] = useState('all');
   const [siteF, setSiteF] = useState('all');
   const [selected, setSelected] = useState(null);
+  const { can } = useAuth();
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const devices = devicesQ.data?.devices || [];
   const sites = sitesQ.data?.sites || [];
@@ -26,7 +28,8 @@ function DevicesScreen({ navigate }) {
 
   return (
     <Page wide>
-      <PageHeader title="Devices" subtitle={`${devices.length} agents · ${devices.filter((d) => d.status === 'online').length} online`} />
+      <PageHeader title="Devices" subtitle={`${devices.length} agents · ${devices.filter((d) => d.status === 'online').length} online`}
+        actions={can('tech') && <Button icon="flash" onClick={() => setBulkOpen(true)}>Deploy to many</Button>} />
 
       <Card className="mb-4">
         <div className="flex flex-wrap items-center gap-2 p-2.5">
@@ -88,7 +91,82 @@ function DevicesScreen({ navigate }) {
       </Card>
 
       <DeviceDetail id={selected} onClose={() => setSelected(null)} navigate={navigate} sites={sites} clients={clients} />
+      <BulkDeployModal open={bulkOpen} onClose={() => setBulkOpen(false)} devices={devices} sites={sites} clients={clients} navigate={navigate} />
     </Page>
+  );
+}
+
+// BulkDeployModal creates ONE approval-gated batch across many devices. Targets
+// are picked client-side (transparent review) — multi-select + "add a whole
+// site" — and sent as agent_ids; the batch awaits approval in Jobs & Approvals.
+function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
+  const toast = useToast();
+  const [sel, setSel] = useState({});
+  const [q, setQ] = useState('');
+  const [shell, setShell] = useState('bash');
+  const [script, setScript] = useState('');
+  const [desc, setDesc] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setSel({}); setQ(''); setScript(''); setDesc(''); setShell('bash'); } }, [open]);
+
+  const ids = Object.keys(sel).filter((k) => sel[k]);
+  const toggle = (id) => setSel((s) => ({ ...s, [id]: !s[id] }));
+  const filtered = devices.filter((d) => !q || d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()));
+  const selectAll = () => { const n = { ...sel }; filtered.forEach((d) => { n[d.id] = true; }); setSel(n); };
+  const addSite = (siteId) => { if (!siteId) return; const n = { ...sel }; devices.filter((d) => d.site_id === siteId).forEach((d) => { n[d.id] = true; }); setSel(n); };
+
+  const submit = async () => {
+    if (!ids.length || !script.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.createBulkJob({ agent_ids: ids, shell, script, description: desc || ('Bulk deploy · ' + ids.length + ' devices') });
+      toast.success('Deployment created', r.count + ' job(s) awaiting approval');
+      onClose();
+      navigate && navigate('jobs');
+    } catch (e) { toast.error('Deployment failed', e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-3xl">
+      <div className="p-5 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="flash" size={18} /></div>
+          <div><div className="text-[15px] font-semibold text-ink">Deploy to many devices</div><div className="text-[12.5px] text-muted">One approval-gated batch across every selected device.</div></div>
+        </div>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter devices…" className="flex-1 h-8" />
+              <Select value="" onChange={(e) => addSite(e.target.value)} className="w-auto h-8"><option value="">+ Site…</option>{clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}</Select>
+            </div>
+            <div className="flex items-center justify-between text-[11.5px] text-faint"><span>{ids.length} selected</span><span className="flex gap-3"><button onClick={selectAll} className="hover:text-ink">Select all</button><button onClick={() => setSel({})} className="hover:text-ink">Clear</button></span></div>
+            <div className="rounded-xl border border-line max-h-64 overflow-y-auto scroll-area divide-y divide-line">
+              {filtered.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 px-3 py-2 text-[12.5px] cursor-pointer hover:bg-elevated/40">
+                  <input type="checkbox" checked={!!sel[d.id]} onChange={() => toggle(d.id)} />
+                  <span className={cx('h-1.5 w-1.5 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
+                  <OsIcon os={d.os} size={13} /><span className="text-ink truncate flex-1">{d.hostname}</span>
+                  {d.status !== 'online' && <span className="text-[10px] text-faint">offline</span>}
+                </label>
+              ))}
+              {filtered.length === 0 && <div className="px-3 py-6 text-center text-[12px] text-faint">No devices.</div>}
+            </div>
+          </div>
+          <div className="space-y-3">
+            <Field label="Shell"><Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option></Select></Field>
+            <Field label="Description"><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="e.g. Install 7-zip on Finance" /></Field>
+            <Field label="Script"><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={150} placeholder="# runs on every selected device" /></Field>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 pt-3 border-t border-line/60">
+          <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="shield" size={13} />Creates one batch — nothing runs until you approve it in Jobs &amp; Approvals.</div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button variant="primary" icon="flash" loading={busy} disabled={!ids.length || !script.trim()} onClick={submit}>Create deployment ({ids.length})</Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

@@ -28,7 +28,7 @@ export type Job = {
   status: "awaiting_approval" | "pending" | "sent" | "running" | "completed" | "failed" | "rejected";
   requires_approval: boolean; created_by: string; approved_by?: string;
   exit_code?: number; stdout: string; stderr: string; created_at: string; updated_at: string;
-  task_id?: string;
+  task_id?: string; batch_id?: string;
 };
 
 export type RemoteSession = {
@@ -183,6 +183,11 @@ export const api = {
   getJob: (id: string) => GET<Job>(`/api/jobs/${id}`),
   createJob: (body: { agent_id: string; shell: Job["shell"]; script: string; description: string; require_approval?: boolean }) =>
     POST<Job>("/api/jobs", body),
+  createBulkJob: (body: { agent_ids?: string[]; group_id?: string; site_id?: string; shell: Job["shell"]; script: string; description?: string }) =>
+    POST<{ batch_id: string; count: number; job_ids: string[] }>("/api/jobs/bulk", body),
+  getBatch: (batchId: string) => GET<{ jobs: Job[] }>(`/api/jobs/batch/${batchId}`),
+  approveBatch: (batchId: string) => POST<{ approved: number }>(`/api/jobs/batch/${batchId}/approve`),
+  rejectBatch: (batchId: string) => POST<{ rejected: number }>(`/api/jobs/batch/${batchId}/reject`),
   approveJob: (id: string) => POST<Job>(`/api/jobs/${id}/approve`),
   rejectJob: (id: string) => POST<Job>(`/api/jobs/${id}/reject`),
 

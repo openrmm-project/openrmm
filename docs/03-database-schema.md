@@ -24,7 +24,10 @@ Managed endpoints.
 | created_at | timestamptz | |
 
 ### `device_groups`
-Logical grouping of agents (id, name, created_at).
+**Departments**: a group bound to a site (`id`, `name`, `site_id` FK → sites
+cascade, `created_at`). Company > Site > Department — a group never spans
+companies/sites; optional. An agent's `group_id` must point at a department of
+the agent's own site.
 
 ### `enroll_tokens`
 One-time / limited-use enrollment tokens (token, uses_left, expires_at).
@@ -69,6 +72,7 @@ Units of work targeted at an agent.
 | created_by | text | actor (`admin`, `api`, `ai:<actor>`) |
 | approved_by | text | nullable |
 | task_id | uuid | set when the job was produced by a scheduled task (nullable) |
+| batch_id | uuid | bulk deployment: jobs created together share it; one batch per company (nullable) |
 | exit_code | int | nullable until finished |
 | stdout, stderr | text | result output |
 | created_at, updated_at | timestamptz | |

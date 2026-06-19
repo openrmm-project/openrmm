@@ -392,6 +392,18 @@ func (s *Store) DeleteClient(ctx context.Context, id string) error {
 	return err
 }
 
+// RenameClient changes a client's name.
+func (s *Store) RenameClient(ctx context.Context, id, name string) error {
+	ct, err := s.pool.Exec(ctx, `UPDATE clients SET name=$2 WHERE id=$1`, id, name)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // CreateSite inserts a site under a client.
 func (s *Store) CreateSite(ctx context.Context, clientID, name string) (*models.Site, error) {
 	id := newID()
@@ -399,6 +411,18 @@ func (s *Store) CreateSite(ctx context.Context, clientID, name string) (*models.
 		return nil, err
 	}
 	return &models.Site{ID: id, ClientID: clientID, Name: name, CreatedAt: time.Now()}, nil
+}
+
+// RenameSite changes a site's name.
+func (s *Store) RenameSite(ctx context.Context, id, name string) error {
+	ct, err := s.pool.Exec(ctx, `UPDATE sites SET name=$2 WHERE id=$1`, id, name)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListSites returns sites, optionally filtered by client.

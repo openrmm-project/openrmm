@@ -136,11 +136,21 @@ const api = {
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
+  setDeviceGroup(id, group_id) { return PATCH('/api/devices/' + id + '/group', { group_id }); },
+
+  /* ---- departments (device groups, under a site) ---- */
+  listGroups() { return GET('/api/groups'); },
+  createGroup(body) { return POST('/api/groups', body); },
+  deleteGroup(id) { return DELETE('/api/groups/' + id); },
 
   /* ---- jobs ---- */
   listJobs(params) { return GET('/api/jobs' + qs(params)); },
   getJob(id) { return GET('/api/jobs/' + id); },
   createJob(body) { return POST('/api/jobs', body); },
+  createBulkJob(body) { return POST('/api/jobs/bulk', body); },
+  getBatch(batchId) { return GET('/api/jobs/batch/' + batchId); },
+  approveBatch(batchId) { return POST('/api/jobs/batch/' + batchId + '/approve'); },
+  rejectBatch(batchId) { return POST('/api/jobs/batch/' + batchId + '/reject'); },
   approveJob(id) { return POST('/api/jobs/' + id + '/approve'); },
   rejectJob(id) { return POST('/api/jobs/' + id + '/reject'); },
   cancelJob(id) { return POST('/api/jobs/' + id + '/cancel'); },
@@ -167,9 +177,11 @@ const api = {
   /* ---- org ---- */
   listClients() { return GET('/api/clients'); },
   createClient(name) { return POST('/api/clients', { name }); },
+  updateClient(id, name) { return PATCH('/api/clients/' + id, { name }); },
   deleteClient(id) { return DELETE('/api/clients/' + id); },
   listSites(client_id) { return GET('/api/sites' + qs({ client_id })); },
   createSite(client_id, name) { return POST('/api/sites', { client_id, name }); },
+  updateSite(id, name) { return PATCH('/api/sites/' + id, { name }); },
   deleteSite(id) { return DELETE('/api/sites/' + id); },
 
   /* ---- scripts ---- */

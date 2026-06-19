@@ -83,11 +83,16 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 CREATE INDEX IF NOT EXISTS idx_sites_client ON sites(client_id);
 
+-- A device group is a DEPARTMENT under a site (Empresa > Site > Departamento).
+-- site_id binds it to the hierarchy so a group never spans companies/sites.
 CREATE TABLE IF NOT EXISTS device_groups (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
+    site_id     UUID REFERENCES sites(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE device_groups ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_device_groups_site ON device_groups(site_id);
 
 CREATE TABLE IF NOT EXISTS agents (
     id           UUID PRIMARY KEY,
@@ -148,6 +153,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_by        TEXT NOT NULL DEFAULT '',
     approved_by       TEXT,
     task_id           UUID,
+    batch_id          UUID,
     exit_code         INTEGER,
     stdout            TEXT NOT NULL DEFAULT '',
     stderr            TEXT NOT NULL DEFAULT '',
@@ -158,6 +164,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_task ON jobs(task_id);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_id UUID;
+-- Bulk/mass-deployment grouping: jobs created together share a batch_id.
+-- (ADD COLUMN before the index so it works on pre-existing jobs tables too.)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS batch_id UUID;
+CREATE INDEX IF NOT EXISTS idx_jobs_batch ON jobs(batch_id);
 
 -- ===================== Inventory =====================
 

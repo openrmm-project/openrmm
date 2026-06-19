@@ -28,7 +28,7 @@ export type Job = {
   status: "awaiting_approval" | "pending" | "sent" | "running" | "completed" | "failed" | "rejected";
   requires_approval: boolean; created_by: string; approved_by?: string;
   exit_code?: number; stdout: string; stderr: string; created_at: string; updated_at: string;
-  task_id?: string;
+  task_id?: string; batch_id?: string;
 };
 
 export type RemoteSession = {
@@ -176,6 +176,12 @@ export const api = {
     POST<RemoteSession>(`/api/devices/${id}/remote`, { provider }),
   setDeviceSite: (id: string, site_id: string) =>
     PATCH<Agent>(`/api/devices/${id}/site`, { site_id }),
+  setDeviceGroup: (id: string, group_id: string | null) =>
+    PATCH<{ status: string }>(`/api/devices/${id}/group`, { group_id }),
+  // departments = device groups, each under a site (Empresa > Site > Departamento)
+  listGroups: () => GET<{ groups: { id: string; name: string; site_id?: string; created_at: string }[] }>("/api/groups"),
+  createGroup: (body: { name: string; site_id: string }) => POST<{ id: string; name: string; site_id?: string }>("/api/groups", body),
+  deleteGroup: (id: string) => DELETE<{ status: string }>(`/api/groups/${id}`),
 
   // ---- jobs ----
   listJobs: (params: { agent_id?: string; limit?: number } = {}) =>
@@ -183,6 +189,13 @@ export const api = {
   getJob: (id: string) => GET<Job>(`/api/jobs/${id}`),
   createJob: (body: { agent_id: string; shell: Job["shell"]; script: string; description: string; require_approval?: boolean }) =>
     POST<Job>("/api/jobs", body),
+  // A deployment never spans companies: the server splits the targets into one
+  // batch per company (a multi-company request fans out into several batches).
+  createBulkJob: (body: { agent_ids?: string[]; group_id?: string; site_id?: string; shell: Job["shell"]; script: string; description?: string }) =>
+    POST<{ batches: { client_id?: string; batch_id: string; count: number }[]; count: number; companies: number }>("/api/jobs/bulk", body),
+  getBatch: (batchId: string) => GET<{ jobs: Job[] }>(`/api/jobs/batch/${batchId}`),
+  approveBatch: (batchId: string) => POST<{ approved: number }>(`/api/jobs/batch/${batchId}/approve`),
+  rejectBatch: (batchId: string) => POST<{ rejected: number }>(`/api/jobs/batch/${batchId}/reject`),
   approveJob: (id: string) => POST<Job>(`/api/jobs/${id}/approve`),
   rejectJob: (id: string) => POST<Job>(`/api/jobs/${id}/reject`),
 
@@ -209,9 +222,11 @@ export const api = {
   // ---- org (clients & sites) ----
   listClients: () => GET<{ clients: Client[] }>("/api/clients"),
   createClient: (name: string) => POST<Client>("/api/clients", { name }),
+  updateClient: (id: string, name: string) => PATCH<{ status: string }>(`/api/clients/${id}`, { name }),
   deleteClient: (id: string) => DELETE<void>(`/api/clients/${id}`),
   listSites: (client_id?: string) => GET<{ sites: Site[] }>(`/api/sites${qs({ client_id })}`),
   createSite: (client_id: string, name: string) => POST<Site>("/api/sites", { client_id, name }),
+  updateSite: (id: string, name: string) => PATCH<{ status: string }>(`/api/sites/${id}`, { name }),
   deleteSite: (id: string) => DELETE<void>(`/api/sites/${id}`),
 
   // ---- scripts ----

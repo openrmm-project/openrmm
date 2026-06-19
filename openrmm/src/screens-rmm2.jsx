@@ -162,7 +162,8 @@ function PolicyDetail({ policy, onClose }) {
 
   const addAssignment = async () => { if (!addScope) return; const [type, id] = addScope.split(':'); await api.createAssignment(policy.id, { scope_type: type, scope_id: id }); setAddScope(''); toast.success('Assigned', 'Checks & tasks now apply to that scope.'); };
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info('Assignment removed'); };
-  const del = async () => { if (!window.confirm('Delete this policy? Its checks, tasks and assignments will be removed.')) return; try { await api.deletePolicy(policy.id); toast.info('Policy deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
+  const [confirmDel, setConfirmDel] = useState(false);
+  const del = async () => { try { await api.deletePolicy(policy.id); toast.info('Policy deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
     <Drawer open onClose={onClose} width="max-w-[720px]">
@@ -199,9 +200,10 @@ function PolicyDetail({ policy, onClose }) {
       </div>
       {can('admin') && (
         <div className="px-5 py-3.5 border-t border-line flex justify-end">
-          <Button variant="danger" icon="trash" onClick={del}>Delete policy</Button>
+          <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete policy</Button>
         </div>
       )}
+      <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={del} danger title="Delete policy?" body={<>This removes <b>{policy.name}</b> with its checks, tasks and assignments. This cannot be undone.</>} confirmLabel="Delete policy" />
     </Drawer>
   );
 }
@@ -246,14 +248,30 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
   const [open, setOpen] = useState(true);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [rename, setRename] = useState(client.name);
+  const [confirmDel, setConfirmDel] = useState(false);
   const addSite = async () => { await api.createSite(client.id, name); setName(''); setAdding(false); toast.success('Site created'); };
+  const saveRename = async () => { const n = rename.trim(); if (!n || n === client.name) { setRenaming(false); return; } try { await api.updateClient(client.id, n); window.dataBus.emit('org'); toast.success('Client renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
+  const delClient = async () => { try { await api.deleteClient(client.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Client deleted'); } catch (e) { toast.error('Failed', e.message); } };
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center gap-2 px-3.5 py-3">
         <button onClick={() => setOpen((o) => !o)} className="text-faint hover:text-ink"><Icon name={open ? 'chevdown' : 'chevright'} size={15} /></button>
         <Icon name="building" size={16} className="text-muted" />
-        <div className="flex-1 min-w-0"><div className="text-[13.5px] font-semibold text-ink truncate">{client.name}</div></div>
-        <span className="text-[11px] text-faint">{clientCount(client.id)} devices</span>
+        <div className="flex-1 min-w-0">
+          {renaming
+            ? <div className="flex items-center gap-1.5"><Input value={rename} onChange={(e) => setRename(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setRenaming(false); }} className="h-7" autoFocus /><Button size="sm" variant="primary" onClick={saveRename}>Save</Button><Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>Cancel</Button></div>
+            : <div className="text-[13.5px] font-semibold text-ink truncate">{client.name}</div>}
+        </div>
+        {!renaming && <span className="text-[11px] text-faint">{clientCount(client.id)} devices</span>}
+        {can('admin') && !renaming && (
+          <Dropdown align="right" width="w-48" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={16} fill /></button>}>
+            <MenuItem icon="edit" onClick={() => { setRename(client.name); setRenaming(true); }}>Rename client</MenuItem>
+            <div className="my-1 border-t border-line" />
+            <MenuItem icon="trash" onClick={() => setConfirmDel(true)}>Delete client</MenuItem>
+          </Dropdown>
+        )}
       </div>
       {open && (
         <div className="border-t border-line">
@@ -269,6 +287,7 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
           ) : <button onClick={() => setAdding(true)} className="w-full flex items-center gap-2 pl-10 pr-3.5 py-2 text-[12px] text-faint hover:text-muted transition"><Icon name="plus" size={13} />Add site</button>)}
         </div>
       )}
+      <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={delClient} danger title="Delete client?" body={<>This removes <b>{client.name}</b> with all its sites and departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete client" />
     </Card>
   );
 }
@@ -307,12 +326,40 @@ function SiteDetail({ site, client, devices }) {
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
   const [busy, setBusy] = useState(false);
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const depts = (groupsQ.data?.groups || []).filter((g) => g.site_id === site.id);
+  const deptCount = (gid) => devices.filter((d) => d.group_id === gid).length;
+  const [renaming, setRenaming] = useState(false);
+  const [rename, setRename] = useState(site.name);
+  const [creatingDept, setCreatingDept] = useState(false);
+  const [newDept, setNewDept] = useState('');
+  const [confirmDelSite, setConfirmDelSite] = useState(false);
+  const [confirmDelDept, setConfirmDelDept] = useState(null);
+  useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
+
+  const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
+  const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
+  const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
+  const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
   return (
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
         <div className="h-10 w-10 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="pin" size={19} /></div>
-        <div className="flex-1"><h2 className="text-[16px] font-semibold text-ink">{site.name}</h2><div className="text-[12px] text-muted">{client?.name} · {devices.length} devices</div></div>
+        <div className="flex-1 min-w-0">
+          {renaming
+            ? <div className="flex items-center gap-2"><Input value={rename} onChange={(e) => setRename(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setRenaming(false); }} className="h-8" autoFocus /><Button size="sm" variant="primary" onClick={saveRename}>Save</Button><Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>Cancel</Button></div>
+            : <h2 className="text-[16px] font-semibold text-ink truncate">{site.name}</h2>}
+          <div className="text-[12px] text-muted">{client?.name} · {devices.length} devices</div>
+        </div>
+        {can('admin') && !renaming && (
+          <Dropdown align="right" width="w-52" trigger={<button className="text-faint hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={18} fill /></button>}>
+            <MenuItem icon="edit" onClick={() => { setRename(site.name); setRenaming(true); }}>Rename site</MenuItem>
+            <MenuItem icon="building" onClick={() => setCreatingDept(true)}>Create department</MenuItem>
+            <div className="my-1 border-t border-line" />
+            <MenuItem icon="trash" onClick={() => setConfirmDelSite(true)}>Delete site</MenuItem>
+          </Dropdown>
+        )}
       </div>
       <div className="mb-5">
         <div className="text-[12px] font-semibold text-muted mb-2">Devices at this site</div>
@@ -321,12 +368,36 @@ function SiteDetail({ site, client, devices }) {
           {devices.length === 0 && <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>}
         </div>
       </div>
+      {can('admin') && (depts.length > 0 || creatingDept) && (
+        <div className="mb-5">
+          <div className="text-[12px] font-semibold text-muted mb-2">Departments <span className="text-faint font-normal">(optional)</span></div>
+          <div className="space-y-1.5">
+            {depts.map((g) => (
+              <div key={g.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+                <Icon name="building" size={14} className="text-muted" />
+                <span className="text-[12.5px] text-ink flex-1">{g.name}</span>
+                <span className="text-[11px] text-faint">{deptCount(g.id)} devices</span>
+                <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={13} /></button>
+              </div>
+            ))}
+            {creatingDept && (
+              <div className="flex items-center gap-2 pt-1">
+                <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') { setCreatingDept(false); setNewDept(''); } }} placeholder="Department name (e.g. Finance)" className="h-8" autoFocus />
+                <Button size="sm" variant="primary" onClick={addDept} disabled={!newDept.trim()}>Add</Button>
+                <Button size="sm" variant="ghost" onClick={() => { setCreatingDept(false); setNewDept(''); }}>Cancel</Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {can('admin') && (
         <div>
           <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>
           {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
         </div>
       )}
+      <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?" body={<>This removes <b>{site.name}</b> and its departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete site" />
+      <ConfirmDialog open={!!confirmDelDept} onClose={() => setConfirmDelDept(null)} onConfirm={delDept} danger title="Delete department?" body={<>This removes the department <b>{confirmDelDept?.name}</b>. Its devices stay, but their department is cleared.</>} confirmLabel="Delete department" />
     </Card>
   );
 }
@@ -602,7 +673,7 @@ function ScopePicker({ scopes, setScopes }) {
   const [q, setQ] = useState('');
   const [allSites, setAllSites] = useState(null); // every site (for search by name + client lookup)
   const [found, setFound] = useState([]);          // device search results
-  // Mode is independent of the selection so "Restrito" works before any node is
+  // Mode is independent of the selection so "Restricted" works before any node is
   // picked (empty selection still means full access on save — hinted below).
   const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
   const restricted = mode === 'restricted';
@@ -645,16 +716,16 @@ function ScopePicker({ scopes, setScopes }) {
   return (
     <div className="space-y-2">
       <div className="flex gap-4 text-[12px]">
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Acesso total</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
-        {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selecionado(s)</span>}
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Full access</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restricted to…</label>
+        {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selected</span>}
       </div>
       {restricted && (
         <div className="rounded-xl border border-line overflow-hidden">
-          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar empresa/site/máquina…" className="text-[12px] h-8" /></div>
+          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company/site/device…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
             {searching ? (() => {
-              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Buscando…</div>;
+              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Searching…</div>;
               const m = (n) => (n || '').toLowerCase().includes(q.trim().toLowerCase());
               const siteObj = {}; allSites.forEach((s) => { siteObj[s.id] = s; });
               const clientObj = {}; clients.forEach((c) => { clientObj[c.id] = c; });
@@ -665,7 +736,7 @@ function ScopePicker({ scopes, setScopes }) {
               // relevant clients = parents of relevant sites + name matches
               const clientIds = new Set(clients.filter((c) => m(c.name)).map((c) => c.id));
               siteIds.forEach((sid) => { const s = siteObj[sid]; if (s) clientIds.add(s.client_id); });
-              if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">Nada encontrado para “{q}”.</div>;
+              if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">No results for “{q}”.</div>;
               // build the filtered, auto-expanded tree (only branches with results)
               return [...clientIds].map((cid) => {
                 const c = clientObj[cid]; if (!c) return null;
@@ -687,8 +758,8 @@ function ScopePicker({ scopes, setScopes }) {
                 );
               });
             })() : <>
-            {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
-            {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">Nenhuma empresa cadastrada.</div>}
+            {clients === null && <div className="p-3 text-center text-faint text-[12px]">Loading…</div>}
+            {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">No companies yet.</div>}
             {(clients || []).filter((c) => match(c.name) || expC[c.id]).map((c) => (
               <div key={c.id}>
                 <Row depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)}
@@ -703,11 +774,11 @@ function ScopePicker({ scopes, setScopes }) {
                         const covered = siteCovered || sel.has('site:' + st.id);
                         return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
                       })}
-                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">sem máquinas</div>}
+                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no devices</div>}
                     </div>
                   );
                 })}
-                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">sem sites</div>}
+                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">no sites</div>}
               </div>
             ))}
             </>}
@@ -715,8 +786,8 @@ function ScopePicker({ scopes, setScopes }) {
         </div>
       )}
       {restricted && scopes.length === 0
-        ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Selecione ao menos um item — sem seleção o usuário terá acesso total.</div>
-        : <div className="text-[11px] text-faint">Marcar uma empresa cobre todos os seus sites/máquinas (a união das marcações).</div>}
+        ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Select at least one item — with no selection the user has full access.</div>
+        : <div className="text-[11px] text-faint">Selecting a company covers all its sites/devices (the union of the selections).</div>}
     </div>
   );
 }

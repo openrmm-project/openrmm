@@ -222,9 +222,11 @@ export const api = {
   // ---- org (clients & sites) ----
   listClients: () => GET<{ clients: Client[] }>("/api/clients"),
   createClient: (name: string) => POST<Client>("/api/clients", { name }),
+  updateClient: (id: string, name: string) => PATCH<{ status: string }>(`/api/clients/${id}`, { name }),
   deleteClient: (id: string) => DELETE<void>(`/api/clients/${id}`),
   listSites: (client_id?: string) => GET<{ sites: Site[] }>(`/api/sites${qs({ client_id })}`),
   createSite: (client_id: string, name: string) => POST<Site>("/api/sites", { client_id, name }),
+  updateSite: (id: string, name: string) => PATCH<{ status: string }>(`/api/sites/${id}`, { name }),
   deleteSite: (id: string) => DELETE<void>(`/api/sites/${id}`),
 
   // ---- scripts ----

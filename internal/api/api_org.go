@@ -39,6 +39,21 @@ func (s *Server) createClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
+func (s *Server) updateClient(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil || in.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if err := s.store.RenameClient(r.Context(), chi.URLParam(r, "id"), in.Name); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (s *Server) deleteClient(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteClient(r.Context(), chi.URLParam(r, "id")); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -77,6 +92,21 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, site)
+}
+
+func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil || in.Name == "" {
+		writeErr(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if err := s.store.RenameSite(r.Context(), chi.URLParam(r, "id"), in.Name); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {

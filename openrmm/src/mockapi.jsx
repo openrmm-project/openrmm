@@ -177,9 +177,11 @@ const api = {
   /* ---- org ---- */
   listClients() { return GET('/api/clients'); },
   createClient(name) { return POST('/api/clients', { name }); },
+  updateClient(id, name) { return PATCH('/api/clients/' + id, { name }); },
   deleteClient(id) { return DELETE('/api/clients/' + id); },
   listSites(client_id) { return GET('/api/sites' + qs({ client_id })); },
   createSite(client_id, name) { return POST('/api/sites', { client_id, name }); },
+  updateSite(id, name) { return PATCH('/api/sites/' + id, { name }); },
   deleteSite(id) { return DELETE('/api/sites/' + id); },
 
   /* ---- scripts ---- */

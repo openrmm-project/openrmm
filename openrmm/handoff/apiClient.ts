@@ -183,8 +183,10 @@ export const api = {
   getJob: (id: string) => GET<Job>(`/api/jobs/${id}`),
   createJob: (body: { agent_id: string; shell: Job["shell"]; script: string; description: string; require_approval?: boolean }) =>
     POST<Job>("/api/jobs", body),
+  // A deployment never spans companies: the server splits the targets into one
+  // batch per company (a multi-company request fans out into several batches).
   createBulkJob: (body: { agent_ids?: string[]; group_id?: string; site_id?: string; shell: Job["shell"]; script: string; description?: string }) =>
-    POST<{ batch_id: string; count: number; job_ids: string[] }>("/api/jobs/bulk", body),
+    POST<{ batches: { client_id?: string; batch_id: string; count: number }[]; count: number; companies: number }>("/api/jobs/bulk", body),
   getBatch: (batchId: string) => GET<{ jobs: Job[] }>(`/api/jobs/batch/${batchId}`),
   approveBatch: (batchId: string) => POST<{ approved: number }>(`/api/jobs/batch/${batchId}/approve`),
   rejectBatch: (batchId: string) => POST<{ rejected: number }>(`/api/jobs/batch/${batchId}/reject`),

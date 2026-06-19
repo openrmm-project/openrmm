@@ -792,16 +792,53 @@ func (s *Server) createBulkJob(w http.ResponseWriter, r *http.Request) {
 	for id := range targets {
 		ids = append(ids, id)
 	}
-	jobs, batchID, err := s.jobs.ProposeBatch(r.Context(), ids, in.Shell, in.Script, in.Description, actorOf(r))
+
+	// A deployment never spans companies: split the targets by company and create
+	// ONE batch per company. A "deploy to all companies" request therefore fans
+	// out into one batch per company (each approved/run within its own company).
+	clientOf, err := s.store.ClientForAgents(r.Context(), ids)
 	if err != nil {
-		writeErr(w, httpStatusFor(err), err.Error())
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jobIDs := make([]string, len(jobs))
-	for i := range jobs {
-		jobIDs[i] = jobs[i].ID
+	byCompany := map[string][]string{}
+	var noCompany []string
+	for _, id := range ids {
+		if c, ok := clientOf[id]; ok {
+			byCompany[c] = append(byCompany[c], id)
+		} else {
+			noCompany = append(noCompany, id) // unassigned devices (no site/company)
+		}
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"batch_id": batchID, "count": len(jobs), "job_ids": jobIDs})
+	type batchResult struct {
+		ClientID string `json:"client_id,omitempty"`
+		BatchID  string `json:"batch_id"`
+		Count    int    `json:"count"`
+	}
+	var batches []batchResult
+	total := 0
+	mk := func(clientID string, agents []string) error {
+		jobs, batchID, err := s.jobs.ProposeBatch(r.Context(), agents, in.Shell, in.Script, in.Description, actorOf(r))
+		if err != nil {
+			return err
+		}
+		batches = append(batches, batchResult{ClientID: clientID, BatchID: batchID, Count: len(jobs)})
+		total += len(jobs)
+		return nil
+	}
+	for c, agents := range byCompany {
+		if err := mk(c, agents); err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+	}
+	if len(noCompany) > 0 {
+		if err := mk("", noCompany); err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"batches": batches, "count": total, "companies": len(batches)})
 }
 
 // batchScopeOK 403s a scoped caller if the batch targets any out-of-scope device.

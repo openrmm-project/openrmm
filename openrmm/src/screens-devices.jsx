@@ -120,7 +120,7 @@ function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
     setBusy(true);
     try {
       const r = await api.createBulkJob({ agent_ids: ids, shell, script, description: desc || ('Bulk deploy · ' + ids.length + ' devices') });
-      toast.success('Deployment created', r.count + ' job(s) awaiting approval');
+      toast.success('Deployment created', r.companies > 1 ? (r.count + ' jobs · 1 batch per company (' + r.companies + ')') : (r.count + ' job(s) awaiting approval'));
       onClose();
       navigate && navigate('jobs');
     } catch (e) { toast.error('Deployment failed', e.message); } finally { setBusy(false); }

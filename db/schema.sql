@@ -83,11 +83,16 @@ CREATE TABLE IF NOT EXISTS sites (
 );
 CREATE INDEX IF NOT EXISTS idx_sites_client ON sites(client_id);
 
+-- A device group is a DEPARTMENT under a site (Empresa > Site > Departamento).
+-- site_id binds it to the hierarchy so a group never spans companies/sites.
 CREATE TABLE IF NOT EXISTS device_groups (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
+    site_id     UUID REFERENCES sites(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE device_groups ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_device_groups_site ON device_groups(site_id);
 
 CREATE TABLE IF NOT EXISTS agents (
     id           UUID PRIMARY KEY,

@@ -78,9 +78,12 @@ type APITokenInfo struct {
 }
 
 // DeviceGroup is a logical grouping of agents (cross-site).
+// DeviceGroup is a department under a site (Empresa > Site > Departamento).
+// SiteID binds it to the hierarchy so a group never spans companies/sites.
 type DeviceGroup struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	SiteID    *string   `json:"site_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

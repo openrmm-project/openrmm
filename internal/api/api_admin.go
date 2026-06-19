@@ -71,13 +71,20 @@ func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		SiteID string `json:"site_id"`
 	}
 	if err := decode(r, &in); err != nil || in.Name == "" {
 		writeErr(w, http.StatusBadRequest, "name required")
 		return
 	}
-	g, err := s.store.CreateGroup(r.Context(), in.Name)
+	// A department belongs to a site (Empresa > Site > Departamento).
+	if in.SiteID == "" {
+		writeErr(w, http.StatusBadRequest, "site_id required (a department belongs to a site)")
+		return
+	}
+	site := in.SiteID
+	g, err := s.store.CreateGroup(r.Context(), in.Name, &site)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -104,7 +111,26 @@ func (s *Server) setDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.store.SetAgentGroup(r.Context(), chi.URLParam(r, "id"), in.GroupID); err != nil {
+	agentID := chi.URLParam(r, "id")
+	// A department lives in one site, so a device can only join a department of
+	// its own site (keeps Empresa > Site > Departamento coherent).
+	if in.GroupID != nil && *in.GroupID != "" {
+		ag, err := s.store.GetAgent(r.Context(), agentID)
+		if err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+		g, err := s.store.GetGroup(r.Context(), *in.GroupID)
+		if err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+		if g.SiteID == nil || ag.SiteID == nil || *g.SiteID != *ag.SiteID {
+			writeErr(w, http.StatusBadRequest, "the department and the device must belong to the same site")
+			return
+		}
+	}
+	if err := s.store.SetAgentGroup(r.Context(), agentID, in.GroupID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

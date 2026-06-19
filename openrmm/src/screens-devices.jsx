@@ -834,19 +834,46 @@ function InfoGrid({ rows }) {
       {rows.map(([k, v]) => (
         <div key={k} className="flex items-center justify-between gap-3 border-b border-line/60 pb-2">
           <span className="text-[12px] text-faint">{k}</span>
-          <span className="text-[12.5px] text-ink font-medium text-right truncate mono">{v}</span>
+          <span className={cx('text-[12.5px] text-ink font-medium text-right mono', String(v || '').includes('\n') ? 'whitespace-pre-line break-words' : 'truncate')}>{v}</span>
         </div>
       ))}
     </div>
   );
 }
-function InventorySection({ title, icon, children }) {
+function InventorySection({ title, icon, children, className = '' }) {
   return (
-    <Card className="p-4">
+    <Card className={cx('p-4', className)}>
       <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink"><Icon name={icon} size={14} className="text-muted" />{title}</div>
       {children}
     </Card>
   );
+}
+function inventoryBytes(bytes) {
+  const n = Number(bytes);
+  return Number.isFinite(n) && n > 0 ? Math.round(n / 1e9) + ' GB' : '';
+}
+function inventoryText(v) {
+  return v == null || String(v).trim() === '' ? 'Not reported' : String(v).trim();
+}
+function inventoryList(items, formatter) {
+  const lines = (items || []).map(formatter).filter(Boolean);
+  return lines.length ? lines.join('\n') : 'Not reported';
+}
+function hardwareRows(hw, cpu, mem, disks) {
+  const mb = hw.motherboard || {};
+  const motherboard = [mb.manufacturer, mb.product || mb.model, mb.version].filter(Boolean).join(' ');
+  const motherboardSerial = mb.serial ? 'SN ' + mb.serial : '';
+  return [
+    ['Service tag', inventoryText(hw.service_tag || hw.serial_number)],
+    ['Processor', inventoryText(hw.processor || cpu.model)],
+    ['Memory', inventoryText(inventoryBytes(hw.memory_total_bytes) || (mem.total_gb ? mem.total_gb + ' GB' : ''))],
+    ['Storage unit', inventoryList(hw.storage_devices, (d) => [d.model || d.name, d.type || d.interface, inventoryBytes(d.size_bytes)].filter(Boolean).join(' · '))],
+    ['Partition', inventoryList(disks, (d) => [d.mount, d.fs, d.total_gb ? (d.free_gb + ' / ' + d.total_gb + ' GB free') : ''].filter(Boolean).join(' · '))],
+    ['Motherboard', inventoryText([motherboard, motherboardSerial].filter(Boolean).join('\n'))],
+    ['Video card', inventoryList(hw.gpus, (g) => [g.name || g.model, inventoryBytes(g.memory_bytes) || g.memory, g.driver_version].filter(Boolean).join(' · '))],
+    ['System model', inventoryText([hw.manufacturer, hw.system_model].filter(Boolean).join(' '))],
+    ['BIOS', inventoryText(hw.bios)],
+  ];
 }
 function InventoryView({ id }) {
   const invQ = useQuery([id, 'inv'], () => api.getInventory(id), {});
@@ -854,7 +881,7 @@ function InventoryView({ id }) {
   if (invQ.loading) return <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>;
   const data = invQ.data?.data || {};
   const sys = data.system || {}, cpu = data.cpu || {}, mem = data.memory || {}, net = data.network || {};
-  const disks = data.disks || [], sw = data.software || [];
+  const disks = data.disks || [], hw = data.hardware || {}, sw = data.software || [];
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -865,6 +892,9 @@ function InventoryView({ id }) {
         <div className="grid md:grid-cols-2 gap-4">
           <InventorySection title="System" icon="devices">
             <InfoGrid rows={[['Hostname', sys.hostname], ['OS', sys.os], ['Arch', sys.arch], ['Domain', sys.domain], ['Uptime', (sys.uptime_hours || 0) + ' h']]} />
+          </InventorySection>
+          <InventorySection title="Hardware" icon="wrench" className="md:col-span-2">
+            <InfoGrid rows={hardwareRows(hw, cpu, mem, disks)} />
           </InventorySection>
           <InventorySection title="CPU & Memory" icon="cpu">
             <InfoGrid rows={[['Model', cpu.model], ['Cores', cpu.cores], ['Load', (cpu.load_pct || 0) + '%'], ['Memory', (mem.total_gb || 0) + ' GB'], ['Mem used', (mem.used_pct || 0) + '%']]} />

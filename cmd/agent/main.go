@@ -284,7 +284,9 @@ func (a *agent) cancelJob(jobID string) {
 func (a *agent) telemetryLoop(done <-chan struct{}) {
 	// Collect inventory off the loop so software/network probing (which can take
 	// seconds) never delays heartbeats.
-	sendInventory := func() { go func() { a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: collectInventory()}) }() }
+	sendInventory := func() {
+		go func() { a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: collectInventory()}) }()
+	}
 	sendInventory()
 	hb := time.NewTicker(20 * time.Second)
 	inv := time.NewTicker(5 * time.Minute)
@@ -577,10 +579,290 @@ func collectInventory() json.RawMessage {
 		}
 		data["disks"] = disks
 	}
+	data["hardware"] = collectHardware()
 	data["network_interfaces"] = collectNetwork()
 	data["software"] = collectSoftware()
 	raw, _ := json.Marshal(data)
 	return raw
+}
+
+func collectHardware() map[string]any {
+	switch runtime.GOOS {
+	case "windows":
+		return collectWindowsHardware()
+	case "linux":
+		return collectLinuxHardware()
+	case "darwin":
+		return collectDarwinHardware()
+	}
+	return map[string]any{}
+}
+
+func collectWindowsHardware() map[string]any {
+	const ps = `$bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+$cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+$base = Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue
+$disks = Get-CimInstance Win32_DiskDrive -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ name = $_.DeviceID; model = $_.Model; serial = $_.SerialNumber; size_bytes = [uint64]$_.Size; type = $_.MediaType; interface = $_.InterfaceType } }
+$gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ name = $_.Name; memory_bytes = [uint64]$_.AdapterRAM; driver_version = $_.DriverVersion } }
+[pscustomobject]@{
+  serial_number = $bios.SerialNumber
+  service_tag = $bios.SerialNumber
+  manufacturer = $cs.Manufacturer
+  system_model = $cs.Model
+  bios = $bios.SMBIOSBIOSVersion
+  motherboard = [pscustomobject]@{ manufacturer = $base.Manufacturer; product = $base.Product; serial = $base.SerialNumber }
+  storage_devices = @($disks)
+  gpus = @($gpus)
+} | ConvertTo-Json -Compress -Depth 5`
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	if err != nil {
+		return map[string]any{}
+	}
+	var hw map[string]any
+	if json.Unmarshal(bytes.TrimSpace(out), &hw) != nil {
+		return map[string]any{}
+	}
+	return compactHardwareMap(hw)
+}
+
+func collectLinuxHardware() map[string]any {
+	hw := map[string]any{}
+	serial := firstHardwareValue(readDMI("product_serial"), readDMI("chassis_serial"), readDMI("board_serial"))
+	setHardwareString(hw, "serial_number", serial)
+	setHardwareString(hw, "service_tag", serial)
+	setHardwareString(hw, "manufacturer", readDMI("sys_vendor"))
+	setHardwareString(hw, "system_model", readDMI("product_name"))
+	setHardwareString(hw, "bios", readDMI("bios_version"))
+
+	mb := map[string]string{}
+	setHardwareStringValue(mb, "manufacturer", readDMI("board_vendor"))
+	setHardwareStringValue(mb, "product", readDMI("board_name"))
+	setHardwareStringValue(mb, "version", readDMI("board_version"))
+	setHardwareStringValue(mb, "serial", readDMI("board_serial"))
+	if len(mb) > 0 {
+		hw["motherboard"] = mb
+	}
+	if storage := collectLinuxStorageDevices(); len(storage) > 0 {
+		hw["storage_devices"] = storage
+	}
+	if gpus := collectLinuxGPUs(); len(gpus) > 0 {
+		hw["gpus"] = gpus
+	}
+	return hw
+}
+
+func collectDarwinHardware() map[string]any {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "system_profiler", "SPHardwareDataType", "SPDisplaysDataType", "-json").Output()
+	if err != nil {
+		return map[string]any{}
+	}
+	var report map[string]any
+	if json.Unmarshal(out, &report) != nil {
+		return map[string]any{}
+	}
+	hw := map[string]any{}
+	setHardwareString(hw, "manufacturer", "Apple")
+	if info := firstMapInSection(report["SPHardwareDataType"]); info != nil {
+		setHardwareString(hw, "serial_number", hardwareString(info["serial_number"]))
+		setHardwareString(hw, "service_tag", hardwareString(info["serial_number"]))
+		setHardwareString(hw, "system_model", firstHardwareValue(hardwareString(info["machine_model"]), hardwareString(info["machine_name"])))
+		setHardwareString(hw, "processor", firstHardwareValue(hardwareString(info["chip_type"]), hardwareString(info["processor_name"])))
+		setHardwareString(hw, "bios", hardwareString(info["boot_rom_version"]))
+	}
+	var gpus []map[string]any
+	for _, item := range hardwareSlice(report["SPDisplaysDataType"]) {
+		if m, ok := item.(map[string]any); ok {
+			gpu := map[string]any{}
+			setHardwareString(gpu, "name", firstHardwareValue(hardwareString(m["sppci_model"]), hardwareString(m["_name"])))
+			setHardwareString(gpu, "memory", hardwareString(m["spdisplays_vram"]))
+			if len(gpu) > 0 {
+				gpus = append(gpus, gpu)
+			}
+		}
+	}
+	if len(gpus) > 0 {
+		hw["gpus"] = gpus
+	}
+	return hw
+}
+
+func collectLinuxStorageDevices() []map[string]any {
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return nil
+	}
+	var out []map[string]any
+	for _, e := range entries {
+		name := e.Name()
+		if virtualBlockDevice(name) {
+			continue
+		}
+		base := "/sys/block/" + name
+		dev := map[string]any{"name": "/dev/" + name}
+		model := strings.TrimSpace(strings.Join([]string{readHardwareFile(base + "/device/vendor"), readHardwareFile(base + "/device/model")}, " "))
+		setHardwareString(dev, "model", model)
+		setHardwareString(dev, "serial", readHardwareFile(base+"/device/serial"))
+		if sectors, err := strconv.ParseUint(readTextFile(base+"/size"), 10, 64); err == nil && sectors > 0 {
+			dev["size_bytes"] = sectors * 512
+		}
+		rotational := readTextFile(base + "/queue/rotational")
+		switch {
+		case strings.HasPrefix(name, "nvme"):
+			dev["type"] = "NVMe"
+		case rotational == "1":
+			dev["type"] = "HDD"
+		case rotational == "0":
+			dev["type"] = "SSD"
+		}
+		out = append(out, dev)
+	}
+	return out
+}
+
+func collectLinuxGPUs() []map[string]any {
+	if _, err := exec.LookPath("lspci"); err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "lspci").Output()
+	if err != nil {
+		return nil
+	}
+	var gpus []map[string]any
+	for _, line := range strings.Split(string(out), "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "vga compatible controller") && !strings.Contains(lower, "3d controller") && !strings.Contains(lower, "display controller") {
+			continue
+		}
+		name := strings.TrimSpace(line)
+		if i := strings.Index(lower, "controller:"); i >= 0 {
+			name = strings.TrimSpace(line[i+len("controller:"):])
+		}
+		if name = cleanHardwareString(name); name != "" {
+			gpus = append(gpus, map[string]any{"name": name})
+		}
+	}
+	return gpus
+}
+
+func virtualBlockDevice(name string) bool {
+	for _, p := range []string{"loop", "ram", "fd", "sr", "zram", "dm-"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func readDMI(name string) string { return readHardwareFile("/sys/class/dmi/id/" + name) }
+
+func readTextFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func readHardwareFile(path string) string { return cleanHardwareString(readTextFile(path)) }
+
+func setHardwareString(m map[string]any, key, value string) {
+	if value = cleanHardwareString(value); value != "" {
+		m[key] = value
+	}
+}
+
+func setHardwareStringValue(m map[string]string, key, value string) {
+	if value = cleanHardwareString(value); value != "" {
+		m[key] = value
+	}
+}
+
+func cleanHardwareString(s string) string {
+	s = strings.TrimSpace(strings.Trim(s, "\x00"))
+	lower := strings.ToLower(s)
+	if lower == "" || lower == "none" || lower == "unknown" || lower == "not specified" || lower == "default string" || lower == "system serial number" || lower == "to be filled by o.e.m." || strings.Contains(lower, "to be filled") {
+		return ""
+	}
+	return s
+}
+
+func firstHardwareValue(vals ...string) string {
+	for _, v := range vals {
+		if v = cleanHardwareString(v); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func compactHardwareMap(m map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range m {
+		if clean, ok := compactHardwareValue(v); ok {
+			out[k] = clean
+		}
+	}
+	return out
+}
+
+func compactHardwareValue(v any) (any, bool) {
+	switch x := v.(type) {
+	case nil:
+		return nil, false
+	case string:
+		if s := cleanHardwareString(x); s != "" {
+			return s, true
+		}
+	case []any:
+		var out []any
+		for _, item := range x {
+			if clean, ok := compactHardwareValue(item); ok {
+				out = append(out, clean)
+			}
+		}
+		return out, len(out) > 0
+	case map[string]any:
+		out := compactHardwareMap(x)
+		return out, len(out) > 0
+	default:
+		return v, true
+	}
+	return nil, false
+}
+
+func hardwareString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	}
+	return ""
+}
+
+func hardwareSlice(v any) []any {
+	if arr, ok := v.([]any); ok {
+		return arr
+	}
+	if v != nil {
+		return []any{v}
+	}
+	return nil
+}
+
+func firstMapInSection(v any) map[string]any {
+	for _, item := range hardwareSlice(v) {
+		if m, ok := item.(map[string]any); ok {
+			return m
+		}
+	}
+	return nil
 }
 
 // collectNetwork returns the up, non-loopback interfaces that have an IPv4.

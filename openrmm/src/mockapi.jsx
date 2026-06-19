@@ -136,6 +136,12 @@ const api = {
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
+  setDeviceGroup(id, group_id) { return PATCH('/api/devices/' + id + '/group', { group_id }); },
+
+  /* ---- departments (device groups, under a site) ---- */
+  listGroups() { return GET('/api/groups'); },
+  createGroup(body) { return POST('/api/groups', body); },
+  deleteGroup(id) { return DELETE('/api/groups/' + id); },
 
   /* ---- jobs ---- */
   listJobs(params) { return GET('/api/jobs' + qs(params)); },

@@ -307,6 +307,12 @@ function SiteDetail({ site, client, devices }) {
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
   const [busy, setBusy] = useState(false);
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const depts = (groupsQ.data?.groups || []).filter((g) => g.site_id === site.id);
+  const [newDept, setNewDept] = useState('');
+  const deptCount = (gid) => devices.filter((d) => d.group_id === gid).length;
+  const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
+  const delDept = async (g) => { if (!window.confirm('Delete department "' + g.name + '"? Devices stay; their department is cleared.')) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
   return (
     <Card className="p-5">
@@ -321,6 +327,26 @@ function SiteDetail({ site, client, devices }) {
           {devices.length === 0 && <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>}
         </div>
       </div>
+      {can('admin') && (
+        <div className="mb-5">
+          <div className="text-[12px] font-semibold text-muted mb-2">Departments <span className="text-faint font-normal">(Empresa &gt; Site &gt; Departamento)</span></div>
+          <div className="space-y-1.5">
+            {depts.map((g) => (
+              <div key={g.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+                <Icon name="building" size={14} className="text-muted" />
+                <span className="text-[12.5px] text-ink flex-1">{g.name}</span>
+                <span className="text-[11px] text-faint">{deptCount(g.id)} devices</span>
+                <button onClick={() => delDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={13} /></button>
+              </div>
+            ))}
+            {depts.length === 0 && <div className="text-[12px] text-faint py-2 text-center">No departments in this site yet.</div>}
+            <div className="flex items-center gap-2 pt-1">
+              <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDept()} placeholder="New department (e.g. Financeiro)" className="h-8" />
+              <Button size="sm" variant="secondary" icon="plus" onClick={addDept} disabled={!newDept.trim()}>Add</Button>
+            </div>
+          </div>
+        </div>
+      )}
       {can('admin') && (
         <div>
           <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>

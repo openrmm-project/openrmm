@@ -101,19 +101,30 @@ function DevicesScreen({ navigate }) {
 // site" — and sent as agent_ids; the batch awaits approval in Jobs & Approvals.
 function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
   const toast = useToast();
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), {});
+  const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState({});
   const [q, setQ] = useState('');
+  const [companyF, setCompanyF] = useState('');
+  const [siteF, setSiteF] = useState('');
+  const [deptF, setDeptF] = useState('');
   const [shell, setShell] = useState('bash');
   const [script, setScript] = useState('');
   const [desc, setDesc] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setSel({}); setQ(''); setScript(''); setDesc(''); setShell('bash'); } }, [open]);
+  useEffect(() => { if (open) { setSel({}); setQ(''); setCompanyF(''); setSiteF(''); setDeptF(''); setScript(''); setDesc(''); setShell('bash'); } }, [open]);
 
+  const clientOfSite = (sid) => (sites.find((s) => s.id === sid) || {}).client_id;
+  const companyOf = (d) => clientOfSite(d.site_id);
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const toggle = (id) => setSel((s) => ({ ...s, [id]: !s[id] }));
-  const filtered = devices.filter((d) => !q || d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()));
+  const filtered = devices.filter((d) =>
+    (!q || d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase())) &&
+    (!companyF || companyOf(d) === companyF) &&
+    (!siteF || d.site_id === siteF) &&
+    (!deptF || d.group_id === deptF));
   const selectAll = () => { const n = { ...sel }; filtered.forEach((d) => { n[d.id] = true; }); setSel(n); };
-  const addSite = (siteId) => { if (!siteId) return; const n = { ...sel }; devices.filter((d) => d.site_id === siteId).forEach((d) => { n[d.id] = true; }); setSel(n); };
+  const selCompanies = new Set(devices.filter((d) => sel[d.id]).map((d) => companyOf(d) || '∅')).size;
 
   const submit = async () => {
     if (!ids.length || !script.trim()) return;
@@ -135,12 +146,14 @@ function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
         </div>
         <div className="grid md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter devices…" className="flex-1 h-8" />
-              <Select value="" onChange={(e) => addSite(e.target.value)} className="w-auto h-8"><option value="">+ Site…</option>{clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}</Select>
+            <div className="grid grid-cols-3 gap-1.5">
+              <Select value={companyF} onChange={(e) => { setCompanyF(e.target.value); setSiteF(''); setDeptF(''); }} className="h-8 text-[12px]"><option value="">All companies</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</Select>
+              <Select value={siteF} onChange={(e) => { setSiteF(e.target.value); setDeptF(''); }} className="h-8 text-[12px]"><option value="">All sites</option>{sites.filter((s) => !companyF || s.client_id === companyF).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>
+              <Select value={deptF} onChange={(e) => setDeptF(e.target.value)} disabled={!siteF} className="h-8 text-[12px]"><option value="">{siteF ? 'All depts' : 'Dept (pick site)'}</option>{groups.filter((g) => g.site_id === siteF).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</Select>
             </div>
-            <div className="flex items-center justify-between text-[11.5px] text-faint"><span>{ids.length} selected</span><span className="flex gap-3"><button onClick={selectAll} className="hover:text-ink">Select all</button><button onClick={() => setSel({})} className="hover:text-ink">Clear</button></span></div>
-            <div className="rounded-xl border border-line max-h-64 overflow-y-auto scroll-area divide-y divide-line">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by hostname…" className="h-8" />
+            <div className="flex items-center justify-between text-[11.5px] text-faint"><span>{ids.length} selected · {selCompanies} compan{selCompanies === 1 ? 'y' : 'ies'} → {selCompanies} batch{selCompanies === 1 ? '' : 'es'}</span><span className="flex gap-3"><button onClick={selectAll} className="hover:text-ink">Select all</button><button onClick={() => setSel({})} className="hover:text-ink">Clear</button></span></div>
+            <div className="rounded-xl border border-line max-h-60 overflow-y-auto scroll-area divide-y divide-line">
               {filtered.map((d) => (
                 <label key={d.id} className="flex items-center gap-2 px-3 py-2 text-[12.5px] cursor-pointer hover:bg-elevated/40">
                   <input type="checkbox" checked={!!sel[d.id]} onChange={() => toggle(d.id)} />
@@ -159,7 +172,7 @@ function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 pt-3 border-t border-line/60">
-          <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="shield" size={13} />Creates one batch — nothing runs until you approve it in Jobs &amp; Approvals.</div>
+          <div className="text-[11.5px] text-faint flex items-center gap-1.5 max-w-[60%]"><Icon name="shield" size={13} className="shrink-0" />A deployment never spans companies — a multi-company selection splits into one batch per company, each awaiting approval.</div>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={onClose}>Cancel</Button>
             <Button variant="primary" icon="flash" loading={busy} disabled={!ids.length || !script.trim()} onClick={submit}>Create deployment ({ids.length})</Button>
@@ -206,6 +219,12 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     try { await api.setDeviceSite(id, siteId || null); toast.success('Site updated'); devQ.refetch(); }
     catch (e) { toast.error('Failed to set site', e.message); }
   };
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const depts = (groupsQ.data?.groups || []).filter((g) => g.site_id === (d && d.site_id));
+  const setGroup = async (gid) => {
+    try { await api.setDeviceGroup(id, gid || null); toast.success('Department updated'); devQ.refetch(); }
+    catch (e) { toast.error('Failed to set department', e.message); }
+  };
 
   return (
     <Drawer open={!!id} onClose={onClose} width="max-w-[860px]">
@@ -248,13 +267,22 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
               {can('tech') && <Button variant="secondary" icon="terminal" onClick={() => setTab('run')}>Run script</Button>}
               <div className="flex-1" />
               <Gate min="admin">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="pin" size={13} />Site</span>
-                  <Select value={d.site_id || ''} onChange={(e) => setSite(e.target.value)} className="w-auto min-w-[160px] h-8">
-                    <option value="">— Unassigned —</option>
-                    {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
-                  </Select>
-                </div>
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="pin" size={13} />Site</span>
+                    <Select value={d.site_id || ''} onChange={(e) => setSite(e.target.value)} className="w-auto min-w-[160px] h-8">
+                      <option value="">— Unassigned —</option>
+                      {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="building" size={13} />Dept</span>
+                    <Select value={d.group_id || ''} onChange={(e) => setGroup(e.target.value)} disabled={!d.site_id} className="w-auto min-w-[150px] h-8">
+                      <option value="">{d.site_id ? '— None —' : 'Set a site first'}</option>
+                      {depts.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </Select>
+                  </div>
+                </>
               </Gate>
             </div>
           </div>

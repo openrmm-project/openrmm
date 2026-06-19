@@ -176,6 +176,12 @@ export const api = {
     POST<RemoteSession>(`/api/devices/${id}/remote`, { provider }),
   setDeviceSite: (id: string, site_id: string) =>
     PATCH<Agent>(`/api/devices/${id}/site`, { site_id }),
+  setDeviceGroup: (id: string, group_id: string | null) =>
+    PATCH<{ status: string }>(`/api/devices/${id}/group`, { group_id }),
+  // departments = device groups, each under a site (Empresa > Site > Departamento)
+  listGroups: () => GET<{ groups: { id: string; name: string; site_id?: string; created_at: string }[] }>("/api/groups"),
+  createGroup: (body: { name: string; site_id: string }) => POST<{ id: string; name: string; site_id?: string }>("/api/groups", body),
+  deleteGroup: (id: string) => DELETE<{ status: string }>(`/api/groups/${id}`),
 
   // ---- jobs ----
   listJobs: (params: { agent_id?: string; limit?: number } = {}) =>

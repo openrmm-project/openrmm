@@ -107,6 +107,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
   const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
+  const [confirmDel, setConfirmDel] = useState(false);
   const startRemote = async (provider) => {
     if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname, os: d.os }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
@@ -127,6 +128,14 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const setSite = async (siteId) => {
     try { await api.setDeviceSite(id, siteId || null); toast.success('Site updated'); devQ.refetch(); }
     catch (e) { toast.error('Failed to set site', e.message); }
+  };
+  const doDelete = async () => {
+    try {
+      await api.deleteDevice(id);
+      toast.success('Device deleted', d.hostname);
+      window.dataBus.emit('devices');
+      onClose();
+    } catch (e) { toast.error('Delete failed', e.message); }
   };
 
   return (
@@ -176,12 +185,13 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                     <option value="">— Unassigned —</option>
                     {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
                   </Select>
+                  <Button variant="danger" size="sm" icon="trash" onClick={() => setConfirmDel(true)}>Delete</Button>
                 </div>
               </Gate>
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'run', label: 'Run script' }, { value: 'notes', label: 'Notes' }]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'run', label: 'Run script' }, { value: 'notes', label: 'Edit' }]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
@@ -191,6 +201,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
           </div>
         </>
       )}
+      {d && <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={doDelete} danger requireType={d.hostname} title="Delete device?" body={<>This permanently removes <b>{d.hostname}</b> and its jobs, inventory and history. The action is audited and cannot be undone. The agent stays installed — uninstall it on the endpoint, or it will re-enroll.</>} confirmLabel="Delete device" />}
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
       {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} filesOnly={remote.filesOnly} onClose={() => setRemote(null)} />}
       {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}

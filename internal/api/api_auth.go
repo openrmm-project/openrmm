@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -386,4 +387,32 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// updateUser changes an existing user's role (admin-only). To avoid locking
+// yourself out, you cannot change your own role here.
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == actorOf(r) {
+		writeErr(w, http.StatusBadRequest, "you cannot change your own role")
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if roleLevel(in.Role) == 0 {
+		writeErr(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	if err := s.store.SetUserRole(r.Context(), id, in.Role); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]string{"role": in.Role})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.role.change", id, detail)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

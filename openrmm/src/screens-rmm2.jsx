@@ -486,6 +486,7 @@ function TwoFactorCard() {
 
 function UsersPanel({ canAdmin }) {
   const toast = useToast();
+  const { user: me } = useAuth();
   const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
   const [creating, setCreating] = useState(false);
   const [username, setUsername] = useState('');
@@ -509,6 +510,11 @@ function UsersPanel({ canAdmin }) {
   };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
   const reset2fa = async (u) => { try { await api.reset2FA(u.id); toast.info('2FA reset', u.username + ' can now sign in with their password'); usersQ.refetch(); } catch (e) { toast.error('Failed', e.message); } };
+  const changeRole = async (u, role) => {
+    if (role === u.role) return;
+    try { await api.updateUser(u.id, { role }); toast.success('Role updated', u.username + ' → ' + role); window.dataBus.emit('users'); }
+    catch (e) { toast.error('Failed to change role', e.message); usersQ.refetch(); }
+  };
 
   // Open the scope editor: fetch the user's current scopes first, then render the
   // picker (so its mode initializes from the loaded selection).
@@ -543,7 +549,11 @@ function UsersPanel({ canAdmin }) {
           {users.map((u) => (
             <tr key={u.id} className="hover:bg-elevated/40 transition">
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><Avatar name={u.username} size={28} /><span className="text-[13px] text-ink font-medium">{u.username}</span></div></td>
-              <td className="px-3 py-3"><RoleBadge role={u.role} /></td>
+              <td className="px-3 py-3">
+                {canAdmin && u.username !== 'admin' && u.id !== me?.id
+                  ? <Select value={u.role} className="h-8 w-auto min-w-[110px]" onChange={(e) => changeRole(u, e.target.value)}><option value="readonly">readonly</option><option value="tech">tech</option><option value="admin">admin</option></Select>
+                  : <RoleBadge role={u.role} />}
+              </td>
               <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(u.created_at)}</td>
               <td className="px-4 py-3 text-right">
                 {canAdmin && (

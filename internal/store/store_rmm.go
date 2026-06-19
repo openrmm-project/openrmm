@@ -24,6 +24,18 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash, role str
 	return &models.User{ID: id, Username: username, Role: role, CreatedAt: time.Now()}, nil
 }
 
+// SetUserRole updates an existing user's role.
+func (s *Store) SetUserRole(ctx context.Context, id, role string) error {
+	ct, err := s.pool.Exec(ctx, `UPDATE users SET role=$2 WHERE id=$1`, id, role)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // CountUsers reports how many users exist (used to bootstrap the first admin).
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int

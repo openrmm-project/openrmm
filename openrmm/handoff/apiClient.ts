@@ -176,6 +176,9 @@ export const api = {
     POST<RemoteSession>(`/api/devices/${id}/remote`, { provider }),
   setDeviceSite: (id: string, site_id: string) =>
     PATCH<Agent>(`/api/devices/${id}/site`, { site_id }),
+  updateDevice: (id: string, body: { description?: string; note?: string }) =>
+    PATCH<Agent>(`/api/devices/${id}`, body),
+  deleteDevice: (id: string) => DELETE<{ status: string }>(`/api/devices/${id}`),
 
   // ---- jobs ----
   listJobs: (params: { agent_id?: string; limit?: number } = {}) =>
@@ -204,6 +207,7 @@ export const api = {
   // ---- users ----
   listUsers: () => GET<{ users: User[] }>("/api/users"),
   createUser: (body: { username: string; role: Role; password?: string }) => POST<User>("/api/users", body),
+  updateUser: (id: string, body: { role: Role }) => PATCH<{ status: string }>(`/api/users/${id}`, body),
   deleteUser: (id: string) => DELETE<void>(`/api/users/${id}`),
 
   // ---- org (clients & sites) ----

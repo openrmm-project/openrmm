@@ -135,6 +135,7 @@ const api = {
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
+  deleteDevice(id) { return DELETE('/api/devices/' + id); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
 
   /* ---- jobs ---- */
@@ -160,6 +161,7 @@ const api = {
   /* ---- users ---- */
   listUsers() { return GET('/api/users'); },
   createUser(body) { return POST('/api/users', body); },
+  updateUser(id, body) { return PATCH('/api/users/' + id, body); },
   deleteUser(id) { return DELETE('/api/users/' + id); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },

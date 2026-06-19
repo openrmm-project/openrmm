@@ -39,6 +39,7 @@ const (
 const (
 	ScopeClient = "client"
 	ScopeSite   = "site"
+	ScopeGroup  = "group"
 	ScopeAgent  = "agent"
 )
 
@@ -62,10 +63,10 @@ type User struct {
 	TOTPEnabled bool      `json:"totp_enabled"`
 }
 
-// UserScope restricts a user's access to a client/site/agent subtree. A user
+// UserScope restricts a user's access to a client/site/group/agent subtree. A user
 // with no scopes has full access. Applies to tech/readonly; admins are full.
 type UserScope struct {
-	ScopeType string `json:"scope_type"` // client | site | agent
+	ScopeType string `json:"scope_type"` // client | site | group | agent
 	ScopeID   string `json:"scope_id"`
 }
 
@@ -77,8 +78,7 @@ type APITokenInfo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// DeviceGroup is a logical grouping of agents (cross-site).
-// DeviceGroup is a department under a site (Empresa > Site > Departamento).
+// DeviceGroup is a department under a site (Company > Site > Department).
 // SiteID binds it to the hierarchy so a group never spans companies/sites.
 type DeviceGroup struct {
 	ID        string    `json:"id"`

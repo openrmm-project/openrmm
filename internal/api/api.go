@@ -168,6 +168,7 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/api-tokens/{id}", s.deleteAPIToken)
 			r.Get("/users", s.listUsers)
 			r.Post("/users", s.createUser)
+			r.Patch("/users/{id}", s.updateUser)
 			r.Get("/users/{id}/scopes", s.getUserScopes)
 			r.Put("/users/{id}/scopes", s.setUserScopes)
 			r.Post("/users/{id}/2fa/reset", s.reset2FA)

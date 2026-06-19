@@ -569,6 +569,9 @@ function UsersPanel({ canAdmin }) {
   const [editScopes, setEditScopes] = useState([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [roleBusy, setRoleBusy] = useState('');
+  const [pendingRole, setPendingRole] = useState(null);
+  const [confirmScopeSave, setConfirmScopeSave] = useState(false);
   const users = usersQ.data?.users || [];
 
   const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setCreating(false); };
@@ -580,6 +583,18 @@ function UsersPanel({ canAdmin }) {
   };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
   const reset2fa = async (u) => { try { await api.reset2FA(u.id); toast.info('2FA reset', u.username + ' can now sign in with their password'); usersQ.refetch(); } catch (e) { toast.error('Failed', e.message); } };
+  const changeRole = async () => {
+    const u = pendingRole?.user, role = pendingRole?.role;
+    if (!u || !role || role === u.role) { setPendingRole(null); return; }
+    setRoleBusy(u.id);
+    try {
+      await api.updateUserRole(u.id, role);
+      toast.success('Role updated', u.username + ' is now ' + role);
+      setPendingRole(null);
+      usersQ.refetch();
+    } catch (e) { toast.error('Failed to update role', e.message); }
+    finally { setRoleBusy(''); }
+  };
 
   // Open the scope editor: fetch the user's current scopes first, then render the
   // picker (so its mode initializes from the loaded selection).
@@ -596,9 +611,10 @@ function UsersPanel({ canAdmin }) {
     try {
       await api.setUserScopes(editUser.id, editScopes.map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })));
       toast.success('Scope updated', editScopes.length ? editScopes.length + ' scope(s)' : 'full access');
+      setConfirmScopeSave(false);
       setEditUser(null);
     } catch (e) { toast.error('Failed', e.message); }
-    finally { setEditSaving(false); }
+    finally { setConfirmScopeSave(false); setEditSaving(false); }
   };
 
   return (
@@ -614,7 +630,11 @@ function UsersPanel({ canAdmin }) {
           {users.map((u) => (
             <tr key={u.id} className="hover:bg-elevated/40 transition">
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><Avatar name={u.username} size={28} /><span className="text-[13px] text-ink font-medium">{u.username}</span></div></td>
-              <td className="px-3 py-3"><RoleBadge role={u.role} /></td>
+              <td className="px-3 py-3">
+                {canAdmin && u.username !== 'admin'
+                  ? <Select value={u.role} disabled={roleBusy === u.id} onChange={(e) => setPendingRole({ user: u, role: e.target.value })} className="h-8 min-w-28"><option value="readonly">readonly</option><option value="tech">tech</option><option value="admin">admin</option></Select>
+                  : <RoleBadge role={u.role} />}
+              </td>
               <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(u.created_at)}</td>
               <td className="px-4 py-3 text-right">
                 {canAdmin && (
@@ -644,17 +664,19 @@ function UsersPanel({ canAdmin }) {
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
-      <Modal open={!!editUser} onClose={() => !editSaving && setEditUser(null)} width="max-w-lg">
+      <Modal open={!!editUser} onClose={() => { if (!editSaving) { setConfirmScopeSave(false); setEditUser(null); } }} width="max-w-lg">
         <div className="p-5">
           <div className="text-[15px] font-semibold text-ink mb-1">Access scope</div>
           <div className="text-[12px] text-muted mb-4">Define which Companies, Sites or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
           {editLoading
             ? <div className="py-8 flex items-center justify-center gap-2 text-faint text-[12.5px]"><Spinner size={14} />Loading current scope…</div>
             : <ScopePicker key={editUser?.id} scopes={editScopes} setScopes={setEditScopes} />}
-          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={saveEdit}>Save scope</Button></div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={() => setConfirmScopeSave(true)}>Save scope</Button></div>
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmReset} onClose={() => setConfirmReset(null)} onConfirm={() => reset2fa(confirmReset)} danger title="Reset two-factor?" body={<>This turns off 2FA for <b>{confirmReset?.username}</b> and invalidates their recovery codes. They'll sign in with just their password until they re-enroll. Use only to recover a locked-out user.</>} confirmLabel="Reset 2FA" />
+      <ConfirmDialog open={!!pendingRole} onClose={() => setPendingRole(null)} onConfirm={changeRole} title="Change user role?" body={<>Change <b>{pendingRole?.user?.username}</b> from <b>{pendingRole?.user?.role}</b> to <b>{pendingRole?.role}</b>? This changes what they can access and manage.</>} confirmLabel="Change role" />
+      <ConfirmDialog open={confirmScopeSave} onClose={() => setConfirmScopeSave(false)} onConfirm={saveEdit} title="Save access scope?" body={<>Update access for <b>{editUser?.username}</b> to {editScopes.length ? <b>{editScopes.length} selected scope(s)</b> : <b>full access</b>}?</>} confirmLabel="Save scope" />
     </Card>
   );
 }
@@ -668,29 +690,62 @@ function ScopePicker({ scopes, setScopes }) {
   const [clients, setClients] = useState(null);
   const [sitesBy, setSitesBy] = useState({});   // clientId -> [sites]
   const [devsBy, setDevsBy] = useState({});      // siteId -> [devices]
+  const [groups, setGroups] = useState(null);    // departments across all sites
   const [expC, setExpC] = useState({});          // expanded clients
   const [expS, setExpS] = useState({});          // expanded sites
   const [q, setQ] = useState('');
-  const [allSites, setAllSites] = useState(null); // every site (for search by name + client lookup)
+  const [allSites, setAllSites] = useState(null); // every site (for search + parent lookup)
   const [found, setFound] = useState([]);          // device search results
   // Mode is independent of the selection so "Restricted" works before any node is
   // picked (empty selection still means full access on save — hinted below).
   const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
   const restricted = mode === 'restricted';
   const searching = q.trim().length > 0;
+  const scopeKey = scopes.map((s) => s.scope_type + ':' + s.scope_id).sort().join('|');
   const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
-  const siteClient = {}; (allSites || []).forEach((st) => { siteClient[st.id] = st.client_id; });
 
-  useEffect(() => { if (restricted && clients === null) loadClients(); }, [mode]);
-  const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
-  const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
-  const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
+  const loadClients = async () => { try { const r = await api.listClients(); setClients(r.clients || []); return r.clients || []; } catch (e) { setClients([]); return []; } };
+  const loadGroups = async () => { try { const r = await api.listGroups(); setGroups(r.groups || []); return r.groups || []; } catch (e) { setGroups([]); return []; } };
+  const loadSites = async (cid) => { if (sitesBy[cid]) return sitesBy[cid]; try { const r = await api.listSites(cid); const sites = r.sites || []; setSitesBy((m) => ({ ...m, [cid]: sites })); return sites; } catch (e) { return []; } };
+  const loadDevs = async (sid) => { if (devsBy[sid]) return devsBy[sid]; try { const r = await api.listDevices({ site_id: sid }); const devs = r.devices || []; setDevsBy((m) => ({ ...m, [sid]: devs })); return devs; } catch (e) { return []; } };
+
+  useEffect(() => { if (restricted) { if (clients === null) loadClients(); if (groups === null) loadGroups(); } }, [mode]);
+
+  // When editing an existing user, expand the tree down to the saved scopes so
+  // the admin immediately sees the selected company/site/department/device.
+  useEffect(() => {
+    if (!restricted || !scopeKey) return;
+    let cancelled = false;
+    (async () => {
+      const [cr, sr, gr, dr] = await Promise.all([api.listClients(), api.listSites(), api.listGroups(), api.listDevices()]);
+      if (cancelled) return;
+      const cs = cr.clients || [], ss = sr.sites || [], gs = gr.groups || [], ds = dr.devices || [];
+      const siteByID = {}; ss.forEach((s) => { siteByID[s.id] = s; });
+      const groupByID = {}; gs.forEach((g) => { groupByID[g.id] = g; });
+      const devByID = {}; ds.forEach((d) => { devByID[d.id] = d; });
+      const nextC = {}, nextS = {};
+      const includeSite = (sid) => { const st = siteByID[sid]; if (!st) return; nextC[st.client_id] = true; nextS[st.id] = true; };
+      scopes.forEach((sc) => {
+        if (sc.scope_type === 'client') nextC[sc.scope_id] = true;
+        if (sc.scope_type === 'site') includeSite(sc.scope_id);
+        if (sc.scope_type === 'group') includeSite(groupByID[sc.scope_id]?.site_id);
+        if (sc.scope_type === 'agent') includeSite(devByID[sc.scope_id]?.site_id);
+      });
+      const nextSitesBy = {}; Object.keys(nextC).forEach((cid) => { nextSitesBy[cid] = ss.filter((s) => s.client_id === cid); });
+      const nextDevsBy = {}; Object.keys(nextS).forEach((sid) => { nextDevsBy[sid] = ds.filter((d) => d.site_id === sid); });
+      setClients(cs); setAllSites(ss); setGroups(gs);
+      setExpC((m) => ({ ...m, ...nextC })); setExpS((m) => ({ ...m, ...nextS }));
+      setSitesBy((m) => ({ ...m, ...nextSitesBy })); setDevsBy((m) => ({ ...m, ...nextDevsBy }));
+    })();
+    return () => { cancelled = true; };
+  }, [restricted, scopeKey]);
 
   // Search across the whole org (not just loaded/expanded nodes): devices via the
-  // server (?q=), companies/sites client-side. Debounced.
+  // server (?q=), companies/sites/departments client-side. Debounced.
   useEffect(() => {
     if (!searching) { setFound([]); return; }
-    if (allSites === null) { api.listSites().then((r) => setAllSites(r.sites || [])).catch(() => setAllSites([])); }
+    if (allSites === null) api.listSites().then((r) => setAllSites(r.sites || [])).catch(() => setAllSites([]));
+    if (groups === null) api.listGroups().then((r) => setGroups(r.groups || [])).catch(() => setGroups([]));
     const t = setTimeout(() => { api.listDevices({ q: q.trim() }).then((r) => setFound(r.devices || [])).catch(() => setFound([])); }, 250);
     return () => clearTimeout(t);
   }, [q]);
@@ -700,6 +755,8 @@ function ScopePicker({ scopes, setScopes }) {
     setScopes(sel.has(k) ? scopes.filter((s) => s.scope_type + ':' + s.scope_id !== k) : [...scopes, { scope_type: type, scope_id: id }]);
   };
   const match = (name) => !q || (name || '').toLowerCase().includes(q.toLowerCase());
+  const groupsForSite = (sid) => (groups || []).filter((g) => g.site_id === sid);
+  const deviceCovered = (siteCovered, d) => siteCovered || (d.group_id && sel.has('group:' + d.group_id));
 
   const Row = ({ depth, icon, name, checked, disabled, onCheck, expandable, expanded, onExpand, hint }) => (
     <div className="flex items-center gap-1.5 py-1 hover:bg-elevated rounded" style={{ paddingLeft: depth * 18 + 4 }}>
@@ -717,27 +774,24 @@ function ScopePicker({ scopes, setScopes }) {
     <div className="space-y-2">
       <div className="flex gap-4 text-[12px]">
         <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Full access</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restricted to…</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); if (groups === null) loadGroups(); }} className="accent-brand" />Restricted to…</label>
         {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selected</span>}
       </div>
       {restricted && (
         <div className="rounded-xl border border-line overflow-hidden">
-          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company/site/device…" className="text-[12px] h-8" /></div>
+          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company/site/department/device…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
             {searching ? (() => {
-              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Searching…</div>;
+              if (allSites === null || clients === null || groups === null) return <div className="p-3 text-center text-faint text-[12px]">Searching…</div>;
               const m = (n) => (n || '').toLowerCase().includes(q.trim().toLowerCase());
               const siteObj = {}; allSites.forEach((s) => { siteObj[s.id] = s; });
               const clientObj = {}; clients.forEach((c) => { clientObj[c.id] = c; });
-              // group matching machines under their site
               const devBySite = {}; found.forEach((d) => { (devBySite[d.site_id] = devBySite[d.site_id] || []).push(d); });
-              // relevant sites = have a matching machine OR match by name
-              const siteIds = new Set([...Object.keys(devBySite), ...allSites.filter((s) => m(s.name)).map((s) => s.id)]);
-              // relevant clients = parents of relevant sites + name matches
+              const groupBySite = {}; groups.forEach((g) => { (groupBySite[g.site_id] = groupBySite[g.site_id] || []).push(g); });
+              const siteIds = new Set([...Object.keys(devBySite), ...allSites.filter((s) => m(s.name)).map((s) => s.id), ...groups.filter((g) => m(g.name)).map((g) => g.site_id)]);
               const clientIds = new Set(clients.filter((c) => m(c.name)).map((c) => c.id));
               siteIds.forEach((sid) => { const s = siteObj[sid]; if (s) clientIds.add(s.client_id); });
               if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">No results for “{q}”.</div>;
-              // build the filtered, auto-expanded tree (only branches with results)
               return [...clientIds].map((cid) => {
                 const c = clientObj[cid]; if (!c) return null;
                 const clientCov = sel.has('client:' + cid);
@@ -746,11 +800,12 @@ function ScopePicker({ scopes, setScopes }) {
                   <div key={cid}>
                     <Row depth={0} icon="building" name={c.name} checked={clientCov} onCheck={() => toggle('client', cid)} />
                     {sitesUnder.map((s) => {
-                      const siteCov = clientCov;
+                      const siteCov = clientCov || sel.has('site:' + s.id);
                       return (
                         <div key={s.id}>
-                          <Row depth={1} icon="pin" name={s.name} checked={siteCov || sel.has('site:' + s.id)} disabled={siteCov} onCheck={() => toggle('site', s.id)} />
-                          {(devBySite[s.id] || []).map((d) => { const cov = siteCov || sel.has('site:' + s.id); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+                          <Row depth={1} icon="pin" name={s.name} checked={siteCov} disabled={clientCov} onCheck={() => toggle('site', s.id)} />
+                          {(groupBySite[s.id] || []).filter((g) => m(g.name)).map((g) => <Row key={g.id} depth={2} icon="building" name={g.name} hint="department" checked={siteCov || sel.has('group:' + g.id)} disabled={siteCov} onCheck={() => toggle('group', g.id)} />)}
+                          {(devBySite[s.id] || []).map((d) => { const cov = deviceCovered(siteCov, d); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
                         </div>
                       );
                     })}
@@ -765,16 +820,18 @@ function ScopePicker({ scopes, setScopes }) {
                 <Row depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)}
                   expandable expanded={!!expC[c.id]} onExpand={() => { setExpC((m) => ({ ...m, [c.id]: !m[c.id] })); loadSites(c.id); }} />
                 {expC[c.id] && (sitesBy[c.id] || []).filter((st) => match(st.name)).map((st) => {
-                  const siteCovered = sel.has('client:' + c.id);
+                  const siteCovered = sel.has('client:' + c.id) || sel.has('site:' + st.id);
+                  const siteGroups = groupsForSite(st.id).filter((g) => match(g.name));
                   return (
                     <div key={st.id}>
-                      <Row depth={1} icon="pin" name={st.name} checked={siteCovered || sel.has('site:' + st.id)} disabled={siteCovered} onCheck={() => toggle('site', st.id)}
+                      <Row depth={1} icon="pin" name={st.name} checked={siteCovered} disabled={sel.has('client:' + c.id)} onCheck={() => toggle('site', st.id)}
                         expandable expanded={!!expS[st.id]} onExpand={() => { setExpS((m) => ({ ...m, [st.id]: !m[st.id] })); loadDevs(st.id); }} />
+                      {expS[st.id] && siteGroups.map((g) => <Row key={g.id} depth={2} icon="building" name={g.name} hint="department" checked={siteCovered || sel.has('group:' + g.id)} disabled={siteCovered} onCheck={() => toggle('group', g.id)} />)}
                       {expS[st.id] && (devsBy[st.id] || []).filter((d) => match(d.hostname)).map((d) => {
-                        const covered = siteCovered || sel.has('site:' + st.id);
+                        const covered = deviceCovered(siteCovered, d);
                         return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
                       })}
-                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no devices</div>}
+                      {expS[st.id] && siteGroups.length === 0 && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no departments or devices</div>}
                     </div>
                   );
                 })}
@@ -787,7 +844,7 @@ function ScopePicker({ scopes, setScopes }) {
       )}
       {restricted && scopes.length === 0
         ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Select at least one item — with no selection the user has full access.</div>
-        : <div className="text-[11px] text-faint">Selecting a company covers all its sites/devices (the union of the selections).</div>}
+        : <div className="text-[11px] text-faint">Selecting a company covers all its sites/departments/devices (the union of the selections).</div>}
     </div>
   );
 }

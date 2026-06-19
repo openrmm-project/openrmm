@@ -170,6 +170,7 @@ const api = {
   /* ---- users ---- */
   listUsers() { return GET('/api/users'); },
   createUser(body) { return POST('/api/users', body); },
+  updateUserRole(id, role) { return PATCH('/api/users/' + id, { role }); },
   deleteUser(id) { return DELETE('/api/users/' + id); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },

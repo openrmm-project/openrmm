@@ -14,6 +14,7 @@
 // ----------------------------- tipos (do brief) -----------------------------
 export type Role = "admin" | "tech" | "readonly";
 export type User = { id: string; username: string; role: Role; created_at: string };
+export type UserScope = { scope_type: "client" | "site" | "group" | "agent"; scope_id: string };
 
 export type Agent = {
   id: string; hostname: string; os: string; arch: string; version: string;
@@ -178,7 +179,7 @@ export const api = {
     PATCH<Agent>(`/api/devices/${id}/site`, { site_id }),
   setDeviceGroup: (id: string, group_id: string | null) =>
     PATCH<{ status: string }>(`/api/devices/${id}/group`, { group_id }),
-  // departments = device groups, each under a site (Empresa > Site > Departamento)
+  // departments = device groups, each under a site (Company > Site > Department)
   listGroups: () => GET<{ groups: { id: string; name: string; site_id?: string; created_at: string }[] }>("/api/groups"),
   createGroup: (body: { name: string; site_id: string }) => POST<{ id: string; name: string; site_id?: string }>("/api/groups", body),
   deleteGroup: (id: string) => DELETE<{ status: string }>(`/api/groups/${id}`),
@@ -216,8 +217,11 @@ export const api = {
 
   // ---- users ----
   listUsers: () => GET<{ users: User[] }>("/api/users"),
-  createUser: (body: { username: string; role: Role; password?: string }) => POST<User>("/api/users", body),
+  createUser: (body: { username: string; role: Role; password?: string; scopes?: UserScope[] }) => POST<User>("/api/users", body),
+  updateUserRole: (id: string, role: Role) => PATCH<User>(`/api/users/${id}`, { role }),
   deleteUser: (id: string) => DELETE<void>(`/api/users/${id}`),
+  getUserScopes: (id: string) => GET<{ scopes: UserScope[] }>(`/api/users/${id}/scopes`),
+  setUserScopes: (id: string, scopes: UserScope[]) => PUT<{ scopes: UserScope[] }>(`/api/users/${id}/scopes`, { scopes }),
 
   // ---- org (clients & sites) ----
   listClients: () => GET<{ clients: Client[] }>("/api/clients"),

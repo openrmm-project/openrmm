@@ -133,10 +133,11 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | POST | `/api/auth/logout` | any | Revoke the session token |
 | GET | `/api/me` | any | Current `{actor, role}` |
 | GET | `/api/users` | admin | List users |
-| POST | `/api/users` | admin | `{username,password,role,scopes?}` (`scopes`: array of `{scope_type,scope_id}`) |
+| POST | `/api/users` | admin | `{username,password,role,scopes?}` (`scopes`: array of `{scope_type,scope_id}`; `scope_type` = `client`/`site`/`group`/`agent`) |
+| PATCH | `/api/users/{id}` | admin | `{role}` update a user's role |
 | DELETE | `/api/users/{id}` | admin | Remove a user |
 | GET | `/api/users/{id}/scopes` | admin | List a user's access-scope assignments |
-| PUT | `/api/users/{id}/scopes` | admin | Replace scope assignments (`[]` = unrestricted) |
+| PUT | `/api/users/{id}/scopes` | admin | Replace scope assignments (`[]` = unrestricted; supports `client`/`site`/`group`/`agent`) |
 
 ### Account
 

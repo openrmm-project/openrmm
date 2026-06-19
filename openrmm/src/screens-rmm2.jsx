@@ -247,6 +247,7 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const addSite = async () => { await api.createSite(client.id, name); setName(''); setAdding(false); toast.success('Site created'); };
+  const delClient = async () => { if (!window.confirm('Delete client "' + client.name + '"?\nThis removes all its sites and departments; its devices become unassigned.')) return; try { await api.deleteClient(client.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Client deleted'); } catch (e) { toast.error('Failed', e.message); } };
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center gap-2 px-3.5 py-3">
@@ -254,6 +255,7 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
         <Icon name="building" size={16} className="text-muted" />
         <div className="flex-1 min-w-0"><div className="text-[13.5px] font-semibold text-ink truncate">{client.name}</div></div>
         <span className="text-[11px] text-faint">{clientCount(client.id)} devices</span>
+        {can('admin') && <button onClick={delClient} title="Delete client" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={13} /></button>}
       </div>
       {open && (
         <div className="border-t border-line">
@@ -314,6 +316,7 @@ function SiteDetail({ site, client, devices }) {
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
   const delDept = async (g) => { if (!window.confirm('Delete department "' + g.name + '"? Devices stay; their department is cleared.')) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+  const delSite = async () => { if (!window.confirm('Delete site "' + site.name + '"?\nIts departments are removed and its devices become unassigned.')) return; try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
   return (
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
@@ -351,6 +354,11 @@ function SiteDetail({ site, client, devices }) {
         <div>
           <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>
           {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
+        </div>
+      )}
+      {can('admin') && (
+        <div className="mt-5 pt-4 border-t border-line/60 flex justify-end">
+          <Button variant="danger" size="sm" icon="trash" onClick={delSite}>Delete site</Button>
         </div>
       )}
     </Card>

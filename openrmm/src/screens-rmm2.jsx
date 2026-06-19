@@ -228,11 +228,18 @@ function ClientsScreen() {
   const selSite = sites.find((s) => s.id === sel);
 
   const ql = q.trim().toLowerCase();
+  const devMatch = (d) => !ql || (d.hostname || '').toLowerCase().includes(ql) || (d.description || '').toLowerCase().includes(ql);
+  const siteMatch = (s) => !ql || s.name.toLowerCase().includes(ql) || devices.some((d) => d.site_id === s.id && devMatch(d));
   const sitesFor = (c) => {
     const all = sites.filter((s) => s.client_id === c.id);
-    return !ql || c.name.toLowerCase().includes(ql) ? all : all.filter((s) => s.name.toLowerCase().includes(ql));
+    return !ql || c.name.toLowerCase().includes(ql) ? all : all.filter(siteMatch);
   };
   const visibleClients = clients.filter((c) => !ql || c.name.toLowerCase().includes(ql) || sitesFor(c).length > 0);
+  // Devices shown in the selected site: all of them, unless the query only matched
+  // a device (then narrow to the matching ones); a client/site name hit shows all.
+  const selClient = selSite && clients.find((c) => c.id === selSite.client_id);
+  const nameHit = !!ql && ((selSite && selSite.name.toLowerCase().includes(ql)) || (selClient && selClient.name.toLowerCase().includes(ql)));
+  const selDevices = devices.filter((d) => d.site_id === sel && (!ql || nameHit || devMatch(d)));
 
   const addClient = async () => { await api.createClient(name); setName(''); setCreatingClient(false); toast.success('Client created'); };
 
@@ -244,12 +251,12 @@ function ClientsScreen() {
         <div className="space-y-3">
           <div className="relative">
             <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client or site…" className="pl-9 h-9" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client, site or device…" className="pl-9 h-9" />
           </div>
           {visibleClients.map((c) => <ClientNode key={c.id} client={c} sites={sitesFor(c)} groups={groups} devices={devices} sel={sel} setSel={setSel} siteCount={siteCount} clientCount={clientCount} />)}
           {visibleClients.length === 0 && <Card><EmptyState icon="building" title={ql ? 'No matches' : 'No clients'} /></Card>}
         </div>
-        <div>{selSite ? <SiteDetail site={selSite} client={clients.find((c) => c.id === selSite.client_id)} devices={devices.filter((d) => d.site_id === sel)} clients={clients} sites={sites} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
+        <div>{selSite ? <SiteDetail site={selSite} client={selClient} devices={selDevices} clients={clients} sites={sites} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
       </div>
       <Modal open={creatingClient} onClose={() => setCreatingClient(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">New client</div><Field label="Client name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind Trading" autoFocus /></Field><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreatingClient(false)}>Cancel</Button><Button variant="primary" onClick={addClient} disabled={!name}>Create</Button></div></div></Modal>
     </Page>

@@ -120,6 +120,21 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	return out, rows.Err()
 }
 
+// UpdateUserRole changes a console operator's role.
+func (s *Store) UpdateUserRole(ctx context.Context, id, role string) (*models.User, error) {
+	var u models.User
+	err := s.pool.QueryRow(ctx,
+		`UPDATE users SET role=$2 WHERE id=$1 RETURNING id, username, role, created_at, totp_enabled`,
+		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
 // DeleteUser removes a user.
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, id)
@@ -267,7 +282,7 @@ func (s *Store) ListUserScopes(ctx context.Context, userID string) ([]models.Use
 
 // AgentAllowedForUser reports whether a user may access an agent. A user with no
 // scopes has full access; otherwise the agent must match one of the user's
-// client/site/agent scopes.
+// client/site/group/agent scopes.
 func (s *Store) AgentAllowedForUser(ctx context.Context, userID, agentID string) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `
@@ -275,6 +290,7 @@ func (s *Store) AgentAllowedForUser(ctx context.Context, userID, agentID string)
 		    OR EXISTS (
 		      SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
 		        (us.scope_type='agent'  AND us.scope_id=$2) OR
+		        (us.scope_type='group'  AND us.scope_id=(SELECT group_id FROM agents WHERE id=$2)) OR
 		        (us.scope_type='site'   AND us.scope_id=(SELECT site_id FROM agents WHERE id=$2)) OR
 		        (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM agents a JOIN sites s ON s.id=a.site_id WHERE a.id=$2))
 		      ))`, userID, agentID).Scan(&ok)
@@ -288,6 +304,7 @@ func (s *Store) ListAgentsForUser(ctx context.Context, userID string) ([]models.
 		OR EXISTS (
 		  SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
 		    (us.scope_type='agent'  AND us.scope_id=a.id) OR
+		    (us.scope_type='group'  AND us.scope_id=a.group_id) OR
 		    (us.scope_type='site'   AND us.scope_id=a.site_id) OR
 		    (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
 		  ))
@@ -337,13 +354,14 @@ func (s *Store) ListClients(ctx context.Context) ([]models.Client, error) {
 }
 
 // ListClientsForUser returns the clients a scoped user may see (all when
-// unscoped) — those directly scoped, or parents of the user's site/agent scopes.
+// unscoped) — those directly scoped, or parents of the user's site/group/agent scopes.
 func (s *Store) ListClientsForUser(ctx context.Context, userID string) ([]models.Client, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, name, created_at FROM clients c WHERE
 		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
 		OR c.id IN (
 		  SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='client'
 		  UNION SELECT s.client_id FROM user_scopes us JOIN sites s ON s.id=us.scope_id WHERE us.user_id=$1 AND us.scope_type='site'
+		  UNION SELECT s.client_id FROM user_scopes us JOIN device_groups g ON g.id=us.scope_id JOIN sites s ON s.id=g.site_id WHERE us.user_id=$1 AND us.scope_type='group'
 		  UNION SELECT s.client_id FROM user_scopes us JOIN agents a ON a.id=us.scope_id JOIN sites s ON s.id=a.site_id WHERE us.user_id=$1 AND us.scope_type='agent'
 		) ORDER BY name`, userID)
 	if err != nil {
@@ -362,13 +380,14 @@ func (s *Store) ListClientsForUser(ctx context.Context, userID string) ([]models
 }
 
 // ListSitesForUser returns the sites a scoped user may see (all when unscoped):
-// directly scoped sites, sites under a scoped client, or sites of a scoped agent.
+// directly scoped sites, sites under a scoped client, or sites of a scoped group/agent.
 func (s *Store) ListSitesForUser(ctx context.Context, userID, clientID string) ([]models.Site, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, client_id, name, created_at FROM sites si WHERE
-		($2 = '' OR si.client_id = $2) AND (
+		($2 = '' OR si.client_id = NULLIF($2, '')::uuid) AND (
 		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
 		  OR si.id IN (SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='site')
 		  OR si.client_id IN (SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='client')
+		  OR si.id IN (SELECT g.site_id FROM user_scopes us JOIN device_groups g ON g.id=us.scope_id WHERE us.user_id=$1 AND us.scope_type='group')
 		  OR si.id IN (SELECT a.site_id FROM user_scopes us JOIN agents a ON a.id=us.scope_id WHERE us.user_id=$1 AND us.scope_type='agent')
 		) ORDER BY name`, userID, clientID)
 	if err != nil {

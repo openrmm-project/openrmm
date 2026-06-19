@@ -215,14 +215,40 @@ function ClientsScreen() {
   const clientsQ = useQuery(['clients'], () => api.listClients(), { invalidateOn: ['org'] });
   const sitesQ = useQuery(['sites'], () => api.listSites(), { invalidateOn: ['org'] });
   const devicesQ = useQuery(['cl-dev'], () => api.listDevices(), { invalidateOn: ['devices'] });
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState(null); // site id
+  const [selDept, setSelDept] = useState(null); // department id within the selected site
   const [creatingClient, setCreatingClient] = useState(false);
   const [name, setName] = useState('');
+  const [q, setQ] = useState('');
 
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [], devices = devicesQ.data?.devices || [];
   const siteCount = (siteId) => devices.filter((d) => d.site_id === siteId).length;
   const clientCount = (cid) => devices.filter((d) => sites.find((s) => s.id === d.site_id && s.client_id === cid)).length;
   const selSite = sites.find((s) => s.id === sel);
+
+  const ql = q.trim().toLowerCase();
+  const devMatch = (d) => !ql || (d.hostname || '').toLowerCase().includes(ql) || (d.description || '').toLowerCase().includes(ql);
+  const siteMatch = (s) => !ql || s.name.toLowerCase().includes(ql) || devices.some((d) => d.site_id === s.id && devMatch(d));
+  const sitesFor = (c) => {
+    const all = sites.filter((s) => s.client_id === c.id);
+    return !ql || c.name.toLowerCase().includes(ql) ? all : all.filter(siteMatch);
+  };
+  const visibleClients = clients.filter((c) => !ql || c.name.toLowerCase().includes(ql) || sitesFor(c).length > 0);
+  // Devices shown in the selected site: all of them, unless the query only matched
+  // a device (then narrow to the matching ones); a client/site name hit shows all.
+  const selClient = selSite && clients.find((c) => c.id === selSite.client_id);
+  const nameHit = !!ql && ((selSite && selSite.name.toLowerCase().includes(ql)) || (selClient && selClient.name.toLowerCase().includes(ql)));
+  const selDevices = devices.filter((d) => d.site_id === sel && (!ql || nameHit || devMatch(d)));
+  // When searching by device, auto-focus the match: keep the current site if it
+  // already has a match, otherwise jump to the first matching device's site/dept.
+  useEffect(() => {
+    if (!ql) return;
+    if (sel && devices.some((d) => d.site_id === sel && devMatch(d))) return;
+    const hit = devices.find((d) => d.site_id && devMatch(d));
+    if (hit) { setSel(hit.site_id); setSelDept(hit.group_id || null); }
+  }, [ql]);
 
   const addClient = async () => { await api.createClient(name); setName(''); setCreatingClient(false); toast.success('Client created'); };
 
@@ -232,17 +258,21 @@ function ClientsScreen() {
         actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setCreatingClient(true)}>New client</Button>} />
       <div className="grid lg:grid-cols-[360px_1fr] gap-5">
         <div className="space-y-3">
-          {clients.map((c) => <ClientNode key={c.id} client={c} sites={sites.filter((s) => s.client_id === c.id)} sel={sel} setSel={setSel} siteCount={siteCount} clientCount={clientCount} />)}
-          {clients.length === 0 && <Card><EmptyState icon="building" title="No clients" /></Card>}
+          <div className="relative">
+            <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client, site or device…" className="pl-9 h-9" />
+          </div>
+          {visibleClients.map((c) => <ClientNode key={c.id} client={c} sites={sitesFor(c)} groups={groups} devices={devices} sel={sel} setSel={setSel} selDept={selDept} setSelDept={setSelDept} siteCount={siteCount} clientCount={clientCount} />)}
+          {visibleClients.length === 0 && <Card><EmptyState icon="building" title={ql ? 'No matches' : 'No clients'} /></Card>}
         </div>
-        <div>{selSite ? <SiteDetail site={selSite} client={clients.find((c) => c.id === selSite.client_id)} devices={devices.filter((d) => d.site_id === sel)} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
+        <div>{selSite ? <SiteDetail site={selSite} client={selClient} devices={selDevices} clients={clients} sites={sites} query={ql} focusDept={selDept} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
       </div>
       <Modal open={creatingClient} onClose={() => setCreatingClient(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">New client</div><Field label="Client name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind Trading" autoFocus /></Field><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreatingClient(false)}>Cancel</Button><Button variant="primary" onClick={addClient} disabled={!name}>Create</Button></div></div></Modal>
     </Page>
   );
 }
 
-function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
+function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setSelDept, siteCount, clientCount }) {
   const { can } = useAuth();
   const toast = useToast();
   const [open, setOpen] = useState(true);
@@ -275,15 +305,30 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
       </div>
       {open && (
         <div className="border-t border-line">
-          {sites.map((s) => (
-            <button key={s.id} onClick={() => setSel(s.id)} className={cx('w-full flex items-center gap-2.5 pl-10 pr-3.5 py-2.5 transition text-left border-b border-line/60 last:border-0', sel === s.id ? 'bg-brandsoft' : 'hover:bg-elevated/40')}>
-              <Icon name="pin" size={13} className={sel === s.id ? 'text-brandhi' : 'text-faint'} />
-              <span className={cx('flex-1 text-[12.5px]', sel === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.name}</span>
-              <span className="text-[11px] text-faint tabular">{siteCount(s.id)}</span>
-            </button>
-          ))}
+          {sites.map((s) => {
+            const siteDepts = (groups || []).filter((g) => g.site_id === s.id);
+            return (
+              <div key={s.id} className="border-b border-line/60 last:border-0">
+                <button onClick={() => { setSel(s.id); setSelDept && setSelDept(null); }} className={cx('w-full flex items-center gap-2.5 pl-10 pr-3.5 py-2.5 transition text-left', sel === s.id && !selDept ? 'bg-brandsoft' : 'hover:bg-elevated/40')}>
+                  <Icon name="pin" size={13} className={sel === s.id && !selDept ? 'text-brandhi' : 'text-faint'} />
+                  <span className={cx('flex-1 text-[12.5px]', sel === s.id && !selDept ? 'text-ink font-medium' : 'text-muted')}>{s.name}</span>
+                  <span className="text-[11px] text-faint tabular">{siteCount(s.id)}</span>
+                </button>
+                {siteDepts.map((g) => {
+                  const active = sel === s.id && selDept === g.id;
+                  return (
+                    <button key={g.id} onClick={() => { setSel(s.id); setSelDept && setSelDept(g.id); }} className={cx('w-full flex items-center gap-2 pl-[3.4rem] pr-3.5 py-1.5 transition text-left', active ? 'bg-brandsoft' : 'hover:bg-elevated/30')}>
+                      <Icon name="building" size={11} className={active ? 'text-brandhi' : 'text-faint/70'} />
+                      <span className={cx('flex-1 text-[11.5px] truncate', active ? 'text-ink font-medium' : 'text-faint')}>{g.name}</span>
+                      <span className="text-[10.5px] text-faint/70 tabular">{(devices || []).filter((d) => d.group_id === g.id).length}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
           {can('admin') && (adding ? (
-            <div className="flex items-center gap-2 pl-10 pr-3 py-2"><Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSite()} placeholder="Site name" className="h-8" autoFocus /><Button size="sm" variant="primary" onClick={addSite} disabled={!name}>Add</Button></div>
+            <div className="flex items-center gap-2 pl-10 pr-3 py-2"><Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSite(); if (e.key === 'Escape') { setAdding(false); setName(''); } }} onBlur={() => { setAdding(false); setName(''); }} placeholder="Site name" className="h-8" autoFocus /><Button size="sm" variant="primary" onMouseDown={(e) => e.preventDefault()} onClick={addSite} disabled={!name}>Add</Button></div>
           ) : <button onClick={() => setAdding(true)} className="w-full flex items-center gap-2 pl-10 pr-3.5 py-2 text-[12px] text-faint hover:text-muted transition"><Icon name="plus" size={13} />Add site</button>)}
         </div>
       )}
@@ -321,7 +366,7 @@ function EnrollCommands({ token, site }) {
   );
 }
 
-function SiteDetail({ site, client, devices }) {
+function SiteDetail({ site, client, devices, clients, sites, query, focusDept }) {
   const { can } = useAuth();
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
@@ -335,13 +380,45 @@ function SiteDetail({ site, client, devices }) {
   const [newDept, setNewDept] = useState('');
   const [confirmDelSite, setConfirmDelSite] = useState(false);
   const [confirmDelDept, setConfirmDelDept] = useState(null);
+  const [moveDevice, setMoveDevice] = useState(null);
+  const [confirmDelDevice, setConfirmDelDevice] = useState(null);
   useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
   const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
+  const delDevice = async () => { const d = confirmDelDevice; if (!d) return; try { await api.deleteDevice(d.id); window.dataBus.emit('devices'); toast.info('Device deleted'); } catch (e) { toast.error('Failed to delete device', e.message); } };
+  const saveDeviceMove = async ({ siteId, groupId }) => {
+    const d = moveDevice;
+    if (!d) return;
+    try {
+      if ((d.group_id || '') && d.site_id !== siteId) await api.setDeviceGroup(d.id, null);
+      if ((d.site_id || '') !== (siteId || '')) await api.setDeviceSite(d.id, siteId || null);
+      if ((d.group_id || '') !== (groupId || '')) await api.setDeviceGroup(d.id, groupId || null);
+      window.dataBus.emit('devices'); setMoveDevice(null); toast.success('Device moved');
+    } catch (e) { toast.error('Failed to move device', e.message); }
+  };
   const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+
+  // Group the site's devices by department; ungrouped devices fall under "No department".
+  const deptIds = new Set(depts.map((g) => g.id));
+  const unassigned = devices.filter((d) => !d.group_id || !deptIds.has(d.group_id));
+  const renderDevice = (d) => (
+    <div key={d.id} className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+      <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
+      <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
+      <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
+      <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
+      {can('admin') && (
+        <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
+          <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
+          <div className="my-1 border-t border-line" />
+          <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
+        </Dropdown>
+      )}
+    </div>
+  );
   return (
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
@@ -362,34 +439,52 @@ function SiteDetail({ site, client, devices }) {
         )}
       </div>
       <div className="mb-5">
-        <div className="text-[12px] font-semibold text-muted mb-2">Devices at this site</div>
-        <div className="space-y-1.5">
-          {devices.map((d) => <div key={d.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2"><span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} /><OsIcon os={d.os} size={14} className="text-muted" /><span className="text-[12.5px] text-ink flex-1">{d.hostname}</span><span className="text-[11px] text-faint">{timeAgo(d.last_seen)}</span></div>)}
-          {devices.length === 0 && <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>}
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[12px] font-semibold text-muted">Devices <span className="text-faint font-normal">· {devices.length}</span></div>
+          {can('admin') && !creatingDept && <button onClick={() => setCreatingDept(true)} className="text-[11.5px] text-faint hover:text-ink flex items-center gap-1"><Icon name="plus" size={12} />Department</button>}
         </div>
-      </div>
-      {can('admin') && (depts.length > 0 || creatingDept) && (
-        <div className="mb-5">
-          <div className="text-[12px] font-semibold text-muted mb-2">Departments <span className="text-faint font-normal">(optional)</span></div>
-          <div className="space-y-1.5">
-            {depts.map((g) => (
-              <div key={g.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
-                <Icon name="building" size={14} className="text-muted" />
-                <span className="text-[12.5px] text-ink flex-1">{g.name}</span>
-                <span className="text-[11px] text-faint">{deptCount(g.id)} devices</span>
-                <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={13} /></button>
-              </div>
-            ))}
-            {creatingDept && (
-              <div className="flex items-center gap-2 pt-1">
-                <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') { setCreatingDept(false); setNewDept(''); } }} placeholder="Department name (e.g. Finance)" className="h-8" autoFocus />
-                <Button size="sm" variant="primary" onClick={addDept} disabled={!newDept.trim()}>Add</Button>
-                <Button size="sm" variant="ghost" onClick={() => { setCreatingDept(false); setNewDept(''); }}>Cancel</Button>
-              </div>
-            )}
+        {creatingDept && (
+          <div className="flex items-center gap-2 mb-2.5">
+            <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') { setCreatingDept(false); setNewDept(''); } }} placeholder="Department name (e.g. Finance)" className="h-8" autoFocus />
+            <Button size="sm" variant="primary" onClick={addDept} disabled={!newDept.trim()}>Add</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setCreatingDept(false); setNewDept(''); }}>Cancel</Button>
           </div>
-        </div>
-      )}
+        )}
+        {(() => {
+          const filtering = !!query;
+          // Focus a single department when one is clicked in the tree; otherwise
+          // show all. When filtering by device, hide departments with no match.
+          const groupsToShow = focusDept ? depts.filter((g) => g.id === focusDept) : depts;
+          const visibleDepts = groupsToShow.filter((g) => focusDept || !filtering || devices.some((d) => d.group_id === g.id));
+          const showUnassigned = !focusDept && (!filtering || unassigned.length > 0);
+          if (!showUnassigned && visibleDepts.length === 0) {
+            return <div className="text-[12.5px] text-faint py-3 text-center">{filtering || focusDept ? 'No devices here.' : 'No devices yet.'}</div>;
+          }
+          return (
+            <div className="space-y-3.5">
+              {showUnassigned && (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] uppercase tracking-wide text-faint font-semibold px-0.5">No department <span className="font-normal text-faint/70">· {unassigned.length}</span></div>
+                  {unassigned.length ? unassigned.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">—</div>}
+                </div>
+              )}
+              {visibleDepts.map((g) => {
+                const items = devices.filter((d) => d.group_id === g.id);
+                return (
+                  <div key={g.id} className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 px-0.5">
+                      <Icon name="building" size={12} className="text-faint" />
+                      <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                      {can('admin') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
+                    </div>
+                    {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </div>
       {can('admin') && (
         <div>
           <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>
@@ -398,7 +493,50 @@ function SiteDetail({ site, client, devices }) {
       )}
       <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?" body={<>This removes <b>{site.name}</b> and its departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete site" />
       <ConfirmDialog open={!!confirmDelDept} onClose={() => setConfirmDelDept(null)} onConfirm={delDept} danger title="Delete department?" body={<>This removes the department <b>{confirmDelDept?.name}</b>. Its devices stay, but their department is cleared.</>} confirmLabel="Delete department" />
+      <DeviceMoveModal open={!!moveDevice} onClose={() => setMoveDevice(null)} device={moveDevice} clients={clients} sites={sites} groups={groupsQ.data?.groups || []} onSave={saveDeviceMove} />
+      <ConfirmDialog open={!!confirmDelDevice} onClose={() => setConfirmDelDevice(null)} onConfirm={delDevice} danger title="Delete device?" body={<>This permanently removes <b>{confirmDelDevice?.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />
     </Card>
+  );
+}
+
+function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave }) {
+  const [q, setQ] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open && device) { setQ(''); setSiteId(device.site_id || ''); setGroupId(device.group_id || ''); } }, [open, device?.id]);
+  if (!device) return null;
+  const query = q.trim().toLowerCase();
+  const matches = (v) => !query || (v || '').toLowerCase().includes(query);
+  const groupsForSite = (sid) => groups.filter((g) => g.site_id === sid);
+  const visibleClients = clients.filter((c) => matches(c.name) || sites.some((s) => s.client_id === c.id && (matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name)))));
+  const chooseSite = (sid) => { setSiteId(sid); setGroupId(''); };
+  const chooseGroup = (sid, gid) => { setSiteId(sid); setGroupId(gid); };
+  const changed = (siteId || '') !== (device.site_id || '') || (groupId || '') !== (device.group_id || '');
+  const save = async () => { setBusy(true); try { await onSave({ siteId, groupId }); } finally { setBusy(false); } };
+
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-2xl">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="pin" size={18} /></div>
+          <div><div className="text-[15px] font-semibold text-ink">Move device</div><div className="text-[12.5px] text-muted">Choose where <b className="text-ink">{device.hostname}</b> belongs in Clients & Sites.</div></div>
+        </div>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, site, or department…" autoFocus />
+        <div className="rounded-xl border border-line max-h-80 overflow-y-auto scroll-area p-1">
+          <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>
+          {visibleClients.map((c) => {
+            const clientSites = sites.filter((s) => s.client_id === c.id && (matches(c.name) || matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name))));
+            return <div key={c.id} className="mt-1"><div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold flex items-center gap-1.5"><Icon name="building" size={12} />{c.name}</div>{clientSites.map((s) => {
+              const siteGroups = groupsForSite(s.id).filter((g) => matches(c.name) || matches(s.name) || matches(g.name));
+              return <div key={s.id}><button onClick={() => chooseSite(s.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-6 pr-3 py-2 text-left text-[12.5px] transition', siteId === s.id && !groupId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="pin" size={13} /><span className="flex-1 truncate">{s.name}</span><span className="text-[10.5px] text-faint">site</span></button>{siteGroups.map((g) => <button key={g.id} onClick={() => chooseGroup(s.id, g.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-11 pr-3 py-1.5 text-left text-[12.5px] transition', groupId === g.id ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="building" size={12} /><span className="flex-1 truncate">{g.name}</span><span className="text-[10.5px] text-faint">department</span></button>)}</div>;
+            })}</div>;
+          })}
+          {visibleClients.length === 0 && <div className="px-3 py-8 text-center text-[12px] text-faint">No matches.</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>Move device</Button></div>
+      </div>
+    </Modal>
   );
 }
 
@@ -569,6 +707,9 @@ function UsersPanel({ canAdmin }) {
   const [editScopes, setEditScopes] = useState([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [roleBusy, setRoleBusy] = useState('');
+  const [pendingRole, setPendingRole] = useState(null);
+  const [confirmScopeSave, setConfirmScopeSave] = useState(false);
   const users = usersQ.data?.users || [];
 
   const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setCreating(false); };
@@ -580,6 +721,18 @@ function UsersPanel({ canAdmin }) {
   };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
   const reset2fa = async (u) => { try { await api.reset2FA(u.id); toast.info('2FA reset', u.username + ' can now sign in with their password'); usersQ.refetch(); } catch (e) { toast.error('Failed', e.message); } };
+  const changeRole = async () => {
+    const u = pendingRole?.user, role = pendingRole?.role;
+    if (!u || !role || role === u.role) { setPendingRole(null); return; }
+    setRoleBusy(u.id);
+    try {
+      await api.updateUserRole(u.id, role);
+      toast.success('Role updated', u.username + ' is now ' + role);
+      setPendingRole(null);
+      usersQ.refetch();
+    } catch (e) { toast.error('Failed to update role', e.message); }
+    finally { setRoleBusy(''); }
+  };
 
   // Open the scope editor: fetch the user's current scopes first, then render the
   // picker (so its mode initializes from the loaded selection).
@@ -596,9 +749,10 @@ function UsersPanel({ canAdmin }) {
     try {
       await api.setUserScopes(editUser.id, editScopes.map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })));
       toast.success('Scope updated', editScopes.length ? editScopes.length + ' scope(s)' : 'full access');
+      setConfirmScopeSave(false);
       setEditUser(null);
     } catch (e) { toast.error('Failed', e.message); }
-    finally { setEditSaving(false); }
+    finally { setConfirmScopeSave(false); setEditSaving(false); }
   };
 
   return (
@@ -614,7 +768,11 @@ function UsersPanel({ canAdmin }) {
           {users.map((u) => (
             <tr key={u.id} className="hover:bg-elevated/40 transition">
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><Avatar name={u.username} size={28} /><span className="text-[13px] text-ink font-medium">{u.username}</span></div></td>
-              <td className="px-3 py-3"><RoleBadge role={u.role} /></td>
+              <td className="px-3 py-3">
+                {canAdmin && u.username !== 'admin'
+                  ? <Select value={u.role} disabled={roleBusy === u.id} onChange={(e) => setPendingRole({ user: u, role: e.target.value })} className="h-8 min-w-28"><option value="readonly">readonly</option><option value="tech">tech</option><option value="admin">admin</option></Select>
+                  : <RoleBadge role={u.role} />}
+              </td>
               <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(u.created_at)}</td>
               <td className="px-4 py-3 text-right">
                 {canAdmin && (
@@ -644,17 +802,19 @@ function UsersPanel({ canAdmin }) {
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
-      <Modal open={!!editUser} onClose={() => !editSaving && setEditUser(null)} width="max-w-lg">
+      <Modal open={!!editUser} onClose={() => { if (!editSaving) { setConfirmScopeSave(false); setEditUser(null); } }} width="max-w-lg">
         <div className="p-5">
           <div className="text-[15px] font-semibold text-ink mb-1">Access scope</div>
-          <div className="text-[12px] text-muted mb-4">Define which Companies, Sites or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
+          <div className="text-[12px] text-muted mb-4">Define which Companies, Sites, Departments or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
           {editLoading
             ? <div className="py-8 flex items-center justify-center gap-2 text-faint text-[12.5px]"><Spinner size={14} />Loading current scope…</div>
             : <ScopePicker key={editUser?.id} scopes={editScopes} setScopes={setEditScopes} />}
-          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={saveEdit}>Save scope</Button></div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={() => setConfirmScopeSave(true)}>Save scope</Button></div>
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmReset} onClose={() => setConfirmReset(null)} onConfirm={() => reset2fa(confirmReset)} danger title="Reset two-factor?" body={<>This turns off 2FA for <b>{confirmReset?.username}</b> and invalidates their recovery codes. They'll sign in with just their password until they re-enroll. Use only to recover a locked-out user.</>} confirmLabel="Reset 2FA" />
+      <ConfirmDialog open={!!pendingRole} onClose={() => setPendingRole(null)} onConfirm={changeRole} title="Change user role?" body={<>Change <b>{pendingRole?.user?.username}</b> from <b>{pendingRole?.user?.role}</b> to <b>{pendingRole?.role}</b>? This changes what they can access and manage.</>} confirmLabel="Change role" />
+      <ConfirmDialog open={confirmScopeSave} onClose={() => setConfirmScopeSave(false)} onConfirm={saveEdit} title="Save access scope?" body={<>Update access for <b>{editUser?.username}</b> to {editScopes.length ? <b>{editScopes.length} selected scope(s)</b> : <b>full access</b>}?</>} confirmLabel="Save scope" />
     </Card>
   );
 }
@@ -668,29 +828,62 @@ function ScopePicker({ scopes, setScopes }) {
   const [clients, setClients] = useState(null);
   const [sitesBy, setSitesBy] = useState({});   // clientId -> [sites]
   const [devsBy, setDevsBy] = useState({});      // siteId -> [devices]
+  const [groups, setGroups] = useState(null);    // departments across all sites
   const [expC, setExpC] = useState({});          // expanded clients
   const [expS, setExpS] = useState({});          // expanded sites
   const [q, setQ] = useState('');
-  const [allSites, setAllSites] = useState(null); // every site (for search by name + client lookup)
+  const [allSites, setAllSites] = useState(null); // every site (for search + parent lookup)
   const [found, setFound] = useState([]);          // device search results
   // Mode is independent of the selection so "Restricted" works before any node is
   // picked (empty selection still means full access on save — hinted below).
   const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
   const restricted = mode === 'restricted';
   const searching = q.trim().length > 0;
+  const scopeKey = scopes.map((s) => s.scope_type + ':' + s.scope_id).sort().join('|');
   const sel = new Set(scopes.map((s) => s.scope_type + ':' + s.scope_id));
-  const siteClient = {}; (allSites || []).forEach((st) => { siteClient[st.id] = st.client_id; });
 
-  useEffect(() => { if (restricted && clients === null) loadClients(); }, [mode]);
-  const loadClients = async () => { try { setClients((await api.listClients()).clients || []); } catch (e) { setClients([]); } };
-  const loadSites = async (cid) => { if (!sitesBy[cid]) { try { const r = await api.listSites(cid); setSitesBy((m) => ({ ...m, [cid]: r.sites || [] })); } catch (e) {} } };
-  const loadDevs = async (sid) => { if (!devsBy[sid]) { try { const r = await api.listDevices({ site_id: sid }); setDevsBy((m) => ({ ...m, [sid]: r.devices || [] })); } catch (e) {} } };
+  const loadClients = async () => { try { const r = await api.listClients(); setClients(r.clients || []); return r.clients || []; } catch (e) { setClients([]); return []; } };
+  const loadGroups = async () => { try { const r = await api.listGroups(); setGroups(r.groups || []); return r.groups || []; } catch (e) { setGroups([]); return []; } };
+  const loadSites = async (cid) => { if (sitesBy[cid]) return sitesBy[cid]; try { const r = await api.listSites(cid); const sites = r.sites || []; setSitesBy((m) => ({ ...m, [cid]: sites })); return sites; } catch (e) { return []; } };
+  const loadDevs = async (sid) => { if (devsBy[sid]) return devsBy[sid]; try { const r = await api.listDevices({ site_id: sid }); const devs = r.devices || []; setDevsBy((m) => ({ ...m, [sid]: devs })); return devs; } catch (e) { return []; } };
+
+  useEffect(() => { if (restricted) { if (clients === null) loadClients(); if (groups === null) loadGroups(); } }, [mode]);
+
+  // When editing an existing user, expand the tree down to the saved scopes so
+  // the admin immediately sees the selected company/site/department/device.
+  useEffect(() => {
+    if (!restricted || !scopeKey) return;
+    let cancelled = false;
+    (async () => {
+      const [cr, sr, gr, dr] = await Promise.all([api.listClients(), api.listSites(), api.listGroups(), api.listDevices()]);
+      if (cancelled) return;
+      const cs = cr.clients || [], ss = sr.sites || [], gs = gr.groups || [], ds = dr.devices || [];
+      const siteByID = {}; ss.forEach((s) => { siteByID[s.id] = s; });
+      const groupByID = {}; gs.forEach((g) => { groupByID[g.id] = g; });
+      const devByID = {}; ds.forEach((d) => { devByID[d.id] = d; });
+      const nextC = {}, nextS = {};
+      const includeSite = (sid) => { const st = siteByID[sid]; if (!st) return; nextC[st.client_id] = true; nextS[st.id] = true; };
+      scopes.forEach((sc) => {
+        if (sc.scope_type === 'client') nextC[sc.scope_id] = true;
+        if (sc.scope_type === 'site') includeSite(sc.scope_id);
+        if (sc.scope_type === 'group') includeSite(groupByID[sc.scope_id]?.site_id);
+        if (sc.scope_type === 'agent') includeSite(devByID[sc.scope_id]?.site_id);
+      });
+      const nextSitesBy = {}; Object.keys(nextC).forEach((cid) => { nextSitesBy[cid] = ss.filter((s) => s.client_id === cid); });
+      const nextDevsBy = {}; Object.keys(nextS).forEach((sid) => { nextDevsBy[sid] = ds.filter((d) => d.site_id === sid); });
+      setClients(cs); setAllSites(ss); setGroups(gs);
+      setExpC((m) => ({ ...m, ...nextC })); setExpS((m) => ({ ...m, ...nextS }));
+      setSitesBy((m) => ({ ...m, ...nextSitesBy })); setDevsBy((m) => ({ ...m, ...nextDevsBy }));
+    })();
+    return () => { cancelled = true; };
+  }, [restricted, scopeKey]);
 
   // Search across the whole org (not just loaded/expanded nodes): devices via the
-  // server (?q=), companies/sites client-side. Debounced.
+  // server (?q=), companies/sites/departments client-side. Debounced.
   useEffect(() => {
     if (!searching) { setFound([]); return; }
-    if (allSites === null) { api.listSites().then((r) => setAllSites(r.sites || [])).catch(() => setAllSites([])); }
+    if (allSites === null) api.listSites().then((r) => setAllSites(r.sites || [])).catch(() => setAllSites([]));
+    if (groups === null) api.listGroups().then((r) => setGroups(r.groups || [])).catch(() => setGroups([]));
     const t = setTimeout(() => { api.listDevices({ q: q.trim() }).then((r) => setFound(r.devices || [])).catch(() => setFound([])); }, 250);
     return () => clearTimeout(t);
   }, [q]);
@@ -700,6 +893,8 @@ function ScopePicker({ scopes, setScopes }) {
     setScopes(sel.has(k) ? scopes.filter((s) => s.scope_type + ':' + s.scope_id !== k) : [...scopes, { scope_type: type, scope_id: id }]);
   };
   const match = (name) => !q || (name || '').toLowerCase().includes(q.toLowerCase());
+  const groupsForSite = (sid) => (groups || []).filter((g) => g.site_id === sid);
+  const deviceCovered = (siteCovered, d) => siteCovered || (d.group_id && sel.has('group:' + d.group_id));
 
   const Row = ({ depth, icon, name, checked, disabled, onCheck, expandable, expanded, onExpand, hint }) => (
     <div className="flex items-center gap-1.5 py-1 hover:bg-elevated rounded" style={{ paddingLeft: depth * 18 + 4 }}>
@@ -717,27 +912,24 @@ function ScopePicker({ scopes, setScopes }) {
     <div className="space-y-2">
       <div className="flex gap-4 text-[12px]">
         <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Full access</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restricted to…</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); if (groups === null) loadGroups(); }} className="accent-brand" />Restricted to…</label>
         {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selected</span>}
       </div>
       {restricted && (
         <div className="rounded-xl border border-line overflow-hidden">
-          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company/site/device…" className="text-[12px] h-8" /></div>
+          <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company/site/department/device…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
             {searching ? (() => {
-              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Searching…</div>;
+              if (allSites === null || clients === null || groups === null) return <div className="p-3 text-center text-faint text-[12px]">Searching…</div>;
               const m = (n) => (n || '').toLowerCase().includes(q.trim().toLowerCase());
               const siteObj = {}; allSites.forEach((s) => { siteObj[s.id] = s; });
               const clientObj = {}; clients.forEach((c) => { clientObj[c.id] = c; });
-              // group matching machines under their site
               const devBySite = {}; found.forEach((d) => { (devBySite[d.site_id] = devBySite[d.site_id] || []).push(d); });
-              // relevant sites = have a matching machine OR match by name
-              const siteIds = new Set([...Object.keys(devBySite), ...allSites.filter((s) => m(s.name)).map((s) => s.id)]);
-              // relevant clients = parents of relevant sites + name matches
+              const groupBySite = {}; groups.forEach((g) => { (groupBySite[g.site_id] = groupBySite[g.site_id] || []).push(g); });
+              const siteIds = new Set([...Object.keys(devBySite), ...allSites.filter((s) => m(s.name)).map((s) => s.id), ...groups.filter((g) => m(g.name)).map((g) => g.site_id)]);
               const clientIds = new Set(clients.filter((c) => m(c.name)).map((c) => c.id));
               siteIds.forEach((sid) => { const s = siteObj[sid]; if (s) clientIds.add(s.client_id); });
               if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">No results for “{q}”.</div>;
-              // build the filtered, auto-expanded tree (only branches with results)
               return [...clientIds].map((cid) => {
                 const c = clientObj[cid]; if (!c) return null;
                 const clientCov = sel.has('client:' + cid);
@@ -746,11 +938,12 @@ function ScopePicker({ scopes, setScopes }) {
                   <div key={cid}>
                     <Row depth={0} icon="building" name={c.name} checked={clientCov} onCheck={() => toggle('client', cid)} />
                     {sitesUnder.map((s) => {
-                      const siteCov = clientCov;
+                      const siteCov = clientCov || sel.has('site:' + s.id);
                       return (
                         <div key={s.id}>
-                          <Row depth={1} icon="pin" name={s.name} checked={siteCov || sel.has('site:' + s.id)} disabled={siteCov} onCheck={() => toggle('site', s.id)} />
-                          {(devBySite[s.id] || []).map((d) => { const cov = siteCov || sel.has('site:' + s.id); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+                          <Row depth={1} icon="pin" name={s.name} checked={siteCov} disabled={clientCov} onCheck={() => toggle('site', s.id)} />
+                          {(groupBySite[s.id] || []).filter((g) => m(g.name)).map((g) => <Row key={g.id} depth={2} icon="building" name={g.name} hint="department" checked={siteCov || sel.has('group:' + g.id)} disabled={siteCov} onCheck={() => toggle('group', g.id)} />)}
+                          {(devBySite[s.id] || []).map((d) => { const cov = deviceCovered(siteCov, d); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
                         </div>
                       );
                     })}
@@ -765,16 +958,18 @@ function ScopePicker({ scopes, setScopes }) {
                 <Row depth={0} icon="building" name={c.name} checked={sel.has('client:' + c.id)} onCheck={() => toggle('client', c.id)}
                   expandable expanded={!!expC[c.id]} onExpand={() => { setExpC((m) => ({ ...m, [c.id]: !m[c.id] })); loadSites(c.id); }} />
                 {expC[c.id] && (sitesBy[c.id] || []).filter((st) => match(st.name)).map((st) => {
-                  const siteCovered = sel.has('client:' + c.id);
+                  const siteCovered = sel.has('client:' + c.id) || sel.has('site:' + st.id);
+                  const siteGroups = groupsForSite(st.id).filter((g) => match(g.name));
                   return (
                     <div key={st.id}>
-                      <Row depth={1} icon="pin" name={st.name} checked={siteCovered || sel.has('site:' + st.id)} disabled={siteCovered} onCheck={() => toggle('site', st.id)}
+                      <Row depth={1} icon="pin" name={st.name} checked={siteCovered} disabled={sel.has('client:' + c.id)} onCheck={() => toggle('site', st.id)}
                         expandable expanded={!!expS[st.id]} onExpand={() => { setExpS((m) => ({ ...m, [st.id]: !m[st.id] })); loadDevs(st.id); }} />
+                      {expS[st.id] && siteGroups.map((g) => <Row key={g.id} depth={2} icon="building" name={g.name} hint="department" checked={siteCovered || sel.has('group:' + g.id)} disabled={siteCovered} onCheck={() => toggle('group', g.id)} />)}
                       {expS[st.id] && (devsBy[st.id] || []).filter((d) => match(d.hostname)).map((d) => {
-                        const covered = siteCovered || sel.has('site:' + st.id);
+                        const covered = deviceCovered(siteCovered, d);
                         return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
                       })}
-                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no devices</div>}
+                      {expS[st.id] && siteGroups.length === 0 && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no departments or devices</div>}
                     </div>
                   );
                 })}
@@ -787,7 +982,7 @@ function ScopePicker({ scopes, setScopes }) {
       )}
       {restricted && scopes.length === 0
         ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Select at least one item — with no selection the user has full access.</div>
-        : <div className="text-[11px] text-faint">Selecting a company covers all its sites/devices (the union of the selections).</div>}
+        : <div className="text-[11px] text-faint">Selecting a company covers all its sites/departments/devices (the union of the selections).</div>}
     </div>
   );
 }

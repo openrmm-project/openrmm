@@ -7,7 +7,7 @@ function DevicesScreen({ navigate }) {
   const [q, setQ] = useState('');
   const [osF, setOsF] = useState('all');
   const [statusF, setStatusF] = useState('all');
-  const [siteF, setSiteF] = useState('all');
+  const [clientF, setClientF] = useState('all');
   const [selected, setSelected] = useState(null);
   const { can } = useAuth();
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -16,13 +16,14 @@ function DevicesScreen({ navigate }) {
   const sites = sitesQ.data?.sites || [];
   const clients = clientsQ.data?.clients || [];
   const siteName = (id) => sites.find((s) => s.id === id)?.name || '—';
+  const clientOfSite = (id) => sites.find((s) => s.id === id)?.client_id || '';
   const osFamily = (os) => { const o = os.toLowerCase(); return o.includes('win') ? 'Windows' : o.includes('mac') ? 'macOS' : 'Linux'; };
 
   const filtered = devices.filter((d) => {
     if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((t) => t.includes(q.toLowerCase())))) return false;
     if (osF !== 'all' && osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
-    if (siteF !== 'all' && d.site_id !== siteF) return false;
+    if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
   });
 
@@ -43,9 +44,9 @@ function DevicesScreen({ navigate }) {
           <Select value={statusF} onChange={(e) => setStatusF(e.target.value)} className="w-auto min-w-[120px]">
             <option value="all">Any status</option><option value="online">Online</option><option value="offline">Offline</option>
           </Select>
-          <Select value={siteF} onChange={(e) => setSiteF(e.target.value)} className="w-auto min-w-[150px]">
-            <option value="all">All sites</option>
-            {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
+          <Select value={clientF} onChange={(e) => setClientF(e.target.value)} className="w-auto min-w-[150px]">
+            <option value="all">All clients</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
         </div>
       </Card>
@@ -198,6 +199,8 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
   const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const startRemote = async (provider) => {
     if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname, os: d.os }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
@@ -215,15 +218,24 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     catch (e) { toast.error('Failed', e.message); }
   };
 
-  const setSite = async (siteId) => {
-    try { await api.setDeviceSite(id, siteId || null); toast.success('Site updated'); devQ.refetch(); }
-    catch (e) { toast.error('Failed to set site', e.message); }
-  };
   const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
-  const depts = (groupsQ.data?.groups || []).filter((g) => g.site_id === (d && d.site_id));
-  const setGroup = async (gid) => {
-    try { await api.setDeviceGroup(id, gid || null); toast.success('Department updated'); devQ.refetch(); }
-    catch (e) { toast.error('Failed to set department', e.message); }
+  const groups = groupsQ.data?.groups || [];
+  const currentSite = d ? sites.find((s) => s.id === d.site_id) : null;
+  const currentClient = currentSite ? clients.find((c) => c.id === currentSite.client_id) : null;
+  const currentGroup = d ? groups.find((g) => g.id === d.group_id) : null;
+  const orgLabel = currentSite ? [currentClient?.name, currentSite.name, currentGroup?.name].filter(Boolean).join(' / ') : 'Unassigned';
+
+  const saveOrg = async ({ siteId, groupId }) => {
+    try {
+      if ((d.group_id || '') && d.site_id !== siteId) await api.setDeviceGroup(id, null);
+      if ((d.site_id || '') !== (siteId || '')) await api.setDeviceSite(id, siteId || null);
+      if ((d.group_id || '') !== (groupId || '')) await api.setDeviceGroup(id, groupId || null);
+      toast.success('Clients & Sites updated'); setOrgOpen(false); devQ.refetch();
+    } catch (e) { toast.error('Failed to update Clients & Sites', e.message); }
+  };
+  const deleteDevice = async () => {
+    try { await api.deleteDevice(id); toast.info('Device deleted'); setConfirmDel(false); onClose(); window.dataBus.emit('devices'); }
+    catch (e) { toast.error('Failed to delete device', e.message); }
   };
 
   return (
@@ -268,20 +280,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
               <div className="flex-1" />
               <Gate min="admin">
                 <>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="pin" size={13} />Site</span>
-                    <Select value={d.site_id || ''} onChange={(e) => setSite(e.target.value)} className="w-auto min-w-[160px] h-8">
-                      <option value="">— Unassigned —</option>
-                      {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
-                    </Select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="building" size={13} />Dept</span>
-                    <Select value={d.group_id || ''} onChange={(e) => setGroup(e.target.value)} disabled={!d.site_id} className="w-auto min-w-[150px] h-8">
-                      <option value="">{d.site_id ? '— None —' : 'Set a site first'}</option>
-                      {depts.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </Select>
-                  </div>
+                  <div className="min-w-0 max-w-[300px] text-right hidden sm:block"><div className="text-[10.5px] uppercase tracking-wide text-faint">Clients & Sites</div><div className="text-[12px] text-muted truncate">{orgLabel}</div></div>
+                  <Button variant="secondary" icon="building" onClick={() => setOrgOpen(true)}>Clients & Sites</Button>
+                  <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete</Button>
                 </>
               </Gate>
             </div>
@@ -300,7 +301,62 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
       {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} filesOnly={remote.filesOnly} onClose={() => setRemote(null)} />}
       {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}
+      {d && <DeviceOrgModal open={orgOpen} onClose={() => setOrgOpen(false)} device={d} clients={clients} sites={sites} groups={groups} onSave={saveOrg} />}
+      {d && <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={deleteDevice} danger title="Delete device?" body={<>This permanently removes <b>{d.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />}
     </Drawer>
+  );
+}
+
+function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave }) {
+  const [q, setQ] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setQ(''); setSiteId(device.site_id || ''); setGroupId(device.group_id || ''); } }, [open, device.id]);
+  const query = q.trim().toLowerCase();
+  const matches = (v) => !query || (v || '').toLowerCase().includes(query);
+  const groupsForSite = (sid) => groups.filter((g) => g.site_id === sid);
+  const visibleClients = clients.filter((c) => matches(c.name) || sites.some((s) => s.client_id === c.id && (matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name)))));
+  const chooseSite = (sid) => { setSiteId(sid); setGroupId(''); };
+  const chooseGroup = (sid, gid) => { setSiteId(sid); setGroupId(gid); };
+  const save = async () => { setBusy(true); try { await onSave({ siteId, groupId }); } finally { setBusy(false); } };
+  const changed = (siteId || '') !== (device.site_id || '') || (groupId || '') !== (device.group_id || '');
+
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-2xl">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="building" size={18} /></div>
+          <div><div className="text-[15px] font-semibold text-ink">Clients & Sites</div><div className="text-[12.5px] text-muted">Assign <b className="text-ink">{device.hostname}</b> to a site or an optional department.</div></div>
+        </div>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, site, or department…" autoFocus />
+        <div className="rounded-xl border border-line max-h-80 overflow-y-auto scroll-area p-1">
+          <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>
+          {visibleClients.map((c) => {
+            const clientSites = sites.filter((s) => s.client_id === c.id && (matches(c.name) || matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name))));
+            return (
+              <div key={c.id} className="mt-1">
+                <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold flex items-center gap-1.5"><Icon name="building" size={12} />{c.name}</div>
+                {clientSites.map((s) => {
+                  const selectedSite = siteId === s.id && !groupId;
+                  const siteGroups = groupsForSite(s.id).filter((g) => matches(c.name) || matches(s.name) || matches(g.name));
+                  return (
+                    <div key={s.id}>
+                      <button onClick={() => chooseSite(s.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-6 pr-3 py-2 text-left text-[12.5px] transition', selectedSite ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="pin" size={13} /><span className="flex-1 truncate">{s.name}</span><span className="text-[10.5px] text-faint">site</span></button>
+                      {siteGroups.map((g) => (
+                        <button key={g.id} onClick={() => chooseGroup(s.id, g.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-11 pr-3 py-1.5 text-left text-[12.5px] transition', groupId === g.id ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="building" size={12} /><span className="flex-1 truncate">{g.name}</span><span className="text-[10.5px] text-faint">department</span></button>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {visibleClients.length === 0 && <div className="px-3 py-8 text-center text-[12px] text-faint">No matches.</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>Save assignment</Button></div>
+      </div>
+    </Modal>
   );
 }
 
@@ -778,19 +834,51 @@ function InfoGrid({ rows }) {
       {rows.map(([k, v]) => (
         <div key={k} className="flex items-center justify-between gap-3 border-b border-line/60 pb-2">
           <span className="text-[12px] text-faint">{k}</span>
-          <span className="text-[12.5px] text-ink font-medium text-right truncate mono">{v}</span>
+          <span className={cx('text-[12.5px] text-ink font-medium text-right mono', String(v || '').includes('\n') ? 'whitespace-pre-line break-words' : 'truncate')}>{v}</span>
         </div>
       ))}
     </div>
   );
 }
-function InventorySection({ title, icon, children }) {
+function InventorySection({ title, icon, children, className = '' }) {
   return (
-    <Card className="p-4">
+    <Card className={cx('p-4', className)}>
       <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink"><Icon name={icon} size={14} className="text-muted" />{title}</div>
       {children}
     </Card>
   );
+}
+function inventoryBytes(bytes) {
+  const n = Number(bytes);
+  return Number.isFinite(n) && n > 0 ? Math.round(n / 1e9) + ' GB' : '';
+}
+function inventoryText(v) {
+  return v == null || String(v).trim() === '' ? 'Not reported' : String(v).trim();
+}
+function inventoryList(items, formatter) {
+  const lines = (items || []).map(formatter).filter(Boolean);
+  return lines.length ? lines.join('\n') : 'Not reported';
+}
+function hardwareRows(hw, cpu, mem) {
+  const mb = hw.motherboard || {};
+  const motherboard = [mb.manufacturer, mb.product || mb.model, mb.version].filter(Boolean).join(' ');
+  const motherboardSerial = mb.serial ? 'SN ' + mb.serial : '';
+  // Fold the (old) CPU & Memory section into the static rows: cores + live load
+  // ride along the Processor row, and live used% rides along the Memory row.
+  const procBase = inventoryText(hw.processor || cpu.model);
+  const procExtra = [cpu.cores ? cpu.cores + ' cores' : '', cpu.load_pct != null ? cpu.load_pct + '% load' : ''].filter(Boolean).join(' · ');
+  const memTotal = inventoryBytes(hw.memory_total_bytes) || (mem.total_gb ? mem.total_gb + ' GB' : '');
+  const memVal = memTotal ? (memTotal + (mem.used_pct != null ? ' · ' + mem.used_pct + '% used' : '')) : 'Not reported';
+  return [
+    ['Service tag', inventoryText(hw.service_tag || hw.serial_number)],
+    ['System model', inventoryText([hw.manufacturer, hw.system_model].filter(Boolean).join(' '))],
+    ['Processor', procExtra ? procBase + ' · ' + procExtra : procBase],
+    ['Memory', memVal],
+    ['Motherboard', inventoryText([motherboard, motherboardSerial].filter(Boolean).join('\n'))],
+    ['Video card', inventoryList(hw.gpus, (g) => [g.name || g.model, inventoryBytes(g.memory_bytes) || g.memory, g.driver_version].filter(Boolean).join(' · '))],
+    ['Storage', inventoryList(hw.storage_devices, (d) => [d.model || d.name, d.type || d.interface, inventoryBytes(d.size_bytes)].filter(Boolean).join(' · '))],
+    ['BIOS', inventoryText(hw.bios)],
+  ];
 }
 function InventoryView({ id }) {
   const invQ = useQuery([id, 'inv'], () => api.getInventory(id), {});
@@ -798,7 +886,7 @@ function InventoryView({ id }) {
   if (invQ.loading) return <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>;
   const data = invQ.data?.data || {};
   const sys = data.system || {}, cpu = data.cpu || {}, mem = data.memory || {}, net = data.network || {};
-  const disks = data.disks || [], sw = data.software || [];
+  const disks = data.disks || [], hw = data.hardware || {}, sw = data.software || [];
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -810,8 +898,8 @@ function InventoryView({ id }) {
           <InventorySection title="System" icon="devices">
             <InfoGrid rows={[['Hostname', sys.hostname], ['OS', sys.os], ['Arch', sys.arch], ['Domain', sys.domain], ['Uptime', (sys.uptime_hours || 0) + ' h']]} />
           </InventorySection>
-          <InventorySection title="CPU & Memory" icon="cpu">
-            <InfoGrid rows={[['Model', cpu.model], ['Cores', cpu.cores], ['Load', (cpu.load_pct || 0) + '%'], ['Memory', (mem.total_gb || 0) + ' GB'], ['Mem used', (mem.used_pct || 0) + '%']]} />
+          <InventorySection title="Hardware" icon="wrench" className="md:col-span-2">
+            <InfoGrid rows={hardwareRows(hw, cpu, mem)} />
           </InventorySection>
           <InventorySection title="Storage" icon="disk">
             <div className="space-y-2.5">

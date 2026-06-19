@@ -41,15 +41,15 @@ One-time 2FA recovery codes (id, user_id, `code_hash` SHA-256, `used_at`
 nullable). Issued when 2FA is enabled, single-use; cleared on disable/admin-reset.
 
 ### `user_scopes`
-Per-user access scope. Each row grants a user access to a Company (client),
-a Site, or a specific device; a user with no rows is **unrestricted**. Enforced
-on read + write paths and on the AI/MCP surface.
+Per-user access scope. Each row grants a user access to a Company (client), a
+Site, a Department (`group`), or a specific device; a user with no rows is
+**unrestricted**. Enforced on read + write paths and on the AI/MCP surface.
 | Column | Type | Notes |
 |--------|------|-------|
 | id | uuid PK | |
 | user_id | uuid FK → users | cascade delete |
-| scope_type | text | `client` / `site` / `agent` |
-| scope_id | uuid | id of the client/site/agent |
+| scope_type | text | `client` / `site` / `group` / `agent` |
+| scope_id | uuid | id of the client/site/group/agent |
 | | | unique on (user_id, scope_type, scope_id) |
 
 ### `api_tokens`

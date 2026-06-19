@@ -46,12 +46,12 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
 
 -- Per-user access scope. A user with NO rows has full access (all clients);
--- any rows restrict the user to the union of those client/site/agent subtrees.
+-- any rows restrict the user to the union of those client/site/group/agent subtrees.
 -- Scopes apply to tech/readonly; admins always have full access.
 CREATE TABLE IF NOT EXISTS user_scopes (
     id         UUID PRIMARY KEY,
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    scope_type TEXT NOT NULL, -- client | site | agent
+    scope_type TEXT NOT NULL, -- client | site | group | agent
     scope_id   UUID NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_id, scope_type, scope_id)

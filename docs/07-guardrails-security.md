@@ -77,9 +77,9 @@ tamper-evidence in production.
   the UI menu).
 - **Per-user access scope** (`user_scopes` table): a user is either *unrestricted*
   (sees the whole fleet) or *restricted* to one or more assignments at
-  Company / Site / specific-device granularity. Scope is enforced on **both** the
-  read path (list endpoints are filtered — devices, jobs, alerts, checks, tasks,
-  check-results, clients, sites) and the write/action path, so a restricted user
+  Company / Site / Department / specific-device granularity. Scope is enforced
+  on **both** the read path (list endpoints are filtered — devices, jobs,
+  alerts, checks, tasks, check-results, clients, sites) and the write/action path, so a restricted user
   cannot see or touch out-of-scope devices. **The AI/MCP respects the same scope**
   (see `06-ai-chat`). Chat sessions are owned (`created_by`) and private to their
   creator.

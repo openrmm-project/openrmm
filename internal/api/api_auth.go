@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -214,6 +215,48 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusCreated, u)
+}
+
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	target := chi.URLParam(r, "id")
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if roleLevel(in.Role) == 0 {
+		writeErr(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	if target == actorOf(r) {
+		writeErr(w, http.StatusBadRequest, "cannot change your own role")
+		return
+	}
+	old, err := s.store.GetUserByID(r.Context(), target)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if old.Username == "admin" && in.Role != models.RoleAdmin {
+		writeErr(w, http.StatusBadRequest, "cannot change the built-in admin role")
+		return
+	}
+	u, err := s.store.UpdateUserRole(r.Context(), target, in.Role)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if in.Role == models.RoleAdmin {
+		if err := s.store.ReplaceUserScopes(r.Context(), target, nil); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	detail, _ := json.Marshal(map[string]string{"from": old.Role, "to": in.Role})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.role.update", target, detail)
+	writeJSON(w, http.StatusOK, u)
 }
 
 // getUserScopes returns a user's access scopes (empty = full access).

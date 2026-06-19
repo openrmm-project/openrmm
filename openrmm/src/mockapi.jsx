@@ -74,6 +74,21 @@ const qs = (o) => {
 /* ---------- adapter: real (flat) inventory -> UI's structured shape ---------- */
 function adaptInventory(inv) {
   const d = (inv && inv.data) || {};
+  const rawHardware = d.hardware || {};
+  const asArray = (v) => Array.isArray(v) ? v : (v ? [v] : []);
+  const first = (...vals) => vals.find((v) => v != null && String(v).trim() !== '');
+  const hardware = {
+    service_tag: first(rawHardware.service_tag, rawHardware.serial_number, d.service_tag, d.serial_number),
+    serial_number: first(rawHardware.serial_number, d.serial_number),
+    processor: first(rawHardware.processor, d.cpu_model),
+    memory_total_bytes: d.mem_total_bytes,
+    system_model: first(rawHardware.system_model, rawHardware.model, d.system_model),
+    manufacturer: first(rawHardware.manufacturer, d.system_vendor),
+    bios: first(rawHardware.bios, rawHardware.bios_version, d.bios_version),
+    motherboard: rawHardware.motherboard || d.motherboard,
+    storage_devices: asArray(rawHardware.storage_devices || d.storage_devices),
+    gpus: asArray(rawHardware.gpus || d.gpus),
+  };
   const disks = (d.disks || []).map((x) => ({
     mount: x.mount, fs: x.fstype,
     total_gb: x.total_bytes ? Math.round(x.total_bytes / 1e9) : undefined,
@@ -87,6 +102,7 @@ function adaptInventory(inv) {
       cpu: { model: d.cpu_model, cores: d.cpu_cores || d.num_cpu },
       memory: { total_gb: d.mem_total_bytes ? Math.round(d.mem_total_bytes / 1e9) : undefined, used_pct: d.mem_used_percent != null ? Math.round(d.mem_used_percent) : undefined },
       disks,
+      hardware,
       network: { interfaces: (d.network_interfaces || []).map((n) => ({ name: n.name, ipv4: n.ipv4, mac: n.mac })) },
       software: (d.software || []).map((s) => ({ name: s.name, version: s.version })),
       agent: { version: d.agent_version, last_check_in: inv && inv.collected_at },
@@ -134,6 +150,7 @@ const api = {
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
+  deleteDevice(id) { return DELETE('/api/devices/' + id); },
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
   setDeviceGroup(id, group_id) { return PATCH('/api/devices/' + id + '/group', { group_id }); },
@@ -170,6 +187,7 @@ const api = {
   /* ---- users ---- */
   listUsers() { return GET('/api/users'); },
   createUser(body) { return POST('/api/users', body); },
+  updateUserRole(id, role) { return PATCH('/api/users/' + id, { role }); },
   deleteUser(id) { return DELETE('/api/users/' + id); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },

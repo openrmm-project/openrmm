@@ -859,19 +859,24 @@ function inventoryList(items, formatter) {
   const lines = (items || []).map(formatter).filter(Boolean);
   return lines.length ? lines.join('\n') : 'Not reported';
 }
-function hardwareRows(hw, cpu, mem, disks) {
+function hardwareRows(hw, cpu, mem) {
   const mb = hw.motherboard || {};
   const motherboard = [mb.manufacturer, mb.product || mb.model, mb.version].filter(Boolean).join(' ');
   const motherboardSerial = mb.serial ? 'SN ' + mb.serial : '';
+  // Fold the (old) CPU & Memory section into the static rows: cores + live load
+  // ride along the Processor row, and live used% rides along the Memory row.
+  const procBase = inventoryText(hw.processor || cpu.model);
+  const procExtra = [cpu.cores ? cpu.cores + ' cores' : '', cpu.load_pct != null ? cpu.load_pct + '% load' : ''].filter(Boolean).join(' · ');
+  const memTotal = inventoryBytes(hw.memory_total_bytes) || (mem.total_gb ? mem.total_gb + ' GB' : '');
+  const memVal = memTotal ? (memTotal + (mem.used_pct != null ? ' · ' + mem.used_pct + '% used' : '')) : 'Not reported';
   return [
     ['Service tag', inventoryText(hw.service_tag || hw.serial_number)],
-    ['Processor', inventoryText(hw.processor || cpu.model)],
-    ['Memory', inventoryText(inventoryBytes(hw.memory_total_bytes) || (mem.total_gb ? mem.total_gb + ' GB' : ''))],
-    ['Storage unit', inventoryList(hw.storage_devices, (d) => [d.model || d.name, d.type || d.interface, inventoryBytes(d.size_bytes)].filter(Boolean).join(' · '))],
-    ['Partition', inventoryList(disks, (d) => [d.mount, d.fs, d.total_gb ? (d.free_gb + ' / ' + d.total_gb + ' GB free') : ''].filter(Boolean).join(' · '))],
+    ['System model', inventoryText([hw.manufacturer, hw.system_model].filter(Boolean).join(' '))],
+    ['Processor', procExtra ? procBase + ' · ' + procExtra : procBase],
+    ['Memory', memVal],
     ['Motherboard', inventoryText([motherboard, motherboardSerial].filter(Boolean).join('\n'))],
     ['Video card', inventoryList(hw.gpus, (g) => [g.name || g.model, inventoryBytes(g.memory_bytes) || g.memory, g.driver_version].filter(Boolean).join(' · '))],
-    ['System model', inventoryText([hw.manufacturer, hw.system_model].filter(Boolean).join(' '))],
+    ['Storage', inventoryList(hw.storage_devices, (d) => [d.model || d.name, d.type || d.interface, inventoryBytes(d.size_bytes)].filter(Boolean).join(' · '))],
     ['BIOS', inventoryText(hw.bios)],
   ];
 }
@@ -894,10 +899,7 @@ function InventoryView({ id }) {
             <InfoGrid rows={[['Hostname', sys.hostname], ['OS', sys.os], ['Arch', sys.arch], ['Domain', sys.domain], ['Uptime', (sys.uptime_hours || 0) + ' h']]} />
           </InventorySection>
           <InventorySection title="Hardware" icon="wrench" className="md:col-span-2">
-            <InfoGrid rows={hardwareRows(hw, cpu, mem, disks)} />
-          </InventorySection>
-          <InventorySection title="CPU & Memory" icon="cpu">
-            <InfoGrid rows={[['Model', cpu.model], ['Cores', cpu.cores], ['Load', (cpu.load_pct || 0) + '%'], ['Memory', (mem.total_gb || 0) + ' GB'], ['Mem used', (mem.used_pct || 0) + '%']]} />
+            <InfoGrid rows={hardwareRows(hw, cpu, mem)} />
           </InventorySection>
           <InventorySection title="Storage" icon="disk">
             <div className="space-y-2.5">

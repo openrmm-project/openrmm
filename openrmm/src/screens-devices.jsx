@@ -7,7 +7,7 @@ function DevicesScreen({ navigate }) {
   const [q, setQ] = useState('');
   const [osF, setOsF] = useState('all');
   const [statusF, setStatusF] = useState('all');
-  const [siteF, setSiteF] = useState('all');
+  const [clientF, setClientF] = useState('all');
   const [selected, setSelected] = useState(null);
   const { can } = useAuth();
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -16,13 +16,14 @@ function DevicesScreen({ navigate }) {
   const sites = sitesQ.data?.sites || [];
   const clients = clientsQ.data?.clients || [];
   const siteName = (id) => sites.find((s) => s.id === id)?.name || '—';
+  const clientOfSite = (id) => sites.find((s) => s.id === id)?.client_id || '';
   const osFamily = (os) => { const o = os.toLowerCase(); return o.includes('win') ? 'Windows' : o.includes('mac') ? 'macOS' : 'Linux'; };
 
   const filtered = devices.filter((d) => {
     if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((t) => t.includes(q.toLowerCase())))) return false;
     if (osF !== 'all' && osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
-    if (siteF !== 'all' && d.site_id !== siteF) return false;
+    if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
   });
 
@@ -43,9 +44,9 @@ function DevicesScreen({ navigate }) {
           <Select value={statusF} onChange={(e) => setStatusF(e.target.value)} className="w-auto min-w-[120px]">
             <option value="all">Any status</option><option value="online">Online</option><option value="offline">Offline</option>
           </Select>
-          <Select value={siteF} onChange={(e) => setSiteF(e.target.value)} className="w-auto min-w-[150px]">
-            <option value="all">All sites</option>
-            {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
+          <Select value={clientF} onChange={(e) => setClientF(e.target.value)} className="w-auto min-w-[150px]">
+            <option value="all">All clients</option>
+            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
         </div>
       </Card>

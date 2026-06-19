@@ -241,6 +241,14 @@ function ClientsScreen() {
   const selClient = selSite && clients.find((c) => c.id === selSite.client_id);
   const nameHit = !!ql && ((selSite && selSite.name.toLowerCase().includes(ql)) || (selClient && selClient.name.toLowerCase().includes(ql)));
   const selDevices = devices.filter((d) => d.site_id === sel && (!ql || nameHit || devMatch(d)));
+  // When searching by device, auto-focus the match: keep the current site if it
+  // already has a match, otherwise jump to the first matching device's site/dept.
+  useEffect(() => {
+    if (!ql) return;
+    if (sel && devices.some((d) => d.site_id === sel && devMatch(d))) return;
+    const hit = devices.find((d) => d.site_id && devMatch(d));
+    if (hit) { setSel(hit.site_id); setSelDept(hit.group_id || null); }
+  }, [ql]);
 
   const addClient = async () => { await api.createClient(name); setName(''); setCreatingClient(false); toast.success('Client created'); };
 
@@ -320,7 +328,7 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
             );
           })}
           {can('admin') && (adding ? (
-            <div className="flex items-center gap-2 pl-10 pr-3 py-2"><Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSite()} placeholder="Site name" className="h-8" autoFocus /><Button size="sm" variant="primary" onClick={addSite} disabled={!name}>Add</Button></div>
+            <div className="flex items-center gap-2 pl-10 pr-3 py-2"><Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSite(); if (e.key === 'Escape') { setAdding(false); setName(''); } }} onBlur={() => { setAdding(false); setName(''); }} placeholder="Site name" className="h-8" autoFocus /><Button size="sm" variant="primary" onMouseDown={(e) => e.preventDefault()} onClick={addSite} disabled={!name}>Add</Button></div>
           ) : <button onClick={() => setAdding(true)} className="w-full flex items-center gap-2 pl-10 pr-3.5 py-2 text-[12px] text-faint hover:text-muted transition"><Icon name="plus" size={13} />Add site</button>)}
         </div>
       )}

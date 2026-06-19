@@ -139,6 +139,10 @@ func (s *Server) Router() http.Handler {
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
 			r.Patch("/devices/{id}", s.updateDeviceMeta) // description + note (scope-checked)
 			r.Post("/jobs", s.createJob)
+			r.Post("/jobs/bulk", s.createBulkJob)
+			r.Get("/jobs/batch/{batch_id}", s.getBatch)
+			r.Post("/jobs/batch/{batch_id}/approve", s.approveBatch)
+			r.Post("/jobs/batch/{batch_id}/reject", s.rejectBatch)
 			r.Post("/jobs/{id}/approve", s.approveJob)
 			r.Post("/jobs/{id}/reject", s.rejectJob)
 			r.Post("/jobs/{id}/cancel", s.cancelJob)
@@ -721,6 +725,148 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, job)
+}
+
+// createBulkJob fans a script out to many devices as ONE approval-gated batch.
+// Targets are the union of explicit agent_ids + a device group + a site,
+// intersected with the caller's access scope. Every job lands in
+// awaiting_approval sharing a batch_id; nothing runs until the batch is approved.
+func (s *Server) createBulkJob(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentIDs    []string `json:"agent_ids"`
+		GroupID     string   `json:"group_id"`
+		SiteID      string   `json:"site_id"`
+		Shell       string   `json:"shell"`
+		Script      string   `json:"script"`
+		Description string   `json:"description"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if in.Script == "" {
+		writeErr(w, http.StatusBadRequest, "script is required")
+		return
+	}
+	if in.Shell == "" {
+		in.Shell = models.ShellBash
+	}
+	targets := map[string]bool{}
+	for _, id := range in.AgentIDs {
+		if id != "" {
+			targets[id] = true
+		}
+	}
+	if in.GroupID != "" {
+		ags, err := s.store.ListAgentsByGroup(r.Context(), in.GroupID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, a := range ags {
+			targets[a.ID] = true
+		}
+	}
+	if in.SiteID != "" {
+		ags, err := s.store.ListAgentsBySite(r.Context(), in.SiteID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, a := range ags {
+			targets[a.ID] = true
+		}
+	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		for id := range targets {
+			if !set[id] {
+				delete(targets, id)
+			}
+		}
+	}
+	if len(targets) == 0 {
+		writeErr(w, http.StatusBadRequest, "no in-scope target devices resolved")
+		return
+	}
+	ids := make([]string, 0, len(targets))
+	for id := range targets {
+		ids = append(ids, id)
+	}
+	jobs, batchID, err := s.jobs.ProposeBatch(r.Context(), ids, in.Shell, in.Script, in.Description, actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	jobIDs := make([]string, len(jobs))
+	for i := range jobs {
+		jobIDs[i] = jobs[i].ID
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"batch_id": batchID, "count": len(jobs), "job_ids": jobIDs})
+}
+
+// batchScopeOK 403s a scoped caller if the batch targets any out-of-scope device.
+func (s *Server) batchScopeOK(w http.ResponseWriter, r *http.Request, batchID string) bool {
+	set, scoped := s.scopedAgentSet(r)
+	if !scoped {
+		return true
+	}
+	jobs, err := s.store.ListJobsByBatch(r.Context(), batchID)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return false
+	}
+	for _, j := range jobs {
+		if !set[j.AgentID] {
+			writeErr(w, http.StatusForbidden, "batch contains devices outside your access scope")
+			return false
+		}
+	}
+	return true
+}
+
+// getBatch returns the jobs in a batch (scope-filtered) for the review/approval UI.
+func (s *Server) getBatch(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.store.ListJobsByBatch(r.Context(), chi.URLParam(r, "batch_id"))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if set, scoped := s.scopedAgentSet(r); scoped {
+		out := make([]models.Job, 0, len(jobs))
+		for _, j := range jobs {
+			if set[j.AgentID] {
+				out = append(out, j)
+			}
+		}
+		jobs = out
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs})
+}
+
+func (s *Server) approveBatch(w http.ResponseWriter, r *http.Request) {
+	batchID := chi.URLParam(r, "batch_id")
+	if !s.batchScopeOK(w, r, batchID) {
+		return
+	}
+	n, err := s.jobs.ApproveBatch(r.Context(), batchID, actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"approved": n})
+}
+
+func (s *Server) rejectBatch(w http.ResponseWriter, r *http.Request) {
+	batchID := chi.URLParam(r, "batch_id")
+	if !s.batchScopeOK(w, r, batchID) {
+		return
+	}
+	n, err := s.jobs.RejectBatch(r.Context(), batchID, actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rejected": n})
 }
 
 // requireJobAgent 403s when the job's target agent is outside the principal's

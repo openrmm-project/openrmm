@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
 )
@@ -21,6 +23,7 @@ type Store interface {
 	SetJobStatus(ctx context.Context, id, status string, approvedBy *string) error
 	SetJobResult(ctx context.Context, id, status string, exitCode int, stdout, stderr string) error
 	ListDispatchableJobs(ctx context.Context, agentID string) ([]models.Job, error)
+	ListJobsByBatch(ctx context.Context, batchID string) ([]models.Job, error)
 	AddAudit(ctx context.Context, actor, action, target string, detail []byte) error
 }
 
@@ -128,6 +131,74 @@ func (s *Service) Reject(ctx context.Context, jobID, actor string) (*models.Job,
 	}
 	s.audit(ctx, actor, "job.reject", jobID, nil)
 	return s.store.GetJob(ctx, jobID)
+}
+
+// ProposeBatch creates one approval-gated job per agent, all sharing a fresh
+// batch_id, for a bulk/mass deployment. Nothing is dispatched until the batch is
+// approved (ApproveBatch) — the same human-in-the-loop guardrail, once for many.
+func (s *Service) ProposeBatch(ctx context.Context, agentIDs []string, shell, script, description, createdBy string) ([]models.Job, string, error) {
+	batchID := uuid.NewString()
+	out := make([]models.Job, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		j := &models.Job{
+			AgentID:          agentID,
+			Type:             models.JobRunScript,
+			Description:      description,
+			Shell:            shell,
+			Script:           script,
+			Status:           models.JobAwaitingApproval,
+			RequiresApproval: true,
+			CreatedBy:        createdBy,
+			BatchID:          &batchID,
+		}
+		created, err := s.store.CreateJob(ctx, j)
+		if err != nil {
+			return nil, "", err
+		}
+		out = append(out, *created)
+	}
+	s.audit(ctx, createdBy, "job.batch.propose", batchID, map[string]any{"agents": len(out), "shell": shell})
+	return out, batchID, nil
+}
+
+// ApproveBatch approves every still-awaiting job in a batch and dispatches each.
+// Targets already rejected/removed are skipped. Returns how many were approved.
+func (s *Service) ApproveBatch(ctx context.Context, batchID, approver string) (int, error) {
+	jobs, err := s.store.ListJobsByBatch(ctx, batchID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range jobs {
+		if jobs[i].Status != models.JobAwaitingApproval {
+			continue
+		}
+		if _, err := s.Approve(ctx, jobs[i].ID, approver); err == nil {
+			n++
+		}
+	}
+	s.audit(ctx, approver, "job.batch.approve", batchID, map[string]any{"approved": n})
+	return n, nil
+}
+
+// RejectBatch rejects every still-awaiting job in a batch (cancels the deployment
+// before anything runs). Returns how many were rejected.
+func (s *Service) RejectBatch(ctx context.Context, batchID, actor string) (int, error) {
+	jobs, err := s.store.ListJobsByBatch(ctx, batchID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range jobs {
+		if jobs[i].Status != models.JobAwaitingApproval {
+			continue
+		}
+		if _, err := s.Reject(ctx, jobs[i].ID, actor); err == nil {
+			n++
+		}
+	}
+	s.audit(ctx, actor, "job.batch.reject", batchID, map[string]any{"rejected": n})
+	return n, nil
 }
 
 // Cancel stops a job. Proposals (not yet dispatched) are rejected; in-flight

@@ -159,6 +159,24 @@ func (s *Store) ListAgentsBySite(ctx context.Context, siteID string) ([]models.A
 	return out, rows.Err()
 }
 
+// ListAgentsByGroup returns the agents in a device group.
+func (s *Store) ListAgentsByGroup(ctx context.Context, groupID string) ([]models.Agent, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents WHERE group_id=$1 ORDER BY hostname`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Agent
+	for rows.Next() {
+		a, err := scanAgent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
 // SetAgentStatus updates online/offline state and last_seen.
 func (s *Store) SetAgentStatus(ctx context.Context, id, status string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agents SET status=$2, last_seen=now() WHERE id=$1`, id, status)
@@ -235,12 +253,12 @@ func (s *Store) APITokenExists(ctx context.Context, hash string) (bool, error) {
 // ---------- Jobs ----------
 
 const jobCols = `id, agent_id, type, description, shell, script, status, requires_approval,
-	created_by, approved_by, task_id, exit_code, stdout, stderr, created_at, updated_at`
+	created_by, approved_by, task_id, batch_id, exit_code, stdout, stderr, created_at, updated_at`
 
 func scanJob(row pgx.Row) (*models.Job, error) {
 	var j models.Job
 	err := row.Scan(&j.ID, &j.AgentID, &j.Type, &j.Description, &j.Shell, &j.Script, &j.Status,
-		&j.RequiresApproval, &j.CreatedBy, &j.ApprovedBy, &j.TaskID, &j.ExitCode, &j.Stdout, &j.Stderr,
+		&j.RequiresApproval, &j.CreatedBy, &j.ApprovedBy, &j.TaskID, &j.BatchID, &j.ExitCode, &j.Stdout, &j.Stderr,
 		&j.CreatedAt, &j.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -255,9 +273,9 @@ func scanJob(row pgx.Row) (*models.Job, error) {
 func (s *Store) CreateJob(ctx context.Context, j *models.Job) (*models.Job, error) {
 	j.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by, task_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, j.Status, j.RequiresApproval, j.CreatedBy, j.TaskID)
+		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by, task_id, batch_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, j.Status, j.RequiresApproval, j.CreatedBy, j.TaskID, j.BatchID)
 	if err != nil {
 		return nil, err
 	}
@@ -267,6 +285,24 @@ func (s *Store) CreateJob(ctx context.Context, j *models.Job) (*models.Job, erro
 // GetJob fetches one job.
 func (s *Store) GetJob(ctx context.Context, id string) (*models.Job, error) {
 	return scanJob(s.pool.QueryRow(ctx, `SELECT `+jobCols+` FROM jobs WHERE id=$1`, id))
+}
+
+// ListJobsByBatch returns all jobs that share a batch_id (a bulk deployment).
+func (s *Store) ListJobsByBatch(ctx context.Context, batchID string) ([]models.Job, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+jobCols+` FROM jobs WHERE batch_id=$1 ORDER BY created_at`, batchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Job
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *j)
+	}
+	return out, rows.Err()
 }
 
 // ListJobs returns jobs, optionally filtered by agent, newest first.

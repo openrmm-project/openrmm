@@ -67,6 +67,7 @@ type Job struct {
 	CreatedBy        string    `json:"created_by"`
 	ApprovedBy       *string   `json:"approved_by,omitempty"`
 	TaskID           *string   `json:"task_id,omitempty"`
+	BatchID          *string   `json:"batch_id,omitempty"`
 	ExitCode         *int      `json:"exit_code,omitempty"`
 	Stdout           string    `json:"stdout"`
 	Stderr           string    `json:"stderr"`

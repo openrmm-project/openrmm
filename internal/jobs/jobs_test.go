@@ -79,6 +79,16 @@ func (f *fakeStore) ListDispatchableJobs(_ context.Context, agentID string) ([]m
 	return out, nil
 }
 
+func (f *fakeStore) ListJobsByBatch(_ context.Context, batchID string) ([]models.Job, error) {
+	var out []models.Job
+	for _, j := range f.jobs {
+		if j.BatchID != nil && *j.BatchID == batchID {
+			out = append(out, *j)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) AddAudit(_ context.Context, actor, action, target string, detail []byte) error {
 	f.audits = append(f.audits, action)
 	return nil

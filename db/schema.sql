@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_by        TEXT NOT NULL DEFAULT '',
     approved_by       TEXT,
     task_id           UUID,
+    batch_id          UUID,
     exit_code         INTEGER,
     stdout            TEXT NOT NULL DEFAULT '',
     stderr            TEXT NOT NULL DEFAULT '',
@@ -158,6 +159,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_task ON jobs(task_id);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_id UUID;
+-- Bulk/mass-deployment grouping: jobs created together share a batch_id.
+-- (ADD COLUMN before the index so it works on pre-existing jobs tables too.)
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS batch_id UUID;
+CREATE INDEX IF NOT EXISTS idx_jobs_batch ON jobs(batch_id);
 
 -- ===================== Inventory =====================
 

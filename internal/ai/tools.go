@@ -76,6 +76,18 @@ func Tools() []Tool {
 			Description: "Cancel a job: rejects it if still awaiting approval, or kills the running process on the device if it is in progress (e.g. a stuck script/download). This stops execution; it never runs anything.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"],"additionalProperties":false}`),
 		}},
+		{Type: "function", Function: FunctionDef{
+			Name: "propose_bulk_deploy",
+			Description: "Propose running ONE script across MANY devices at once (a mass deployment, e.g. \"install X on every device\" or \"deploy to all companies\"). DOES NOT execute: it creates approval-gated jobs, automatically SPLIT INTO ONE BATCH PER COMPANY — a deployment never spans companies — and a human approves each company batch in the UI. To choose targets, first call list_devices and pass their ids in agent_ids (optionally narrow with site_id or group_id). Write the script for the targets' OS.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"agent_ids":{"type":"array","items":{"type":"string"},"description":"target device ids (from list_devices)"},
+				"site_id":{"type":"string","description":"optional: also target every device of this site"},
+				"group_id":{"type":"string","description":"optional: also target every device of this department (group)"},
+				"shell":{"type":"string","enum":["bash","sh","powershell","cmd"],"description":"interpreter for the script"},
+				"script":{"type":"string","description":"the full script source to run on every target"},
+				"description":{"type":"string","description":"one-line human summary of the deployment"}
+			},"required":["shell","script","description"],"additionalProperties":false}`),
+		}},
 	}
 	return append(base, highLevelTools()...)
 }
@@ -92,6 +104,8 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(getInventory(ctx, tc, args))
 	case "propose_script":
 		return proposeScript(ctx, tc, args)
+	case "propose_bulk_deploy":
+		return proposeBulkDeploy(ctx, tc, args)
 	case "get_job_status":
 		return jsonResult(getJobStatus(ctx, tc, args))
 	case "cancel_job":
@@ -186,6 +200,91 @@ func proposeJob(ctx context.Context, tc ToolContext, agentID, shell, script, des
 		"message": "Job created and is AWAITING HUMAN APPROVAL. It will not run until a person approves it in the UI.",
 	})
 	return ToolResult{Output: string(out), CreatedJobIDs: []string{job.ID}}
+}
+
+// proposeBulkDeploy proposes a mass deployment: it resolves the target devices
+// (agent_ids ∪ site ∪ department), keeps only those in the caller's access
+// scope, and hands them to jobs.ProposeBulk, which splits them BY COMPANY into
+// one approval-gated batch per company. Nothing runs until a human approves.
+func proposeBulkDeploy(ctx context.Context, tc ToolContext, args json.RawMessage) ToolResult {
+	var in struct {
+		AgentIDs    []string `json:"agent_ids"`
+		SiteID      string   `json:"site_id"`
+		GroupID     string   `json:"group_id"`
+		Shell       string   `json:"shell"`
+		Script      string   `json:"script"`
+		Description string   `json:"description"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return errResult(err.Error())
+	}
+	if in.Script == "" {
+		return errResult("script is required")
+	}
+	if in.Shell == "" {
+		in.Shell = models.ShellBash
+	}
+	targets := map[string]bool{}
+	for _, id := range in.AgentIDs {
+		if id != "" {
+			targets[id] = true
+		}
+	}
+	if in.GroupID != "" {
+		ags, err := tc.Store.ListAgentsByGroup(ctx, in.GroupID)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		for _, a := range ags {
+			targets[a.ID] = true
+		}
+	}
+	if in.SiteID != "" {
+		ags, err := tc.Store.ListAgentsBySite(ctx, in.SiteID)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		for _, a := range ags {
+			targets[a.ID] = true
+		}
+	}
+	// Keep only in-scope devices.
+	if tc.ScopeUserID != "" {
+		ags, err := tc.Store.ListAgentsForUser(ctx, tc.ScopeUserID)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		allowed := make(map[string]bool, len(ags))
+		for _, a := range ags {
+			allowed[a.ID] = true
+		}
+		for id := range targets {
+			if !allowed[id] {
+				delete(targets, id)
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return errResult("no in-scope target devices resolved")
+	}
+	ids := make([]string, 0, len(targets))
+	for id := range targets {
+		ids = append(ids, id)
+	}
+	batches, err := tc.Jobs.ProposeBulk(ctx, ids, in.Shell, in.Script, in.Description, "ai:"+tc.Actor)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	var jobIDs []string
+	for _, b := range batches {
+		jobIDs = append(jobIDs, b.JobIDs...)
+	}
+	out, _ := json.Marshal(map[string]any{
+		"batches": len(batches),
+		"jobs":    len(jobIDs),
+		"message": fmt.Sprintf("Prepared a bulk deployment: %d job(s) split into %d company batch(es). ALL are AWAITING HUMAN APPROVAL — nothing runs until a person approves each batch in the UI.", len(jobIDs), len(batches)),
+	})
+	return ToolResult{Output: string(out), CreatedJobIDs: jobIDs}
 }
 
 func getJobStatus(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {

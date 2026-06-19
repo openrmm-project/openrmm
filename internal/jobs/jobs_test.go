@@ -89,6 +89,10 @@ func (f *fakeStore) ListJobsByBatch(_ context.Context, batchID string) ([]models
 	return out, nil
 }
 
+func (f *fakeStore) ClientForAgents(_ context.Context, agentIDs []string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
 func (f *fakeStore) AddAudit(_ context.Context, actor, action, target string, detail []byte) error {
 	f.audits = append(f.audits, action)
 	return nil

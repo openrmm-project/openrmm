@@ -162,7 +162,8 @@ function PolicyDetail({ policy, onClose }) {
 
   const addAssignment = async () => { if (!addScope) return; const [type, id] = addScope.split(':'); await api.createAssignment(policy.id, { scope_type: type, scope_id: id }); setAddScope(''); toast.success('Assigned', 'Checks & tasks now apply to that scope.'); };
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info('Assignment removed'); };
-  const del = async () => { if (!window.confirm('Delete this policy? Its checks, tasks and assignments will be removed.')) return; try { await api.deletePolicy(policy.id); toast.info('Policy deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
+  const [confirmDel, setConfirmDel] = useState(false);
+  const del = async () => { try { await api.deletePolicy(policy.id); toast.info('Policy deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
 
   return (
     <Drawer open onClose={onClose} width="max-w-[720px]">
@@ -199,9 +200,10 @@ function PolicyDetail({ policy, onClose }) {
       </div>
       {can('admin') && (
         <div className="px-5 py-3.5 border-t border-line flex justify-end">
-          <Button variant="danger" icon="trash" onClick={del}>Delete policy</Button>
+          <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete policy</Button>
         </div>
       )}
+      <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={del} danger title="Delete policy?" body={<>This removes <b>{policy.name}</b> with its checks, tasks and assignments. This cannot be undone.</>} confirmLabel="Delete policy" />
     </Drawer>
   );
 }
@@ -671,7 +673,7 @@ function ScopePicker({ scopes, setScopes }) {
   const [q, setQ] = useState('');
   const [allSites, setAllSites] = useState(null); // every site (for search by name + client lookup)
   const [found, setFound] = useState([]);          // device search results
-  // Mode is independent of the selection so "Restrito" works before any node is
+  // Mode is independent of the selection so "Restricted" works before any node is
   // picked (empty selection still means full access on save — hinted below).
   const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
   const restricted = mode === 'restricted';
@@ -714,16 +716,16 @@ function ScopePicker({ scopes, setScopes }) {
   return (
     <div className="space-y-2">
       <div className="flex gap-4 text-[12px]">
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Acesso total</label>
-        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restrito a…</label>
-        {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selecionado(s)</span>}
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={!restricted} onChange={() => { setMode('full'); setScopes([]); }} className="accent-brand" />Full access</label>
+        <label className="flex items-center gap-1.5 cursor-pointer"><input type="radio" checked={restricted} onChange={() => { setMode('restricted'); if (clients === null) loadClients(); }} className="accent-brand" />Restricted to…</label>
+        {restricted && <span className="ml-auto text-[11px] text-faint">{scopes.length} selected</span>}
       </div>
       {restricted && (
         <div className="rounded-xl border border-line overflow-hidden">
           <div className="p-2 border-b border-line"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company/site/device…" className="text-[12px] h-8" /></div>
           <div className="max-h-72 overflow-y-auto p-1">
             {searching ? (() => {
-              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Buscando…</div>;
+              if (allSites === null || clients === null) return <div className="p-3 text-center text-faint text-[12px]">Searching…</div>;
               const m = (n) => (n || '').toLowerCase().includes(q.trim().toLowerCase());
               const siteObj = {}; allSites.forEach((s) => { siteObj[s.id] = s; });
               const clientObj = {}; clients.forEach((c) => { clientObj[c.id] = c; });
@@ -734,7 +736,7 @@ function ScopePicker({ scopes, setScopes }) {
               // relevant clients = parents of relevant sites + name matches
               const clientIds = new Set(clients.filter((c) => m(c.name)).map((c) => c.id));
               siteIds.forEach((sid) => { const s = siteObj[sid]; if (s) clientIds.add(s.client_id); });
-              if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">Nada encontrado para “{q}”.</div>;
+              if (clientIds.size === 0) return <div className="p-3 text-center text-faint text-[12px]">No results for “{q}”.</div>;
               // build the filtered, auto-expanded tree (only branches with results)
               return [...clientIds].map((cid) => {
                 const c = clientObj[cid]; if (!c) return null;
@@ -756,7 +758,7 @@ function ScopePicker({ scopes, setScopes }) {
                 );
               });
             })() : <>
-            {clients === null && <div className="p-3 text-center text-faint text-[12px]">Carregando…</div>}
+            {clients === null && <div className="p-3 text-center text-faint text-[12px]">Loading…</div>}
             {clients && clients.length === 0 && <div className="p-3 text-center text-faint text-[12px]">No companies yet.</div>}
             {(clients || []).filter((c) => match(c.name) || expC[c.id]).map((c) => (
               <div key={c.id}>
@@ -772,11 +774,11 @@ function ScopePicker({ scopes, setScopes }) {
                         const covered = siteCovered || sel.has('site:' + st.id);
                         return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
                       })}
-                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">sem máquinas</div>}
+                      {expS[st.id] && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no devices</div>}
                     </div>
                   );
                 })}
-                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">sem sites</div>}
+                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">no sites</div>}
               </div>
             ))}
             </>}

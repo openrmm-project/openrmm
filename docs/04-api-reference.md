@@ -62,10 +62,14 @@ here**.
 |--------|------|-------------|
 | GET | `/api/jobs?agent_id=&limit=` | List jobs (newest first) |
 | POST | `/api/jobs` | Create/propose a job |
+| POST | `/api/jobs/bulk` | tech: mass deployment — one script to many devices |
 | GET | `/api/jobs/{id}` | One job (with result) |
 | POST | `/api/jobs/{id}/approve` | Approve → dispatch |
 | POST | `/api/jobs/{id}/reject` | Reject a proposal |
 | POST | `/api/jobs/{id}/cancel` | Reject if pending, or request cancel of a running job |
+| GET | `/api/jobs/batch/{batch_id}` | tech: the jobs in a bulk batch (scope-filtered) |
+| POST | `/api/jobs/batch/{batch_id}/approve` | tech: approve every awaiting job in the batch |
+| POST | `/api/jobs/batch/{batch_id}/reject` | tech: reject every awaiting job in the batch |
 
 `POST /jobs` body:
 ```json
@@ -74,6 +78,26 @@ here**.
 ```
 `require_approval` defaults to `true`. With `false`, the job is dispatched
 immediately (use only for trusted automation, never for AI-authored scripts).
+
+### Bulk deployment (`POST /jobs/bulk`)
+
+```json
+{ "agent_ids": ["..."], "site_id": "...", "group_id": "...",
+  "shell": "bash", "script": "...", "description": "..." }
+```
+Targets are the **union** of `agent_ids` + a `site_id` + a `group_id`
+(department), intersected with the caller's access scope. The targets are then
+**split by company** — a deployment never spans companies — into **one
+approval-gated batch per company**. So a "deploy to all companies" request fans
+out into several batches, each approved/run within its own company. Approval
+stays mandatory. Response:
+```json
+{ "batches": [{ "client_id": "...", "batch_id": "...", "count": 3 }],
+  "companies": 1, "count": 3 }
+```
+Review/approve a batch as one unit via `/api/jobs/batch/{batch_id}` (jobs share a
+`batch_id`). Same engine backs the AI `propose_bulk_deploy` tool — see
+[06-ai-chat](06-ai-chat.md).
 
 ## Audit
 
@@ -175,9 +199,11 @@ boolean `*_set` flags.
 |--------|------|------|-------------|
 | GET | `/api/clients` | readonly | List clients |
 | POST | `/api/clients` | admin | `{name}` |
+| PATCH | `/api/clients/{id}` | admin | `{name}` rename a client |
 | DELETE | `/api/clients/{id}` | admin | Delete (cascades to sites) |
 | GET | `/api/sites?client_id=` | readonly | List sites |
 | POST | `/api/sites` | admin | `{client_id,name}` |
+| PATCH | `/api/sites/{id}` | admin | `{name}` rename a site |
 | DELETE | `/api/sites/{id}` | admin | Delete site |
 | PATCH | `/api/devices/{id}/site` | admin | `{site_id}` reassign a device |
 
@@ -238,14 +264,17 @@ boolean `*_set` flags.
 | POST | `/api/api-tokens` | admin | `{name, role}` → token (shown once) |
 | DELETE | `/api/api-tokens/{id}` | admin | Revoke a token |
 
-## Device groups & destructive actions
+## Departments (device groups) & destructive actions
+
+A **department** is a device group **under a site** (Company > Site >
+Department); it never spans companies/sites. Optional.
 
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
-| GET | `/api/groups` | readonly | List device groups |
-| POST | `/api/groups` | admin | `{name}` |
-| DELETE | `/api/groups/{id}` | admin | Delete a group (audited) |
-| PATCH | `/api/devices/{id}/group` | admin | `{group_id}` assign/clear group |
+| GET | `/api/groups` | readonly | List departments (each carries its `site_id`) |
+| POST | `/api/groups` | admin | `{name, site_id}` — `site_id` is **required** |
+| DELETE | `/api/groups/{id}` | admin | Delete a department (audited) |
+| PATCH | `/api/devices/{id}/group` | admin | `{group_id}` assign/clear — the department must be in the device's own site |
 | DELETE | `/api/devices/{id}` | admin | Delete a device (audited; never via AI/MCP) |
 
 ## MCP endpoint

@@ -57,15 +57,22 @@ everything. The same enforcement applies to the MCP server (`11-mcp`).
 | `fleet_summary` | read | Aggregate counts + recent jobs (for reports) |
 | `cancel_job` | control | Reject a pending job or request cancel of a running one |
 | `propose_script` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
+| `propose_bulk_deploy` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
 
-### Why `propose_script` is the only write tool
+### Why the write tools only *propose*
 
-The model can read everything but the **single** mutating action it can take is
-to *propose* a job. `propose_script` calls `jobs.Propose(..., requireApproval=true)`,
+The model can read everything but the only mutating actions it can take are to
+*propose* jobs. `propose_script` calls `jobs.Propose(..., requireApproval=true)`,
 which creates a job in `awaiting_approval`. Nothing reaches an endpoint until a
 human approves it via `POST /api/jobs/{id}/approve`. The tool's return value
 explicitly tells the model the job is pending approval, so it won't claim
 success. This is the guardrail, enforced in code.
+
+`propose_bulk_deploy` is the same guardrail for **mass deployment**: it resolves
+the targets (device ids ∪ site ∪ department), keeps only the caller's in-scope
+devices, and calls `jobs.ProposeBulk`, which splits them **by company** into one
+`awaiting_approval` batch per company (a deployment never spans companies). The
+human approves each company batch in the UI; nothing runs before that.
 
 ## High-level tools (OS-aware actions)
 
@@ -111,7 +118,7 @@ model renders the data as a **GitHub Markdown table** (or a fenced ` ```csv ` bl
 The chat UI (`openrmm/src/screens-chat.jsx`) parses the assistant message:
 
 - Markdown tables render as real HTML tables.
-- A **"Baixar CSV"** button appears under the message; it builds the CSV and
+- A **"Download CSV"** button appears under the message; it builds the CSV and
   downloads it **client-side via a `Blob`** — nothing is written on the server or
   the endpoint, and no file artifact is persisted.
 

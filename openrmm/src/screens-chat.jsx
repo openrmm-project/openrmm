@@ -236,7 +236,7 @@ function ChatMessage({ m, navigate }) {
         <div className="text-[13.5px] text-ink space-y-0.5">{renderRich(m.content)}</div>
         {csv && (
           <button onClick={() => downloadText('report-' + (m.id || 'export') + '.csv', csv, 'text/csv')} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line bg-card hover:border-line2 hover:bg-elevated/60 transition px-2.5 py-1.5 text-[12px] text-muted hover:text-ink">
-            <Icon name="download" size={13} className="text-brandhi" />Baixar CSV
+            <Icon name="download" size={13} className="text-brandhi" />Download CSV
           </button>
         )}
         {jobIds.map((id) => <ProposedJob key={id} jobId={id} navigate={navigate} />)}

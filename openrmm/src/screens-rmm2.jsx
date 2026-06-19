@@ -235,7 +235,7 @@ function ClientsScreen() {
           {clients.map((c) => <ClientNode key={c.id} client={c} sites={sites.filter((s) => s.client_id === c.id)} sel={sel} setSel={setSel} siteCount={siteCount} clientCount={clientCount} />)}
           {clients.length === 0 && <Card><EmptyState icon="building" title="No clients" /></Card>}
         </div>
-        <div>{selSite ? <SiteDetail site={selSite} client={clients.find((c) => c.id === selSite.client_id)} devices={devices.filter((d) => d.site_id === sel)} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
+        <div>{selSite ? <SiteDetail site={selSite} client={clients.find((c) => c.id === selSite.client_id)} devices={devices.filter((d) => d.site_id === sel)} clients={clients} sites={sites} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
       </div>
       <Modal open={creatingClient} onClose={() => setCreatingClient(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">New client</div><Field label="Client name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind Trading" autoFocus /></Field><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreatingClient(false)}>Cancel</Button><Button variant="primary" onClick={addClient} disabled={!name}>Create</Button></div></div></Modal>
     </Page>
@@ -321,7 +321,7 @@ function EnrollCommands({ token, site }) {
   );
 }
 
-function SiteDetail({ site, client, devices }) {
+function SiteDetail({ site, client, devices, clients, sites }) {
   const { can } = useAuth();
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
@@ -335,12 +335,25 @@ function SiteDetail({ site, client, devices }) {
   const [newDept, setNewDept] = useState('');
   const [confirmDelSite, setConfirmDelSite] = useState(false);
   const [confirmDelDept, setConfirmDelDept] = useState(null);
+  const [moveDevice, setMoveDevice] = useState(null);
+  const [confirmDelDevice, setConfirmDelDevice] = useState(null);
   useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
   const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
+  const delDevice = async () => { const d = confirmDelDevice; if (!d) return; try { await api.deleteDevice(d.id); window.dataBus.emit('devices'); toast.info('Device deleted'); } catch (e) { toast.error('Failed to delete device', e.message); } };
+  const saveDeviceMove = async ({ siteId, groupId }) => {
+    const d = moveDevice;
+    if (!d) return;
+    try {
+      if ((d.group_id || '') && d.site_id !== siteId) await api.setDeviceGroup(d.id, null);
+      if ((d.site_id || '') !== (siteId || '')) await api.setDeviceSite(d.id, siteId || null);
+      if ((d.group_id || '') !== (groupId || '')) await api.setDeviceGroup(d.id, groupId || null);
+      window.dataBus.emit('devices'); setMoveDevice(null); toast.success('Device moved');
+    } catch (e) { toast.error('Failed to move device', e.message); }
+  };
   const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
   return (
     <Card className="p-5">
@@ -364,7 +377,21 @@ function SiteDetail({ site, client, devices }) {
       <div className="mb-5">
         <div className="text-[12px] font-semibold text-muted mb-2">Devices at this site</div>
         <div className="space-y-1.5">
-          {devices.map((d) => <div key={d.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2"><span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} /><OsIcon os={d.os} size={14} className="text-muted" /><span className="text-[12.5px] text-ink flex-1">{d.hostname}</span><span className="text-[11px] text-faint">{timeAgo(d.last_seen)}</span></div>)}
+          {devices.map((d) => (
+            <div key={d.id} className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+              <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
+              <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
+              <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
+              <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
+              {can('admin') && (
+                <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
+                  <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
+                  <div className="my-1 border-t border-line" />
+                  <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
+                </Dropdown>
+              )}
+            </div>
+          ))}
           {devices.length === 0 && <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>}
         </div>
       </div>
@@ -398,7 +425,50 @@ function SiteDetail({ site, client, devices }) {
       )}
       <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?" body={<>This removes <b>{site.name}</b> and its departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete site" />
       <ConfirmDialog open={!!confirmDelDept} onClose={() => setConfirmDelDept(null)} onConfirm={delDept} danger title="Delete department?" body={<>This removes the department <b>{confirmDelDept?.name}</b>. Its devices stay, but their department is cleared.</>} confirmLabel="Delete department" />
+      <DeviceMoveModal open={!!moveDevice} onClose={() => setMoveDevice(null)} device={moveDevice} clients={clients} sites={sites} groups={groupsQ.data?.groups || []} onSave={saveDeviceMove} />
+      <ConfirmDialog open={!!confirmDelDevice} onClose={() => setConfirmDelDevice(null)} onConfirm={delDevice} danger title="Delete device?" body={<>This permanently removes <b>{confirmDelDevice?.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />
     </Card>
+  );
+}
+
+function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave }) {
+  const [q, setQ] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open && device) { setQ(''); setSiteId(device.site_id || ''); setGroupId(device.group_id || ''); } }, [open, device?.id]);
+  if (!device) return null;
+  const query = q.trim().toLowerCase();
+  const matches = (v) => !query || (v || '').toLowerCase().includes(query);
+  const groupsForSite = (sid) => groups.filter((g) => g.site_id === sid);
+  const visibleClients = clients.filter((c) => matches(c.name) || sites.some((s) => s.client_id === c.id && (matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name)))));
+  const chooseSite = (sid) => { setSiteId(sid); setGroupId(''); };
+  const chooseGroup = (sid, gid) => { setSiteId(sid); setGroupId(gid); };
+  const changed = (siteId || '') !== (device.site_id || '') || (groupId || '') !== (device.group_id || '');
+  const save = async () => { setBusy(true); try { await onSave({ siteId, groupId }); } finally { setBusy(false); } };
+
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-2xl">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="pin" size={18} /></div>
+          <div><div className="text-[15px] font-semibold text-ink">Move device</div><div className="text-[12.5px] text-muted">Choose where <b className="text-ink">{device.hostname}</b> belongs in Clients & Sites.</div></div>
+        </div>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, site, or department…" autoFocus />
+        <div className="rounded-xl border border-line max-h-80 overflow-y-auto scroll-area p-1">
+          <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>
+          {visibleClients.map((c) => {
+            const clientSites = sites.filter((s) => s.client_id === c.id && (matches(c.name) || matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name))));
+            return <div key={c.id} className="mt-1"><div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold flex items-center gap-1.5"><Icon name="building" size={12} />{c.name}</div>{clientSites.map((s) => {
+              const siteGroups = groupsForSite(s.id).filter((g) => matches(c.name) || matches(s.name) || matches(g.name));
+              return <div key={s.id}><button onClick={() => chooseSite(s.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-6 pr-3 py-2 text-left text-[12.5px] transition', siteId === s.id && !groupId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="pin" size={13} /><span className="flex-1 truncate">{s.name}</span><span className="text-[10.5px] text-faint">site</span></button>{siteGroups.map((g) => <button key={g.id} onClick={() => chooseGroup(s.id, g.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-11 pr-3 py-1.5 text-left text-[12.5px] transition', groupId === g.id ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="building" size={12} /><span className="flex-1 truncate">{g.name}</span><span className="text-[10.5px] text-faint">department</span></button>)}</div>;
+            })}</div>;
+          })}
+          {visibleClients.length === 0 && <div className="px-3 py-8 text-center text-[12px] text-faint">No matches.</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>Move device</Button></div>
+      </div>
+    </Modal>
   );
 }
 
@@ -667,7 +737,7 @@ function UsersPanel({ canAdmin }) {
       <Modal open={!!editUser} onClose={() => { if (!editSaving) { setConfirmScopeSave(false); setEditUser(null); } }} width="max-w-lg">
         <div className="p-5">
           <div className="text-[15px] font-semibold text-ink mb-1">Access scope</div>
-          <div className="text-[12px] text-muted mb-4">Define which Companies, Sites or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
+          <div className="text-[12px] text-muted mb-4">Define which Companies, Sites, Departments or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
           {editLoading
             ? <div className="py-8 flex items-center justify-center gap-2 text-faint text-[12.5px]"><Spinner size={14} />Loading current scope…</div>
             : <ScopePicker key={editUser?.id} scopes={editScopes} setScopes={setEditScopes} />}

@@ -198,6 +198,8 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
   const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const startRemote = async (provider) => {
     if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname, os: d.os }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
@@ -215,15 +217,24 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     catch (e) { toast.error('Failed', e.message); }
   };
 
-  const setSite = async (siteId) => {
-    try { await api.setDeviceSite(id, siteId || null); toast.success('Site updated'); devQ.refetch(); }
-    catch (e) { toast.error('Failed to set site', e.message); }
-  };
   const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
-  const depts = (groupsQ.data?.groups || []).filter((g) => g.site_id === (d && d.site_id));
-  const setGroup = async (gid) => {
-    try { await api.setDeviceGroup(id, gid || null); toast.success('Department updated'); devQ.refetch(); }
-    catch (e) { toast.error('Failed to set department', e.message); }
+  const groups = groupsQ.data?.groups || [];
+  const currentSite = d ? sites.find((s) => s.id === d.site_id) : null;
+  const currentClient = currentSite ? clients.find((c) => c.id === currentSite.client_id) : null;
+  const currentGroup = d ? groups.find((g) => g.id === d.group_id) : null;
+  const orgLabel = currentSite ? [currentClient?.name, currentSite.name, currentGroup?.name].filter(Boolean).join(' / ') : 'Unassigned';
+
+  const saveOrg = async ({ siteId, groupId }) => {
+    try {
+      if ((d.group_id || '') && d.site_id !== siteId) await api.setDeviceGroup(id, null);
+      if ((d.site_id || '') !== (siteId || '')) await api.setDeviceSite(id, siteId || null);
+      if ((d.group_id || '') !== (groupId || '')) await api.setDeviceGroup(id, groupId || null);
+      toast.success('Clients & Sites updated'); setOrgOpen(false); devQ.refetch();
+    } catch (e) { toast.error('Failed to update Clients & Sites', e.message); }
+  };
+  const deleteDevice = async () => {
+    try { await api.deleteDevice(id); toast.info('Device deleted'); setConfirmDel(false); onClose(); window.dataBus.emit('devices'); }
+    catch (e) { toast.error('Failed to delete device', e.message); }
   };
 
   return (
@@ -268,20 +279,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
               <div className="flex-1" />
               <Gate min="admin">
                 <>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="pin" size={13} />Site</span>
-                    <Select value={d.site_id || ''} onChange={(e) => setSite(e.target.value)} className="w-auto min-w-[160px] h-8">
-                      <option value="">— Unassigned —</option>
-                      {clients.map((c) => <optgroup key={c.id} label={c.name}>{sites.filter((s) => s.client_id === c.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup>)}
-                    </Select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11.5px] text-faint flex items-center gap-1"><Icon name="building" size={13} />Dept</span>
-                    <Select value={d.group_id || ''} onChange={(e) => setGroup(e.target.value)} disabled={!d.site_id} className="w-auto min-w-[150px] h-8">
-                      <option value="">{d.site_id ? '— None —' : 'Set a site first'}</option>
-                      {depts.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </Select>
-                  </div>
+                  <div className="min-w-0 max-w-[300px] text-right hidden sm:block"><div className="text-[10.5px] uppercase tracking-wide text-faint">Clients & Sites</div><div className="text-[12px] text-muted truncate">{orgLabel}</div></div>
+                  <Button variant="secondary" icon="building" onClick={() => setOrgOpen(true)}>Clients & Sites</Button>
+                  <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete</Button>
                 </>
               </Gate>
             </div>
@@ -300,7 +300,62 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
       {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} filesOnly={remote.filesOnly} onClose={() => setRemote(null)} />}
       {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}
+      {d && <DeviceOrgModal open={orgOpen} onClose={() => setOrgOpen(false)} device={d} clients={clients} sites={sites} groups={groups} onSave={saveOrg} />}
+      {d && <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={deleteDevice} danger title="Delete device?" body={<>This permanently removes <b>{d.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />}
     </Drawer>
+  );
+}
+
+function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave }) {
+  const [q, setQ] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setQ(''); setSiteId(device.site_id || ''); setGroupId(device.group_id || ''); } }, [open, device.id]);
+  const query = q.trim().toLowerCase();
+  const matches = (v) => !query || (v || '').toLowerCase().includes(query);
+  const groupsForSite = (sid) => groups.filter((g) => g.site_id === sid);
+  const visibleClients = clients.filter((c) => matches(c.name) || sites.some((s) => s.client_id === c.id && (matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name)))));
+  const chooseSite = (sid) => { setSiteId(sid); setGroupId(''); };
+  const chooseGroup = (sid, gid) => { setSiteId(sid); setGroupId(gid); };
+  const save = async () => { setBusy(true); try { await onSave({ siteId, groupId }); } finally { setBusy(false); } };
+  const changed = (siteId || '') !== (device.site_id || '') || (groupId || '') !== (device.group_id || '');
+
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-2xl">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="building" size={18} /></div>
+          <div><div className="text-[15px] font-semibold text-ink">Clients & Sites</div><div className="text-[12.5px] text-muted">Assign <b className="text-ink">{device.hostname}</b> to a site or an optional department.</div></div>
+        </div>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, site, or department…" autoFocus />
+        <div className="rounded-xl border border-line max-h-80 overflow-y-auto scroll-area p-1">
+          <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>
+          {visibleClients.map((c) => {
+            const clientSites = sites.filter((s) => s.client_id === c.id && (matches(c.name) || matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name))));
+            return (
+              <div key={c.id} className="mt-1">
+                <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold flex items-center gap-1.5"><Icon name="building" size={12} />{c.name}</div>
+                {clientSites.map((s) => {
+                  const selectedSite = siteId === s.id && !groupId;
+                  const siteGroups = groupsForSite(s.id).filter((g) => matches(c.name) || matches(s.name) || matches(g.name));
+                  return (
+                    <div key={s.id}>
+                      <button onClick={() => chooseSite(s.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-6 pr-3 py-2 text-left text-[12.5px] transition', selectedSite ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="pin" size={13} /><span className="flex-1 truncate">{s.name}</span><span className="text-[10.5px] text-faint">site</span></button>
+                      {siteGroups.map((g) => (
+                        <button key={g.id} onClick={() => chooseGroup(s.id, g.id)} className={cx('w-full flex items-center gap-2 rounded-lg pl-11 pr-3 py-1.5 text-left text-[12.5px] transition', groupId === g.id ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="building" size={12} /><span className="flex-1 truncate">{g.name}</span><span className="text-[10.5px] text-faint">department</span></button>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {visibleClients.length === 0 && <div className="px-3 py-8 text-center text-[12px] text-faint">No matches.</div>}
+        </div>
+        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>Save assignment</Button></div>
+      </div>
+    </Modal>
   );
 }
 

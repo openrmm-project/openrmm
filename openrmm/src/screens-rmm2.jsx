@@ -215,14 +215,24 @@ function ClientsScreen() {
   const clientsQ = useQuery(['clients'], () => api.listClients(), { invalidateOn: ['org'] });
   const sitesQ = useQuery(['sites'], () => api.listSites(), { invalidateOn: ['org'] });
   const devicesQ = useQuery(['cl-dev'], () => api.listDevices(), { invalidateOn: ['devices'] });
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState(null); // site id
   const [creatingClient, setCreatingClient] = useState(false);
   const [name, setName] = useState('');
+  const [q, setQ] = useState('');
 
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [], devices = devicesQ.data?.devices || [];
   const siteCount = (siteId) => devices.filter((d) => d.site_id === siteId).length;
   const clientCount = (cid) => devices.filter((d) => sites.find((s) => s.id === d.site_id && s.client_id === cid)).length;
   const selSite = sites.find((s) => s.id === sel);
+
+  const ql = q.trim().toLowerCase();
+  const sitesFor = (c) => {
+    const all = sites.filter((s) => s.client_id === c.id);
+    return !ql || c.name.toLowerCase().includes(ql) ? all : all.filter((s) => s.name.toLowerCase().includes(ql));
+  };
+  const visibleClients = clients.filter((c) => !ql || c.name.toLowerCase().includes(ql) || sitesFor(c).length > 0);
 
   const addClient = async () => { await api.createClient(name); setName(''); setCreatingClient(false); toast.success('Client created'); };
 
@@ -232,8 +242,12 @@ function ClientsScreen() {
         actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setCreatingClient(true)}>New client</Button>} />
       <div className="grid lg:grid-cols-[360px_1fr] gap-5">
         <div className="space-y-3">
-          {clients.map((c) => <ClientNode key={c.id} client={c} sites={sites.filter((s) => s.client_id === c.id)} sel={sel} setSel={setSel} siteCount={siteCount} clientCount={clientCount} />)}
-          {clients.length === 0 && <Card><EmptyState icon="building" title="No clients" /></Card>}
+          <div className="relative">
+            <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search client or site…" className="pl-9 h-9" />
+          </div>
+          {visibleClients.map((c) => <ClientNode key={c.id} client={c} sites={sitesFor(c)} groups={groups} devices={devices} sel={sel} setSel={setSel} siteCount={siteCount} clientCount={clientCount} />)}
+          {visibleClients.length === 0 && <Card><EmptyState icon="building" title={ql ? 'No matches' : 'No clients'} /></Card>}
         </div>
         <div>{selSite ? <SiteDetail site={selSite} client={clients.find((c) => c.id === selSite.client_id)} devices={devices.filter((d) => d.site_id === sel)} clients={clients} sites={sites} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
       </div>
@@ -242,7 +256,7 @@ function ClientsScreen() {
   );
 }
 
-function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
+function ClientNode({ client, sites, groups, devices, sel, setSel, siteCount, clientCount }) {
   const { can } = useAuth();
   const toast = useToast();
   const [open, setOpen] = useState(true);
@@ -275,13 +289,25 @@ function ClientNode({ client, sites, sel, setSel, siteCount, clientCount }) {
       </div>
       {open && (
         <div className="border-t border-line">
-          {sites.map((s) => (
-            <button key={s.id} onClick={() => setSel(s.id)} className={cx('w-full flex items-center gap-2.5 pl-10 pr-3.5 py-2.5 transition text-left border-b border-line/60 last:border-0', sel === s.id ? 'bg-brandsoft' : 'hover:bg-elevated/40')}>
-              <Icon name="pin" size={13} className={sel === s.id ? 'text-brandhi' : 'text-faint'} />
-              <span className={cx('flex-1 text-[12.5px]', sel === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.name}</span>
-              <span className="text-[11px] text-faint tabular">{siteCount(s.id)}</span>
-            </button>
-          ))}
+          {sites.map((s) => {
+            const siteDepts = (groups || []).filter((g) => g.site_id === s.id);
+            return (
+              <div key={s.id} className="border-b border-line/60 last:border-0">
+                <button onClick={() => setSel(s.id)} className={cx('w-full flex items-center gap-2.5 pl-10 pr-3.5 py-2.5 transition text-left', sel === s.id ? 'bg-brandsoft' : 'hover:bg-elevated/40')}>
+                  <Icon name="pin" size={13} className={sel === s.id ? 'text-brandhi' : 'text-faint'} />
+                  <span className={cx('flex-1 text-[12.5px]', sel === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.name}</span>
+                  <span className="text-[11px] text-faint tabular">{siteCount(s.id)}</span>
+                </button>
+                {siteDepts.map((g) => (
+                  <button key={g.id} onClick={() => setSel(s.id)} className="w-full flex items-center gap-2 pl-[3.4rem] pr-3.5 py-1.5 hover:bg-elevated/30 transition text-left">
+                    <Icon name="building" size={11} className="text-faint/70" />
+                    <span className="flex-1 text-[11.5px] text-faint truncate">{g.name}</span>
+                    <span className="text-[10.5px] text-faint/70 tabular">{(devices || []).filter((d) => d.group_id === g.id).length}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })}
           {can('admin') && (adding ? (
             <div className="flex items-center gap-2 pl-10 pr-3 py-2"><Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addSite()} placeholder="Site name" className="h-8" autoFocus /><Button size="sm" variant="primary" onClick={addSite} disabled={!name}>Add</Button></div>
           ) : <button onClick={() => setAdding(true)} className="w-full flex items-center gap-2 pl-10 pr-3.5 py-2 text-[12px] text-faint hover:text-muted transition"><Icon name="plus" size={13} />Add site</button>)}
@@ -355,6 +381,25 @@ function SiteDetail({ site, client, devices, clients, sites }) {
     } catch (e) { toast.error('Failed to move device', e.message); }
   };
   const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+
+  // Group the site's devices by department; ungrouped devices fall under "No department".
+  const deptIds = new Set(depts.map((g) => g.id));
+  const unassigned = devices.filter((d) => !d.group_id || !deptIds.has(d.group_id));
+  const renderDevice = (d) => (
+    <div key={d.id} className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+      <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
+      <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
+      <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
+      <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
+      {can('admin') && (
+        <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
+          <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
+          <div className="my-1 border-t border-line" />
+          <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
+        </Dropdown>
+      )}
+    </div>
+  );
   return (
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
@@ -375,48 +420,41 @@ function SiteDetail({ site, client, devices, clients, sites }) {
         )}
       </div>
       <div className="mb-5">
-        <div className="text-[12px] font-semibold text-muted mb-2">Devices at this site</div>
-        <div className="space-y-1.5">
-          {devices.map((d) => (
-            <div key={d.id} className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
-              <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
-              <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
-              <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
-              <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
-              {can('admin') && (
-                <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
-                  <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
-                  <div className="my-1 border-t border-line" />
-                  <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
-                </Dropdown>
-              )}
-            </div>
-          ))}
-          {devices.length === 0 && <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>}
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[12px] font-semibold text-muted">Devices <span className="text-faint font-normal">· {devices.length}</span></div>
+          {can('admin') && !creatingDept && <button onClick={() => setCreatingDept(true)} className="text-[11.5px] text-faint hover:text-ink flex items-center gap-1"><Icon name="plus" size={12} />Department</button>}
         </div>
-      </div>
-      {can('admin') && (depts.length > 0 || creatingDept) && (
-        <div className="mb-5">
-          <div className="text-[12px] font-semibold text-muted mb-2">Departments <span className="text-faint font-normal">(optional)</span></div>
-          <div className="space-y-1.5">
-            {depts.map((g) => (
-              <div key={g.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
-                <Icon name="building" size={14} className="text-muted" />
-                <span className="text-[12.5px] text-ink flex-1">{g.name}</span>
-                <span className="text-[11px] text-faint">{deptCount(g.id)} devices</span>
-                <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={13} /></button>
-              </div>
-            ))}
-            {creatingDept && (
-              <div className="flex items-center gap-2 pt-1">
-                <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') { setCreatingDept(false); setNewDept(''); } }} placeholder="Department name (e.g. Finance)" className="h-8" autoFocus />
-                <Button size="sm" variant="primary" onClick={addDept} disabled={!newDept.trim()}>Add</Button>
-                <Button size="sm" variant="ghost" onClick={() => { setCreatingDept(false); setNewDept(''); }}>Cancel</Button>
-              </div>
-            )}
+        {creatingDept && (
+          <div className="flex items-center gap-2 mb-2.5">
+            <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') { setCreatingDept(false); setNewDept(''); } }} placeholder="Department name (e.g. Finance)" className="h-8" autoFocus />
+            <Button size="sm" variant="primary" onClick={addDept} disabled={!newDept.trim()}>Add</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setCreatingDept(false); setNewDept(''); }}>Cancel</Button>
           </div>
-        </div>
-      )}
+        )}
+        {devices.length === 0 && depts.length === 0 ? (
+          <div className="text-[12.5px] text-faint py-3 text-center">No devices yet.</div>
+        ) : (
+          <div className="space-y-3.5">
+            <div className="space-y-1.5">
+              <div className="text-[11px] uppercase tracking-wide text-faint font-semibold px-0.5">No department <span className="font-normal text-faint/70">· {unassigned.length}</span></div>
+              {unassigned.length ? unassigned.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">—</div>}
+            </div>
+            {depts.map((g) => {
+              const items = devices.filter((d) => d.group_id === g.id);
+              return (
+                <div key={g.id} className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 px-0.5">
+                    <Icon name="building" size={12} className="text-faint" />
+                    <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                    {can('admin') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
+                  </div>
+                  {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
       {can('admin') && (
         <div>
           <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>

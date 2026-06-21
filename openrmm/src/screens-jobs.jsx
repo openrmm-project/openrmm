@@ -123,13 +123,11 @@ function JobCard({ job, device, defaultOpen, focused }) {
             <div className="flex items-center justify-between gap-3 pt-1">
               <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — nothing has run yet.</div>
               <div className="flex items-center gap-2">
-                {can('tech') ? (
+                {can('tech') && (
                   <>
                     <Button variant="danger" icon="reject" onClick={reject} disabled={busy}>Reject</Button>
                     <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approve()}>Approve & run</Button>
                   </>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-[12px] text-faint"><Icon name="shield" size={13} />Approval requires the tech role</span>
                 )}
               </div>
             </div>
@@ -224,13 +222,11 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
             <div className="flex items-center justify-between gap-3 pt-1">
               <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — review the targets, then approve once for all {awaiting.length}.</div>
               <div className="flex items-center gap-2">
-                {can('tech') ? (
+                {can('tech') && (
                   <>
                     <Button variant="danger" icon="reject" onClick={rejectAll} disabled={busy}>Reject all</Button>
                     <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approveAll()}>Approve {awaiting.length}</Button>
                   </>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-[12px] text-faint"><Icon name="shield" size={13} />Approval requires the tech role</span>
                 )}
               </div>
             </div>

@@ -303,12 +303,12 @@ function ProposedJob({ jobId, navigate }) {
         {isAwaiting && (
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="eye" size={12} />Nothing has run yet.</span>
-            {can('tech') ? (
+            {can('tech') && (
               <div className="flex gap-2">
                 <Button size="sm" variant="danger" icon="reject" onClick={() => act(api.rejectJob, 'Rejected')} disabled={busy}>Reject</Button>
                 <Button size="sm" variant="success" icon="approve" loading={busy} onClick={() => act(api.approveJob, 'Approved — dispatching')}>Approve & run</Button>
               </div>
-            ) : <span className="inline-flex items-center gap-1.5 text-[11.5px] text-faint"><Icon name="shield" size={12} />Tech role needed to approve</span>}
+            )}
           </div>
         )}
         {j.status === 'running' && <div className="flex items-center gap-2 text-[12px] text-run"><Spinner size={13} className="text-run" />Executing…</div>}

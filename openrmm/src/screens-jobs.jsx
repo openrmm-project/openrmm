@@ -251,6 +251,21 @@ function AuditScreen() {
   const [actorF, setActorF] = useState('all');
   const entries = auditQ.data?.entries || [];
   const actors = Array.from(new Set(entries.map((e) => e.actor)));
+  // The audit log stores the actor's user id (stable); resolve it to a username
+  // for display (non-user actors like "scheduler"/"agent"/"api" stay as-is).
+  const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
+  const userMap = {};
+  (usersQ.data?.users || []).forEach((u) => { userMap[u.id] = u.username; });
+  const displayActor = (a) => {
+    if (!a) return a;
+    if (a.startsWith('ai:')) { const u = userMap[a.slice(3)]; return u ? 'AI · ' + u : 'AI assistant'; }
+    return userMap[a] || a;
+  };
+  // target is the id of whatever the action acted on (device, job, batch, user…).
+  // Resolve the ones we can name (device -> hostname, user -> username); the rest
+  // (job/batch/token ids) stay as the raw id.
+  const devMap = useDeviceMap();
+  const displayTarget = (t) => (t && (devMap[t]?.hostname || userMap[t])) || t;
 
   const filtered = entries.filter((e) => {
     if (actorF !== 'all' && e.actor !== actorF) return false;
@@ -267,7 +282,7 @@ function AuditScreen() {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search actor, action, target…" className={cx(inputCls, 'pl-9')} />
         </div>
         <Select value={actorF} onChange={(e) => setActorF(e.target.value)} className="w-auto min-w-[160px]">
-          <option value="all">All actors</option>{actors.map((a) => <option key={a} value={a}>{a}</option>)}
+          <option value="all">All actors</option>{actors.map((a) => <option key={a} value={a}>{displayActor(a)}</option>)}
         </Select>
       </div></Card>
 
@@ -285,9 +300,9 @@ function AuditScreen() {
               return (
                 <tr key={e.id} className="hover:bg-elevated/40 transition align-top">
                   <td className="px-4 py-2.5 text-[12px] text-muted whitespace-nowrap tabular">{fmtTime(e.created_at)}</td>
-                  <td className="px-3 py-2.5"><span className={cx('text-[12.5px] font-medium', ai ? 'text-brandhi' : 'text-ink')}>{ai ? 'AI assistant' : e.actor}</span></td>
+                  <td className="px-3 py-2.5"><span className={cx('text-[12.5px] font-medium', ai ? 'text-brandhi' : 'text-ink')} title={e.actor}>{displayActor(e.actor)}</span></td>
                   <td className="px-3 py-2.5"><span className={cx('inline-flex items-center gap-1.5 text-[12px]', m.c)}><Icon name={m.icon} size={13} /><span className="mono text-muted">{e.action}</span></span></td>
-                  <td className="px-3 py-2.5 text-[12px] mono text-faint">{e.target}</td>
+                  <td className="px-3 py-2.5 text-[12px] mono text-faint" title={e.target}>{displayTarget(e.target)}</td>
                   <td className="px-4 py-2.5 text-[12px] text-muted max-w-[360px]"><span className="line-clamp-2">{Object.entries(e.detail || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') || '—'}</span></td>
                 </tr>
               );

@@ -273,6 +273,16 @@ function AuditScreen() {
     return true;
   });
 
+  // Export the currently filtered entries to CSV (resolved names + raw ids).
+  const exportCSV = () => {
+    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+    const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
+    const rows = filtered.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e.target), e.target, detailStr(e.detail)]);
+    const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+    downloadText('audit-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv');
+  };
+
   return (
     <Page>
       <PageHeader title="Audit log" subtitle="An immutable record of who did what. Read-only." />
@@ -284,6 +294,7 @@ function AuditScreen() {
         <Select value={actorF} onChange={(e) => setActorF(e.target.value)} className="w-auto min-w-[160px]">
           <option value="all">All actors</option>{actors.map((a) => <option key={a} value={a}>{displayActor(a)}</option>)}
         </Select>
+        <Button variant="secondary" icon="download" onClick={exportCSV} disabled={!filtered.length}>Export CSV ({filtered.length})</Button>
       </div></Card>
 
       <Card className="overflow-hidden">

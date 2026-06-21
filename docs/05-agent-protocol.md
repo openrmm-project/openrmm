@@ -43,9 +43,10 @@ once on connect).
 | `remote_start` | `{ session_id, token, relay_url, kind }` | connect a remote module to the relay |
 
 `kind` selects which module the agent attaches: `"desktop"` (or empty) spawns the
-media sidecar (screen + input); `"terminal"` opens an **elevated interactive
-shell** in the agent process (real PTY on Unix / ConPTY on Windows) and bridges
-it to the relay. See [08-remote-access](08-remote-access.md).
+media sidecar (screen + input); `"files"` spawns the same sidecar in
+**file-transfer-only mode** (no screen capture); `"terminal"` opens an **elevated
+interactive shell** in the agent process (real PTY on Unix / ConPTY on Windows)
+and bridges it to the relay. See [08-remote-access](08-remote-access.md).
 
 ## Reliability
 

@@ -50,7 +50,8 @@ here**.
 | POST | `/api/devices/{id}/remote` | Start a remote session |
 | PATCH | `/api/devices/{id}` | tech: set `{description, note}` (identification fields, scope-checked) |
 
-`POST /devices/{id}/remote` body: `{ "provider": "native" }` — also `terminal`
+`POST /devices/{id}/remote` body: `{ "provider": "native" }` — also `files`
+(file transfer only, no screen capture; tech role), `terminal`
 (an elevated shell; requires the **tech** role), `meshcentral`, or `rustdesk`
 (optional, off by default; reads the device's RustDesk id on demand and returns a
 `rustdesk://<id>` deep link — see [08-remote-access](08-remote-access.md)); omitted

@@ -1,9 +1,10 @@
 # 08 — Remote Access
 
 Remote access is **pluggable**: a single `Provider` interface
-(`internal/remote`) with three implementations: `native` (remote desktop),
-`terminal` (elevated shell), and `meshcentral`. Callers never depend on a specific tool — if the native
-tool doesn't pan out, drop it and MeshCentral keeps working.
+(`internal/remote`) with four implementations: `native` (remote desktop),
+`files` (file transfer only — the media sidecar with **no** screen capture),
+`terminal` (elevated shell), and `meshcentral`. Callers never depend on a specific
+tool — if the native tool doesn't pan out, drop it and MeshCentral keeps working.
 
 ```go
 type Provider interface {

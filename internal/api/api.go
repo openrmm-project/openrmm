@@ -149,6 +149,7 @@ func (s *Server) Router() http.Handler {
 			r.Post("/alerts/{id}/ack", s.ackAlert)
 			r.Post("/alerts/{id}/resolve", s.resolveAlert)
 			r.Post("/chat/sessions", s.createChatSession)
+			r.Delete("/chat/sessions/{id}", s.deleteChatSession)
 			r.Post("/chat/sessions/{id}/messages", s.postChatMessage)
 		})
 
@@ -1008,6 +1009,18 @@ func (s *Server) listChatMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }
 
+func (s *Server) deleteChatSession(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireChatOwner(w, r, id) {
+		return
+	}
+	if err := s.store.DeleteChatSession(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "id")
 	if !s.requireChatOwner(w, r, sessionID) {
@@ -1020,6 +1033,12 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "content is required")
 		return
 	}
+	// Name the conversation from its first message (only while still a placeholder).
+	title := strings.TrimSpace(in.Content)
+	if rs := []rune(title); len(rs) > 60 {
+		title = string(rs[:60]) + "…"
+	}
+	_ = s.store.MaybeTitleChatSession(r.Context(), sessionID, title)
 	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())

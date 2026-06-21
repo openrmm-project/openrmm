@@ -507,6 +507,21 @@ func (s *Store) ListChatSessions(ctx context.Context, owner string) ([]models.Ch
 	return out, rows.Err()
 }
 
+// DeleteChatSession removes a conversation and its messages (FK cascade).
+func (s *Store) DeleteChatSession(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM chat_sessions WHERE id=$1`, id)
+	return err
+}
+
+// MaybeTitleChatSession sets the title only while it is still a placeholder, so
+// the first user message names the conversation without overwriting a real title.
+func (s *Store) MaybeTitleChatSession(ctx context.Context, id, title string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE chat_sessions SET title=$2 WHERE id=$1 AND (title='' OR title='New chat' OR title='New conversation')`,
+		id, title)
+	return err
+}
+
 // ChatSessionExists reports whether a session id is valid.
 func (s *Store) ChatSessionExists(ctx context.Context, id string) (bool, error) {
 	var n int

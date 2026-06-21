@@ -211,6 +211,7 @@ export const api = {
   // ---- chat ----
   listSessions: () => GET<{ sessions: ChatSession[] }>("/api/chat/sessions"),
   createSession: (title: string) => POST<ChatSession>("/api/chat/sessions", { title }),
+  deleteSession: (id: string) => DELETE<{ status: string }>(`/api/chat/sessions/${id}`),
   getMessages: (id: string) => GET<{ messages: ChatMessage[] }>(`/api/chat/sessions/${id}/messages`),
   /** Roda o loop do agente no backend; retorna a resposta + jobs propostos. */
   sendMessage: (id: string, content: string) =>

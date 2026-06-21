@@ -99,6 +99,8 @@ function ChatScreen({ navigate }) {
   const sessionsQ = useQuery(['chat-sessions'], () => api.listSessions(), { invalidateOn: ['chat'] });
   const [active, setActive] = useState(null);
   const sessions = sessionsQ.data?.sessions || [];
+  const toast = useToast();
+  const [confirmDel, setConfirmDel] = useState(null);
 
   // initialize selection + handle dashboard "ask the AI" handoff
   useEffect(() => {
@@ -111,7 +113,12 @@ function ChatScreen({ navigate }) {
     if (!active && sessions.length) setActive(sessions[0].id);
   }, [sessions.length]);
 
-  const newChat = async () => { const s = await api.createSession('New conversation'); setActive(s.id); };
+  const newChat = async () => { const s = await api.createSession(''); setActive(s.id); };
+  const delSession = async () => {
+    const sess = confirmDel; if (!sess) return;
+    try { await api.deleteSession(sess.id); if (active === sess.id) setActive(null); toast.info('Conversation deleted'); }
+    catch (e) { toast.error('Failed', e.message); }
+  };
 
   return (
     <div className="h-full flex">
@@ -122,13 +129,16 @@ function ChatScreen({ navigate }) {
         </div>
         <div className="flex-1 overflow-y-auto scroll-area p-2">
           {sessions.map((s) => (
-            <button key={s.id} onClick={() => setActive(s.id)} className={cx('w-full text-left rounded-lg px-2.5 py-2 mb-0.5 transition group', active === s.id ? 'bg-elevated' : 'hover:bg-elevated/50')}>
-              <div className="flex items-center gap-2">
-                <Icon name="chat" size={13} className={active === s.id ? 'text-brandhi' : 'text-faint'} />
-                <span className={cx('text-[12.5px] truncate flex-1', active === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.title}</span>
-              </div>
-              <div className="text-[10.5px] text-faint mt-0.5 pl-5">{timeAgo(s.created_at)}</div>
-            </button>
+            <div key={s.id} className={cx('group w-full rounded-lg px-2.5 py-2 mb-0.5 transition flex items-center gap-1', active === s.id ? 'bg-elevated' : 'hover:bg-elevated/50')}>
+              <button onClick={() => setActive(s.id)} className="flex-1 min-w-0 text-left">
+                <div className="flex items-center gap-2">
+                  <Icon name="chat" size={13} className={active === s.id ? 'text-brandhi' : 'text-faint'} />
+                  <span className={cx('text-[12.5px] truncate flex-1', active === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.title || 'New conversation'}</span>
+                </div>
+                <div className="text-[10.5px] text-faint mt-0.5 pl-5">{timeAgo(s.created_at)}</div>
+              </button>
+              <button onClick={() => setConfirmDel(s)} title="Delete conversation" className="opacity-0 group-hover:opacity-100 text-faint hover:text-bad p-1 transition shrink-0"><Icon name="trash" size={13} /></button>
+            </div>
           ))}
         </div>
       </div>
@@ -139,6 +149,7 @@ function ChatScreen({ navigate }) {
           <div className="flex-1 flex items-center justify-center"><EmptyState icon="sparkle" title="Start a conversation" msg="Ask the AI to inspect or act on your fleet. It proposes; you approve." action={<Button variant="primary" icon="plus" onClick={newChat}>New conversation</Button>} /></div>
         )}
       </div>
+      <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={delSession} danger title="Delete conversation?" body={<>This permanently removes <b>{confirmDel?.title || 'this conversation'}</b> and its messages. This cannot be undone.</>} confirmLabel="Delete conversation" />
     </div>
   );
 }

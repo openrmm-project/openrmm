@@ -181,6 +181,7 @@ const api = {
   /* ---- chat ---- */
   listSessions() { return GET('/api/chat/sessions'); },
   createSession(title) { return POST('/api/chat/sessions', { title }); },
+  deleteSession(id) { return DELETE('/api/chat/sessions/' + id); },
   getMessages(id) { return GET('/api/chat/sessions/' + id + '/messages'); },
   sendMessage(id, content) { return POST('/api/chat/sessions/' + id + '/messages', { content }); },
 

@@ -551,8 +551,8 @@ function SettingsScreen() {
   return (
     <Page>
       <PageHeader title="Users & Settings" subtitle="Manage access and review your instance configuration." />
-      <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[{ value: 'users', label: 'Users' }, { value: 'config', label: 'Configuration' }, { value: 'enroll', label: 'Enrollment' }]} />
-      {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard /><UsersPanel canAdmin={can('admin')} /></>}
+      <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[{ value: 'users', label: 'Users' }, { value: 'config', label: 'Configuration' }, ...(can('admin') ? [{ value: 'enroll', label: 'Enrollment' }] : [])]} />
+      {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard />{can('admin') && <UsersPanel canAdmin />}</>}
       {tab === 'config' && <ConfigPanel />}
       {tab === 'enroll' && <EnrollPanel canAdmin={can('admin')} />}
     </Page>
@@ -1054,7 +1054,7 @@ function ConfigPanel() {
         <ConfigItem label="Version" value={c.server.version} mono /><ConfigItem label="API base URL" value={c.server.base_url} mono />
         <div className="flex items-center justify-between gap-3 mt-4">
           <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Secrets are write-only and encrypted in the database; blank secret fields preserve current values.</div>
-          {can('admin') ? <Button variant="primary" icon="check" loading={saving} onClick={save}>Save configuration</Button> : <div className="text-[12px] text-faint">Admin role required to edit.</div>}
+          {can('admin') && <Button variant="primary" icon="check" loading={saving} onClick={save}>Save configuration</Button>}
         </div>
       </Card>
     </div>

@@ -28,7 +28,9 @@ function setSession(s) {
 function apiError(status, message) { const e = new Error(message); e.status = status; return e; }
 
 /* ------------------------------- transport ------------------------------- */
-async function request(method, path, body) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function request(method, path, body, attempt = 0) {
   const headers = { 'Content-Type': 'application/json' };
   if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
   let res;
@@ -36,6 +38,15 @@ async function request(method, path, body) {
     res = await fetch(API_BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   } catch (e) {
     throw apiError(0, 'cannot reach backend at ' + API_BASE);
+  }
+  // 429: the per-IP API limiter pushed back. The chatty SPA fires bursts on
+  // navigation, so retry a few times with backoff (honoring Retry-After) before
+  // surfacing the error — this is what kept tabs occasionally rendering empty.
+  if (res.status === 429 && attempt < 4) {
+    const ra = parseFloat(res.headers.get('Retry-After'));
+    const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 350 * (attempt + 1) + Math.random() * 250;
+    await sleep(Math.min(wait, 4000));
+    return request(method, path, body, attempt + 1);
   }
   if (res.status === 401) {
     setSession(null);

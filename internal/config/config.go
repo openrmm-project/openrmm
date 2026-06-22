@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -58,11 +59,27 @@ type Config struct {
 	// Encryption key for secrets stored in app_settings. If empty, runtime
 	// settings fall back to deriving a key from AdminToken.
 	SettingsEncryptionKey string
+
+	// APIRateLimit is the per-IP request budget per minute for the general
+	// authenticated API. It's a safety net against token-guessing, not a
+	// per-user quota — the single-page UI is chatty (polling + many parallel
+	// queries on navigation), so this needs headroom. Default 600.
+	APIRateLimit int
 }
 
 func env(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+// envInt reads an integer env var, falling back to def when unset or invalid.
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
 	}
 	return def
 }
@@ -89,6 +106,7 @@ func Load() (*Config, error) {
 		TrustProxyHeaders:     os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",
 		CORSOrigins:           splitCSV(env("RMM_CORS_ORIGINS", "*")),
 		SettingsEncryptionKey: os.Getenv("RMM_SETTINGS_ENCRYPTION_KEY"),
+		APIRateLimit:          envInt("RMM_API_RATE_LIMIT", 600),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")

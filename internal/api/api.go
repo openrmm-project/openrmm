@@ -33,9 +33,10 @@ import (
 
 // Per-IP rate limits (requests per minute).
 const (
-	authRateLimit = 10  // login / bootstrap — strict (anti brute-force)
-	mcpRateLimit  = 60  // external AI clients
-	apiRateLimit  = 120 // safety net across the authenticated API (anti token-guessing)
+	authRateLimit = 10 // login / bootstrap — strict (anti brute-force)
+	mcpRateLimit  = 60 // external AI clients
+	// The general API limit is per-IP and tunable via RMM_API_RATE_LIMIT
+	// (config.APIRateLimit, default 600) — see s.apiRateLimit().
 )
 
 type ctxKey string
@@ -97,7 +98,7 @@ func (s *Server) Router() http.Handler {
 	})
 
 	r.Route("/api", func(r chi.Router) {
-		r.Use(s.rateLimit(apiRateLimit)) // per-IP safety net (anti token-guessing)
+		r.Use(s.rateLimit(s.apiRateLimit())) // per-IP safety net (anti token-guessing)
 		r.Use(s.authMiddleware)
 
 		// ---- read-only (any authenticated role) ----
@@ -262,6 +263,15 @@ func (s *Server) requireRole(minRole string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// apiRateLimit is the effective per-IP/minute budget for the general API,
+// from config (RMM_API_RATE_LIMIT) with a safe default for the chatty SPA.
+func (s *Server) apiRateLimit() int {
+	if s.cfg.APIRateLimit > 0 {
+		return s.cfg.APIRateLimit
+	}
+	return 600
 }
 
 // rateLimit returns a per-IP rate-limiting middleware. The key respects the

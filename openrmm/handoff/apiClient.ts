@@ -111,7 +111,9 @@ class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function request<T>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (session?.token) headers.Authorization = `Bearer ${session.token}`;
 
@@ -119,6 +121,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     method, headers, body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
+  // 429: per-IP API limiter pushed back. Retry with backoff (honoring
+  // Retry-After) before surfacing — the SPA fires bursts on navigation.
+  if (res.status === 429 && attempt < 4) {
+    const ra = parseFloat(res.headers.get("Retry-After") || "");
+    const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 350 * (attempt + 1) + Math.random() * 250;
+    await sleep(Math.min(wait, 4000));
+    return request<T>(method, path, body, attempt + 1);
+  }
   if (res.status === 401) { setSession(null); throw new ApiError(401, "unauthorized"); }
   if (!res.ok) {
     let msg = res.statusText;

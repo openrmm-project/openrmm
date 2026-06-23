@@ -110,6 +110,11 @@ func runMedia(conn *websocket.Conn) error {
 		}
 	})
 
+	// Physical-input lock (evdev EVIOCGRAB). Idle until a viewer enables it;
+	// always released when the session ends (kernel also frees grabs on fd close).
+	lock := &inputLock{}
+	defer lock.closeAll()
+
 	// announce the running sidecar version (viewer staleness check)
 	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
@@ -148,6 +153,35 @@ func runMedia(conn *websocket.Conn) error {
 			case "kf":
 				kfReq.Store(true)
 				pace.markActivity() // viewer (re)connected — resume the active rate
+			case "lockinput":
+				var lm struct {
+					Enable bool `json:"enable"`
+				}
+				_ = json.Unmarshal(data, &lm)
+				go func(on bool) {
+					err := lock.set(on)
+					ack := map[string]any{"t": "inputlocked", "enabled": on && err == nil}
+					if err != nil {
+						ack["err"] = err.Error()
+						log.Printf("inputlock: %v", err)
+					}
+					if b, e := json.Marshal(ack); e == nil {
+						select {
+						case out <- omsg{websocket.TextMessage, b}:
+						case <-done:
+						}
+					}
+					if err == nil {
+						note := "⚠ O técnico bloqueou seu teclado e mouse durante a sessão."
+						if !on {
+							note = "✓ Seu teclado e mouse foram liberados."
+						}
+						select { // transparency notice in the host chat window
+						case chatInbox <- note:
+						default:
+						}
+					}
+				}(lm.Enable)
 			case "chat":
 				var cm struct {
 					From string `json:"from"`

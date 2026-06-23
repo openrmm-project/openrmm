@@ -327,6 +327,7 @@ type session struct {
 	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
 	uacOff  bool               // true while we've moved UAC prompts off the secure desktop
 	kfReq   atomic.Bool        // a viewer asked for a full keyframe (e.g. on reconnect)
+	lockWanted atomic.Bool     // a viewer asked to block the host's physical input
 }
 
 func (s *session) send(mt int, data []byte) {
@@ -389,6 +390,9 @@ func runMedia(conn *websocket.Conn) error {
 			s.onMessage(mt, data)
 		}
 	}()
+	// Input lock follows the active input desktop on its own thread (idle until a
+	// viewer enables it); released automatically when the session ends.
+	go s.inputLockWorker()
 	// Capture + input on a dedicated thread that FOLLOWS the active input desktop
 	// (default / secure-UAC / Winlogon login / lock). Running as SYSTEM, this lets
 	// us stream the logon screen and inject into elevated/secure desktops, and
@@ -542,6 +546,8 @@ func (s *session) onMessage(mt int, data []byte) {
 		}
 	case "uac":
 		go s.setUAC(e.Enable)
+	case "lockinput":
+		go s.setInputLock(e.Enable)
 	case "fls":
 		go s.onList(data)
 	case "fmkdir":

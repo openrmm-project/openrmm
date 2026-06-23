@@ -173,6 +173,30 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   requests on its own X connection, so it works on any X server the sidecar
   reaches (the user session and the display-manager greeter), mirroring the
   Win32 chat window.
+- **Input lock (Windows):** the **Lock input** button in the viewer blocks the
+  host's **physical** keyboard and mouse for the duration of the session, so the
+  person at the machine can't fight the technician. It uses system-wide
+  low-level hooks (`WH_KEYBOARD_LL`/`WH_MOUSE_LL`, `inputlock_windows.go`) that
+  swallow real events while letting **injected** input (the technician's
+  `SendInput`, flagged `LLKHF_INJECTED`) through. The hook thread follows the
+  active input desktop just like capture, so the lock holds across the **user
+  desktop, the UAC/secure desktop and the Winlogon login screen**. The host is
+  told via the chat window (transparency), and the lock is always released on
+  release/disconnect/session-end (and reset to off on reconnect). **Not covered:**
+  `Ctrl+Alt+Del` (the Secure Attention Sequence) is a kernel trusted path no
+  user-mode hook can intercept — suppressing it would need the Enterprise/IoT
+  Keyboard Filter driver and is intentionally out of scope.
+- **Input lock (Linux):** same **Lock input** button; the sidecar grabs every
+  physical keyboard/pointer via the evdev **`EVIOCGRAB`** ioctl
+  (`inputlock_linux.go`), making itself the exclusive consumer so the local user
+  is locked out while the technician's **uinput/XTEST** injection (a separate
+  path) still works. Devices are picked from `/proc/bus/input/devices`
+  (keyboards + mice/touchpads; power/lid buttons skipped). Because the grab is in
+  the kernel input layer it is independent of the active X server, so it holds
+  across the seat-following greeter↔session transitions and **covers the login
+  screen** with no re-arming. Failsafe: the kernel frees the grab when the fd
+  closes, so input is restored on release/disconnect/session-end (or if the
+  sidecar dies). Requires the sidecar to run as **root** (it does).
 - **Still maturing:** tiles are JPEG-encoded (works everywhere, no codec deps)
   rather than a real video codec (VP8/9/AV1) — fine for desktops, heavier for
   full-motion video. The Linux engine assumes a TrueColor little-endian X server

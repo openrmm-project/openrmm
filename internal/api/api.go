@@ -39,6 +39,11 @@ const (
 	// (config.APIRateLimit, default 600) — see s.apiRateLimit().
 )
 
+// maxAPIBodyBytes caps the size of an API request body (anti-DoS): a 1 MiB
+// ceiling is ample for JSON payloads and human-written scripts, while keeping a
+// single authenticated caller from forcing unbounded memory with a huge body.
+const maxAPIBodyBytes = 1 << 20
+
 type ctxKey string
 
 const (
@@ -79,8 +84,8 @@ func (s *Server) Router() http.Handler {
 
 	// Unauthenticated auth endpoints — strictly rate-limited (anti brute-force).
 	authLimiter := s.rateLimit(authRateLimit)
-	r.With(authLimiter).Post("/api/auth/login", s.login)
-	r.With(authLimiter).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
+	r.With(authLimiter, maxBody).Post("/api/auth/login", s.login)
+	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
 
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; tech role minimum since it
@@ -90,6 +95,7 @@ func (s *Server) Router() http.Handler {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.rateLimit(mcpRateLimit))
+		r.Use(maxBody)
 		r.Use(s.mcpIPAllowlist)
 		r.Use(s.authMiddleware)
 		r.Use(s.requireRole(models.RoleTech))
@@ -99,6 +105,7 @@ func (s *Server) Router() http.Handler {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.rateLimit(s.apiRateLimit())) // per-IP safety net (anti token-guessing)
+		r.Use(maxBody)                       // cap request body size (anti-DoS)
 		r.Use(s.authMiddleware)
 
 		// ---- read-only (any authenticated role) ----
@@ -248,6 +255,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, roleKey, role)
 		ctx = context.WithValue(ctx, scopeUserKey, scopeUser)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// maxBody caps the request body so a single caller can't force unbounded memory
+// with a huge payload. On exceed, the next read (e.g. in decode) returns an
+// error and the handler responds 400; MaxBytesReader also flags the connection
+// to close. Applied to all /api routes.
+func maxBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

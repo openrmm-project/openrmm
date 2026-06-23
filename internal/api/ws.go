@@ -23,6 +23,16 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
+// Per-message read limits cap memory a single peer can force the server to
+// allocate (a malicious/compromised agent or relay peer could otherwise stream
+// an unbounded frame). Agent frames are JSON envelopes (job results cap stdout/
+// stderr at 1 MiB each); relay frames carry screen tiles / 64 KiB file chunks,
+// so it gets generous headroom.
+const (
+	agentWSReadLimit = 8 << 20  // 8 MiB
+	relayWSReadLimit = 32 << 20 // 32 MiB
+)
+
 // handleAgentWS upgrades, authenticates the agent via the register handshake,
 // then runs the read loop while a write pump pushes queued frames.
 func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +40,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(agentWSReadLimit)
 	ctx := context.Background()
 
 	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -193,6 +204,7 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(relayWSReadLimit)
 	_ = s.store.SetRemoteSessionStatus(r.Context(), sess.ID, "active")
 	_ = s.relay.Join(token, role, conn)
 	_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")

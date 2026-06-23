@@ -125,9 +125,15 @@ exposes no secrets).
 - `RMM_ADMIN_TOKEN` must be ≥ 32 chars (rejected at startup otherwise).
 - Login runs a dummy bcrypt compare for unknown users (mitigates enumeration).
 - Agent caps job stdout/stderr at 1 MiB each (DoS / DB-bloat guard).
+- API/MCP request bodies are capped at 1 MiB (`http.MaxBytesReader`), and the
+  agent/relay WebSockets cap per-message reads (8 MiB / 32 MiB via
+  `SetReadLimit`) — a single peer can't force an unbounded allocation.
 - **Per-IP rate limiting** (`httprate`): 10/min on `/api/auth/*` (anti
-  brute-force), 60/min on `/mcp`, 120/min across the authenticated API (anti
-  token-guessing). Returns `429`. The key respects `RMM_TRUST_PROXY_HEADERS`.
+  brute-force), 60/min on `/mcp`, and a safety net across the authenticated API
+  (anti token-guessing) that defaults to 600/min and is tunable via
+  `RMM_API_RATE_LIMIT` (the single-page UI polls and fires parallel queries on
+  navigation, so it needs headroom). Returns `429`, which the frontend retries
+  with backoff. The key respects `RMM_TRUST_PROXY_HEADERS`.
 
 **Second pass (multi-tenancy / scope):**
 - A review of the new per-user scope feature found cross-tenant **read-path leaks**

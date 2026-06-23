@@ -22,8 +22,12 @@ designed defense-first. This summarizes the posture; details live in
   use bcrypt; editable runtime secrets (incl. TOTP secrets) are encrypted with
   AES-256-GCM in `app_settings`; the admin/agent token comparisons are
   constant-time; no secret is logged or returned by the API.
-- **Per-IP rate limiting** on auth (10/min), MCP (60/min) and the API (120/min)
-  to blunt brute-force and token-guessing.
+- **Per-IP rate limiting** on auth (10/min), MCP (60/min) and the API
+  (600/min, tunable via `RMM_API_RATE_LIMIT`) to blunt brute-force and
+  token-guessing.
+- **Resource caps** against memory-exhaustion: API/MCP request bodies are
+  capped at 1 MiB, and the agent/relay WebSockets cap per-message reads
+  (8 MiB / 32 MiB) so no single peer can force an unbounded allocation.
 - **Signed agent/sidecar updates** are supported for `/dl` artifacts with
   Ed25519 detached signatures. Roll out in `warn`, then enforce with
   `RMM_UPDATE_VERIFY=strict`.

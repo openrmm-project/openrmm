@@ -41,6 +41,11 @@ const (
 	absRange = 0x7fff // absolute axis 0..32767, mapped proportionally to the screen
 )
 
+// uinputDeviceName labels our virtual injection device. inputlock_linux.go reads
+// it back from /proc/bus/input/devices to EXCLUDE this device from the grab, so
+// the technician's injected input is never blocked.
+const uinputDeviceName = "rmm-remote virtual input"
+
 type uinputDevice struct{ fd int }
 
 // newUinput creates a virtual pointer+keyboard device.
@@ -70,7 +75,7 @@ func newUinput() (*uinputDevice, error) {
 	// Legacy uinput_user_dev: name[80] + input_id(8) + ff_effects_max(4) +
 	// absmax/absmin/absfuzz/absflat ([64]int32 each) = 1116 bytes.
 	dev := make([]byte, 1116)
-	copy(dev[0:80], "rmm-remote virtual input")
+	copy(dev[0:80], uinputDeviceName)
 	le.PutUint16(dev[80:], 0x06) // BUS_VIRTUAL
 	le.PutUint16(dev[82:], 0x1234)
 	le.PutUint16(dev[84:], 0x5678)

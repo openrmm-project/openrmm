@@ -402,6 +402,7 @@ const CH_VIDEO = 0x01, CH_FILE = 0x02;
 function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const toast = useToast();
   const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
+  const canLock = isWin || /linux/i.test(os || ''); // input lock: Windows + Linux (not macOS)
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const dlRef = useRef({});   // active downloads: id -> { name, chunks: [] }
@@ -417,6 +418,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const [pathEdit, setPathEdit] = useState(''); // editable address bar
   useEffect(() => { if (fb) setPathEdit(fb.path); }, [fb && fb.path]);
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
+  const [locked, setLocked] = useState(false); // host's physical keyboard/mouse blocked (Windows)
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
   const [notice, setNotice] = useState(null); // host-side notice (e.g. Wayland can't be captured)
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
@@ -439,6 +441,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
+        else if (m.t === 'inputlocked') { setLocked(!!m.enabled); if (m.err) toast.error('Input lock failed', m.err); }
         else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
         else if (m.t === 'fend') {
           const d = dlRef.current[m.id];
@@ -512,6 +515,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
         retries = 0; setStatus(filesOnly ? 'connected' : 'streaming'); setNotice(null);
+        setLocked(false); // a fresh sidecar starts unlocked (reconnect after logoff/desktop switch)
         // File-transfer-only sessions never stream the screen, so don't ask for a
         // keyframe; jump straight into the browser. Desktop sessions request a frame.
         if (filesOnly) {
@@ -619,6 +623,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           {!filesOnly && <>
             <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
+            {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title="Block the host's physical keyboard & mouse (user + login screen)">{locked ? 'Locked' : 'Lock input'}</Button>}
             <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>
             <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
           </>}

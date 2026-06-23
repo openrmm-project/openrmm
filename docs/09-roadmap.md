@@ -41,6 +41,9 @@ Remaining Phase 2 nice-to-haves:
     `scripts/linux-force-xorg.sh`).
   - **Bidirectional free-path file transfer** with a file manager on **both**
     Windows and Linux.
+  - **Input lock**: a viewer toggle blocks the host's physical keyboard/mouse
+    (Windows `WH_KEYBOARD_LL`/`WH_MOUSE_LL` hooks; Linux evdev `EVIOCGRAB`) while
+    the technician's injected input still works — covers the login screen too.
   - `native` is a first-class provider; the viewer also opens in a browser tab.
 - **Elevated remote Terminal** (`terminal` provider, tech-only): a real PTY (Unix)
   / ConPTY (Windows) shell running as the agent's service account (root/SYSTEM),

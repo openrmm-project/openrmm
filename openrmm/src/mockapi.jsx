@@ -264,6 +264,11 @@ const api = {
   ackAlert(id) { return POST('/api/alerts/' + id + '/ack'); },
   resolveAlert(id) { return POST('/api/alerts/' + id + '/resolve'); },
 
+  /* ---- reports (fleet inventory: software / hardware / machines) ---- */
+  reportSoftware(params) { return GET('/api/reports/software' + qs(params || {})); },
+  reportHardware(params) { return GET('/api/reports/hardware' + qs(params || {})); },
+  reportMachines(params) { return GET('/api/reports/machines' + qs(params || {})); },
+
   /* ---- config ---- */
   getConfig() { return GET('/api/config'); },
   updateConfig(body) { return PUT('/api/config', body); },

@@ -43,6 +43,9 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
   (Company/Site/device), enforced on read, write, and the AI/MCP surface. Users can
   change their own password in-app.
 - REST API, token auth, immutable audit log, encrypted runtime secrets (AES-256-GCM).
+- **Fleet inventory reports** (software / hardware / machines) aggregated in the
+  database by Company / Site / Department, scope-filtered, with client-side CSV
+  export and a matching `inventory_report` AI/MCP tool — see [15-reports](15-reports.md).
 - React frontend (`openrmm/`) wired to the backend; cross-platform Go agent that
   **self-updates** from the server (`/dl` ETag).
 

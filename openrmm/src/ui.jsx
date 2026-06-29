@@ -430,6 +430,20 @@ function Sparkline({ data, width = 160, height = 36, colorFn }) {
   );
 }
 
+/* ------------------------------ csv / download ---------------------------- */
+// csvEscape quotes a value when it contains a comma, quote or newline.
+function csvEscape(v) { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+// toCSV builds a CRLF-joined CSV string from a header row + data rows.
+function toCSV(headers, rows) { return [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n'); }
+// downloadText saves text as a file from the browser — no server/endpoint write.
+function downloadText(name, text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /* confirm dialog hook-ish component */
 function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = 'Confirm', danger, requireType }) {
   const [typed, setTyped] = useState('');
@@ -465,4 +479,5 @@ Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, useQuery, useMutation, useToast, ToastProvider,
   Button, Spinner, StatusPill, STATUS_META, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Toggle,
   Avatar, RoleBadge, Kbd, Skeleton, EmptyState, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
+  csvEscape, toCSV, downloadText,
 });

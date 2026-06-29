@@ -54,7 +54,9 @@ Remaining Phase 2 nice-to-haves:
 ## ✅ Phase 4 — Frontend (done)
 React SPA (`openrmm/`) per [`14-frontend-design-brief.md`](14-frontend-design-brief.md), wired to the backend:
 dashboard, devices, device detail with remote-launch, jobs + approval queue with
-dry-run preview, AI chat (with in-chat CSV report download), audit, users/2FA/scope.
+dry-run preview, AI chat (with in-chat CSV report download), audit, users/2FA/scope,
+and a **Reports** tab (fleet software/hardware/machines inventory by
+client/site/department, column picker + CSV — see [15-reports](15-reports.md)).
 
 ## ✅ Agent self-update (done)
 Agents upgrade themselves from the server: each compares the

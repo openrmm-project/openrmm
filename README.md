@@ -99,6 +99,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [12-native-remote-fork](docs/12-native-remote-fork.md) | Historical: the abandoned RustDesk-fork plan (superseded by the homegrown engine in 08) |
 | [13-security-rollout](docs/13-security-rollout.md) | Staged hardening: signed updates, TLS enforcement, CI checks, CSP staging |
 | [14-frontend-design-brief](docs/14-frontend-design-brief.md) | Frontend brief: product context, screens, design language, full API contract |
+| [15-reports](docs/15-reports.md) | Fleet inventory reports (software/hardware/machines) by client/site/department, scoped, CSV export, AI tool |
 
 To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 

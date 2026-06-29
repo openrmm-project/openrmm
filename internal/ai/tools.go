@@ -52,7 +52,7 @@ func Tools() []Tool {
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"agent_id":{"type":"string","description":"target device id"}},"required":["agent_id"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
-			Name: "propose_script",
+			Name:        "propose_script",
 			Description: "Propose a script to run on a device. This DOES NOT execute it: it creates a job that a human must approve first. Write the full script yourself for the device's OS. Pick the correct shell.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"agent_id":{"type":"string","description":"target device id"},
@@ -72,12 +72,21 @@ func Tools() []Tool {
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
+			Name:        "inventory_report",
+			Description: "Generate a FLEET-WIDE inventory report aggregated across many devices, optionally narrowed to one client, site or department (group). report_type 'software' lists installed packages per machine; 'hardware' lists each machine's hardware profile; 'machines' lists the fleet (parque) with status. Use THIS (not get_inventory) when the user asks for an inventory of a client/site/department or of 'all machines'. Read-only — it never changes anything. For one specific named device, use get_inventory instead.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"report_type":{"type":"string","enum":["software","hardware","machines"],"description":"which report to produce"},
+				"scope_type":{"type":"string","enum":["client","site","group"],"description":"optional: narrow to one client, site or department (group)"},
+				"scope_id":{"type":"string","description":"id of the client/site/group; required when scope_type is set"}
+			},"required":["report_type"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
 			Name:        "cancel_job",
 			Description: "Cancel a job: rejects it if still awaiting approval, or kills the running process on the device if it is in progress (e.g. a stuck script/download). This stops execution; it never runs anything.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
-			Name: "propose_bulk_deploy",
+			Name:        "propose_bulk_deploy",
 			Description: "Propose running ONE script across MANY devices at once (a mass deployment, e.g. \"install X on every device\" or \"deploy to all companies\"). DOES NOT execute: it creates approval-gated jobs, automatically SPLIT INTO ONE BATCH PER COMPANY — a deployment never spans companies — and a human approves each company batch in the UI. To choose targets, first call list_devices and pass their ids in agent_ids (optionally narrow with site_id or group_id). Write the script for the targets' OS.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"agent_ids":{"type":"array","items":{"type":"string"},"description":"target device ids (from list_devices)"},
@@ -112,6 +121,8 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(cancelJobTool(ctx, tc, args))
 	case "fleet_summary":
 		return jsonResult(fleetSummary(ctx, tc))
+	case "inventory_report":
+		return jsonResult(inventoryReport(ctx, tc, args))
 	default:
 		return ToolResult{Output: fmt.Sprintf(`{"error":"unknown tool %q"}`, name)}
 	}
@@ -287,6 +298,72 @@ func proposeBulkDeploy(ctx context.Context, tc ToolContext, args json.RawMessage
 	return ToolResult{Output: string(out), CreatedJobIDs: jobIDs}
 }
 
+// maxReportRows caps the rows an inventory_report returns to the model so a
+// large fleet (machines × packages) can't blow the context window. The full
+// data is always available via the Reports tab / /api/reports CSV export.
+const maxReportRows = 1000
+
+// inventoryReport runs a deterministic, scope-aware fleet inventory report,
+// reusing the exact store functions the REST /api/reports endpoints use.
+func inventoryReport(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
+	var in struct {
+		ReportType string `json:"report_type"`
+		ScopeType  string `json:"scope_type"`
+		ScopeID    string `json:"scope_id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	f := store.ReportFilter{ScopeUserID: tc.ScopeUserID}
+	switch in.ScopeType {
+	case "client", "site", "group":
+		if in.ScopeID == "" {
+			return nil, fmt.Errorf("scope_id is required when scope_type is set")
+		}
+		f.ScopeType, f.ScopeID = in.ScopeType, in.ScopeID
+	case "":
+		// whole in-scope fleet
+	default:
+		return nil, fmt.Errorf("unknown scope_type %q", in.ScopeType)
+	}
+	switch in.ReportType {
+	case "software":
+		rows, err := tc.Store.SoftwareReport(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		return cappedRows(rows), nil
+	case "hardware":
+		rows, err := tc.Store.HardwareReport(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		return cappedRows(rows), nil
+	case "machines":
+		rows, err := tc.Store.MachinesReport(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		return cappedRows(rows), nil
+	default:
+		return nil, fmt.Errorf("unknown report_type %q", in.ReportType)
+	}
+}
+
+// cappedRows wraps report rows for the model, truncating to maxReportRows and
+// flagging when it did so.
+func cappedRows[T any](rows []T) map[string]any {
+	out := map[string]any{"total": len(rows)}
+	if len(rows) > maxReportRows {
+		out["rows"] = rows[:maxReportRows]
+		out["truncated"] = true
+		out["note"] = fmt.Sprintf("showing the first %d of %d rows; use the Reports tab to export the full CSV", maxReportRows, len(rows))
+	} else {
+		out["rows"] = rows
+	}
+	return out
+}
+
 func getJobStatus(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
 	var in struct {
 		JobID string `json:"job_id"`
@@ -366,9 +443,9 @@ func fleetSummary(ctx context.Context, tc ToolContext) (any, error) {
 		js = append(js, jobSummary{j.ID, j.AgentID, j.Description, j.Status})
 	}
 	return map[string]any{
-		"total_devices":   len(agents),
-		"devices_by_os":   byOS,
+		"total_devices":    len(agents),
+		"devices_by_os":    byOS,
 		"devices_by_state": byStatus,
-		"recent_jobs":     js,
+		"recent_jobs":      js,
 	}, nil
 }

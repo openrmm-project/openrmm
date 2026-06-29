@@ -33,7 +33,7 @@ import (
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-const agentVersion = "0.4.0"
+const agentVersion = "0.4.1"
 
 type state struct {
 	AgentID    string `json:"agent_id"`

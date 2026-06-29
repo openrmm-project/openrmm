@@ -177,6 +177,8 @@ CREATE TABLE IF NOT EXISTS inventory (
     data         JSONB NOT NULL DEFAULT '{}',
     collected_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Speeds up the inventory reports' JSONB lookups (software/hardware aggregation).
+CREATE INDEX IF NOT EXISTS idx_inventory_data ON inventory USING gin (data);
 
 -- ===================== Policies =====================
 

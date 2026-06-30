@@ -13,6 +13,7 @@ import (
 	"github.com/p1ngu/rmm/internal/hub"
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/protocol"
 	"github.com/p1ngu/rmm/internal/store"
 )
@@ -20,16 +21,24 @@ import (
 // offlineAfter is how long since last_seen before an agent is alerted offline.
 const offlineAfter = 3 * time.Minute
 
+// Patch cadence: how often the patch routine runs, and how stale a scan may be.
+const (
+	patchTickEvery    = 2 * time.Minute
+	patchScanInterval = 6 * time.Hour
+)
+
 // Scheduler evaluates checks/tasks and manages alerts.
 type Scheduler struct {
-	store *store.Store
-	hub   *hub.Hub
-	jobs  *jobs.Service
+	store         *store.Store
+	hub           *hub.Hub
+	jobs          *jobs.Service
+	patches       *patches.Service
+	lastPatchTick time.Time
 }
 
 // New builds the scheduler.
-func New(s *store.Store, h *hub.Hub, j *jobs.Service) *Scheduler {
-	return &Scheduler{store: s, hub: h, jobs: j}
+func New(s *store.Store, h *hub.Hub, j *jobs.Service, p *patches.Service) *Scheduler {
+	return &Scheduler{store: s, hub: h, jobs: j, patches: p}
 }
 
 // Run ticks until the context is cancelled.
@@ -66,6 +75,87 @@ func (s *Scheduler) tick(ctx context.Context) {
 		s.dispatchChecks(ctx, a.ID, siteID, clientID, now)
 		s.dispatchTasks(ctx, a.ID, siteID, clientID, now)
 	}
+	if now.Sub(s.lastPatchTick) >= patchTickEvery {
+		s.lastPatchTick = now
+		s.patchTick(ctx, agents, now)
+	}
+}
+
+// patchTick drives patch management: it requests scans from due agents,
+// auto-approves per policy, and — inside a policy's maintenance window —
+// installs approved patches and reboots when one is pending.
+func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now time.Time) {
+	due, _ := s.store.PatchScanDue(ctx, patchScanInterval)
+	for _, id := range due {
+		if s.hub.IsOnline(id) {
+			s.patches.DispatchScan(id)
+		}
+	}
+	pendingReboot := map[string]bool{}
+	if ids, err := s.store.RebootPendingAgents(ctx); err == nil {
+		for _, id := range ids {
+			pendingReboot[id] = true
+		}
+	}
+	for i := range agents {
+		a := &agents[i]
+		pols, err := s.store.PatchPoliciesForAgent(ctx, a.ID)
+		if err != nil || len(pols) == 0 {
+			continue
+		}
+		for j := range pols {
+			if _, err := s.store.AutoApproveForAgent(ctx, a.ID, &pols[j]); err != nil {
+				log.Printf("patch auto-approve %s: %v", a.ID, err)
+			}
+		}
+		if !s.hub.IsOnline(a.ID) {
+			continue
+		}
+		open, rebootAllowed := windowState(pols, now)
+		if !open {
+			continue
+		}
+		if ids, _ := s.store.ApprovedIdentifiers(ctx, a.ID); len(ids) > 0 {
+			if err := s.patches.DispatchInstall(ctx, a.ID, nil); err != nil {
+				log.Printf("patch install %s: %v", a.ID, err)
+			}
+		} else if rebootAllowed && pendingReboot[a.ID] {
+			// Nothing left to install; clear a pending reboot inside the window.
+			if err := s.patches.DispatchReboot(ctx, a.ID, 60); err != nil {
+				log.Printf("patch reboot %s: %v", a.ID, err)
+			}
+		}
+	}
+}
+
+// windowState reports whether any policy's maintenance window is open now, and
+// whether reboots are allowed by a policy whose window is open.
+func windowState(pols []models.PatchPolicy, now time.Time) (open, rebootAllowed bool) {
+	mins := now.Hour()*60 + now.Minute()
+	wd := int(now.Weekday()) // 0=Sun..6=Sat
+	for i := range pols {
+		p := &pols[i]
+		if len(p.WindowDays) > 0 && !containsInt(p.WindowDays, wd) {
+			continue
+		}
+		if mins < p.WindowStartMin || mins > p.WindowEndMin {
+			continue
+		}
+		open = true
+		if p.Reboot != models.RebootNever {
+			rebootAllowed = true
+		}
+	}
+	return open, rebootAllowed
+}
+
+func containsInt(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now time.Time) {

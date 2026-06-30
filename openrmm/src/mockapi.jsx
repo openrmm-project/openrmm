@@ -269,6 +269,22 @@ const api = {
   reportHardware(params) { return GET('/api/reports/hardware' + qs(params || {})); },
   reportMachines(params) { return GET('/api/reports/machines' + qs(params || {})); },
 
+  /* ---- patch management ---- */
+  devicePatches(id) { return GET('/api/devices/' + id + '/patches'); },
+  scanDevicePatches(id) { return POST('/api/devices/' + id + '/patches/scan'); },
+  installDevicePatches(id, identifiers) { return POST('/api/devices/' + id + '/patches/install', { identifiers: identifiers || [] }); },
+  rebootDevice(id) { return POST('/api/devices/' + id + '/reboot'); },
+  patchCatalog() { return GET('/api/patches'); },
+  approvePatch(id, body) { return POST('/api/patches/' + id + '/approve', body); },
+  compliance() { return GET('/api/reports/compliance'); },
+  listPatchPolicies() { return GET('/api/patch-policies'); },
+  createPatchPolicy(b) { return POST('/api/patch-policies', b); },
+  updatePatchPolicy(id, b) { return PUT('/api/patch-policies/' + id, b); },
+  deletePatchPolicy(id) { return DELETE('/api/patch-policies/' + id); },
+  listPatchAssignments(id) { return GET('/api/patch-policies/' + id + '/assignments'); },
+  addPatchAssignment(id, b) { return POST('/api/patch-policies/' + id + '/assignments', b); },
+  deletePatchAssignment(aid) { return DELETE('/api/patch-policies/assignments/' + aid); },
+
   /* ---- config ---- */
   getConfig() { return GET('/api/config'); },
   updateConfig(body) { return PUT('/api/config', body); },

@@ -16,6 +16,7 @@ import (
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/hub"
 	"github.com/p1ngu/rmm/internal/jobs"
+	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
 	"github.com/p1ngu/rmm/internal/settings"
@@ -51,14 +52,15 @@ func main() {
 	relay := remote.NewRelay()
 	aiClient := ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	chat := ai.NewEngine(aiClient, st, jobSvc)
-	sched := scheduler.New(st, h, jobSvc)
+	patchSvc := patches.New(st, h)
+	sched := scheduler.New(st, h, jobSvc, patchSvc)
 
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()
 	go sched.Run(schedCtx)
 	log.Println("scheduler started")
 
-	srv := api.New(cfg, st, h, jobSvc, remoteMgr, relay, chat, sched)
+	srv := api.New(cfg, st, h, jobSvc, remoteMgr, relay, chat, sched, patchSvc)
 
 	httpServer := &http.Server{
 		Addr:         cfg.HTTPAddr,

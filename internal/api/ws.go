@@ -149,6 +149,20 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, raw []byt
 				log.Printf("check result error: %v", err)
 			}
 		}
+	case protocol.MsgPatchReport:
+		var rep protocol.PatchReportMsg
+		if json.Unmarshal(env.Data, &rep) == nil {
+			if err := s.patches.OnReport(ctx, agentID, &rep); err != nil {
+				log.Printf("patch report error: %v", err)
+			}
+		}
+	case protocol.MsgPatchResult:
+		var res protocol.PatchResultMsg
+		if json.Unmarshal(env.Data, &res) == nil {
+			if err := s.patches.OnResult(ctx, agentID, &res); err != nil {
+				log.Printf("patch result error: %v", err)
+			}
+		}
 	case protocol.MsgRemoteQueryResult:
 		var res protocol.RemoteQueryResultMsg
 		if json.Unmarshal(env.Data, &res) == nil {

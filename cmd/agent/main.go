@@ -33,7 +33,7 @@ import (
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-const agentVersion = "0.4.1"
+const agentVersion = "0.4.2"
 
 type state struct {
 	AgentID    string `json:"agent_id"`
@@ -238,6 +238,18 @@ func (a *agent) handleFrame(raw []byte) {
 		var q protocol.RemoteQueryMsg
 		if json.Unmarshal(env.Data, &q) == nil {
 			go a.handleRemoteQuery(q)
+		}
+	case protocol.MsgPatchScan:
+		go func() { a.queue(protocol.MsgPatchReport, scanPatches()) }()
+	case protocol.MsgPatchInstall:
+		var m protocol.PatchInstallMsg
+		if json.Unmarshal(env.Data, &m) == nil {
+			go a.handlePatchInstall(m)
+		}
+	case protocol.MsgReboot:
+		var m protocol.RebootMsg
+		if json.Unmarshal(env.Data, &m) == nil {
+			go rebootHost(m.DelaySeconds)
 		}
 	}
 }

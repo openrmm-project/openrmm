@@ -48,6 +48,10 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
 - **Fleet inventory reports** (software / hardware / machines) aggregated in the
   database by Company / Site / Department, scope-filtered, with client-side CSV
   export and a matching `inventory_report` AI/MCP tool — see [15-reports](15-reports.md).
+- **Patch management**: missing-patch inventory (Windows KBs, Linux advisories),
+  a catalog with approval + classification, patch policies (maintenance windows,
+  auto-approve, exclusions), reboot orchestration and a compliance report — all
+  approval/scope/audit-gated. See [16-patch-management](16-patch-management.md).
 - React frontend (`openrmm/`) wired to the backend; cross-platform Go agent that
   **self-updates** from the server (`/dl` ETag).
 
@@ -58,7 +62,7 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
   codecs (VP8/9/AV1) and media end-to-end encryption are future work. **macOS**
   capture is still a stub, and **Linux requires an Xorg session** (Wayland blocks
   screen capture — see [08-remote-access](08-remote-access.md)).
-- **Rich osquery inventory, patch management, script sandboxing/signing** — see
+- **Rich osquery inventory, script sandboxing/signing** — see
   [09-roadmap](09-roadmap.md).
 
 ## Non-negotiable principle

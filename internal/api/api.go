@@ -25,6 +25,7 @@ import (
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/mcpserver"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
 	"github.com/p1ngu/rmm/internal/settings"
@@ -54,19 +55,20 @@ const (
 
 // Server holds all HTTP dependencies.
 type Server struct {
-	cfg    *config.Config
-	store  *store.Store
-	hub    *hub.Hub
-	jobs   *jobs.Service
-	remote *remote.Manager
-	relay  *remote.Relay
-	chat   *ai.Engine
-	sched  *scheduler.Scheduler
+	cfg     *config.Config
+	store   *store.Store
+	hub     *hub.Hub
+	jobs    *jobs.Service
+	remote  *remote.Manager
+	relay   *remote.Relay
+	chat    *ai.Engine
+	sched   *scheduler.Scheduler
+	patches *patches.Service
 }
 
 // New builds the API server.
-func New(cfg *config.Config, s *store.Store, h *hub.Hub, j *jobs.Service, rm *remote.Manager, relay *remote.Relay, chat *ai.Engine, sched *scheduler.Scheduler) *Server {
-	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, chat: chat, sched: sched}
+func New(cfg *config.Config, s *store.Store, h *hub.Hub, j *jobs.Service, rm *remote.Manager, relay *remote.Relay, chat *ai.Engine, sched *scheduler.Scheduler, patchSvc *patches.Service) *Server {
+	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, chat: chat, sched: sched, patches: patchSvc}
 }
 
 // Router builds the chi router.
@@ -137,6 +139,9 @@ func (s *Server) Router() http.Handler {
 			r.Get("/reports/software", s.reportSoftware)
 			r.Get("/reports/hardware", s.reportHardware)
 			r.Get("/reports/machines", s.reportMachines)
+			r.Get("/reports/compliance", s.reportCompliance)
+			r.Get("/devices/{id}/patches", s.listDevicePatches)
+			r.Get("/patches", s.listPatchCatalog)
 			r.Get("/chat/sessions", s.listChatSessions)
 			r.Get("/chat/sessions/{id}/messages", s.listChatMessages)
 		})
@@ -148,6 +153,10 @@ func (s *Server) Router() http.Handler {
 			r.Get("/scripts", s.listScripts)
 			r.Get("/scripts/{id}", s.getScript)
 			r.Post("/devices/{id}/run-script", s.runLibraryScript)
+			r.Post("/devices/{id}/patches/scan", s.scanDevicePatches)
+			r.Post("/devices/{id}/patches/install", s.installDevicePatches)
+			r.Post("/devices/{id}/reboot", s.rebootDevice)
+			r.Post("/patches/{id}/approve", s.approvePatch)
 			r.Patch("/devices/{id}", s.updateDeviceMeta) // description + note (scope-checked)
 			r.Post("/jobs", s.createJob)
 			r.Post("/jobs/bulk", s.createBulkJob)
@@ -173,6 +182,13 @@ func (s *Server) Router() http.Handler {
 			r.Get("/groups", s.listGroups)
 			r.Get("/policies", s.listPolicies)
 			r.Get("/policies/{id}/assignments", s.listPolicyAssignments)
+			r.Get("/patch-policies", s.listPatchPolicies)
+			r.Post("/patch-policies", s.createPatchPolicy)
+			r.Put("/patch-policies/{id}", s.updatePatchPolicy)
+			r.Delete("/patch-policies/{id}", s.deletePatchPolicy)
+			r.Get("/patch-policies/{id}/assignments", s.listPatchPolicyAssignments)
+			r.Post("/patch-policies/{id}/assignments", s.addPatchPolicyAssignment)
+			r.Delete("/patch-policies/assignments/{aid}", s.deletePatchPolicyAssignment)
 			r.Put("/config", s.updateConfig)
 			r.Post("/enroll-tokens", s.createEnrollToken)
 			r.Get("/api-tokens", s.listAPITokens)

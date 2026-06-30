@@ -186,3 +186,100 @@ type Alert struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
+
+// ===================== Patch management =====================
+
+// Patch classifications + agent_patches statuses + reboot policy values.
+const (
+	PatchClassSecurity  = "security"
+	PatchClassCritical  = "critical"
+	PatchClassImportant = "important"
+	PatchClassModerate  = "moderate"
+	PatchClassOptional  = "optional"
+	PatchClassOther     = "other"
+
+	PatchStatusMissing    = "missing"
+	PatchStatusApproved   = "approved"
+	PatchStatusInstalling = "installing"
+	PatchStatusInstalled  = "installed"
+	PatchStatusFailed     = "failed"
+	PatchStatusExcluded   = "excluded"
+
+	RebootNever      = "never"
+	RebootIfRequired = "if_required"
+	RebootAlways     = "always"
+)
+
+// Patch is one distinct patch in the fleet-wide catalog.
+type Patch struct {
+	ID             string    `json:"id"`
+	OS             string    `json:"os"`
+	Identifier     string    `json:"identifier"`
+	Title          string    `json:"title"`
+	Classification string    `json:"classification"`
+	KB             string    `json:"kb"`
+	CVEs           []string  `json:"cves"`
+	RebootRequired bool      `json:"reboot_required"`
+	FirstSeen      time.Time `json:"first_seen"`
+	LastSeen       time.Time `json:"last_seen"`
+}
+
+// AgentPatch is a patch's state on one device (joined with catalog fields for
+// list endpoints).
+type AgentPatch struct {
+	AgentID        string     `json:"agent_id"`
+	PatchID        string     `json:"patch_id"`
+	Status         string     `json:"status"`
+	AvailableVer   string     `json:"available_version"`
+	DetectedAt     time.Time  `json:"detected_at"`
+	InstalledAt    *time.Time `json:"installed_at,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	Hostname       string     `json:"hostname,omitempty"`
+	Identifier     string     `json:"identifier,omitempty"`
+	Title          string     `json:"title,omitempty"`
+	Classification string     `json:"classification,omitempty"`
+	KB             string     `json:"kb,omitempty"`
+	CVEs           []string   `json:"cves,omitempty"`
+	RebootRequired bool       `json:"reboot_required,omitempty"`
+}
+
+// PatchPolicy bundles auto-approval, exclusions, a maintenance window and a
+// reboot rule, assigned to a client/site/agent scope.
+type PatchPolicy struct {
+	ID                 string    `json:"id"`
+	Name               string    `json:"name"`
+	Enabled            bool      `json:"enabled"`
+	AutoApprove        []string  `json:"auto_approve"`
+	AutoApproveAgeDays int       `json:"auto_approve_age_days"`
+	Exclusions         []string  `json:"exclusions"`
+	WindowDays         []int     `json:"window_days"`
+	WindowStartMin     int       `json:"window_start_min"`
+	WindowEndMin       int       `json:"window_end_min"`
+	Reboot             string    `json:"reboot"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+// PatchPolicyAssignment binds a patch policy to a scope.
+type PatchPolicyAssignment struct {
+	ID        string    `json:"id"`
+	PolicyID  string    `json:"policy_id"`
+	ScopeType string    `json:"scope_type"`
+	ScopeID   string    `json:"scope_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ComplianceRow is a per-device patch-compliance summary.
+type ComplianceRow struct {
+	AgentID       string     `json:"agent_id"`
+	Hostname      string     `json:"hostname"`
+	OS            string     `json:"os"`
+	Client        string     `json:"client"`
+	Site          string     `json:"site"`
+	Department    string     `json:"department"`
+	MissingTotal  int        `json:"missing_total"`
+	MissingSec    int        `json:"missing_security"`
+	Failed        int        `json:"failed"`
+	RebootPending bool       `json:"reboot_pending"`
+	LastScan      *time.Time `json:"last_scan,omitempty"`
+	Status        string     `json:"status"` // compliant|at_risk|critical|unknown
+}

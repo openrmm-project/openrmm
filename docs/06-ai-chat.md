@@ -56,6 +56,7 @@ everything. The same enforcement applies to the MCP server (`11-mcp`).
 | `get_job_status` | read | Status + result of a job |
 | `fleet_summary` | read | Aggregate counts + recent jobs (for reports) |
 | `inventory_report` | read | Fleet inventory (software/hardware/machines) by client/site/department, scope-filtered, capped at 1000 rows — see [15-reports](15-reports.md) |
+| `list_patches` | read | Missing OS patches on a device (KB/advisory, classification, status) — see [16-patch-management](16-patch-management.md). Installing is a human/policy action, not an AI tool. |
 | `cancel_job` | control | Reject a pending job or request cancel of a running one |
 | `propose_script` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
 | `propose_bulk_deploy` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |

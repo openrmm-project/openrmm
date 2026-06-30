@@ -288,11 +288,12 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, ...(can('tech') ? [{ value: 'run', label: 'Run script' }, { value: 'notes', label: 'Notes' }] : [])]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'patches', label: 'Patches' }, ...(can('tech') ? [{ value: 'run', label: 'Run script' }, { value: 'notes', label: 'Notes' }] : [])]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
             {tab === 'jobs' && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
+            {tab === 'patches' && <DevicePatches id={id} />}
             {tab === 'run' && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
             {tab === 'notes' && <DeviceNotes device={d} />}
           </div>
@@ -1019,6 +1020,40 @@ function RunScriptForm({ device, onCreated }) {
   );
 }
 
+// DevicePatches is the device-drawer Patches tab: missing patches + scan/install/
+// reboot actions. Self-contained (no cross-file component dependency).
+function DevicePatches({ id }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const q = useQuery([id, 'dpatches'], () => api.devicePatches(id), { invalidateOn: ['patches'], poll: 5000 });
+  const patches = q.data?.patches || [];
+  const approved = patches.filter((p) => p.status === 'approved').length;
+  const classColor = (c) => (c === 'security' || c === 'critical') ? 'text-bad' : (c === 'important' || c === 'moderate') ? 'text-warn' : 'text-faint';
+  const act = async (fn, msg) => { try { await fn(); toast.info(msg); window.dataBus.emit('patches'); } catch (e) { toast.error('Failed', e.message); } };
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <div className="text-[12.5px] text-muted flex-1">{patches.length} item(s){approved ? ` · ${approved} approved` : ''}</div>
+        {can('tech') && <Button size="sm" variant="secondary" icon="refresh" onClick={() => act(() => api.scanDevicePatches(id), 'Scan requested')}>Scan</Button>}
+        {can('tech') && <Button size="sm" variant="primary" icon="download" disabled={!approved} onClick={() => act(() => api.installDevicePatches(id, []), 'Installing approved patches')}>Install approved</Button>}
+        {can('tech') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => act(() => api.rebootDevice(id), 'Reboot requested')}>Reboot</Button>}
+      </div>
+      {q.loading ? <Skeleton className="h-20 w-full" />
+        : !patches.length ? <EmptyState icon="shield" title="No missing patches" msg="Run a scan to check for OS updates." />
+          : <div className="space-y-1.5">{patches.map((p) => (
+            <div key={p.patch_id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2 text-[12.5px]">
+              <span className={cx('text-[10.5px] font-semibold uppercase tracking-wide w-16 shrink-0', classColor(p.classification))}>{p.classification}</span>
+              <span className="flex-1 min-w-0 truncate text-ink" title={p.title}>{p.title || p.identifier}</span>
+              {p.kb && <span className="mono text-faint shrink-0">{p.kb}</span>}
+              <span className={cx('text-[11px] shrink-0', p.status === 'installed' ? 'text-ok' : p.status === 'failed' ? 'text-bad' : p.status === 'approved' ? 'text-brandhi' : 'text-faint')}>{p.status}</span>
+            </div>
+          ))}</div>}
+      {patches.some((p) => p.status === 'failed') && <div className="text-[11.5px] text-bad mt-2">Some installs failed — check the device error detail / try again.</div>}
+    </div>
+  );
+}
+
 window.DevicesScreen = DevicesScreen;
 window.DeviceDetail = DeviceDetail;
+window.DevicePatches = DevicePatches;
 window.RemoteViewer = RemoteViewer;

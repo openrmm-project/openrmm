@@ -214,8 +214,10 @@ function ClientsScreen() {
   const toast = useToast();
   const clientsQ = useQuery(['clients'], () => api.listClients(), { invalidateOn: ['org'] });
   const sitesQ = useQuery(['sites'], () => api.listSites(), { invalidateOn: ['org'] });
-  const devicesQ = useQuery(['cl-dev'], () => api.listDevices(), { invalidateOn: ['devices'] });
-  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  // Poll so newly-enrolled devices (a server-side event, not a UI mutation) show
+  // up without a manual page refresh.
+  const devicesQ = useQuery(['cl-dev'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 8000 });
+  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'], poll: 12000 });
   const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState(null); // site id
   const [selDept, setSelDept] = useState(null); // department id within the selected site
@@ -384,6 +386,8 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
   const [confirmDelDevice, setConfirmDelDevice] = useState(null);
   const [selected, setSelected] = useState(null); // device id -> open the full detail drawer (same as the Devices tab)
   useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
+  // Clear a generated enrollment command when the selected site/department changes.
+  useEffect(() => { setEnrollToken(null); }, [site.id, focusDept]);
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
@@ -492,7 +496,10 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       </div>
       {can('admin') && (
         <div>
-          <div className="text-[12px] font-semibold text-muted mb-2">Enroll a new agent</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[12px] font-semibold text-muted">Enroll a new agent</div>
+            {enrollToken && <button onClick={() => setEnrollToken(null)} className="text-[11.5px] text-faint hover:text-ink inline-flex items-center gap-1"><Icon name="close" size={12} />Hide</button>}
+          </div>
           {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
         </div>
       )}

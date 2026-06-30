@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -49,11 +50,16 @@ func TestDecryptWrongKeyFails(t *testing.T) {
 func TestDecryptTamperedFails(t *testing.T) {
 	cfg := &config.Config{AdminToken: "tamper-key-tamper-key"}
 	enc, _ := encrypt(cfg, "secret")
-	// flip a character in the base64 body
-	tampered := enc[:len(enc)-1] + "A"
-	if tampered == enc {
-		tampered = enc[:len(enc)-1] + "B"
+	// Decode the base64 body, flip a real byte of the GCM-protected payload, and
+	// re-encode. Flipping a base64 character directly is unreliable: RawStdEncoding
+	// has no padding, so the final character carries unused low bits and some flips
+	// decode to the identical bytes (which made this test flaky).
+	raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(enc, "enc:v1:"))
+	if err != nil {
+		t.Fatalf("decode body: %v", err)
 	}
+	raw[len(raw)-1] ^= 0xFF // corrupt the last byte of the GCM tag
+	tampered := "enc:v1:" + base64.RawStdEncoding.EncodeToString(raw)
 	if _, err := decrypt(cfg, tampered); err == nil {
 		t.Fatal("decrypt of tampered ciphertext should fail")
 	}

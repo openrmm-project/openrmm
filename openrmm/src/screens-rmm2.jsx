@@ -382,6 +382,7 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
   const [confirmDelDept, setConfirmDelDept] = useState(null);
   const [moveDevice, setMoveDevice] = useState(null);
   const [confirmDelDevice, setConfirmDelDevice] = useState(null);
+  const [selected, setSelected] = useState(null); // device id -> open the full detail drawer (same as the Devices tab)
   useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
@@ -405,21 +406,25 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
   const deptIds = new Set(depts.map((g) => g.id));
   const unassigned = devices.filter((d) => !d.group_id || !deptIds.has(d.group_id));
   const renderDevice = (d) => (
-    <div key={d.id} className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+    <div key={d.id} onClick={() => setSelected(d.id)} title="Open device options"
+      className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2 cursor-pointer hover:border-line2 hover:bg-elevated/40 transition">
       <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
       <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
       <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
       <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
       {can('admin') && (
-        <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
-          <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
-          <div className="my-1 border-t border-line" />
-          <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
-        </Dropdown>
+        <span onClick={(e) => e.stopPropagation()}>
+          <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
+            <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
+            <div className="my-1 border-t border-line" />
+            <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
+          </Dropdown>
+        </span>
       )}
     </div>
   );
   return (
+    <>
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
         <div className="h-10 w-10 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="pin" size={19} /></div>
@@ -496,6 +501,8 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       <DeviceMoveModal open={!!moveDevice} onClose={() => setMoveDevice(null)} device={moveDevice} clients={clients} sites={sites} groups={groupsQ.data?.groups || []} onSave={saveDeviceMove} />
       <ConfirmDialog open={!!confirmDelDevice} onClose={() => setConfirmDelDevice(null)} onConfirm={delDevice} danger title="Delete device?" body={<>This permanently removes <b>{confirmDelDevice?.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />
     </Card>
+    <DeviceDetail id={selected} onClose={() => setSelected(null)} sites={sites} clients={clients} />
+    </>
   );
 }
 

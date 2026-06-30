@@ -46,7 +46,12 @@ TOKEN=$(curl -s -X POST localhost:8080/api/enroll-tokens \
 curl -s localhost:8080/api/devices -H "Authorization: Bearer $RMM_ADMIN_TOKEN" | jq
 ```
 
-Cross-compile the agent for endpoints with `make agent-all`.
+Cross-compile the agent for endpoints with `make agent-all` (publish with
+`make agent-dist`). Both **amd64 and arm64** are built for Windows and Linux,
+plus macOS arm64 — the agent is CGO-free, so every target cross-compiles from any
+host. The native remote sidecar (`make remote-dist`) likewise ships
+Windows/Linux **amd64 + arm64** (macOS needs CGO — `remote-dist-darwin`, run on a
+Mac). The `install.sh` / `install.ps1` scripts auto-detect the host architecture.
 
 ## Updating agents (self-update)
 

@@ -24,7 +24,8 @@ if (-not $isAdmin) { Write-Error "Run this in an elevated PowerShell (Run as Adm
 $Dir   = Join-Path $Env:ProgramData "rmm-agent"
 $Exe   = Join-Path $Dir "rmm-agent.exe"
 $State = Join-Path $Dir "state.json"
-$Bin   = "rmm-agent-windows-amd64.exe"
+$Arch  = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }
+$Bin   = "rmm-agent-windows-$Arch.exe"
 $Ws    = $Server -replace '^https','wss' -replace '^http','ws'
 if ($RequireTls -and ($Ws -notlike 'wss://*')) {
     Write-Error "-RequireTls needs an https:// server URL"

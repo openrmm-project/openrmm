@@ -22,7 +22,9 @@ signer:
 # Cross-compile the agent for the major endpoint platforms.
 agent-all:
 	GOOS=windows GOARCH=amd64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-windows-amd64.exe ./cmd/agent
+	GOOS=windows GOARCH=arm64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-windows-arm64.exe ./cmd/agent
 	GOOS=linux   GOARCH=amd64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-linux-amd64       ./cmd/agent
+	GOOS=linux   GOARCH=arm64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-linux-arm64       ./cmd/agent
 	GOOS=darwin  GOARCH=arm64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-darwin-arm64      ./cmd/agent
 
 # Cross-compile the native remote media sidecar (cmd/rmm-remote). Windows
@@ -32,13 +34,17 @@ agent-all:
 # (or with an osxcross toolchain). All share the tile-delta codec (encoder.go).
 remote-all:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o bin/rmm-remote-windows-amd64.exe ./cmd/rmm-remote
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o bin/rmm-remote-windows-arm64.exe ./cmd/rmm-remote
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o bin/rmm-remote-linux-amd64        ./cmd/rmm-remote
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o bin/rmm-remote-linux-arm64        ./cmd/rmm-remote
 
 # Publish the sidecar binaries to deploy/public/ so the server serves them at
 # /dl/ for the agent's ETag-based auto-update (gitignored; rebuild before deploy).
 remote-dist:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-windows-amd64.exe ./cmd/rmm-remote
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-windows-arm64.exe ./cmd/rmm-remote
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-linux-amd64        ./cmd/rmm-remote
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-linux-arm64        ./cmd/rmm-remote
 
 # macOS sidecar — CGO (CoreGraphics + CGEvent). RUN ON A MAC: CGO_ENABLED=1 with
 # Apple's frameworks; `go` cross-compiles arch via clang's -arch. On Apple
@@ -57,6 +63,7 @@ remote-dist-darwin:
 # Names must match agentDownloadName(): rmm-agent-<os>-<arch>[.exe].
 agent-dist:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-windows-amd64.exe ./cmd/agent
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-windows-arm64.exe ./cmd/agent
 	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-linux-amd64        ./cmd/agent
 	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-linux-arm64        ./cmd/agent
 	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-darwin-amd64       ./cmd/agent

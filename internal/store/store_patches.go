@@ -470,6 +470,7 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 		SELECT a.id, a.hostname, a.os, COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing')),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing') AND pt.classification='security'),
+		       COUNT(ap.patch_id) FILTER (WHERE ap.status='approved'),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status='failed'),
 		       a.reboot_pending, a.last_patch_scan
 		FROM agents a` + reportJoins + `
@@ -486,7 +487,7 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 	for rows.Next() {
 		var r models.ComplianceRow
 		if err := rows.Scan(&r.AgentID, &r.Hostname, &r.OS, &r.Client, &r.Site, &r.Department,
-			&r.MissingTotal, &r.MissingSec, &r.Failed, &r.RebootPending, &r.LastScan); err != nil {
+			&r.MissingTotal, &r.MissingSec, &r.Approved, &r.Failed, &r.RebootPending, &r.LastScan); err != nil {
 			return nil, err
 		}
 		r.Status = complianceStatus(r)

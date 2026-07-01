@@ -279,6 +279,7 @@ type ComplianceRow struct {
 	Department    string     `json:"department"`
 	MissingTotal  int        `json:"missing_total"`
 	MissingSec    int        `json:"missing_security"`
+	Approved      int        `json:"approved"`
 	Failed        int        `json:"failed"`
 	RebootPending bool       `json:"reboot_pending"`
 	LastScan      *time.Time `json:"last_scan,omitempty"`

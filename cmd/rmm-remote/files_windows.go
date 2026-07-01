@@ -14,9 +14,9 @@ import (
 // so "Remote ▸ File transfer" opens only the file browser, not a remote desktop.
 // Input/chat/kf frames that arrive are harmlessly ignored (no worker drains
 // them). Mirrors the POSIX runFilesOnly in files.go.
-func runFilesOnly(conn *websocket.Conn) error {
+func runFilesOnly(conn *websocket.Conn, _ bool) error {
 	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
-		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}}
+		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}, allowFiles: true}
 	defer close(s.done)
 
 	errc := make(chan error, 2)

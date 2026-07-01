@@ -30,7 +30,11 @@ const sessionTTL = 2 * time.Minute
 // Provider opens a remote-access session to an agent.
 type Provider interface {
 	Name() string
-	StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error)
+	StartSession(ctx context.Context, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error)
+}
+
+type StartOptions struct {
+	AllowFiles bool
 }
 
 // Manager holds the configured providers and shared dependencies.
@@ -138,12 +142,12 @@ func (m *Manager) ResolveQuery(res protocol.RemoteQueryResultMsg) {
 }
 
 // Start opens a session using the named provider (or the agent's best default).
-func (m *Manager) Start(ctx context.Context, providerName string, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+func (m *Manager) Start(ctx context.Context, providerName string, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error) {
 	p, ok := m.providers[providerName]
 	if !ok {
 		return nil, fmt.Errorf("unknown remote provider %q", providerName)
 	}
-	return p.StartSession(ctx, agent, createdBy)
+	return p.StartSession(ctx, agent, createdBy, opts)
 }
 
 // wsBase converts the configured public HTTP URL to a ws:// or wss:// base.
@@ -172,7 +176,7 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 // pipes bytes between them (NAT-friendly relay, hbbr-equivalent). kind tells
 // the agent which module to attach (desktop sidecar vs. elevated terminal); it is
 // also recorded as the session provider so the audit/list reflect what was opened.
-func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string) (*models.RemoteSession, error) {
+func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string, allowFiles *bool) (*models.RemoteSession, error) {
 	if !m.hub.IsOnline(agent.ID) {
 		return nil, fmt.Errorf("agent %s is offline", agent.ID)
 	}
@@ -195,7 +199,7 @@ func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdB
 	}
 
 	// Tell the agent to connect the requested remote module to the relay.
-	start := protocol.RemoteStartMsg{SessionID: rs.ID, Token: token, RelayURL: agentURL, Kind: kind}
+	start := protocol.RemoteStartMsg{SessionID: rs.ID, Token: token, RelayURL: agentURL, Kind: kind, AllowFiles: allowFiles}
 	data, _ := json.Marshal(start)
 	frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgRemoteStart, Data: data})
 	m.hub.Send(agent.ID, frame)
@@ -207,8 +211,9 @@ type nativeProvider struct{ m *Manager }
 func (p *nativeProvider) Name() string { return "native" }
 
 // StartSession brokers a relayed remote-desktop session (media sidecar).
-func (p *nativeProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
-	return p.m.brokerRelay(ctx, agent, createdBy, "native", protocol.RemoteKindDesktop)
+func (p *nativeProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error) {
+	allowFiles := opts.AllowFiles
+	return p.m.brokerRelay(ctx, agent, createdBy, "native", protocol.RemoteKindDesktop, &allowFiles)
 }
 
 // ---------- files (file transfer only — no screen capture) ----------
@@ -222,8 +227,9 @@ func (p *filesProvider) Name() string { return "files" }
 // streaming the screen. Opening "Remote ▸ File transfer" must NOT start a remote
 // desktop session — only this. (A desktop session can still open the file
 // browser in-band via the Files button, which stays the native provider.)
-func (p *filesProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
-	return p.m.brokerRelay(ctx, agent, createdBy, "files", protocol.RemoteKindFiles)
+func (p *filesProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
+	allowFiles := true
+	return p.m.brokerRelay(ctx, agent, createdBy, "files", protocol.RemoteKindFiles, &allowFiles)
 }
 
 // ---------- terminal (elevated shell over the relay) ----------
@@ -236,8 +242,8 @@ func (p *terminalProvider) Name() string { return "terminal" }
 // shell on a PTY. The shell runs inside the agent process, so it inherits the
 // agent's privileges — and the agent runs as a system service (root on
 // Linux/macOS, SYSTEM on Windows), so the terminal session is elevated.
-func (p *terminalProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
-	return p.m.brokerRelay(ctx, agent, createdBy, "terminal", protocol.RemoteKindTerminal)
+func (p *terminalProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
+	return p.m.brokerRelay(ctx, agent, createdBy, "terminal", protocol.RemoteKindTerminal, nil)
 }
 
 // ---------- meshcentral ----------
@@ -250,7 +256,7 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 // a login token key is configured it mints a login token so the session embeds
 // without a second login (like Tactical RMM); otherwise it returns a deep link
 // that works once the technician is logged into MeshCentral.
-func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
 	p.m.mu.RLock()
 	meshURL, meshTokenKey, meshUser, enabled := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled
 	p.m.mu.RUnlock()
@@ -298,7 +304,7 @@ func (p *rustdeskProvider) Name() string { return "rustdesk" }
 // RustDesk client is installed separately, not by this RMM) and returns a
 // rustdesk://<id> deep link the technician's RustDesk viewer opens. The media path
 // goes through the operator's RustDesk server (hbbs/hbbr), never through OpenRMM.
-func (p *rustdeskProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string) (*models.RemoteSession, error) {
+func (p *rustdeskProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
 	p.m.mu.RLock()
 	enabled := p.m.rustdeskEnabled
 	p.m.mu.RUnlock()

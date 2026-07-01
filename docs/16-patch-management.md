@@ -25,8 +25,8 @@ A first-class patch-management subsystem covering:
 
 - **Scanning/reading is free; installing is gated** — nothing reaches an endpoint
   without approval (manual or policy-driven), the same guardrail as jobs.
-- **Per-user scope + RBAC + audit** on everything (`user_scopes`,
-  `readonly/tech/admin`, `audit_log`).
+- **Per-user scope + granular roles + audit** on everything (`user_scopes`,
+  `roles`/`role_permissions`, `audit_log`).
 - **CGO-free agent** — per-OS scanners shell out (`exec`) to PowerShell/WUA, apt,
   dnf, `softwareupdate`; cross-compiles (incl. arm64).
 - **Maximum reuse** — `jobs` for install history, `policy_assignments` for
@@ -68,8 +68,8 @@ A first-class patch-management subsystem covering:
 
 ## Cross-cutting
 
-- **RBAC**: approve/install = `tech`/`admin`; policies = `admin`. Scope enforced on
-  read and write.
+- **RBAC**: scan/approve/install/reboot require `patches.manage`; patch policy
+  CRUD requires `patches.policies.manage`. Scope is enforced on read and write.
 - **Audit**: `patch.scan`, `patch.approve/decline`, `patch.install`,
   `patch.policy.*`, `reboot`.
 - **Security**: the agent runs as SYSTEM/root (can install); server-side

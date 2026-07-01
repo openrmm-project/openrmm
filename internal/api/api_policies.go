@@ -4,10 +4,18 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/p1ngu/rmm/internal/models"
 )
 
 func (s *Server) listPolicies(w http.ResponseWriter, r *http.Request) {
-	policies, err := s.store.ListPolicies(r.Context())
+	var policies []models.Policy
+	var err error
+	if uid := s.scopeUserID(r); uid != "" {
+		policies, err = s.store.ListPoliciesForUser(r.Context(), uid)
+	} else {
+		policies, err = s.store.ListPolicies(r.Context())
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -41,7 +49,13 @@ func (s *Server) deletePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPolicyAssignments(w http.ResponseWriter, r *http.Request) {
-	as, err := s.store.ListPolicyAssignments(r.Context(), chi.URLParam(r, "id"))
+	var as []models.PolicyAssignment
+	var err error
+	if uid := s.scopeUserID(r); uid != "" {
+		as, err = s.store.ListPolicyAssignmentsForUser(r.Context(), uid, chi.URLParam(r, "id"))
+	} else {
+		as, err = s.store.ListPolicyAssignments(r.Context(), chi.URLParam(r, "id"))
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

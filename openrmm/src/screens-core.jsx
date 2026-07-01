@@ -72,10 +72,11 @@ function Gate({ min, children, fallback = null }) {
 
 /* =============================== DASHBOARD ================================= */
 function DashboardScreen({ navigate }) {
-  const devicesQ = useQuery(['dash-dev'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
-  const jobsQ = useQuery(['dash-jobs'], () => api.listJobs(), { invalidateOn: ['jobs'], poll: 4000 });
-  const auditQ = useQuery(['dash-audit'], () => api.listAudit(8), { invalidateOn: ['audit'], poll: 8000 });
-  const alertsQ = useQuery(['dash-alerts'], () => api.listAlerts(), { invalidateOn: ['alerts'], poll: 8000 });
+  const { can, role } = useAuth();
+  const devicesQ = useQuery(['dash-dev', role], () => can('devices.view') ? api.listDevices() : Promise.resolve({ devices: [] }), { invalidateOn: ['devices'], poll: can('devices.view') ? 10000 : 0 });
+  const jobsQ = useQuery(['dash-jobs', role], () => can('jobs.view') ? api.listJobs() : Promise.resolve({ jobs: [] }), { invalidateOn: ['jobs'], poll: can('jobs.view') ? 4000 : 0 });
+  const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit(8) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
+  const alertsQ = useQuery(['dash-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
   const [ask, setAsk] = useState('');
 
   const devices = devicesQ.data?.devices || [];
@@ -92,29 +93,30 @@ function DashboardScreen({ navigate }) {
     <Page wide>
       <PageHeader title="Dashboard" subtitle="Fleet health at a glance" />
 
-      {/* Ask the AI */}
-      <Card className="p-4 mb-5 relative overflow-hidden grain">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0"><Icon name="sparkle" size={18} /></div>
-          <input value={ask} onChange={(e) => setAsk(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submitAsk()}
-            placeholder="Ask the AI to inspect or act on your fleet — e.g. “install 7-zip on the finance group”"
-            className="flex-1 bg-transparent text-[14px] text-ink placeholder:text-faint outline-none min-w-0" />
-          <Button variant="primary" icon="arrowright" onClick={submitAsk} disabled={!ask.trim()}>Ask</Button>
-        </div>
-      </Card>
+      {can('ai_chat.use') && (
+        <Card className="p-4 mb-5 relative overflow-hidden grain">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0"><Icon name="sparkle" size={18} /></div>
+            <input value={ask} onChange={(e) => setAsk(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submitAsk()}
+              placeholder="Ask the AI to inspect or act on your fleet — e.g. “install 7-zip on the finance group”"
+              className="flex-1 bg-transparent text-[14px] text-ink placeholder:text-faint outline-none min-w-0" />
+            <Button variant="primary" icon="arrowright" onClick={submitAsk} disabled={!ask.trim()}>Ask</Button>
+          </div>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-        <StatTile label="Total devices" value={devices.length} icon="devices" onClick={() => navigate('devices')} />
-        <StatTile label="Online" value={online} icon="dot" tone="ok" sub={`${devices.length - online} offline`} onClick={() => navigate('devices')} />
-        <StatTile label="Awaiting approval" value={awaiting.length} icon="flash" tone="warn" highlight={awaiting.length > 0} onClick={() => navigate('jobs')} sub="needs a human" />
-        <StatTile label="Open alerts" value={openAlerts.length} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />
-        <StatTile label="Recent failures" value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />
+        {can('devices.view') && <StatTile label="Total devices" value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
+        {can('devices.view') && <StatTile label="Online" value={online} icon="dot" tone="ok" sub={`${devices.length - online} offline`} onClick={() => navigate('devices')} />}
+        {can('jobs.view') && <StatTile label="Awaiting approval" value={awaiting.length} icon="flash" tone="warn" highlight={awaiting.length > 0} onClick={() => navigate('jobs')} sub="needs a human" />}
+        {can('alerts.view') && <StatTile label="Open alerts" value={openAlerts.length} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
+        {can('jobs.view') && <StatTile label="Recent failures" value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
       </div>
 
       <div className="grid lg:grid-cols-3 gap-5">
         {/* Approval queue preview */}
-        <div className="lg:col-span-2 space-y-5">
-          <Card>
+        <div className={cx(can('jobs.view') ? 'lg:col-span-2' : 'lg:col-span-3', 'space-y-5')}>
+          {can('jobs.view') && <Card>
             <div className="flex items-center justify-between px-4 h-12 border-b border-line">
               <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="flash" size={15} className="text-warn" />Awaiting approval</div>
               <button onClick={() => navigate('jobs')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">View all <Icon name="chevright" size={13} /></button>
@@ -138,22 +140,22 @@ function DashboardScreen({ navigate }) {
                 );
               })}
             </div>
-          </Card>
+          </Card>}
 
-          {/* Activity feed */}
-          <Card>
-            <div className="px-4 h-12 flex items-center justify-between border-b border-line">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="history" size={15} className="text-muted" />Recent activity</div>
-              <button onClick={() => navigate('audit')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">Audit log <Icon name="chevright" size={13} /></button>
-            </div>
-            <div className="p-2">
-              {(auditQ.data?.entries || []).map((e) => <ActivityRow key={e.id} entry={e} />)}
-            </div>
-          </Card>
+          {can('audit.view') && (
+            <Card>
+              <div className="px-4 h-12 flex items-center justify-between border-b border-line">
+                <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="history" size={15} className="text-muted" />Recent activity</div>
+                <button onClick={() => navigate('audit')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">Audit log <Icon name="chevright" size={13} /></button>
+              </div>
+              <div className="p-2">
+                {(auditQ.data?.entries || []).map((e) => <ActivityRow key={e.id} entry={e} />)}
+              </div>
+            </Card>
+          )}
         </div>
 
-        {/* Alerts + offline */}
-        <div className="space-y-5">
+        {can('alerts.view') && <div className="space-y-5">
           <Card>
             <div className="px-4 h-12 flex items-center justify-between border-b border-line">
               <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="alert" size={15} className="text-bad" />Open alerts</div>
@@ -175,7 +177,7 @@ function DashboardScreen({ navigate }) {
               })}
             </div>
           </Card>
-        </div>
+        </div>}
       </div>
     </Page>
   );

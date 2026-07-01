@@ -19,7 +19,7 @@ import (
 // chVideo tile frames + {t:"kf"}) so the same viewer drives both, including file
 // transfer (transfer_linux.go) and in-session chat (a native X11 window,
 // chat_linux.go).
-func runMedia(conn *websocket.Conn) error {
+func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	type omsg struct {
 		mt int
 		b  []byte
@@ -116,7 +116,7 @@ func runMedia(conn *websocket.Conn) error {
 	defer lock.closeAll()
 
 	// announce the running sidecar version (viewer staleness check)
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion}); e == nil {
+	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
@@ -130,7 +130,7 @@ func runMedia(conn *websocket.Conn) error {
 			}
 			if mt == websocket.BinaryMessage {
 				// viewer -> agent file upload chunk: [chFile][id][bytes]
-				if len(data) >= 2 && data[0] == chFile {
+				if allowFiles && len(data) >= 2 && data[0] == chFile {
 					xfer.onChunk(data[1], data[2:])
 				}
 				continue
@@ -194,7 +194,9 @@ func runMedia(conn *websocket.Conn) error {
 					}
 				}
 			default:
-				xfer.dispatch(e.T, data) // file-transfer control (fls/fget/fput/…)
+				if allowFiles {
+					xfer.dispatch(e.T, data) // file-transfer control (fls/fget/fput/…)
+				}
 			}
 		}
 	}()

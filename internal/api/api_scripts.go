@@ -67,7 +67,7 @@ func (s *Server) deleteScript(w http.ResponseWriter, r *http.Request) {
 }
 
 // runLibraryScript runs a stored script on a device, creating an approval-gated
-// job (or pre-approved when require_approval=false).
+// job (or pre-approved when require_approval=false and the caller can manage jobs).
 func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgent(w, r, chi.URLParam(r, "id")) {
 		return
@@ -85,9 +85,10 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	// Approval mandatory unless the deployer opted into unapproved jobs.
+	// Approval mandatory unless the deployer opted into unapproved jobs and the
+	// caller can also manage jobs. jobs.create alone may only create approval-gated jobs.
 	require := true
-	if in.RequireApproval != nil && s.cfg.AllowUnapprovedJobs {
+	if in.RequireApproval != nil && s.cfg.AllowUnapprovedJobs && hasPermission(r, models.PermJobsManage) {
 		require = *in.RequireApproval
 	}
 	job, err := s.jobs.Propose(r.Context(), chi.URLParam(r, "id"), sc.Shell, sc.Body, "library: "+sc.Name, actorOf(r), require)

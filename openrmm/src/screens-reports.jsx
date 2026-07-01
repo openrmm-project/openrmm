@@ -93,6 +93,7 @@ function ColumnPicker({ columns, hidden, onToggle }) {
 }
 
 function ReportsScreen() {
+  const { can } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState('software');
   const [clientId, setClientId] = useState('');
@@ -103,9 +104,9 @@ function ReportsScreen() {
   const [hiddenCols, setHiddenCols] = useState(() => { try { return JSON.parse(localStorage.getItem('rmm-report-hidden') || '{}'); } catch (e) { return {}; } });
   useEffect(() => { try { localStorage.setItem('rmm-report-hidden', JSON.stringify(hiddenCols)); } catch (e) {} }, [hiddenCols]);
 
-  const clientsQ = useQuery(['rep-clients'], () => api.listClients(), { invalidateOn: ['org'] });
-  const sitesQ = useQuery(['rep-sites'], () => api.listSites(), { invalidateOn: ['org'] });
-  const groupsQ = useQuery(['rep-groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const clientsQ = useQuery(['rep-clients'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
+  const sitesQ = useQuery(['rep-sites'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
+  const groupsQ = useQuery(['rep-groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups'] });
   const clients = clientsQ.data?.clients || [];
   const sites = sitesQ.data?.sites || [];
   const groups = groupsQ.data?.groups || [];

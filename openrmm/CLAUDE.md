@@ -33,7 +33,7 @@ projeto Vite/TS). Pontos de atenção da integração: seção final de `RUNNING
    destrutivos).
 3. Dry-run sempre: mostrar o script antes de rodar.
 4. Trilha de auditoria visível.
-5. Gating por papel `admin`/`tech`/`readonly` (e o backend aplica 403).
+5. Gating por permission key (`jobs.create`, `jobs.manage`, `devices.terminal`, etc.; o backend aplica 403).
 
 ## Convenções
 - HTML/React via Babel (sem build) no protótipo. Manter HTML canônico (tags

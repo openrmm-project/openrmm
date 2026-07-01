@@ -28,18 +28,20 @@ const PATCH_CLASSES = ['security', 'critical', 'important', 'moderate', 'optiona
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function PatchesScreen({ navigate }) {
+  const { can } = useAuth();
   const [tab, setTab] = useState('compliance');
+  const tabs = [
+    { value: 'compliance', label: 'Compliance' },
+    { value: 'catalog', label: 'Catalog' },
+    ...(can('patches.policies.manage') ? [{ value: 'policies', label: 'Policies' }] : []),
+  ];
   return (
     <div className="p-5 max-w-[1400px] mx-auto">
       <div className="mb-4">
         <h1 className="text-[18px] font-semibold text-ink">Patches</h1>
         <p className="text-[13px] text-muted mt-0.5">Inventory, approve and roll out OS updates across the fleet — with maintenance windows, auto-approval and reboot orchestration.</p>
       </div>
-      <Tabs value={tab} onChange={setTab} className="mb-4" tabs={[
-        { value: 'compliance', label: 'Compliance' },
-        { value: 'catalog', label: 'Catalog' },
-        { value: 'policies', label: 'Policies' },
-      ]} />
+      <Tabs value={tab} onChange={setTab} className="mb-4" tabs={tabs} />
       {tab === 'compliance' && <ComplianceTab navigate={navigate} />}
       {tab === 'catalog' && <CatalogTab />}
       {tab === 'policies' && <PoliciesTab />}
@@ -63,7 +65,7 @@ function ComplianceTab() {
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter devices…" className="pl-9 h-8" />
         </div>
         <div className="flex-1" />
-        {can('tech') && <Button size="sm" variant="secondary" icon="refresh" onClick={scanAll}>Scan all</Button>}
+        {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={scanAll}>Scan all</Button>}
       </div>
       {q.loading ? <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
         : !rows.length ? <EmptyState icon="shield" title="No devices" msg="No in-scope devices have reported patch state yet." />
@@ -84,7 +86,7 @@ function ComplianceTab() {
                       <td className={cx('px-4 py-2 tabular', r.failed > 0 && 'text-bad')}>{r.failed}</td>
                       <td className="px-4 py-2">{r.reboot_pending ? <span className="text-warn inline-flex items-center gap-1"><Icon name="refresh" size={12} />pending</span> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2 text-faint whitespace-nowrap">{r.last_scan ? timeAgo(r.last_scan) : 'never'}</td>
-                      <td className="px-4 py-2 text-right">{can('tech') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>Scan</Button>}</td>
+                      <td className="px-4 py-2 text-right">{can('patches.manage') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>Scan</Button>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -132,7 +134,7 @@ function CatalogTab() {
                       <td className="px-4 py-2 tabular text-ok">{p.approved_count || ''}</td>
                       <td className="px-4 py-2">{p.reboot_required ? <Icon name="refresh" size={13} className="text-warn" /> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2 text-right">
-                        {can('tech') && (
+                        {can('patches.manage') && (
                           <span className="inline-flex gap-1.5">
                             <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>Approve</Button>
                             <Button size="sm" variant="ghost" icon="reject" onClick={() => decide(p, 'decline')}>Decline</Button>
@@ -158,7 +160,7 @@ function PoliciesTab() {
   const del = async (p) => { try { await api.deletePatchPolicy(p.id); window.dataBus.emit('patch-pol'); toast.info('Policy deleted'); } catch (e) { toast.error('Failed', e.message); } };
   return (
     <div className="space-y-3">
-      {can('admin') && <div className="flex justify-end"><Button variant="primary" icon="plus" onClick={() => setEditing({})}>New policy</Button></div>}
+      {can('patches.policies.manage') && <div className="flex justify-end"><Button variant="primary" icon="plus" onClick={() => setEditing({})}>New policy</Button></div>}
       {q.loading ? <Card className="p-4"><Skeleton className="h-16 w-full" /></Card>
         : !pols.length ? <Card><EmptyState icon="policy" title="No patch policies" msg="Create one to auto-approve patches and define maintenance windows." /></Card>
           : pols.map((p) => (
@@ -176,7 +178,7 @@ function PoliciesTab() {
                     {p.exclusions?.length ? <span>Excludes: {p.exclusions.join(', ')}</span> : null}
                   </div>
                 </div>
-                {can('admin') && (
+                {can('patches.policies.manage') && (
                   <div className="flex gap-1.5 shrink-0">
                     <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(p)}>Edit</Button>
                     <Button size="sm" variant="ghost" icon="trash" onClick={() => del(p)} />
@@ -263,10 +265,11 @@ function PolicyModal({ policy, onClose }) {
 }
 
 function PolicyAssignments({ policyId }) {
+  const { can } = useAuth();
   const toast = useToast();
   const q = useQuery(['patch-assign', policyId], () => api.listPatchAssignments(policyId), { invalidateOn: ['patch-assign'] });
-  const clientsQ = useQuery(['clients'], () => api.listClients(), { invalidateOn: ['org'] });
-  const sitesQ = useQuery(['sites'], () => api.listSites(), { invalidateOn: ['org'] });
+  const clientsQ = useQuery(['clients'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
+  const sitesQ = useQuery(['sites'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
   const [val, setVal] = useState('');
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
   const assigns = q.data?.assignments || [];

@@ -86,6 +86,38 @@ func (s *Store) ListGroups(ctx context.Context) ([]models.DeviceGroup, error) {
 	return out, rows.Err()
 }
 
+// ListGroupsForUser returns departments inside the user's access scope. A user
+// with no scope rows sees all departments; otherwise a department is visible if
+// it is directly scoped, under a scoped site/client, or contains a scoped agent.
+func (s *Store) ListGroupsForUser(ctx context.Context, userID string) ([]models.DeviceGroup, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, name, site_id, created_at FROM device_groups g WHERE
+		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR g.id IN (SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='group')
+		OR g.site_id IN (SELECT scope_id FROM user_scopes WHERE user_id=$1 AND scope_type='site')
+		OR g.site_id IN (
+		  SELECT s.id FROM sites s JOIN user_scopes us ON us.scope_id=s.client_id
+		  WHERE us.user_id=$1 AND us.scope_type='client'
+		)
+		OR g.id IN (
+		  SELECT a.group_id FROM agents a JOIN user_scopes us ON us.scope_id=a.id
+		  WHERE us.user_id=$1 AND us.scope_type='agent' AND a.group_id IS NOT NULL
+		)
+		ORDER BY name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.DeviceGroup
+	for rows.Next() {
+		var g models.DeviceGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.SiteID, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // ClientForAgents maps each agent id to its company (client) id, resolved via
 // site → client. Agents with no site are omitted (they have no company). Used to
 // split a bulk deployment into one batch per company.

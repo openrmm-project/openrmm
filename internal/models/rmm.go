@@ -59,6 +59,7 @@ type User struct {
 	ID          string    `json:"id"`
 	Username    string    `json:"username"`
 	Role        string    `json:"role"`
+	Permissions []string  `json:"permissions,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	TOTPEnabled bool      `json:"totp_enabled"`
 }

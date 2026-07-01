@@ -38,9 +38,12 @@ with a `connect_url` the UI acts on.
   `{"t":"hello"|"exit"|"error"}`. The viewer is **xterm.js** (`TerminalViewer` in
   `openrmm/src/screens-devices.jsx`, opened from the device **Remote ▸ Terminal**
   menu).
-- **Access control:** an elevated shell is equivalent to running scripts, so
-  unlike read-only remote-desktop assistance the `terminal` provider requires the
-  **`tech`** role (enforced in `startRemote` and gated in the UI menu).
+- **Access control:** remote desktop, file transfer, and terminal are separate
+  device sub-permissions: `devices.remote`, `devices.files`, and
+  `devices.terminal`. In-band file transfer inside a native desktop session is
+  also disabled unless `devices.files` is present. An elevated shell is equivalent
+  to running scripts, so the `terminal` provider requires `devices.terminal`
+  (enforced in `startRemote` and gated in the UI menu).
 - Verified end-to-end: broker → relay → live root/user PTY echoes a computed
   marker back to the viewer.
 
@@ -152,7 +155,7 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   **both Windows and Linux** (`transfer_windows.go` / `transfer_linux.go`); the
   browser file browser is path-aware per host OS (Windows `\`+drive list vs POSIX
   `/`). Open it from **Remote ▸ File transfer** or the **Files** button in the
-  viewer.
+  viewer; both require `devices.files`.
 - **Windows extras:** multi-monitor selection, **in-session chat** (native dark
   Win32 window on the host, rounded/minimizable), **UAC handling** (sidecar runs
   as SYSTEM in the active console session via `CreateProcessAsUser`;

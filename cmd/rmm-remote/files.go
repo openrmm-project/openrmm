@@ -17,7 +17,7 @@ import (
 // own runFilesOnly in files_windows.go, reusing its session-bound file ops.)
 // Opening file transfer therefore never starts a remote-desktop session; only an
 // explicit desktop session does (and it can still open the file browser in-band).
-func runFilesOnly(conn *websocket.Conn) error {
+func runFilesOnly(conn *websocket.Conn, _ bool) error {
 	type omsg struct {
 		mt int
 		b  []byte

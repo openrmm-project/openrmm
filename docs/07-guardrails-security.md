@@ -5,10 +5,11 @@ These controls are built in.
 
 ## Human-in-the-loop (enforced in code)
 
-- AI actions go through `propose_script`, which **always** sets
-  `requires_approval=true` → job status `awaiting_approval`. This applies to both
-  the built-in chat and the **MCP** surface (external AI like Claude/ChatGPT) —
-  same tool catalog, same gate.
+- AI actions go through proposal tools (`propose_script`, bulk deploy, or
+  high-level action tools), which **always** set `requires_approval=true` → job
+  status `awaiting_approval`. This applies to both the built-in chat and the
+  **MCP** surface (external AI like Claude/ChatGPT) — same permission-filtered
+  tool catalog, same gate.
 - **Every ad-hoc script run requires approval by default.** `POST /api/jobs` and
   `run-script` ignore `require_approval:false` unless the deployer explicitly sets
   `RMM_ALLOW_UNAPPROVED_JOBS=true`.
@@ -17,21 +18,23 @@ These controls are built in.
   and triggers dispatch.
 - The UI must show the full script (dry-run preview) before the approve action.
 
-### Destructive actions are admin-only, human-only
+### Destructive actions are permission-gated, human-only
 
-- **Deleting a device or group** is an `admin`-only REST action
-  (`DELETE /api/devices/{id}`, `DELETE /api/groups/{id}`) — a deliberate human
-  action in the tool, audited (`device.delete` / `group.delete`). The AI/MCP
-  surface has **no** delete tool, so external AI can never delete anything.
-- **Scheduled tasks** are the one pre-approved path: they are admin-defined
-  automation, authorized at creation and fully audited; disable a task to stop it.
+- **Deleting a device or group** requires `devices.delete` or `clients.manage`
+  respectively (`DELETE /api/devices/{id}`, `DELETE /api/groups/{id}`) — a
+  deliberate human action in the tool, audited (`device.delete` / `group.delete`).
+  The AI/MCP surface has **no** delete tool, so external AI can never delete anything.
+- **Scheduled tasks** are the one pre-approved path: they require `tasks.manage`,
+  are authorized at creation and fully audited; disable a task to stop it.
 
 ## MCP surface controls
 
 The `/mcp` endpoint (external AI) adds: a built-in **IP allowlist**
-(`RMM_MCP_ALLOWED_IPS`), a minimum role of `tech`, and dedicated **revocable API
-tokens** (issue per connector — never share the admin token). See
-[11-mcp](11-mcp.md).
+(`RMM_MCP_ALLOWED_IPS`), the `mcp.use` permission, and dedicated **revocable
+API tokens** (issue per connector — never share the bootstrap/admin token). MCP
+and the built-in AI Chat advertise and execute only tools allowed by the
+principal's permissions (`devices.view`, `reports.view`, `patches.view`,
+`jobs.create`, `jobs.manage`, etc.) and access scope. See [11-mcp](11-mcp.md).
 
 ## Audit trail
 
@@ -53,12 +56,12 @@ tamper-evidence in production.
   `401 {totp_required:true}` until a valid code is supplied. The TOTP secret is
   encrypted at rest (see below). Enabling 2FA issues **10 one-time recovery
   codes** (shown once, stored SHA-256-hashed, single-use) usable in place of the
-  TOTP code at login; a user can regenerate them, and an **admin can reset** a
+  TOTP code at login; a user can regenerate them, and a user manager can reset a
   locked-out user's 2FA.
 - Editable runtime secrets (AI API key, MeshCentral token key, TOTP secrets) are
-  admin-only / write-only fields, **encrypted with AES-256-GCM** (`enc:v1:` prefix,
-  `internal/settings`) before storage; `/api/config` returns only boolean `*_set`
-  flags.
+  write-only fields gated by `settings.manage`, **encrypted with AES-256-GCM**
+  (`enc:v1:` prefix, `internal/settings`) before storage; `/api/config` returns
+  only boolean `*_set` flags.
 - Agents: a random 32-byte token minted at enrollment, stored **hashed**
   (SHA-256) server-side; compared in constant time. Enroll tokens are
   single/limited-use and can expire.
@@ -66,15 +69,16 @@ tamper-evidence in production.
 
 ## RBAC & per-user access scope
 
-- **Roles** `readonly < tech < admin`, enforced by chi route groups (the backend
-  returns `403`, the UI also gates nav). `readonly` may view and start **remote
-  desktop** (assistance/observation) but cannot run/approve scripts or delete
-  devices; `tech` approves jobs and manages scripts; `admin` manages users,
-  policies, groups, audit, and deletes.
-- The **elevated remote Terminal** (`provider:"terminal"`) opens a root/SYSTEM
-  shell — equivalent to running arbitrary scripts — so unlike read-only remote
-  desktop it requires the **tech** role (enforced in `startRemote` and gated in
-  the UI menu).
+- **Roles are named permission sets**, not a fixed hierarchy. Built-ins are
+  `readonly`, `tech`, and `admin`; custom roles are stored in `roles` and
+  `role_permissions`. The backend returns `403` when a permission is missing and
+  the UI gates navigation/actions from the same `permissions` list returned by
+  login and `/api/me`.
+- Device remote capabilities are split: `devices.remote` for remote desktop,
+  `devices.files` for file transfer, and `devices.terminal` for elevated terminal.
+  The **elevated remote Terminal** (`provider:"terminal"`) opens a root/SYSTEM
+  shell — equivalent to running arbitrary scripts — so it is separate from remote
+  desktop observation.
 - **Per-user access scope** (`user_scopes` table): a user is either *unrestricted*
   (sees the whole fleet) or *restricted* to one or more assignments at
   Company / Site / Department / specific-device granularity. Scope is enforced
@@ -91,15 +95,16 @@ omitted:
 
 1. **TLS** — terminate HTTPS/WSS at a reverse proxy (Caddy/nginx/Traefik). Tokens
    and traffic must not cross the wire in clear text.
-2. ~~**RBAC / multi-tenancy**~~ — **DONE**: `readonly/tech/admin` roles plus
-   per-user Company/Site/device access scope, enforced on read and write paths and
-   on the AI/MCP surface. See *RBAC & per-user access scope* above.
+2. ~~**RBAC / multi-tenancy**~~ — **DONE**: default and custom roles with granular
+   permissions plus per-user Company/Site/Department/device access scope, enforced
+   on read and write paths and on the AI/MCP surface. See *RBAC & per-user access
+   scope* above.
 3. **Script sandboxing** — scripts run with the agent's privileges. Consider an
    allowlist of vetted scripts, signing, or a constrained execution mode for
    AI-authored scripts.
 4. **Rate limiting / quotas** on the chat and job endpoints.
 5. **Relay authorization** — `/ws/remote` validates the session token; add
-   per-role checks and consider end-to-end encryption in the media layer (the
+   principal binding and consider end-to-end encryption in the media layer (the
    native engine is homegrown/CGO-free, so media E2E is future work — no fork).
 6. **Agent token rotation** and revocation (disable a compromised agent).
 7. **Output size limits** — cap stdout/stderr persisted per job.
@@ -114,8 +119,8 @@ guidance, not a guarantee — the human approval gate is the real control.
 
 An independent audit confirmed the core posture is sound: **no SQL injection**
 (all queries parameterized), the **approval guardrail holds** (AI/MCP can only
-`propose_script`; deletes are admin-only and unreachable by AI), **RBAC route
-grouping is correct**, and **tokens/secrets are well handled** (256-bit random,
+create approval-gated job proposals; deletes are permission-gated and unreachable by AI), **RBAC route
+permission checks are correct**, and **tokens/secrets are well handled** (256-bit random,
 stored hashed; bcrypt passwords; constant-time admin/agent compares; `/api/config`
 exposes no secrets).
 
@@ -140,9 +145,10 @@ exposes no secrets).
   (list endpoints `/jobs`, `/alerts`, `/checks`, `/tasks`, `/check-results` returned
   all tenants even when the action path was scoped) and **globally readable chats**.
   Both fixed: list endpoints are now scope-filtered and chat sessions are owned by
-  their creator. `/audit`, `/policies`, `/groups` moved to admin-only, `/scripts` to
-  tech, and alert ack/resolve are scope-gated. Verified live (readonly→403,
-  scoped user sees 0 out-of-scope jobs/alerts/clients).
+  their creator. Sensitive routes are now permission-gated (`audit.view`,
+  `policies.*`, `clients.*`, `scripts.*`, `alerts.manage`) and scope-gated where
+  they act on devices. Verified live (readonly→403 for restricted modules, scoped
+  user sees 0 out-of-scope jobs/alerts/clients).
 - **Two-factor (TOTP)** added for user logins; secrets encrypted at rest.
 
 **Remaining (tracked):**

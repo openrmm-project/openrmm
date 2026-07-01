@@ -27,19 +27,22 @@ this project fills.
 - **Pluggable remote access** — `native` (built-in relay + CGO-free media sidecar,
   tile-delta codec; Windows and Linux/Xorg incl. the login screen, with
   cross-platform file transfer), `terminal` (an **elevated** PTY/ConPTY shell in
-  the browser, tech-only), and `meshcentral` — all behind one interface. Swap freely.
+  the browser, gated by `devices.terminal`), and `meshcentral` — all behind one
+  interface. Swap freely.
 - **BYO AI model** — any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, …).
 - **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
   monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
   installs as a system service and reports rich inventory.
-- **Access control** — `admin`/`tech`/`readonly` roles, optional **TOTP 2FA**, and
-  **per-user access scope** (Company/Site/device) enforced on read, write, and the
-  AI/MCP surface. AI reports stay in chat with a client-side **CSV download** —
+- **Access control** — built-in `admin`/`tech`/`readonly` roles plus custom roles,
+  optional **TOTP 2FA**, and **per-user access scope** (Company/Site/Department/
+  device) enforced on read, write, remote access, and the AI/MCP surface. AI/MCP
+  tools are filtered by the caller's permissions and scope. AI reports stay in chat
+  with a client-side **CSV download** —
   never written to an endpoint.
 - **MCP server** — connect external AI (Claude, ChatGPT, …) to manage the fleet,
-  reusing the same tools and the same human-approval guardrail. Secured with
-  scoped revocable tokens + an IP allowlist; deploy privately (Tailscale) or
-  behind TLS.
+  reusing the same permission-filtered tools and the same human-approval guardrail.
+  Secured with scoped revocable tokens + `mcp.use` + an IP allowlist; deploy
+  privately (Tailscale) or behind TLS.
 
 ## Architecture at a glance
 

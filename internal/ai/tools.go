@@ -16,6 +16,7 @@ type ToolContext struct {
 	Jobs        *jobs.Service
 	Actor       string // who is driving the chat (recorded as job creator / audit actor)
 	ScopeUserID string // restrict tools to this user's access scope ("" = full)
+	Permissions map[string]bool
 }
 
 // allows reports whether the caller's scope permits acting on an agent.
@@ -27,6 +28,13 @@ func (tc ToolContext) allows(ctx context.Context, agentID string) bool {
 	return err == nil && ok
 }
 
+func (tc ToolContext) hasPermission(permission string) bool {
+	if permission == "" || tc.Permissions == nil {
+		return true
+	}
+	return tc.Permissions[permission]
+}
+
 // ToolResult is returned to the chat loop after a tool runs.
 type ToolResult struct {
 	Output        string   // JSON string fed back to the model
@@ -35,10 +43,9 @@ type ToolResult struct {
 
 // Tools returns the catalog advertised to the model.
 //
-// Design note: the model can READ freely (list_devices, get_inventory,
-// get_job_status, fleet_summary) but the only WRITE tool, propose_script, never
-// executes anything — it creates a job in 'awaiting_approval'. A human approves
-// in the UI before it ever reaches an endpoint. This is the core guardrail.
+// Design note: the advertised catalog is filtered by permission. Write-capable
+// tools never execute anything directly — they create jobs in 'awaiting_approval'.
+// A human approves in the UI before anything reaches an endpoint.
 func Tools() []Tool {
 	base := []Tool{
 		{Type: "function", Function: FunctionDef{
@@ -106,8 +113,50 @@ func Tools() []Tool {
 	return append(base, highLevelTools()...)
 }
 
+func ToolsForPermissions(perms map[string]bool) []Tool {
+	tools := Tools()
+	if perms == nil {
+		return tools
+	}
+	out := make([]Tool, 0, len(tools))
+	for _, t := range tools {
+		permission := toolPermission(t.Function.Name)
+		if permission == "" || perms[permission] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func toolPermission(name string) string {
+	if highLevelNames[name] {
+		return models.PermJobsCreate
+	}
+	switch name {
+	case "list_devices", "get_inventory":
+		return models.PermDevicesView
+	case "list_patches":
+		return models.PermPatchesView
+	case "propose_script", "propose_bulk_deploy":
+		return models.PermJobsCreate
+	case "cancel_job":
+		return models.PermJobsManage
+	case "get_job_status":
+		return models.PermJobsView
+	case "fleet_summary":
+		return models.PermDevicesView
+	case "inventory_report":
+		return models.PermReportsView
+	default:
+		return ""
+	}
+}
+
 // Execute dispatches a single tool call and returns its JSON output.
 func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMessage) ToolResult {
+	if permission := toolPermission(name); permission != "" && !tc.hasPermission(permission) {
+		return errResult("missing permission: " + permission)
+	}
 	if res, ok := executeHighLevel(ctx, tc, name, args); ok {
 		return res
 	}
@@ -222,6 +271,9 @@ func proposeScript(ctx context.Context, tc ToolContext, args json.RawMessage) To
 // "awaiting approval" tool result. Shared by propose_script and every
 // high-level tool so the guardrail is identical across all of them.
 func proposeJob(ctx context.Context, tc ToolContext, agentID, shell, script, desc string) ToolResult {
+	if !tc.hasPermission(models.PermJobsCreate) {
+		return errResult("missing permission: " + models.PermJobsCreate)
+	}
 	if !tc.allows(ctx, agentID) {
 		return errResult("device is outside your access scope")
 	}
@@ -441,9 +493,13 @@ func fleetSummary(ctx context.Context, tc ToolContext) (any, error) {
 		byOS[a.OS]++
 		byStatus[a.Status]++
 	}
-	recent, err := tc.Store.ListJobs(ctx, "", 25)
-	if err != nil {
-		return nil, err
+	var recent []models.Job
+	if tc.hasPermission(models.PermJobsView) {
+		var err error
+		recent, err = tc.Store.ListJobs(ctx, "", 25)
+		if err != nil {
+			return nil, err
+		}
 	}
 	type jobSummary struct {
 		ID          string `json:"id"`
@@ -460,11 +516,13 @@ func fleetSummary(ctx context.Context, tc ToolContext) (any, error) {
 		}
 	}
 	js := make([]jobSummary, 0, len(recent))
-	for _, j := range recent {
-		if allowed != nil && !allowed[j.AgentID] {
-			continue
+	if tc.hasPermission(models.PermJobsView) {
+		for _, j := range recent {
+			if allowed != nil && !allowed[j.AgentID] {
+				continue
+			}
+			js = append(js, jobSummary{j.ID, j.AgentID, j.Description, j.Status})
 		}
-		js = append(js, jobSummary{j.ID, j.AgentID, j.Description, j.Status})
 	}
 	return map[string]any{
 		"total_devices":    len(agents),

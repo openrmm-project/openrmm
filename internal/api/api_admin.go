@@ -28,8 +28,14 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		UserID string `json:"user_id"` // optional: bind to a user to inherit their access scope
 	}
 	_ = decode(r, &in)
-	if roleLevel(in.Role) == 0 {
+	if in.Role == "" {
 		in.Role = models.RoleTech // sensible default for MCP connectors
+	} else if ok, err := s.roleExists(r.Context(), in.Role); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid role")
+		return
 	}
 	var boundUser *string
 	if in.UserID != "" {
@@ -61,7 +67,13 @@ func (s *Server) deleteAPIToken(w http.ResponseWriter, r *http.Request) {
 // ---------- Device groups ----------
 
 func (s *Server) listGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := s.store.ListGroups(r.Context())
+	var groups []models.DeviceGroup
+	var err error
+	if uid := s.scopeUserID(r); uid != "" {
+		groups, err = s.store.ListGroupsForUser(r.Context(), uid)
+	} else {
+		groups, err = s.store.ListGroups(r.Context())
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -92,7 +104,7 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, g)
 }
 
-// deleteGroup removes a group. Destructive → admin-only, human action in the tool.
+// deleteGroup removes a group. Destructive and permission-gated; never AI/MCP.
 func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := s.store.DeleteGroup(r.Context(), id); err != nil {
@@ -154,8 +166,8 @@ func (s *Server) setDeviceRemoteIDs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// deleteDevice removes an agent. Destructive → admin-only, human action in the
-// tool; never exposed to the AI/MCP surface.
+// deleteDevice removes an agent. Destructive and permission-gated; never exposed
+// to the AI/MCP surface.
 func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := s.store.DeleteAgent(r.Context(), id); err != nil {

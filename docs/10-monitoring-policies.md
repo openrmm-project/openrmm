@@ -15,17 +15,25 @@ This hierarchy is also what **policies** target (see below).
 
 ## RBAC & authentication
 
-Three roles, ranked: `readonly` < `tech` < `admin`.
+Roles are named permission sets, not a fixed hierarchy. Built-in roles are seeded
+on startup and custom roles can be added from **Settings → Roles**.
 
-| Role | Can |
-|------|-----|
-| readonly | GET everything |
-| tech | + run scripts, approve/reject jobs, start remote, ack/resolve alerts, use AI chat |
-| admin | + manage users, clients/sites, scripts, checks, tasks, policies, enroll tokens |
+| Built-in role | Default access |
+|---------------|----------------|
+| `readonly` | Dashboard, Devices, Clients & Sites, Settings self-service; remote desktop only (`devices.remote`, no `devices.files`) |
+| `tech` | Operational modules: AI Chat, MCP, Jobs, Alerts, Checks/Tasks/Policies view, Scripts view, Patches, Devices remote/files/terminal, Reports |
+| `admin` | Every permission: users, roles, config, enrollment, API tokens, audit, clients/sites management, device deletion |
+
+Permissions are module/action keys such as `ai_chat.use`, `mcp.use`,
+`jobs.create`, `jobs.manage`, `alerts.manage`, `checks.view`, `devices.terminal`,
+`settings.manage`, and `roles.manage`. The
+backend enforces them on every route; the UI uses the same `permissions` list from
+login and `/api/me` to hide navigation/actions.
 
 Authentication accepts three credential types as `Authorization: Bearer <token>`:
 1. **Session token** — from `POST /api/auth/login` (user + bcrypt password).
-2. **API token** — issued rows in `api_tokens` (role-scoped).
+2. **API token** — issued rows in `api_tokens` with a role assignment, optionally
+   bound to a user for access scope.
 3. **Bootstrap admin token** — `RMM_ADMIN_TOKEN` (always admin; for first setup
    and automation).
 
@@ -61,7 +69,7 @@ agent returns a raw value/output; the server computes `passing`/`warning`/
 
 A **task** runs a script (from the library via `script_id`, or inline) on a
 schedule (`interval` or `daily`). The scheduler dispatches due tasks as
-**pre-approved** jobs (admin-defined automation — distinct from AI-proposed
+**pre-approved** jobs (`tasks.manage` automation — distinct from AI-proposed
 scripts, which always require human approval). Each run is linked via
 `jobs.task_id`. Tasks may be owned by an agent or a policy.
 

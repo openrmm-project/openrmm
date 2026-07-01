@@ -7,16 +7,19 @@ designed defense-first. This summarizes the posture; details live in
 
 ## Core guarantees (enforced in code)
 
-- **AI proposes, humans dispose.** The AI and the MCP surface can only
-  `propose_script`, which creates an approval-gated job. They have **no** execute
-  or delete tool. Nothing reaches a machine without a human approval.
-- **Destructive actions are admin-only**, deliberate, and audited (device/group
-  deletion never via AI/MCP).
+- **AI proposes, humans dispose.** The AI and the MCP surface can only create
+  approval-gated job proposals (`propose_script`, bulk deploy, or high-level
+  proposal tools). They have **no** direct execute or delete tool. Nothing reaches
+  a machine without a human approval.
+- **Destructive actions are permission-gated**, deliberate, and audited
+  (device/group deletion never via AI/MCP).
 - **Approval is mandatory by default** for every ad-hoc/AI script run (bypass
   only via the explicit `RMM_ALLOW_UNAPPROVED_JOBS=true`).
-- **RBAC**: `admin` / `tech` / `readonly`, enforced per route, plus **per-user
-  access scope** (Company/Site/device) filtered on read + write paths and on the
-  AI/MCP surface — restricted users can't see or touch out-of-scope devices.
+- **RBAC**: built-in and custom roles with granular permissions, enforced per
+  route, plus **per-user access scope** (Company/Site/Department/device) filtered
+  on read + write paths and on the AI/MCP surface. AI/MCP tools are advertised and
+  executed only when the principal has the required permission, and restricted
+  users can't see or touch out-of-scope devices.
 - **Two-factor (TOTP)**: optional per-user 2FA (RFC 6238); secret encrypted at rest.
 - **Secrets**: tokens are 256-bit random and stored hashed (SHA-256); passwords
   use bcrypt; editable runtime secrets (incl. TOTP secrets) are encrypted with
@@ -40,7 +43,7 @@ designed defense-first. This summarizes the posture; details live in
 - Set a strong `RMM_ADMIN_TOKEN` (`openssl rand -hex 32`); rotate to per-user
   logins and scoped API tokens after bootstrap.
 - For the MCP endpoint: dedicated **revocable API tokens**, the built-in
-  **IP allowlist** (`RMM_MCP_ALLOWED_IPS`), and role ≥ `tech`. See docs/11-mcp.md.
+  **IP allowlist** (`RMM_MCP_ALLOWED_IPS`), and `mcp.use`. See docs/11-mcp.md.
 - Tighten `RMM_CORS_ORIGINS` from the `*` default if you wish (safe for
   bearer-token auth, which uses no cookies).
 - Keep `RMM_ALLOW_UNAPPROVED_JOBS` unset (approval stays mandatory).

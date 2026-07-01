@@ -27,13 +27,23 @@ var sidecarRefresh sync.Mutex
 // and nothing here changes.
 func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	relay := a.relayURL(rs.Token)
+	allowFiles := rs.AllowFiles == nil || *rs.AllowFiles
+	if rs.Kind != protocol.RemoteKindFiles && !allowFiles {
+		if u, err := url.Parse(relay); err == nil {
+			q := u.Query()
+			q.Set("allow_files", "0")
+			u.RawQuery = q.Encode()
+			relay = u.String()
+		}
+	}
 	bin, err := a.ensureSidecar()
 	if err != nil {
 		log.Printf("remote: sidecar unavailable: %v", err)
 		return
 	}
 	// Kind "files" runs the sidecar in file-transfer-only mode (no screen
-	// capture); "desktop" (or empty) is the full media engine.
+	// capture); "desktop" (or empty) is the media engine. Desktop sessions can
+	// additionally disable in-band file transfer when the operator lacks permission.
 	var extra []string
 	if rs.Kind == protocol.RemoteKindFiles {
 		extra = append(extra, "-files")

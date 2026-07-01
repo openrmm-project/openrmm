@@ -144,10 +144,11 @@ type InventoryMsg struct {
 //   - "files": the media sidecar in file-transfer-only mode — NO screen capture
 //   - "terminal": an elevated interactive shell on a PTY, run in the agent itself
 type RemoteStartMsg struct {
-	SessionID string `json:"session_id"`
-	Token     string `json:"token"`
-	RelayURL  string `json:"relay_url"`
-	Kind      string `json:"kind,omitempty"`
+	SessionID  string `json:"session_id"`
+	Token      string `json:"token"`
+	RelayURL   string `json:"relay_url"`
+	Kind       string `json:"kind,omitempty"`
+	AllowFiles *bool  `json:"allow_files,omitempty"`
 }
 
 // Remote session kinds (RemoteStartMsg.Kind).

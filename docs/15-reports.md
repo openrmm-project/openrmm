@@ -66,7 +66,8 @@ sees only that client's rows and 0 when filtering another.)
 
 ## AI / MCP tool
 
-The same engine is exposed to the AI (and MCP clients) as `inventory_report`:
+The same engine is exposed to the AI (and MCP clients) as `inventory_report` when
+the caller has `reports.view`:
 
 ```
 inventory_report(report_type: "software"|"hardware"|"machines",
@@ -75,7 +76,8 @@ inventory_report(report_type: "software"|"hardware"|"machines",
 
 It calls the identical store functions with the caller's scope, so the chat can
 answer "give me the software inventory of client X as CSV" and render a table the
-UI exports. The result is **capped at 1000 rows** for the model (with a
+UI exports. MCP and AI Chat do not advertise or execute this tool without
+`reports.view`. The result is **capped at 1000 rows** for the model (with a
 `truncated` flag) so a large fleet can't overflow the context window — the full
 data is always available via the Reports tab / REST export. Read-only: it never
 creates a job.

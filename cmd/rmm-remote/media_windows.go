@@ -318,16 +318,17 @@ type wsMsg struct {
 // A single writer goroutine serializes all sends (gorilla forbids concurrent
 // writes).
 type session struct {
-	conn    *websocket.Conn
-	out     chan wsMsg
-	done    chan struct{}
-	inputCh chan []byte // input events handed to the desktop worker
-	chat    *chatWindow
-	mu      sync.Mutex
-	uploads map[uint8]*os.File // active viewer->agent uploads, by transfer id
-	uacOff  bool               // true while we've moved UAC prompts off the secure desktop
-	kfReq   atomic.Bool        // a viewer asked for a full keyframe (e.g. on reconnect)
-	lockWanted atomic.Bool     // a viewer asked to block the host's physical input
+	conn       *websocket.Conn
+	out        chan wsMsg
+	done       chan struct{}
+	inputCh    chan []byte // input events handed to the desktop worker
+	chat       *chatWindow
+	mu         sync.Mutex
+	uploads    map[uint8]*os.File // active viewer->agent uploads, by transfer id
+	uacOff     bool               // true while we've moved UAC prompts off the secure desktop
+	kfReq      atomic.Bool        // a viewer asked for a full keyframe (e.g. on reconnect)
+	lockWanted atomic.Bool        // a viewer asked to block the host's physical input
+	allowFiles bool
 }
 
 func (s *session) send(mt int, data []byte) {
@@ -342,9 +343,9 @@ func (s *session) sendJSON(v any) {
 	s.send(websocket.TextMessage, b)
 }
 
-func runMedia(conn *websocket.Conn) error {
+func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
-		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}}
+		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}, allowFiles: allowFiles}
 	defer close(s.done)
 	s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
 		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
@@ -374,7 +375,7 @@ func runMedia(conn *websocket.Conn) error {
 		}
 	}()
 	// announce the running sidecar version so the viewer can surface staleness
-	s.sendJSON(map[string]any{"t": "hello", "v": remoteVersion})
+	s.sendJSON(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles})
 	// Auto-enable UAC control so elevation prompts are visible/clickable without
 	// a manual click; restored to the secure default on disconnect. The viewer
 	// toggle can still turn it back off mid-session.
@@ -515,7 +516,7 @@ func desktopName(h uintptr) string {
 // onMessage routes a relay frame to input / chat / file handling.
 func (s *session) onMessage(mt int, data []byte) {
 	if mt == websocket.BinaryMessage {
-		if len(data) >= 2 && data[0] == chFile {
+		if s.allowFiles && len(data) >= 2 && data[0] == chFile {
 			s.onUploadChunk(data[1], data[2:])
 		}
 		return
@@ -549,22 +550,40 @@ func (s *session) onMessage(mt int, data []byte) {
 	case "lockinput":
 		go s.setInputLock(e.Enable)
 	case "fls":
-		go s.onList(data)
+		if s.allowFiles {
+			go s.onList(data)
+		}
 	case "fmkdir":
-		go s.onMkdir(data)
+		if s.allowFiles {
+			go s.onMkdir(data)
+		}
 	case "fdel":
-		go s.onDelete(data)
+		if s.allowFiles {
+			go s.onDelete(data)
+		}
 	case "frename":
-		go s.onRename(data)
+		if s.allowFiles {
+			go s.onRename(data)
+		}
 	case "fcopy":
-		go s.onCopy(data)
+		if s.allowFiles {
+			go s.onCopy(data)
+		}
 	case "fmove":
-		go s.onMove(data)
+		if s.allowFiles {
+			go s.onMove(data)
+		}
 	case "fput":
-		s.onUploadStart(data)
+		if s.allowFiles {
+			s.onUploadStart(data)
+		}
 	case "fget":
-		go s.onDownload(data)
+		if s.allowFiles {
+			go s.onDownload(data)
+		}
 	case "fend":
-		s.onUploadEnd(e.ID)
+		if s.allowFiles {
+			s.onUploadEnd(e.ID)
+		}
 	}
 }

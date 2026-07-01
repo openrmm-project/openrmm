@@ -318,3 +318,73 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
+
+-- ===================== Patch management =====================
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS reboot_pending  BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_patch_scan TIMESTAMPTZ;
+
+-- Catalog of distinct patches seen across the fleet, deduped per (os, identifier).
+CREATE TABLE IF NOT EXISTS patches (
+    id              UUID PRIMARY KEY,
+    os              TEXT NOT NULL,
+    identifier      TEXT NOT NULL,                  -- KB id / package name / advisory id
+    title           TEXT NOT NULL DEFAULT '',
+    classification  TEXT NOT NULL DEFAULT 'other',  -- security|critical|important|moderate|optional|other
+    kb              TEXT NOT NULL DEFAULT '',
+    cves            TEXT[] NOT NULL DEFAULT '{}',
+    reboot_required BOOLEAN NOT NULL DEFAULT FALSE,
+    first_seen      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (os, identifier)
+);
+
+-- Per-device missing/available patch state.
+CREATE TABLE IF NOT EXISTS agent_patches (
+    agent_id          UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    patch_id          UUID NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    status            TEXT NOT NULL DEFAULT 'missing', -- missing|approved|installing|installed|failed|excluded
+    available_version TEXT NOT NULL DEFAULT '',
+    detected_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    installed_at      TIMESTAMPTZ,
+    error             TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (agent_id, patch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_patches_agent  ON agent_patches(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_patches_status ON agent_patches(status);
+
+-- Approval decisions, scoped (global when scope_type/scope_id are empty).
+CREATE TABLE IF NOT EXISTS patch_approvals (
+    id          UUID PRIMARY KEY,
+    patch_id    UUID NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    scope_type  TEXT NOT NULL DEFAULT '',  -- ''=global | client|site|agent
+    scope_id    TEXT NOT NULL DEFAULT '',
+    decision    TEXT NOT NULL DEFAULT 'approve', -- approve|decline
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual|policy
+    actor       TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (patch_id, scope_type, scope_id)
+);
+
+-- Patch policies (maintenance window, auto-approval, exclusions, reboot).
+CREATE TABLE IF NOT EXISTS patch_policies (
+    id                    UUID PRIMARY KEY,
+    name                  TEXT NOT NULL,
+    enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+    auto_approve          TEXT[] NOT NULL DEFAULT '{}', -- classifications to auto-approve
+    auto_approve_age_days INT NOT NULL DEFAULT 7,
+    exclusions            TEXT[] NOT NULL DEFAULT '{}', -- identifiers or classifications to never install
+    window_days           INT[] NOT NULL DEFAULT '{}',  -- 0=Sun..6=Sat; empty = any day
+    window_start_min      INT NOT NULL DEFAULT 0,       -- minutes from midnight (server time)
+    window_end_min        INT NOT NULL DEFAULT 1439,
+    reboot                TEXT NOT NULL DEFAULT 'if_required', -- never|if_required|always
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS patch_policy_assignments (
+    id          UUID PRIMARY KEY,
+    policy_id   UUID NOT NULL REFERENCES patch_policies(id) ON DELETE CASCADE,
+    scope_type  TEXT NOT NULL,  -- client|site|agent
+    scope_id    UUID NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_patch_policy_assign ON patch_policy_assignments(policy_id);

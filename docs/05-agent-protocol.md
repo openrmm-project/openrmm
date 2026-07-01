@@ -30,6 +30,8 @@ The agent stores `{agent_id, agent_token}` in its state file (`-state`, default
 | `heartbeat` | `{}` | refresh `last_seen`, mark online |
 | `inventory` | `{ "data": {...} }` | upsert the inventory snapshot |
 | `job_result` | `{ job_id, exit_code, stdout, stderr, success }` | finalize the job |
+| `patch_report` | `{ os, patches:[{identifier,title,classification,kb,reboot_required,...}] }` | upsert the device's missing patches ([16](16-patch-management.md)) |
+| `patch_result` | `{ request_id, results:[{identifier,success,reboot_required,error}], reboot_required }` | record an install run |
 | `remote_status` | (reserved) | native remote-session state |
 
 The reference agent sends a heartbeat every 20s and inventory every 5min (and
@@ -41,6 +43,9 @@ once on connect).
 |------|------|--------|
 | `job` | `{ job_id, type, shell, script }` | run it, reply with `job_result` |
 | `remote_start` | `{ session_id, token, relay_url, kind }` | connect a remote module to the relay |
+| `patch_scan` | `{}` | scan for missing OS patches, reply with `patch_report` |
+| `patch_install` | `{ request_id, identifiers }` | install patches (empty = all approved), reply with `patch_result` |
+| `reboot` | `{ delay_seconds }` | reboot the host |
 
 `kind` selects which module the agent attaches: `"desktop"` (or empty) spawns the
 media sidecar (screen + input); `"files"` spawns the same sidecar in

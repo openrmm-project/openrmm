@@ -72,6 +72,11 @@ func Tools() []Tool {
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
+			Name:        "list_patches",
+			Description: "List the OS patches/updates currently missing on a device (Windows KBs, Linux advisories) with their classification (security/critical/...), status and whether a reboot is needed. Read-only — installing patches is a human/policy action.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{"agent_id":{"type":"string","description":"target device id"}},"required":["agent_id"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
 			Name:        "inventory_report",
 			Description: "Generate a FLEET-WIDE inventory report aggregated across many devices, optionally narrowed to one client, site or department (group). report_type 'software' lists installed packages per machine; 'hardware' lists each machine's hardware profile; 'machines' lists the fleet (parque) with status. Use THIS (not get_inventory) when the user asks for an inventory of a client/site/department or of 'all machines'. Read-only — it never changes anything. For one specific named device, use get_inventory instead.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
@@ -111,6 +116,8 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(listDevices(ctx, tc))
 	case "get_inventory":
 		return jsonResult(getInventory(ctx, tc, args))
+	case "list_patches":
+		return jsonResult(listPatches(ctx, tc, args))
 	case "propose_script":
 		return proposeScript(ctx, tc, args)
 	case "propose_bulk_deploy":
@@ -179,6 +186,23 @@ func getInventory(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 		return nil, err
 	}
 	return inv, nil
+}
+
+func listPatches(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
+	var in struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	if !tc.allows(ctx, in.AgentID) {
+		return nil, fmt.Errorf("device is outside your access scope")
+	}
+	ps, err := tc.Store.ListAgentPatches(ctx, in.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"patches": ps}, nil
 }
 
 func proposeScript(ctx context.Context, tc ToolContext, args json.RawMessage) ToolResult {

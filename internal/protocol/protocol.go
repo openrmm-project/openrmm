@@ -19,9 +19,73 @@ const (
 
 	MsgRemoteQuery       = "remote_query"        // server -> agent: read a remote-provider value on demand
 	MsgRemoteQueryResult = "remote_query_result" // agent -> server: reply to a remote_query
-	MsgRunCheck     = "run_check"     // server -> agent: execute a monitoring check
-	MsgCheckResult  = "check_result"  // agent -> server: raw check outcome
+	MsgRunCheck          = "run_check"           // server -> agent: execute a monitoring check
+	MsgCheckResult       = "check_result"        // agent -> server: raw check outcome
+
+	MsgPatchScan    = "patch_scan"    // server -> agent: scan for missing OS patches
+	MsgPatchReport  = "patch_report"  // agent -> server: list of missing patches
+	MsgPatchInstall = "patch_install" // server -> agent: install approved patches
+	MsgPatchResult  = "patch_result"  // agent -> server: per-patch install outcome
+	MsgReboot       = "reboot"        // server -> agent: reboot the host
 )
+
+// Patch classifications (normalized across OSes).
+const (
+	PatchSecurity  = "security"
+	PatchCritical  = "critical"
+	PatchImportant = "important"
+	PatchModerate  = "moderate"
+	PatchOptional  = "optional"
+	PatchOther     = "other"
+)
+
+// PatchScanMsg asks the agent to scan for missing OS patches and reply with a
+// PatchReportMsg.
+type PatchScanMsg struct{}
+
+// PatchItem is one missing patch reported by the agent.
+type PatchItem struct {
+	Identifier     string   `json:"identifier"` // KB id / package name / advisory id
+	Title          string   `json:"title"`
+	Classification string   `json:"classification"`
+	KB             string   `json:"kb,omitempty"`
+	CVEs           []string `json:"cves,omitempty"`
+	RebootRequired bool     `json:"reboot_required"`
+	Version        string   `json:"version,omitempty"` // available version
+}
+
+// PatchReportMsg is the agent's current set of missing patches.
+type PatchReportMsg struct {
+	OS      string      `json:"os"`
+	Patches []PatchItem `json:"patches"`
+}
+
+// PatchInstallMsg tells the agent to install patches by identifier (empty list =
+// every patch the agent currently sees as available).
+type PatchInstallMsg struct {
+	RequestID   string   `json:"request_id"`
+	Identifiers []string `json:"identifiers"`
+}
+
+// PatchResultItem is the per-patch install outcome.
+type PatchResultItem struct {
+	Identifier     string `json:"identifier"`
+	Success        bool   `json:"success"`
+	RebootRequired bool   `json:"reboot_required"`
+	Error          string `json:"error,omitempty"`
+}
+
+// PatchResultMsg reports the outcome of a PatchInstallMsg.
+type PatchResultMsg struct {
+	RequestID      string            `json:"request_id"`
+	Results        []PatchResultItem `json:"results"`
+	RebootRequired bool              `json:"reboot_required"`
+}
+
+// RebootMsg asks the agent to reboot the host (optionally after a delay).
+type RebootMsg struct {
+	DelaySeconds int `json:"delay_seconds,omitempty"`
+}
 
 // Envelope wraps every WebSocket frame.
 type Envelope struct {

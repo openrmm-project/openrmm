@@ -116,6 +116,7 @@ const NAV = [
     { id: 'tasks', label: 'Scheduled tasks', icon: 'tasks' },
     { id: 'policies', label: 'Policies', icon: 'policy', min: 'admin' },
     { id: 'scripts', label: 'Scripts', icon: 'script', min: 'tech' },
+    { id: 'patches', label: 'Patches', icon: 'shield' },
     { id: 'reports', label: 'Reports', icon: 'report' },
   ] },
   { section: 'Organization', items: [
@@ -190,7 +191,7 @@ function Sidebar({ route, navigate }) {
 
 /* -------------------------------- Topbar ---------------------------------- */
 function Topbar({ route, navigate, onToggleTheme, theme }) {
-  const titles = { dashboard: 'Dashboard', devices: 'Devices', jobs: 'Jobs & Approvals', alerts: 'Alerts', checks: 'Checks', tasks: 'Scheduled tasks', policies: 'Policies', scripts: 'Script library', chat: 'AI Chat', clients: 'Clients & Sites', audit: 'Audit log', settings: 'Users & Settings', reports: 'Reports' };
+  const titles = { dashboard: 'Dashboard', devices: 'Devices', jobs: 'Jobs & Approvals', alerts: 'Alerts', checks: 'Checks', tasks: 'Scheduled tasks', policies: 'Policies', scripts: 'Script library', chat: 'AI Chat', clients: 'Clients & Sites', audit: 'Audit log', settings: 'Users & Settings', reports: 'Reports', patches: 'Patches' };
   return (
     <header className="h-14 shrink-0 border-b border-line bg-panel/70 backdrop-blur flex items-center gap-3 px-5">
       <div className="text-[14.5px] font-semibold text-ink tracking-tight whitespace-nowrap">{titles[route.name] || ''}</div>
@@ -231,7 +232,7 @@ function Shell() {
     alerts: window.AlertsScreen, checks: window.ChecksScreen, tasks: window.TasksScreen,
     policies: window.PoliciesScreen, scripts: window.ScriptsScreen, chat: window.ChatScreen,
     clients: window.ClientsScreen, audit: window.AuditScreen, settings: window.SettingsScreen,
-    reports: window.ReportsScreen,
+    reports: window.ReportsScreen, patches: window.PatchesScreen,
   };
   const Screen = screens[route.name] || (() => <EmptyState title="Coming soon" msg="This screen is part of the build." />);
   const fullBleed = route.name === 'chat';

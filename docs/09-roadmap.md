@@ -27,7 +27,6 @@ audit). The product's differentiator.
 Remaining Phase 2 nice-to-haves:
 - osquery-grade software inventory; device groups/tags filtering in the UI.
 - High-level AI action tools (`install_software`, `install_printer(model, ip)`).
-- Patch management.
 
 ## ✅ Phase 3 — Remote access (done; codecs maturing)
 - MeshCentral token-login embed (turnkey in-browser sessions).
@@ -68,6 +67,15 @@ downloads + validates + atomically swaps + reloads (re-exec on Unix; detached
 service restart on Windows). Publish with `make agent-dist`; tune with
 `RMM_AUTO_UPDATE` / `RMM_UPDATE_INTERVAL`. See
 [02-getting-started](02-getting-started.md#updating-agents-self-update).
+
+## ✅ Patch management (done)
+A first-class patch subsystem: **missing-patch inventory** (Windows KBs, Linux
+advisories/CVEs), a **catalog with per-patch approval + classification**,
+**patch policies** (maintenance windows, auto-approve security after N days,
+exclusions), **post-patch reboot orchestration**, and **compliance reporting** —
+all behind the existing approval/scope/audit guardrails, with a Patches tab, a
+device-drawer Patches view and a read-only `list_patches` AI tool. Requires agent
+≥ 0.4.2. Design + per-OS notes in [16-patch-management](16-patch-management.md).
 
 ## Cross-cutting hardening
 TLS everywhere, rate limiting, script output caps, agent revocation, signed

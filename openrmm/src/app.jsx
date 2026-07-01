@@ -26,7 +26,7 @@ function LoginScreen({ onAuthed }) {
     setBusy(true); setErr(null);
     try {
       const res = mode === 'token' ? await api.loginWithToken(token.trim()) : await api.login(username.trim(), password, code.trim() || undefined);
-      localStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role }));
+      localStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] }));
       onAuthed(res);
     } catch (e) {
       if (e.totpRequired) { setNeed2fa(true); setErr(code ? 'Invalid code — try again' : 'Enter your authenticator code'); }
@@ -106,30 +106,30 @@ function BrandMark({ size = 32 }) {
 const NAV = [
   { section: null, items: [
     { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-    { id: 'chat', label: 'AI Chat', icon: 'chat', accent: true },
-    { id: 'alerts', label: 'Alerts', icon: 'alert', badge: 'alerts' },
+    { id: 'chat', label: 'AI Chat', icon: 'chat', accent: true, min: 'ai_chat.use' },
+    { id: 'alerts', label: 'Alerts', icon: 'alert', badge: 'alerts', min: 'alerts.view' },
   ] },
   { section: 'Fleet', items: [
-    { id: 'devices', label: 'Devices', icon: 'devices' },
-    { id: 'jobs', label: 'Jobs', icon: 'flash', badge: 'jobs' },
-    { id: 'checks', label: 'Checks', icon: 'check' },
-    { id: 'tasks', label: 'Scheduled tasks', icon: 'tasks' },
-    { id: 'policies', label: 'Policies', icon: 'policy', min: 'admin' },
-    { id: 'scripts', label: 'Scripts', icon: 'script', min: 'tech' },
-    { id: 'patches', label: 'Patches', icon: 'shield' },
-    { id: 'reports', label: 'Reports', icon: 'report' },
+    { id: 'devices', label: 'Devices', icon: 'devices', min: 'devices.view' },
+    { id: 'jobs', label: 'Jobs', icon: 'flash', badge: 'jobs', min: 'jobs.view' },
+    { id: 'checks', label: 'Checks', icon: 'check', min: 'checks.view' },
+    { id: 'tasks', label: 'Scheduled tasks', icon: 'tasks', min: 'tasks.view' },
+    { id: 'policies', label: 'Policies', icon: 'policy', min: 'policies.view' },
+    { id: 'scripts', label: 'Scripts', icon: 'script', min: 'scripts.view' },
+    { id: 'patches', label: 'Patches', icon: 'shield', min: 'patches.view' },
+    { id: 'reports', label: 'Reports', icon: 'report', min: 'reports.view' },
   ] },
   { section: 'Organization', items: [
-    { id: 'clients', label: 'Clients & Sites', icon: 'building' },
-    { id: 'audit', label: 'Audit log', icon: 'audit', min: 'admin' },
+    { id: 'clients', label: 'Clients & Sites', icon: 'building', min: 'clients.view' },
+    { id: 'audit', label: 'Audit log', icon: 'audit', min: 'audit.view' },
     { id: 'settings', label: 'Users & Settings', icon: 'settings' },
   ] },
 ];
 
 function Sidebar({ route, navigate }) {
   const { user, role, logout, can } = useAuth();
-  const jobsQ = useQuery(['nav-jobs'], () => api.listJobs(), { invalidateOn: ['jobs'], poll: 5000 });
-  const alertsQ = useQuery(['nav-alerts'], () => api.listAlerts(), { invalidateOn: ['alerts'], poll: 8000 });
+  const jobsQ = useQuery(['nav-jobs', role], () => can('jobs.view') ? api.listJobs() : Promise.resolve({ jobs: [] }), { invalidateOn: ['jobs'], poll: can('jobs.view') ? 5000 : 0 });
+  const alertsQ = useQuery(['nav-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
   const awaiting = (jobsQ.data?.jobs || []).filter((j) => j.status === 'awaiting_approval').length;
   const openAlerts = (alertsQ.data?.alerts || []).filter((a) => a.status === 'new').length;
   const badges = { jobs: awaiting, alerts: openAlerts };
@@ -191,16 +191,17 @@ function Sidebar({ route, navigate }) {
 
 /* -------------------------------- Topbar ---------------------------------- */
 function Topbar({ route, navigate, onToggleTheme, theme }) {
+  const { can } = useAuth();
   const titles = { dashboard: 'Dashboard', devices: 'Devices', jobs: 'Jobs & Approvals', alerts: 'Alerts', checks: 'Checks', tasks: 'Scheduled tasks', policies: 'Policies', scripts: 'Script library', chat: 'AI Chat', clients: 'Clients & Sites', audit: 'Audit log', settings: 'Users & Settings', reports: 'Reports', patches: 'Patches' };
   return (
     <header className="h-14 shrink-0 border-b border-line bg-panel/70 backdrop-blur flex items-center gap-3 px-5">
       <div className="text-[14.5px] font-semibold text-ink tracking-tight whitespace-nowrap">{titles[route.name] || ''}</div>
       <div className="flex-1" />
-      <button onClick={() => navigate('chat')} className="hidden md:flex items-center gap-2 h-9 px-3 rounded-lg border border-line2 bg-elevated/60 hover:bg-elevated text-[12.5px] text-muted hover:text-ink transition group">
+      {can('ai_chat.use') && <button onClick={() => navigate('chat')} className="hidden md:flex items-center gap-2 h-9 px-3 rounded-lg border border-line2 bg-elevated/60 hover:bg-elevated text-[12.5px] text-muted hover:text-ink transition group">
         <Icon name="sparkle" size={14} className="text-brandhi" />
         <span>Ask the AI…</span>
         <Kbd>⌘K</Kbd>
-      </button>
+      </button>}
       <Tip label={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
         <button onClick={onToggleTheme} className="h-9 w-9 flex items-center justify-center rounded-lg border border-line2 bg-elevated/60 hover:bg-elevated text-muted hover:text-ink transition">
           <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
@@ -212,6 +213,7 @@ function Topbar({ route, navigate, onToggleTheme, theme }) {
 
 /* -------------------------------- Router ---------------------------------- */
 function Shell() {
+  const { can } = useAuth();
   const [route, setRoute] = useState({ name: 'dashboard', params: {} });
   const [theme, setTheme] = useState(() => localStorage.getItem('rmm-theme') || 'dark');
   const navigate = (name, params = {}) => setRoute({ name, params });
@@ -223,7 +225,7 @@ function Shell() {
   }, [theme]);
 
   uE(() => {
-    const h = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); navigate('chat'); } };
+    const h = (e) => { if (can('ai_chat.use') && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); navigate('chat'); } };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   }, []);
 
@@ -234,7 +236,11 @@ function Shell() {
     clients: window.ClientsScreen, audit: window.AuditScreen, settings: window.SettingsScreen,
     reports: window.ReportsScreen, patches: window.PatchesScreen,
   };
-  const Screen = screens[route.name] || (() => <EmptyState title="Coming soon" msg="This screen is part of the build." />);
+  const screenMin = { devices: 'devices.view', clients: 'clients.view', chat: 'ai_chat.use', alerts: 'alerts.view', jobs: 'jobs.view', checks: 'checks.view', tasks: 'tasks.view', policies: 'policies.view', scripts: 'scripts.view', patches: 'patches.view', reports: 'reports.view', audit: 'audit.view' };
+  const denied = screenMin[route.name] && !can(screenMin[route.name]);
+  const Screen = denied
+    ? (() => <Page><EmptyState icon="shield" title="Access denied" msg="Your role does not have permission to open this screen." /></Page>)
+    : (screens[route.name] || (() => <EmptyState title="Coming soon" msg="This screen is part of the build." />));
   const fullBleed = route.name === 'chat';
 
   return (
@@ -258,7 +264,12 @@ function App() {
   const remoteDev = params.get('dev');
   if (remoteDev) {
     const RV = window.RemoteViewer;
-    return <ToastProvider><RV deviceId={remoteDev} hostname={params.get('host') || 'remote'} os={params.get('os') || ''} onClose={() => window.close()} /></ToastProvider>;
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch (e) {}
+    const permissions = stored?.permissions || stored?.user?.permissions || DEFAULT_ROLE_PERMS[stored?.role] || [];
+    const permissionSet = new Set(permissions);
+    const ctx = { user: stored?.user || null, role: stored?.role || null, permissions, logout: () => {}, can: (key) => permissionSet.has(PERM_ALIASES[key] || key) };
+    return <AuthCtx.Provider value={ctx}><ToastProvider><RV deviceId={remoteDev} hostname={params.get('host') || 'remote'} os={params.get('os') || ''} onClose={() => window.close()} /></ToastProvider></AuthCtx.Provider>;
   }
 
   const [auth, setAuth] = useState(undefined); // undefined=loading, null=logged out
@@ -268,7 +279,7 @@ function App() {
     if (!raw) { setAuth(null); return; }
     try {
       const a = JSON.parse(raw);
-      api.loginWithToken(a.token).then((res) => setAuth({ token: res.token, user: res.user, role: res.role })).catch(() => setAuth(null));
+      api.loginWithToken(a.token).then((res) => setAuth({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] })).catch(() => setAuth(null));
     } catch (e) { setAuth(null); }
   }, []);
 
@@ -277,7 +288,9 @@ function App() {
   if (auth === undefined) return <div className="h-full flex items-center justify-center text-faint"><Spinner size={22} /></div>;
   if (auth === null) return <ToastProvider><LoginScreen onAuthed={setAuth} /></ToastProvider>;
 
-  const ctx = { user: auth.user, role: auth.role, logout, can: (min) => ROLES[auth.role] >= ROLES[min] };
+  const permissions = auth.permissions || auth.user?.permissions || DEFAULT_ROLE_PERMS[auth.role] || [];
+  const permissionSet = new Set(permissions);
+  const ctx = { user: auth.user, role: auth.role, permissions, logout, can: (key) => permissionSet.has(PERM_ALIASES[key] || key) };
   return (
     <AuthCtx.Provider value={ctx}>
       <ToastProvider><Shell /></ToastProvider>

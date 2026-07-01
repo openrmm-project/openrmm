@@ -24,15 +24,24 @@ func enabledDefaultTrue(body []byte) bool {
 // ---------- checks ----------
 
 func (s *Server) listChecks(w http.ResponseWriter, r *http.Request) {
-	checks, err := s.store.ListChecks(r.Context(), r.URL.Query().Get("agent_id"), r.URL.Query().Get("policy_id"))
+	policyID := r.URL.Query().Get("policy_id")
+	checks, err := s.store.ListChecks(r.Context(), r.URL.Query().Get("agent_id"), policyID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if set, scoped := s.scopedAgentSet(r); scoped {
+		policyVisible := false
+		if policyID != "" {
+			policyVisible, err = s.store.PolicyAllowedForUser(r.Context(), s.scopeUserID(r), policyID)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		f := checks[:0]
 		for _, c := range checks {
-			if inScope(set, c.AgentID) { // policy-owned (no agent) hidden for restricted users
+			if inScope(set, c.AgentID) || (policyVisible && c.AgentID == nil && c.PolicyID != nil && *c.PolicyID == policyID) {
 				f = append(f, c)
 			}
 		}
@@ -106,15 +115,24 @@ func (s *Server) listCheckResults(w http.ResponseWriter, r *http.Request) {
 // ---------- tasks ----------
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.store.ListTasks(r.Context(), r.URL.Query().Get("agent_id"), r.URL.Query().Get("policy_id"))
+	policyID := r.URL.Query().Get("policy_id")
+	tasks, err := s.store.ListTasks(r.Context(), r.URL.Query().Get("agent_id"), policyID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if set, scoped := s.scopedAgentSet(r); scoped {
+		policyVisible := false
+		if policyID != "" {
+			policyVisible, err = s.store.PolicyAllowedForUser(r.Context(), s.scopeUserID(r), policyID)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		f := tasks[:0]
 		for _, t := range tasks {
-			if inScope(set, t.AgentID) {
+			if inScope(set, t.AgentID) || (policyVisible && t.AgentID == nil && t.PolicyID != nil && *t.PolicyID == policyID) {
 				f = append(f, t)
 			}
 		}

@@ -49,7 +49,13 @@ func (s *Server) bootstrapAdmin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "role": u.Role, "user": u})
+	perms, err := s.permissionsForRole(r.Context(), u.Role)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	u.Permissions = perms
+	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "role": u.Role, "permissions": perms, "user": u})
 }
 
 // login verifies credentials and returns a session bearer token.
@@ -106,7 +112,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		user = &models.User{ID: id, Username: in.Username, Role: role}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "role": role, "user": user})
+	perms, err := s.permissionsForRole(r.Context(), role)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user.Permissions = perms
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "role": role, "permissions": perms, "user": user})
 }
 
 // logout revokes the caller's session token.
@@ -119,7 +131,13 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 // one for the bootstrap admin token / API tokens).
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	actor, role := actorOf(r), roleOf(r)
+	perms, err := s.permissionsForRole(r.Context(), role)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if u, err := s.store.GetUserByID(r.Context(), actor); err == nil {
+		u.Permissions = perms
 		writeJSON(w, http.StatusOK, u)
 		return
 	}
@@ -129,7 +147,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	} else if actor == "api" {
 		name = "api-token"
 	}
-	writeJSON(w, http.StatusOK, models.User{ID: actor, Username: name, Role: role})
+	writeJSON(w, http.StatusOK, models.User{ID: actor, Username: name, Role: role, Permissions: perms})
 }
 
 // changePassword lets a signed-in user change their own password after proving
@@ -195,8 +213,14 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username and password required")
 		return
 	}
-	if roleLevel(in.Role) == 0 {
+	if in.Role == "" {
 		in.Role = models.RoleTech
+	} else if ok, err := s.roleExists(r.Context(), in.Role); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
+		writeErr(w, http.StatusBadRequest, "invalid role")
+		return
 	}
 	hash, err := auth.HashPassword(in.Password)
 	if err != nil {
@@ -226,7 +250,10 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if roleLevel(in.Role) == 0 {
+	if ok, err := s.roleExists(r.Context(), in.Role); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !ok {
 		writeErr(w, http.StatusBadRequest, "invalid role")
 		return
 	}

@@ -181,7 +181,7 @@ func postKey(browserCode int, down bool) {
 
 // ---- relay loop ----
 
-func runMedia(conn *websocket.Conn) error {
+func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	type omsg struct {
 		mt int
 		b  []byte
@@ -236,7 +236,7 @@ func runMedia(conn *websocket.Conn) error {
 		}
 	})
 
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion}); e == nil {
+	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
@@ -249,7 +249,7 @@ func runMedia(conn *websocket.Conn) error {
 				return
 			}
 			if mt == websocket.BinaryMessage {
-				if len(data) >= 2 && data[0] == chFile {
+				if allowFiles && len(data) >= 2 && data[0] == chFile {
 					xfer.onChunk(data[1], data[2:])
 				}
 				continue
@@ -273,7 +273,9 @@ func runMedia(conn *websocket.Conn) error {
 				kfReq.Store(true)
 				pace.markActivity()
 			default:
-				xfer.dispatch(e.T, data)
+				if allowFiles {
+					xfer.dispatch(e.T, data)
+				}
 			}
 		}
 	}()

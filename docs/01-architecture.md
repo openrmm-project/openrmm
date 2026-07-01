@@ -26,8 +26,8 @@ internal/
   hub/           # registry of live agent connections (push channel per agent)
   jobs/          # job lifecycle: propose/approve/reject/dispatch/result + audit
   scheduler/     # dispatches due checks/tasks, evaluates results, raises/resolves alerts
-  ai/            # OpenAI-compatible client, tool catalog, tool-calling loop
-  mcpserver/     # exposes the AI tool catalog as an MCP server (Streamable HTTP) for external AI
+  ai/            # OpenAI-compatible client, permission-filtered tool catalog, tool loop
+  mcpserver/     # exposes the same permission/scope-filtered tools over Streamable HTTP
   remote/        # RemoteProvider abstraction (native + terminal + meshcentral) + session relay
   api/           # chi router, auth middleware, REST handlers, WebSocket handlers
 ```
@@ -39,9 +39,9 @@ internal/
 2. ai.Engine.Respond:
      - persists the user message
      - loads history + system prompt
-     - calls the LLM with the tool catalog
+     - calls the LLM with the permission-filtered tool catalog
 3. LLM calls list_devices -> finds host Z's agent_id
-4. LLM calls propose_script(agent_id, shell, script, description)
+4. LLM calls a proposal tool, e.g. propose_script(agent_id, shell, script, description)
      - jobs.Propose creates a job with status = awaiting_approval  (NOT executed)
      - audit: job.propose
 5. LLM produces a final message: "I've prepared a script, awaiting your approval."

@@ -4,10 +4,10 @@ The RMM exposes its AI tools as a **Model Context Protocol (MCP)** server over
 **Streamable HTTP** at `/mcp`. Any MCP-capable client — Claude (Desktop/web),
 ChatGPT, and others — can connect and manage the fleet in natural language.
 
-It reuses the **exact same tool catalog and implementations** as the built-in
-chat (`ai.Tools` / `ai.Execute`), so both surfaces behave identically — including
-the guardrail: the only write tool is `propose_script`, which creates an
-**approval-gated** job. External AI can propose, never execute, never delete.
+It reuses the **exact same permission-filtered tool catalog and implementations**
+as the built-in chat (`ai.ToolsForPermissions` / `ai.Execute`), so both surfaces
+behave identically. Write-capable tools only create **approval-gated** job
+proposals. External AI can propose, never execute directly, never delete.
 
 Verified end-to-end: `initialize` → `tools/list` → `tools/call` over HTTP, with
 scoped tokens and IP allowlisting.
@@ -15,8 +15,8 @@ scoped tokens and IP allowlisting.
 ## Endpoint & auth
 
 - **URL**: `https://<your-host>/mcp`
-- **Auth**: `Authorization: Bearer <token>`, minimum role **tech**.
-  Use a **dedicated, revocable API token** (not the bootstrap admin token):
+- **Auth**: `Authorization: Bearer <token>` with `mcp.use` permission.
+  Use a **dedicated, revocable API token** (not the bootstrap/admin token):
   ```bash
   curl -X POST https://host/api/api-tokens \
     -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
@@ -27,7 +27,11 @@ scoped tokens and IP allowlisting.
 - **Access scope**: if the API token is bound to a user with a restricted access
   scope, the MCP tools see and act on **only** that user's Companies/Sites/devices —
   the same enforcement as the in-app AI (see `06-ai-chat` and `07-guardrails-security`).
-  An unbound/admin token sees the whole fleet.
+  An unbound token with a full-access role sees the whole fleet.
+- **Tool permissions**: MCP only advertises and runs tools allowed by the token's
+  role permissions. For example, inventory reports require `reports.view`, patch
+  reads require `patches.view`, proposing jobs requires `jobs.create`, and
+  canceling jobs requires `jobs.manage`.
 
 ## Connecting a client
 
@@ -61,20 +65,22 @@ Set `RMM_PUBLIC_URL=https://rmm.yourdomain.com` and, if behind the proxy,
    Empty = no app-level restriction. When set, non-matching sources get `403`.
    Behind a proxy, set `RMM_TRUST_PROXY_HEADERS=true` so `X-Forwarded-For` is
    used (only with a trusted proxy — otherwise it is spoofable).
-2. **Dedicated scoped tokens.** Issue a per-connector API token at role `tech`;
-   revoke it independently of everything else. Never put the admin token in a
-   client.
+2. **Dedicated scoped tokens.** Issue a per-connector API token with a role that
+   has `mcp.use` (the built-in `tech` role is the default); revoke it
+   independently of everything else. Never put the bootstrap/admin token in a client.
 3. **TLS everywhere** for public exposure; or no public exposure at all (Tailscale).
-4. **Approval guardrail.** External AI can only `propose_script` → human approves
-   in the tool. It has no execute/delete tools. See
+4. **Approval guardrail.** External AI can only create job proposals → human
+   approves in the tool. It has no direct execute/delete tools. See
    [07-guardrails-security](07-guardrails-security.md).
-5. **Least privilege.** The `/mcp` group requires role `tech`, not `admin`.
+5. **Least privilege.** The `/mcp` group requires `mcp.use`, not broad admin
+   access.
 
 ## Recommended hardening checklist
 
 - [ ] Private network (Tailscale) **or** reverse proxy + valid TLS cert.
 - [ ] `RMM_MCP_ALLOWED_IPS` set to your client / proxy egress IPs.
-- [ ] Dedicated `tech` API token per connector; rotate/revoke as needed.
+- [ ] Dedicated API token per connector with only the needed role; rotate/revoke
+  as needed.
 - [ ] `RMM_ALLOW_UNAPPROVED_JOBS=false` (default) — approval stays mandatory.
 - [ ] Watch the audit log for `apitoken.create` / `job.propose` / `job.approve`.
 
@@ -82,7 +88,7 @@ Set `RMM_PUBLIC_URL=https://rmm.yourdomain.com` and, if behind the proxy,
 
 | Capability | Allowed? |
 |------------|----------|
-| List devices, read inventory, fleet summary, job status | ✅ |
-| Propose a script (creates an approval-gated job) | ✅ (awaits human approval) |
+| List devices, read inventory, fleet summary, job status | ✅ only with matching permissions |
+| Propose scripts/bulk/high-level actions | ✅ only with `jobs.create`; awaits human approval |
 | Execute a script directly | ❌ |
-| Delete a device or group | ❌ (admin-only, human action in the tool) |
+| Delete a device or group | ❌ (permission-gated human action in the tool) |

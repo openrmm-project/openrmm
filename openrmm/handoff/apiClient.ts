@@ -12,9 +12,15 @@
  */
 
 // ----------------------------- tipos (do brief) -----------------------------
-export type Role = "admin" | "tech" | "readonly";
-export type User = { id: string; username: string; role: Role; created_at: string };
+export type Role = string;
+export type PermissionKey = string;
+export type User = { id: string; username: string; role: Role; permissions?: PermissionKey[]; created_at: string };
 export type UserScope = { scope_type: "client" | "site" | "group" | "agent"; scope_id: string };
+export type Permission = { key: string; label: string; description: string; group: string };
+export type RoleDefinition = {
+  key: string; name: string; description: string; system: boolean;
+  permissions: PermissionKey[]; created_at?: string; updated_at?: string;
+};
 
 export type Agent = {
   id: string; hostname: string; os: string; arch: string; version: string;
@@ -95,9 +101,16 @@ const API_BASE =
   "http://localhost:8080";
 
 const TOKEN_KEY = "rmm-ai-auth";
-const ROLES: Record<Role, number> = { admin: 3, tech: 2, readonly: 1 };
+const DEFAULT_ROLE_PERMS: Record<string, PermissionKey[]> = {
+  readonly: ["devices.view", "devices.remote", "clients.view"],
+  tech: ["ai_chat.use", "mcp.use", "alerts.view", "alerts.manage", "jobs.view", "jobs.create", "jobs.manage", "checks.view", "tasks.view", "policies.view", "scripts.view", "patches.view", "patches.manage", "devices.view", "devices.manage", "devices.remote", "devices.files", "devices.terminal", "clients.view", "reports.view"],
+  admin: ["ai_chat.use", "mcp.use", "alerts.view", "alerts.manage", "jobs.view", "jobs.create", "jobs.manage", "checks.view", "checks.manage", "tasks.view", "tasks.manage", "policies.view", "policies.manage", "scripts.view", "scripts.manage", "patches.view", "patches.manage", "patches.policies.manage", "devices.view", "devices.manage", "devices.delete", "devices.remote", "devices.files", "devices.terminal", "clients.view", "clients.manage", "reports.view", "audit.view", "settings.manage", "enrollment.manage", "api_tokens.manage", "users.manage", "roles.manage"],
+};
+const PERM_ALIASES: Record<string, PermissionKey> = { admin: "settings.manage", tech: "jobs.manage", readonly: "devices.view" };
 
-let session: { token: string; user: User; role: Role } | null = (() => {
+type Session = { token: string; user: User; role: Role; permissions: PermissionKey[] };
+
+let session: Session | null = (() => {
   try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || "null"); } catch { return null; }
 })();
 
@@ -105,6 +118,22 @@ function setSession(s: typeof session) {
   session = s;
   if (s) localStorage.setItem(TOKEN_KEY, JSON.stringify(s));
   else localStorage.removeItem(TOKEN_KEY);
+}
+
+function normalizeSession(token: string, r: Partial<User> & { user?: User; role?: Role; permissions?: PermissionKey[] }): Session {
+  const user = (r.user || r) as User;
+  const role = r.role || user.role;
+  const permissions = r.permissions || user.permissions || DEFAULT_ROLE_PERMS[role] || [];
+  return { token, user: { ...user, permissions }, role, permissions };
+}
+
+function sessionPerms() {
+  return new Set(session?.permissions || session?.user?.permissions || DEFAULT_ROLE_PERMS[session?.role || ""] || []);
+}
+
+function canPermission(key: string) {
+  if (!session) return false;
+  return sessionPerms().has(PERM_ALIASES[key] || key);
 }
 
 class ApiError extends Error {
@@ -151,33 +180,52 @@ const qs = (o: Record<string, unknown>) => {
   const s = u.toString(); return s ? `?${s}` : "";
 };
 
+function adaptPermissions(r: { permissions?: Permission[] }) {
+  const permissions = (r.permissions || []).map((p) => (
+    p.key === "ai_chat.use" ? { ...p, label: p.label === "Use AI Chat" ? "AI Chat" : p.label, group: "AI" }
+      : p.key === "jobs.manage" ? { ...p, label: "Manage jobs", description: "Approve, reject, and cancel jobs.", group: "Jobs" }
+        : p
+  ));
+  if (!permissions.some((p) => p.key === "mcp.use")) {
+    permissions.push({ key: "mcp.use", label: "MCP", description: "Connect external MCP clients to AI tools.", group: "AI" });
+  }
+  if (!permissions.some((p) => p.key === "jobs.create")) {
+    const i = permissions.findIndex((p) => p.key === "jobs.manage");
+    const create = { key: "jobs.create", label: "Create jobs", description: "Create approval-gated jobs and bulk deployments.", group: "Jobs" };
+    if (i >= 0) permissions.splice(i, 0, create); else permissions.push(create);
+  }
+  return { permissions };
+}
+
 // --------------------------------- api -------------------------------------
 export const api = {
   API_BASE,
 
   // ---- auth & sessão ----
   async login(username: string, password: string) {
-    const r = await POST<{ token: string; role: Role; user: User }>("/api/auth/login", { username, password });
-    setSession({ token: r.token, user: r.user, role: r.role });
+    const r = await POST<{ token: string; role: Role; user: User; permissions?: PermissionKey[] }>("/api/auth/login", { username, password });
+    setSession(normalizeSession(r.token, r));
     return r;
   },
   /** Primeiro acesso quando a instância está vazia (sem usuários). */
   async bootstrap(username: string, password: string) {
-    const r = await POST<{ token: string; role: Role; user: User }>("/api/auth/bootstrap", { username, password });
-    setSession({ token: r.token, user: r.user, role: r.role });
+    const r = await POST<{ token: string; role: Role; user: User; permissions?: PermissionKey[] }>("/api/auth/bootstrap", { username, password });
+    setSession(normalizeSession(r.token, r));
     return r;
   },
   /** Login por token colado (MVP). Resolve o principal via GET /api/me. */
   async loginWithToken(token: string) {
-    setSession({ token, user: { id: "", username: "", role: "readonly", created_at: "" }, role: "readonly" });
+    setSession({ token, user: { id: "", username: "", role: "readonly", permissions: [], created_at: "" }, role: "readonly", permissions: [] });
     const user = await GET<User>("/api/me");
-    setSession({ token, user, role: user.role });
-    return { token, role: user.role, user };
+    const next = normalizeSession(token, user);
+    setSession(next);
+    return next;
   },
   async me() { return GET<User>("/api/me"); },
   async logout() { try { await POST("/api/auth/logout"); } finally { setSession(null); } },
   currentRole(): Role | null { return session?.role ?? null; },
-  can(min: Role) { return !!session && ROLES[session.role] >= ROLES[min]; },
+  permissions(): PermissionKey[] { return Array.from(sessionPerms()); },
+  can(key: string) { return canPermission(key); },
 
   // ---- devices ----
   listDevices: () => GET<{ devices: Agent[] }>("/api/devices"),
@@ -234,6 +282,13 @@ export const api = {
   deleteUser: (id: string) => DELETE<void>(`/api/users/${id}`),
   getUserScopes: (id: string) => GET<{ scopes: UserScope[] }>(`/api/users/${id}/scopes`),
   setUserScopes: (id: string, scopes: UserScope[]) => PUT<{ scopes: UserScope[] }>(`/api/users/${id}/scopes`, { scopes }),
+
+  // ---- roles & permissions ----
+  listRoles: () => GET<{ roles: RoleDefinition[] }>("/api/roles"),
+  listPermissions: async () => adaptPermissions(await GET<{ permissions: Permission[] }>("/api/permissions")),
+  createRole: (body: { key: string; name: string; description?: string; permissions: PermissionKey[] }) => POST<RoleDefinition>("/api/roles", body),
+  updateRole: (key: string, body: { name?: string; description?: string; permissions?: PermissionKey[] }) => PUT<RoleDefinition>(`/api/roles/${encodeURIComponent(key)}`, body),
+  deleteRole: (key: string) => DELETE<void>(`/api/roles/${encodeURIComponent(key)}`),
 
   // ---- org (clients & sites) ----
   listClients: () => GET<{ clients: Client[] }>("/api/clients"),

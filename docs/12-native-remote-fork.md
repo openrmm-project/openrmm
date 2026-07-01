@@ -148,7 +148,9 @@ wheel `{dy}`, `k` key `{code:VK,down}`. Coordinates are normalized 0..1 across t
   chat panel in the viewer.
 - **File transfer:** bidirectional, free-path (`transfer_windows.go`) — upload
   from the browser to any remote path, download any remote file to the browser.
-  Guarded by a 2 GiB cap and logged; the relay is the only transport.
+  Requires `devices.files`; desktop sessions started without that permission pass
+  `allow_files=false` to the sidecar and file-control frames are ignored. Guarded
+  by a 2 GiB cap and logged; the relay is the only transport.
 
 ### Known limitations of the reference engine (intentional, fork closes them)
 - **Session-0 isolation:** the agent runs as a service in session 0, which

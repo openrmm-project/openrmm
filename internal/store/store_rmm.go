@@ -580,6 +580,73 @@ func (s *Store) ListPolicies(ctx context.Context) ([]models.Policy, error) {
 	return out, rows.Err()
 }
 
+// ListPoliciesForUser returns policies that apply to at least one agent in the
+// user's access scope. Unscoped users see all policies.
+func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]models.Policy, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT p.id, p.name, p.description, p.created_at
+		FROM policies p
+		WHERE NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR EXISTS (
+		  SELECT 1
+		  FROM policy_assignments pa
+		  JOIN agents a ON (
+		    (pa.scope_type='agent'  AND pa.scope_id=a.id) OR
+		    (pa.scope_type='group'  AND pa.scope_id=a.group_id) OR
+		    (pa.scope_type='site'   AND pa.scope_id=a.site_id) OR
+		    (pa.scope_type='client' AND pa.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		  )
+		  WHERE pa.policy_id=p.id AND EXISTS (
+		    SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		      (us.scope_type='agent'  AND us.scope_id=a.id) OR
+		      (us.scope_type='group'  AND us.scope_id=a.group_id) OR
+		      (us.scope_type='site'   AND us.scope_id=a.site_id) OR
+		      (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		    )
+		  )
+		)
+		ORDER BY p.name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.Policy
+	for rows.Next() {
+		var p models.Policy
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// PolicyAllowedForUser reports whether a policy applies to at least one agent in
+// the user's access scope. Users with no scope rows can see any policy.
+func (s *Store) PolicyAllowedForUser(ctx context.Context, userID, policyID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT
+		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR EXISTS (
+		  SELECT 1
+		  FROM policy_assignments pa
+		  JOIN agents a ON (
+		    (pa.scope_type='agent'  AND pa.scope_id=a.id) OR
+		    (pa.scope_type='group'  AND pa.scope_id=a.group_id) OR
+		    (pa.scope_type='site'   AND pa.scope_id=a.site_id) OR
+		    (pa.scope_type='client' AND pa.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		  )
+		  WHERE pa.policy_id=$2 AND EXISTS (
+		    SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		      (us.scope_type='agent'  AND us.scope_id=a.id) OR
+		      (us.scope_type='group'  AND us.scope_id=a.group_id) OR
+		      (us.scope_type='site'   AND us.scope_id=a.site_id) OR
+		      (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		    )
+		  )
+		)`, userID, policyID).Scan(&ok)
+	return ok, err
+}
+
 // DeletePolicy removes a policy (cascades to its checks/tasks/assignments).
 func (s *Store) DeletePolicy(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM policies WHERE id=$1`, id)
@@ -602,6 +669,48 @@ func (s *Store) AssignPolicy(ctx context.Context, policyID, scopeType, scopeID s
 func (s *Store) ListPolicyAssignments(ctx context.Context, policyID string) ([]models.PolicyAssignment, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, policy_id, scope_type, scope_id, created_at FROM policy_assignments WHERE policy_id=$1`, policyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.PolicyAssignment
+	for rows.Next() {
+		var pa models.PolicyAssignment
+		if err := rows.Scan(&pa.ID, &pa.PolicyID, &pa.ScopeType, &pa.ScopeID, &pa.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, pa)
+	}
+	return out, rows.Err()
+}
+
+// ListPolicyAssignmentsForUser returns only assignments that intersect the
+// user's access scope. Unscoped users see all assignments for the policy.
+func (s *Store) ListPolicyAssignmentsForUser(ctx context.Context, userID, policyID string) ([]models.PolicyAssignment, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT pa.id, pa.policy_id, pa.scope_type, pa.scope_id, pa.created_at
+		FROM policy_assignments pa
+		WHERE pa.policy_id=$2 AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (
+		    SELECT 1
+		    FROM agents a
+		    WHERE (
+		      (pa.scope_type='agent'  AND pa.scope_id=a.id) OR
+		      (pa.scope_type='group'  AND pa.scope_id=a.group_id) OR
+		      (pa.scope_type='site'   AND pa.scope_id=a.site_id) OR
+		      (pa.scope_type='client' AND pa.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		    )
+		    AND EXISTS (
+		      SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		        (us.scope_type='agent'  AND us.scope_id=a.id) OR
+		        (us.scope_type='group'  AND us.scope_id=a.group_id) OR
+		        (us.scope_type='site'   AND us.scope_id=a.site_id) OR
+		        (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
+		      )
+		    )
+		  )
+		)
+		ORDER BY pa.created_at`, userID, policyID)
 	if err != nil {
 		return nil, err
 	}

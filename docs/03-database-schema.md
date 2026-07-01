@@ -33,8 +33,16 @@ the agent's own site.
 One-time / limited-use enrollment tokens (token, uses_left, expires_at).
 
 ### `users`
-Console accounts. `password_hash` (bcrypt), `role` (`admin`/`tech`/`readonly`),
-`totp_secret` (encrypted, nullable) and `totp_enabled` for optional TOTP 2FA.
+Console accounts. `password_hash` (bcrypt), `role` (role key such as
+`admin`/`tech`/`readonly` or a custom role), `totp_secret` (encrypted, nullable)
+and `totp_enabled` for optional TOTP 2FA.
+
+### `roles` / `role_permissions`
+Role definitions and their permission keys. `roles.role_key` is the stable key
+stored in `users.role` and `api_tokens.role`; `system=true` marks the built-in
+`readonly`, `tech`, and `admin` roles. `role_permissions` is keyed by
+(`role_key`, `permission`) and stores granular module permissions such as
+`devices.view`, `devices.remote`, `jobs.create`, `jobs.manage`, `roles.manage`.
 
 ### `user_recovery_codes`
 One-time 2FA recovery codes (id, user_id, `code_hash` SHA-256, `used_at`
@@ -53,9 +61,11 @@ Site, a Department (`group`), or a specific device; a user with no rows is
 | | | unique on (user_id, scope_type, scope_id) |
 
 ### `api_tokens`
-Hashed API tokens for the UI/integrations (token_hash, name, role, nullable
-`user_id`). When bound to a user, the token inherits that user's access scope.
-The bootstrap `RMM_ADMIN_TOKEN` is also accepted without a row.
+Hashed API tokens for the UI/integrations (token_hash, name, role key, nullable
+`user_id`). The role key resolves to the same permission set as a user role. When
+bound to a user, the token inherits that user's access scope. The bootstrap
+`RMM_ADMIN_TOKEN` is also accepted without a row and uses the built-in `admin`
+permission set.
 
 ### `jobs`
 Units of work targeted at an agent.
@@ -187,6 +197,7 @@ agents 1───* jobs 0..1───* tasks     (jobs.task_id, for scheduled ru
 agents 1───1 inventory
 agents 1───* check_results / alerts / remote_sessions
 checks 1───* check_results
+roles 1───* role_permissions
 users 1───* sessions / user_scopes / user_recovery_codes
 chat_sessions 1───* chat_messages
 ```

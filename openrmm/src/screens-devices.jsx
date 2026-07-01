@@ -2,14 +2,14 @@
 
 function DevicesScreen({ navigate }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
-  const sitesQ = useQuery(['sites-all'], () => api.listSites(), { invalidateOn: ['org'] });
-  const clientsQ = useQuery(['clients-all'], () => api.listClients(), { invalidateOn: ['org'] });
+  const { can } = useAuth();
+  const sitesQ = useQuery(['sites-all'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
+  const clientsQ = useQuery(['clients-all'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
   const [q, setQ] = useState('');
   const [osF, setOsF] = useState('all');
   const [statusF, setStatusF] = useState('all');
   const [clientF, setClientF] = useState('all');
   const [selected, setSelected] = useState(null);
-  const { can } = useAuth();
   const [bulkOpen, setBulkOpen] = useState(false);
 
   const devices = devicesQ.data?.devices || [];
@@ -30,7 +30,7 @@ function DevicesScreen({ navigate }) {
   return (
     <Page wide>
       <PageHeader title="Devices" subtitle={`${devices.length} agents · ${devices.filter((d) => d.status === 'online').length} online`}
-        actions={can('tech') && <Button icon="flash" onClick={() => setBulkOpen(true)}>Deploy to many</Button>} />
+        actions={can('jobs.create') && <Button icon="flash" onClick={() => setBulkOpen(true)}>Deploy to many</Button>} />
 
       <Card className="mb-4">
         <div className="flex flex-wrap items-center gap-2 p-2.5">
@@ -101,8 +101,9 @@ function DevicesScreen({ navigate }) {
 // are picked client-side (transparent review) — multi-select + "add a whole
 // site" — and sent as agent_ids; the batch awaits approval in Jobs & Approvals.
 function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
+  const { can } = useAuth();
   const toast = useToast();
-  const groupsQ = useQuery(['groups'], () => api.listGroups(), {});
+  const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), {});
   const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState({});
   const [q, setQ] = useState('');
@@ -218,7 +219,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     catch (e) { toast.error('Failed', e.message); }
   };
 
-  const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
+  const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups'] });
   const groups = groupsQ.data?.groups || [];
   const currentSite = d ? sites.find((s) => s.id === d.site_id) : null;
   const currentClient = currentSite ? clients.find((c) => c.id === currentSite.client_id) : null;
@@ -261,41 +262,36 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
 
             <div className="flex items-center gap-2 mt-4 flex-wrap">
-              <Dropdown align="left" width="w-60" trigger={
+              {(can('devices.remote') || can('devices.terminal') || can('devices.files')) && <Dropdown align="left" width="w-60" trigger={
                 <Button variant="primary" icon="remote" iconRight="chevdown" loading={remoteBusy} disabled={d.status !== 'online'}>Remote</Button>
               }>
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
-                <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>
-                <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>
-                {can('tech') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
-                {can('tech') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
-                {meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>}
-                {rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
-                {can('admin') && meshEnabled && <>
+                {can('devices.remote') && <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>}
+                {can('devices.remote') && <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>}
+                {can('devices.terminal') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
+                {can('devices.files') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
+                {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>}
+                {can('devices.remote') && rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
+                {can('devices.manage') && meshEnabled && <>
                   <div className="my-1 border-t border-line" />
                   <MenuItem icon="external" onClick={() => linkRemote('mesh_id', 'MeshCentral node id')}>Link MeshCentral node…</MenuItem>
                 </>}
-              </Dropdown>
-              {can('tech') && <Button variant="secondary" icon="terminal" onClick={() => setTab('run')}>Run script</Button>}
+              </Dropdown>}
+              {can('jobs.create') && <Button variant="secondary" icon="terminal" onClick={() => setTab('run')}>Run script</Button>}
               <div className="flex-1" />
-              <Gate min="admin">
-                <>
-                  <div className="min-w-0 max-w-[300px] text-right hidden sm:block"><div className="text-[10.5px] uppercase tracking-wide text-faint">Clients & Sites</div><div className="text-[12px] text-muted truncate">{orgLabel}</div></div>
-                  <Button variant="secondary" icon="building" onClick={() => setOrgOpen(true)}>Clients & Sites</Button>
-                  <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete</Button>
-                </>
-              </Gate>
+              {can('clients.manage') && <><div className="min-w-0 max-w-[300px] text-right hidden sm:block"><div className="text-[10.5px] uppercase tracking-wide text-faint">Clients & Sites</div><div className="text-[12px] text-muted truncate">{orgLabel}</div></div><Button variant="secondary" icon="building" onClick={() => setOrgOpen(true)}>Clients & Sites</Button></>}
+              {can('devices.delete') && <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete</Button>}
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, { value: 'jobs', label: 'Jobs' }, { value: 'patches', label: 'Patches' }, ...(can('tech') ? [{ value: 'run', label: 'Run script' }, { value: 'notes', label: 'Notes' }] : [])]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: 'Inventory' }, ...(can('jobs.view') ? [{ value: 'jobs', label: 'Jobs' }] : []), ...(can('patches.view') ? [{ value: 'patches', label: 'Patches' }] : []), ...(can('jobs.create') ? [{ value: 'run', label: 'Run script' }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: 'Notes' }] : [])]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
-            {tab === 'jobs' && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
-            {tab === 'patches' && <DevicePatches id={id} />}
-            {tab === 'run' && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
-            {tab === 'notes' && <DeviceNotes device={d} />}
+            {tab === 'jobs' && can('jobs.view') && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
+            {tab === 'patches' && can('patches.view') && <DevicePatches id={id} />}
+            {tab === 'run' && can('jobs.create') && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
+            {tab === 'notes' && can('devices.manage') && <DeviceNotes device={d} />}
           </div>
         </>
       )}
@@ -366,7 +362,7 @@ function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave 
 function DeviceNotes({ device }) {
   const { can } = useAuth();
   const toast = useToast();
-  const editable = can('tech');
+  const editable = can('devices.manage');
   const [desc, setDesc] = useState(device.description || '');
   const [note, setNote] = useState(device.note || '');
   const [busy, setBusy] = useState(false);
@@ -388,7 +384,7 @@ function DeviceNotes({ device }) {
       </Field>
       {editable
         ? <div className="flex justify-end"><Button variant="primary" loading={busy} disabled={!dirty} onClick={save}>Save</Button></div>
-        : <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Tech role needed to edit.</div>}
+        : <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Device metadata permission needed to edit.</div>}
     </div>
   );
 }
@@ -402,6 +398,9 @@ function DeviceNotes({ device }) {
 const CH_VIDEO = 0x01, CH_FILE = 0x02;
 function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const toast = useToast();
+  const auth = useAuth() || { can: () => false };
+  const can = auth.can;
+  const allowFiles = filesOnly || can('devices.files');
   const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
   const canLock = isWin || /linux/i.test(os || ''); // input lock: Windows + Linux (not macOS)
   const canvasRef = useRef(null);
@@ -440,20 +439,20 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         if (m.t === 'hello') setVer(m.v);
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); toast.info('Remote notice', m.text); } else setNotice(null); }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
-        else if (m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
+        else if (allowFiles && m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'inputlocked') { setLocked(!!m.enabled); if (m.err) toast.error('Input lock failed', m.err); }
-        else if (m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
-        else if (m.t === 'fend') {
+        else if (allowFiles && m.t === 'fmeta') dlRef.current[m.id] = { name: m.name, chunks: [] };
+        else if (allowFiles && m.t === 'fend') {
           const d = dlRef.current[m.id];
           if (d && d.chunks) { saveBlob(new Blob(d.chunks), d.name); toast.success('Downloaded', d.name); delete dlRef.current[m.id]; }
-        } else if (m.t === 'ferr') toast.error('Transfer failed', m.err || '');
+        } else if (allowFiles && m.t === 'ferr') toast.error('Transfer failed', m.err || '');
         return;
       }
       const bytes = new Uint8Array(ev.data);
       if (bytes[0] === CH_VIDEO) {
         drawVideo(ev.data);
-      } else if (bytes[0] === CH_FILE) {
+      } else if (allowFiles && bytes[0] === CH_FILE) {
         const d = dlRef.current[bytes[1]];
         if (d) d.chunks.push(ev.data.slice(2));
       }
@@ -519,7 +518,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         setLocked(false); // a fresh sidecar starts unlocked (reconnect after logoff/desktop switch)
         // File-transfer-only sessions never stream the screen, so don't ask for a
         // keyframe; jump straight into the browser. Desktop sessions request a frame.
-        if (filesOnly) {
+        if (filesOnly && allowFiles) {
           if (!openedFilesRef.current) { openedFilesRef.current = true; browse(rootPath); }
         } else {
           try { ws.send(JSON.stringify({ t: 'kf' })); } catch (e) {}
@@ -562,7 +561,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
     };
-  }, [deviceId]);
+  }, [deviceId, filesOnly, allowFiles]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
   // Remote file browser: navigate folders, download a file, or
@@ -586,8 +585,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const i = t.lastIndexOf('/');
     return i <= 0 ? '/' : t.slice(0, i);
   };
-  const browse = (path) => { const p = path == null ? rootPath : path; setFb({ path: p, entries: null }); setFbSel([]); sendJSON({ t: 'fls', id: nextId(), path: p }); };
-  const downloadEntry = (name) => sendJSON({ t: 'fget', id: nextId(), path: joinPath(fb.path, name) });
+  const browse = (path) => { if (!allowFiles) return; const p = path == null ? rootPath : path; setFb({ path: p, entries: null }); setFbSel([]); sendJSON({ t: 'fls', id: nextId(), path: p }); };
+  const downloadEntry = (name) => { if (allowFiles) sendJSON({ t: 'fget', id: nextId(), path: joinPath(fb.path, name) }); };
   const toggleSel = (name) => setFbSel((s) => s.includes(name) ? s.filter((x) => x !== name) : [...s, name]);
   const doMkdir = () => { const n = window.prompt('New folder name:'); if (n) sendJSON({ t: 'fmkdir', id: nextId(), path: joinPath(fb.path, n) }); };
   const doDelete = () => { if (fbSel.length && window.confirm('Delete ' + fbSel.length + ' item(s) on ' + hostname + '?')) { fbSel.forEach((n) => sendJSON({ t: 'fdel', id: nextId(), path: joinPath(fb.path, n) })); setFbSel([]); } };
@@ -596,7 +595,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const doPaste = () => { if (!fbClip) return; fbClip.names.forEach((n) => sendJSON({ t: fbClip.op === 'cut' ? 'fmove' : 'fcopy', id: nextId(), src: joinPath(fbClip.base, n), dst: joinPath(fb.path, n) })); if (fbClip.op === 'cut') setFbClip(null); };
   const doDownloadSel = () => fbSel.forEach((n) => { const en = (fb.entries || []).find((e) => e.name === n); if (en && !en.dir) downloadEntry(n); });
   const uploadFile = async (file) => {
-    if (!file || !fb) return;
+    if (!allowFiles || !file || !fb) return;
     const ws = wsRef.current; if (!ws || ws.readyState !== 1) return;
     const dest = joinPath(fb.path, file.name);
     const id = nextId();
@@ -625,13 +624,13 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           {!filesOnly && <>
             <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
             {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title="Block the host's physical keyboard & mouse (user + login screen)">{locked ? 'Locked' : 'Lock input'}</Button>}
-            <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>
+            {allowFiles && <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>}
             <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
           </>}
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
       </div>
-      {fb && (
+      {allowFiles && fb && (
         <div className="absolute inset-0 z-[5] bg-black/55 flex items-center justify-center" onClick={() => filesOnly ? onClose() : setFb(null)}>
           <div className="w-[760px] h-[80vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
@@ -968,12 +967,12 @@ function RunScriptForm({ device, onCreated }) {
   const [script, setScript] = useState(defShell === 'powershell' ? 'Get-Service | Where-Object Status -eq "Running" | Select-Object -First 10' : 'uptime\ndf -h /');
   const [busy, setBusy] = useState(false);
   const [runNow, setRunNow] = useState(false);
-  const scriptsQ = useQuery(['scripts-pick'], () => api.listScripts(), { invalidateOn: ['scripts'] });
+  const scriptsQ = useQuery(['scripts-pick'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
-  const canDirect = can('admin') && cfgQ.data?.server?.allow_unapproved_jobs;
+  const canDirect = can('jobs.manage') && can('settings.manage') && cfgQ.data?.server?.allow_unapproved_jobs;
   const direct = canDirect && runNow;
 
-  if (!can('tech')) return <EmptyState icon="shield" title="Read-only access" msg="Running scripts requires the tech or admin role." />;
+  if (!can('jobs.create')) return <EmptyState icon="shield" title="Read-only access" msg="Creating jobs requires job creation permission." />;
 
   const submit = async () => {
     setBusy(true);
@@ -991,13 +990,13 @@ function RunScriptForm({ device, onCreated }) {
         <Icon name="info" size={16} className={cx('mt-0.5 shrink-0', direct ? 'text-bad' : 'text-warn')} />
         <div className="text-[12.5px] text-ink leading-relaxed">{direct
           ? <>Direct execution is <b>on</b>: this runs on {device.hostname} <b>immediately</b>, with no approval step.</>
-          : <>This creates an <b>approval-gated job</b>. It is a dry-run preview until a tech or admin approves it — nothing executes on {device.hostname} yet.</>}</div>
+          : <>This creates an <b>approval-gated job</b>. It is a dry-run preview until someone with job management permission approves it — nothing executes on {device.hostname} yet.</>}</div>
       </div>
       {canDirect && (
         <label className="flex items-center gap-2.5 cursor-pointer select-none">
           <input type="checkbox" checked={runNow} onChange={(e) => setRunNow(e.target.checked)} className="h-4 w-4 accent-bad" />
           <span className="text-[12.5px] text-ink">Run immediately (skip approval)</span>
-          <span className="text-[11.5px] text-faint">— admin only; enabled on this instance</span>
+          <span className="text-[11.5px] text-faint">— configuration managers only; enabled on this instance</span>
         </label>
       )}
       <div className="flex gap-3">
@@ -1034,9 +1033,9 @@ function DevicePatches({ id }) {
     <div>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <div className="text-[12.5px] text-muted flex-1">{patches.length} item(s){approved ? ` · ${approved} approved` : ''}</div>
-        {can('tech') && <Button size="sm" variant="secondary" icon="refresh" onClick={() => act(() => api.scanDevicePatches(id), 'Scan requested')}>Scan</Button>}
-        {can('tech') && <Button size="sm" variant="primary" icon="download" disabled={!approved} onClick={() => act(() => api.installDevicePatches(id, []), 'Installing approved patches')}>Install approved</Button>}
-        {can('tech') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => act(() => api.rebootDevice(id), 'Reboot requested')}>Reboot</Button>}
+        {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={() => act(() => api.scanDevicePatches(id), 'Scan requested')}>Scan</Button>}
+        {can('patches.manage') && <Button size="sm" variant="primary" icon="download" disabled={!approved} onClick={() => act(() => api.installDevicePatches(id, []), 'Installing approved patches')}>Install approved</Button>}
+        {can('patches.manage') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => act(() => api.rebootDevice(id), 'Reboot requested')}>Reboot</Button>}
       </div>
       {q.loading ? <Skeleton className="h-20 w-full" />
         : !patches.length ? <EmptyState icon="shield" title="No missing patches" msg="Run a scan to check for OS updates." />

@@ -49,7 +49,7 @@ runs code on real machines, so destructive/AI actions must feel deliberate.
 - Row click → **Device detail** drawer/page:
   - Header: hostname, OS, status, last seen; **Remote** button (provider dropdown:
     native / terminal / meshcentral) → calls remote API, then opens the returned
-    `connect_url` (`terminal` is an elevated, tech-only shell — see
+    `connect_url` (`terminal` is an elevated shell requiring `devices.terminal` — see
     [`08-remote-access.md`](08-remote-access.md)).
   - Tabs: **Inventory** (pretty-print the JSON), **Jobs** (this device's history),
     **Run script** (manual: shell selector + editor → creates an approval-gated job).
@@ -100,10 +100,10 @@ Content-Type: application/json
 ```
 
 ### Auth model (frontend)
-Username + password → `POST /api/auth/login` returns `{token, role}`; store it in
-`localStorage` and attach as the bearer on every `/api/*` call. See §9 for roles
-and first-run bootstrap. TOTP 2FA and per-user access scope are backend-enforced —
-the UI just surfaces them.
+Username + password → `POST /api/auth/login` returns `{token, role, permissions}`;
+store it in `localStorage` and attach as the bearer on every `/api/*` call. See §9
+for roles and first-run bootstrap. TOTP 2FA and per-user access scope are
+backend-enforced — the UI just surfaces them.
 
 ### Endpoints & types — canonical sources
 
@@ -154,25 +154,29 @@ Design these additional areas. Background and semantics:
 ## 9. Authentication & roles
 
 - **Login screen**: username + password → `POST /api/auth/login` → store the
-  returned `token` + `role`; attach as bearer. (`POST /api/auth/bootstrap` for
-  first-run admin creation when the instance is empty — show a setup screen if
-  login reports no users.)
-- **Roles** gate the UI: `readonly` (view only), `tech` (run/approve/ack),
-  `admin` (manage everything). Hide/disable actions above the user's role; the
-  API also enforces this (403). Read the current principal from `GET /api/me`.
+  returned `token`, `role`, and `permissions`; attach as bearer. (`POST
+  /api/auth/bootstrap` for first-run admin creation when the instance is empty —
+  show a setup screen if login reports no users.)
+- **Roles** are permission sets. The built-ins are `readonly`, `tech`, and
+  `admin`, and custom roles can be managed from Settings → Roles. The UI asks for
+  a display name and generates the technical role key automatically. Hide/disable
+  UI actions by permission key (`jobs.create`, `jobs.manage`, `alerts.manage`,
+  `devices.terminal`, etc.); the API also enforces this (403). Read the current
+  principal from `GET /api/me`.
 
 ## 10. New screens
 
 ### 10.1 Organization (Clients → Sites)
-Tree or master-detail of Clients → Sites. Create/delete (admin). Show device
-counts. From a site, copy an **enrollment command** (create a site-bound enroll
-token via `POST /api/enroll-tokens {site_id}` and show the agent install snippet).
+Tree or master-detail of Clients → Sites. Create/delete with `clients.manage`.
+Show device counts. From a site, copy an **enrollment command** (create a
+site-bound enroll token via `POST /api/enroll-tokens {site_id}` and show the
+agent install snippet).
 Device detail gains a **site selector** (`PATCH /api/devices/{id}/site`).
 
 ### 10.2 Script library
 Table (name, category, shell). Editor with a code editor for `body` (Monaco/
 CodeMirror, syntax by shell). "Run on device" action → pick device → creates an
-approval-gated job. Admin CRUD.
+approval-gated job. CRUD requires `scripts.manage`.
 
 ### 10.3 Monitoring (Checks) ⭐
 - Per device **and** per policy: list checks with their **live status pill**
@@ -198,25 +202,26 @@ daily-at-time; enabled toggle). Show last run + link to the jobs it produced
 ### 10.6 Alerts center ⭐
 - Dashboard-prominent. Table of alerts: severity (info/warning/error), source
   (check/task/agent), status (new/acked/resolved), message, device, time.
-- Filters by status/severity. Actions: **Ack**, **Resolve** (tech+). Alerts
+- Filters by status/severity. Actions: **Ack**, **Resolve** (`alerts.manage`). Alerts
   auto-resolve when the condition clears — reflect that with live status.
 - Surface the open-alert count as a badge in the nav and on the dashboard.
 
 ### 10.7 Users & settings
-Admin: list/create/delete users with role. Show AI provider + remote provider
-config (read-only). Enrollment token management.
+Users: list/create/delete users with role (`users.manage`). Show AI provider +
+remote provider config (read-only). Enrollment token management.
 
-**API tokens / MCP connectors** (admin): list/create/revoke API tokens
+**API tokens / MCP connectors** (`api_tokens.manage`): list/create/revoke API tokens
 (`GET/POST/DELETE /api/api-tokens`). On create, show the secret **once** with a
 copy button and the `/mcp` connector URL, so the user can paste both into Claude/
-ChatGPT. Explain that the token is role-scoped (`tech`) and revocable.
+ChatGPT. Explain that the token uses a role, needs `mcp.use` for MCP, exposes only
+tools allowed by that role's permissions, and is revocable.
 
 ### 10.8 Destructive actions (must confirm)
 - **Delete device** (`DELETE /api/devices/{id}`) and **delete group**
-  (`DELETE /api/groups/{id}`) are admin-only and require an explicit **confirm
-  dialog** (type-to-confirm for devices). These are deliberate human actions —
-  never triggered by the AI. Device groups: `GET/POST /api/groups`, assign via
-  `PATCH /api/devices/{id}/group`.
+  (`DELETE /api/groups/{id}`) require `devices.delete` / `clients.manage` and an
+  explicit **confirm dialog** (type-to-confirm for devices). These are deliberate
+  human actions — never triggered by the AI. Device groups: `GET/POST
+  /api/groups`, assign via `PATCH /api/devices/{id}/group`.
 - Approval is mandatory for every script run; the UI never offers a
   "run without approval" path unless the backend reports it is enabled.
 

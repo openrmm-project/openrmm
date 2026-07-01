@@ -38,11 +38,12 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
   **File transfer** works on both Windows and Linux, and a session can **lock the
   host's physical keyboard/mouse** (Windows LL hooks / Linux evdev grab) — covering
   the login screen — so the local user can't interfere while the technician works.
-- **Elevated remote Terminal** (tech-only): a real PTY (Unix) / ConPTY (Windows)
-  shell that runs as the agent's service account (root/SYSTEM), bridged to an
-  xterm.js viewer.
-- **RBAC** (admin/tech/readonly) + optional **TOTP 2FA** + **per-user access scope**
-  (Company/Site/device), enforced on read, write, and the AI/MCP surface. Users can
+- **Elevated remote Terminal** (`devices.terminal`): a real PTY (Unix) / ConPTY
+  (Windows) shell that runs as the agent's service account (root/SYSTEM), bridged
+  to an xterm.js viewer.
+- **Granular roles/permissions** (built-in `readonly`/`tech`/`admin` plus custom
+  roles) + optional **TOTP 2FA** + **per-user access scope** (Company/Site/
+  Department/device), enforced on read, write, and the AI/MCP surface. Users can
   change their own password in-app.
 - REST API, token auth, immutable audit log, encrypted runtime secrets (AES-256-GCM).
 - **Fleet inventory reports** (software / hardware / machines) aggregated in the

@@ -64,7 +64,7 @@ function AlertsScreen({ navigate }) {
                   <td className="px-3 py-3"><StatusPill status={a.status} size="sm" /></td>
                   <td className="px-3 py-3 text-right text-[12px] text-muted tabular whitespace-nowrap">{timeAgo(a.created_at)}</td>
                   <td className="px-4 py-3 text-right">
-                    {a.status !== 'resolved' && can('tech') ? (
+                    {a.status !== 'resolved' && can('alerts.manage') ? (
                       <div className="flex items-center justify-end gap-1.5">
                         {a.status === 'new' && <Button size="sm" variant="subtle" onClick={() => act(api.ackAlert, a.id, 'Acknowledged')}>Ack</Button>}
                         <Button size="sm" variant="secondary" icon="approve" onClick={() => act(api.resolveAlert, a.id, 'Resolved')}>Resolve</Button>
@@ -87,7 +87,7 @@ function ChecksScreen() {
   const { can } = useAuth();
   const checksQ = useQuery(['checks'], () => api.listChecks(), { invalidateOn: ['checks'], poll: 8000 });
   const devMap = useDeviceMap();
-  const policiesQ = useQuery(['pols-c'], () => api.listPolicies(), { invalidateOn: ['policies'] });
+  const policiesQ = useQuery(['pols-c'], () => can('policies.view') ? api.listPolicies() : Promise.resolve({ policies: [] }), { invalidateOn: ['policies'] });
   const [editing, setEditing] = useState(null); // check obj or 'new'
   const [detail, setDetail] = useState(null);
 
@@ -97,9 +97,9 @@ function ChecksScreen() {
   checks.forEach((c) => { const st = c.latest?.status || 'passing'; summary[st]++; });
 
   return (
-    <Page wide>
-      <PageHeader title="Checks" subtitle="Continuous monitoring across devices and policies."
-        actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New check</Button>} />
+      <Page wide>
+        <PageHeader title="Checks" subtitle="Continuous monitoring across devices and policies."
+        actions={can('checks.manage') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New check</Button>} />
 
       <div className="grid grid-cols-3 gap-3 mb-4 max-w-xl">
         <div className="rounded-xl border border-ok/25 bg-oksoft px-3.5 py-3"><div className="text-[11px] text-muted">Passing</div><div className="text-[22px] font-semibold text-ok tabular">{summary.passing}</div></div>
@@ -154,7 +154,7 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
           <div className="flex items-center gap-2 min-w-0"><h2 className="text-[16px] font-semibold text-ink truncate">{check.name}</h2><span className="shrink-0"><StatusPill status={check.latest?.status || 'passing'} size="sm" /></span></div>
           <div className="text-[12px] text-muted mt-0.5 truncate">{t.label} · {dev?.hostname || 'policy'} · every {check.interval_sec < 60 ? check.interval_sec + 's' : Math.round(check.interval_sec / 60) + 'm'}</div>
         </div>
-        {can('admin') && <Button size="sm" variant="secondary" icon="edit" onClick={() => onEdit(check)}>Edit</Button>}
+        {can('checks.manage') && <Button size="sm" variant="secondary" icon="edit" onClick={() => onEdit(check)}>Edit</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
@@ -237,7 +237,7 @@ function CheckEditor({ check, onClose, devMap, policies }) {
         {(t.dir === 'state' || t.dir === 'script') && <Field label="Interval (s)" className="w-40"><Input type="number" value={interval} onChange={(e) => setInterval(e.target.value)} /></Field>}
         <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{t.dir === 'low' ? 'Alerts when the value drops below the threshold (e.g. low disk/memory).' : t.dir === 'high' ? 'Alerts when the value rises above the threshold (e.g. high CPU/latency).' : t.dir === 'state' ? 'Alerts when the service is not running.' : 'Alerts on a non-zero exit code.'}</div>
       </div>
-      <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('admin') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? 'Save check' : 'Create check'}</Button></div>
+      <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('checks.manage') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? 'Save check' : 'Create check'}</Button></div>
     </Modal>
   );
 }
@@ -248,8 +248,8 @@ function TasksScreen() {
   const toast = useToast();
   const tasksQ = useQuery(['tasks'], () => api.listTasks(), { invalidateOn: ['tasks'] });
   const devMap = useDeviceMap();
-  const policiesQ = useQuery(['pols-t'], () => api.listPolicies(), { invalidateOn: ['policies'] });
-  const scriptsQ = useQuery(['scripts-t'], () => api.listScripts(), { invalidateOn: ['scripts'] });
+  const policiesQ = useQuery(['pols-t'], () => can('policies.view') ? api.listPolicies() : Promise.resolve({ policies: [] }), { invalidateOn: ['policies'] });
+  const scriptsQ = useQuery(['scripts-t'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const [editing, setEditing] = useState(null);
   const tasks = tasksQ.data?.tasks || [];
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
@@ -259,9 +259,9 @@ function TasksScreen() {
   const toggle = async (t) => { await api.updateTask(t.id, { enabled: !t.enabled }); toast.success(t.enabled ? 'Task disabled' : 'Task enabled'); };
 
   return (
-    <Page wide>
-      <PageHeader title="Scheduled tasks" subtitle="Run scripts on a schedule, per device or per policy."
-        actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New task</Button>} />
+      <Page wide>
+        <PageHeader title="Scheduled tasks" subtitle="Run scripts on a schedule, per device or per policy."
+        actions={can('tasks.manage') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New task</Button>} />
       <Card className="overflow-hidden">
         <table className="w-full text-left">
           <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
@@ -278,8 +278,8 @@ function TasksScreen() {
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{schedule(t)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[12px] text-faint">{sc?.name || 'inline'}</td>
-                  <td className="px-3 py-3"><Toggle checked={t.enabled} onChange={() => toggle(t)} disabled={!can('admin')} /></td>
-                  <td className="px-4 py-3 text-right">{can('admin') && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(t)}>Edit</Button>}</td>
+                  <td className="px-3 py-3"><Toggle checked={t.enabled} onChange={() => toggle(t)} disabled={!can('tasks.manage')} /></td>
+                  <td className="px-4 py-3 text-right">{can('tasks.manage') && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(t)}>Edit</Button>}</td>
                 </tr>
               );
             })}
@@ -336,7 +336,7 @@ function TaskEditor({ task, onClose, devMap, policies, scripts }) {
         </Field>
         <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={setEnabled} /><span className="text-[13px] text-ink">Enabled</span></label>
       </div>
-      <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{task && can('admin') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{task ? 'Save task' : 'Create task'}</Button></div>
+      <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{task && can('tasks.manage') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{task ? 'Save task' : 'Create task'}</Button></div>
     </Modal>
   );
 }

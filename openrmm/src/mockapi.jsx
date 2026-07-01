@@ -7,6 +7,12 @@
 
 const API_BASE = (window.__API_BASE__) || 'http://localhost:8080';
 const ROLES = { admin: 3, tech: 2, readonly: 1 };
+const DEFAULT_ROLE_PERMS = {
+  readonly: ['devices.view', 'devices.remote', 'clients.view'],
+  tech: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'tasks.view', 'policies.view', 'scripts.view', 'patches.view', 'patches.manage', 'devices.view', 'devices.manage', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'reports.view'],
+  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'],
+};
+const PERM_ALIASES = { admin: 'settings.manage', tech: 'jobs.manage', readonly: 'devices.view' };
 const AUTH_KEY = 'rmm-ai-auth';
 
 /* event bus kept for compatibility (mutations can emit; queries may listen) */
@@ -23,6 +29,21 @@ let session = (() => {
 function setSession(s) {
   session = s;
   try { s ? localStorage.setItem(AUTH_KEY, JSON.stringify(s)) : localStorage.removeItem(AUTH_KEY); } catch (e) {}
+}
+
+function normalizeSession(token, r) {
+  const user = r.user || r;
+  const role = r.role || user.role;
+  const permissions = r.permissions || user.permissions || DEFAULT_ROLE_PERMS[role] || [];
+  return { token, user: { ...user, permissions }, role, permissions };
+}
+function sessionPerms() {
+  if (!session) return new Set();
+  return new Set(session.permissions || session.user?.permissions || DEFAULT_ROLE_PERMS[session.role] || []);
+}
+function canPermission(key) {
+  if (!session) return false;
+  return sessionPerms().has(PERM_ALIASES[key] || key);
 }
 
 function apiError(status, message) { const e = new Error(message); e.status = status; return e; }
@@ -122,6 +143,23 @@ function adaptInventory(inv) {
   };
 }
 
+function adaptPermissions(r) {
+  const permissions = ((r && r.permissions) || []).map((p) => (
+    p.key === 'ai_chat.use' ? { ...p, label: p.label === 'Use AI Chat' ? 'AI Chat' : p.label, group: 'AI' }
+      : p.key === 'jobs.manage' ? { ...p, label: 'Manage jobs', description: 'Approve, reject, and cancel jobs.', group: 'Jobs' }
+        : p
+  ));
+  if (!permissions.some((p) => p.key === 'mcp.use')) {
+    permissions.push({ key: 'mcp.use', label: 'MCP', description: 'Connect external MCP clients to AI tools.', group: 'AI' });
+  }
+  if (!permissions.some((p) => p.key === 'jobs.create')) {
+    const i = permissions.findIndex((p) => p.key === 'jobs.manage');
+    const create = { key: 'jobs.create', label: 'Create jobs', description: 'Create approval-gated jobs and bulk deployments.', group: 'Jobs' };
+    if (i >= 0) permissions.splice(i, 0, create); else permissions.push(create);
+  }
+  return { permissions };
+}
+
 /* ---------------------------------- api ---------------------------------- */
 const api = {
   API_BASE,
@@ -129,7 +167,7 @@ const api = {
   /* ---- auth ---- */
   async login(username, password, code) {
     const r = await POST('/api/auth/login', { username, password, code });
-    setSession({ token: r.token, user: r.user, role: r.role });
+    setSession(normalizeSession(r.token, r));
     return r;
   },
   setup2FA() { return POST('/api/me/2fa/setup'); },
@@ -140,19 +178,21 @@ const api = {
   changePassword(currentPassword, newPassword) { return POST('/api/me/password', { current_password: currentPassword, new_password: newPassword }); },
   async bootstrap(username, password) {
     const r = await POST('/api/auth/bootstrap', { username, password });
-    setSession({ token: r.token, user: r.user, role: r.role });
+    setSession(normalizeSession(r.token, r));
     return r;
   },
   async loginWithToken(token) {
-    setSession({ token, user: { id: '', username: '', role: 'readonly', created_at: '' }, role: 'readonly' });
+    setSession({ token, user: { id: '', username: '', role: 'readonly', created_at: '', permissions: [] }, role: 'readonly', permissions: [] });
     const user = await GET('/api/me');
-    setSession({ token, user, role: user.role });
-    return { token, user, role: user.role };
+    const next = normalizeSession(token, user);
+    setSession(next);
+    return next;
   },
   async me() { return GET('/api/me'); },
   async logout() { try { await POST('/api/auth/logout'); } catch (e) {} finally { setSession(null); } },
   currentRole() { return session ? session.role : null; },
-  can(min) { return !!session && ROLES[session.role] >= ROLES[min]; },
+  permissions() { return Array.from(sessionPerms()); },
+  can(key) { return canPermission(key); },
   hasUsers() { return true; },
 
   /* ---- devices ---- */
@@ -203,6 +243,13 @@ const api = {
   deleteUser(id) { return DELETE('/api/users/' + id); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },
+
+  /* ---- roles & permissions ---- */
+  listRoles() { return GET('/api/roles'); },
+  async listPermissions() { return adaptPermissions(await GET('/api/permissions')); },
+  createRole(body) { return POST('/api/roles', body); },
+  updateRole(key, body) { return PUT('/api/roles/' + encodeURIComponent(key), body); },
+  deleteRole(key) { return DELETE('/api/roles/' + encodeURIComponent(key)); },
 
   /* ---- org ---- */
   listClients() { return GET('/api/clients'); },
@@ -292,3 +339,5 @@ const api = {
 
 window.api = api;
 window.ROLES = ROLES;
+window.DEFAULT_ROLE_PERMS = DEFAULT_ROLE_PERMS;
+window.PERM_ALIASES = PERM_ALIASES;

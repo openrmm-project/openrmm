@@ -7,9 +7,78 @@ CREATE TABLE IF NOT EXISTS users (
     id            UUID PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'tech', -- admin | tech | readonly
+    role          TEXT NOT NULL DEFAULT 'tech', -- role key: admin | tech | readonly | custom
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS roles (
+    role_key    TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    system      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    role_key   TEXT NOT NULL REFERENCES roles(role_key) ON DELETE CASCADE,
+    permission TEXT NOT NULL,
+    PRIMARY KEY (role_key, permission)
+);
+
+INSERT INTO roles (role_key, name, description, system) VALUES
+    ('readonly', 'Read-only', 'View devices, clients, sites, and start remote desktop sessions.', TRUE),
+    ('tech', 'Technician', 'Operate the fleet: jobs, alerts, scripts, patches, reports, and remote tools.', TRUE),
+    ('admin', 'Administrator', 'Full access to every module and administrative setting.', TRUE)
+ON CONFLICT (role_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    system = TRUE;
+
+INSERT INTO role_permissions (role_key, permission)
+SELECT 'readonly', permission FROM (VALUES
+    ('devices.view'), ('devices.remote'), ('clients.view')
+) AS p(permission)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role_key, permission)
+SELECT 'tech', permission FROM (VALUES
+    ('ai_chat.use'), ('mcp.use'),
+    ('alerts.view'), ('alerts.manage'),
+    ('jobs.view'), ('jobs.create'), ('jobs.manage'),
+    ('checks.view'),
+    ('tasks.view'),
+    ('policies.view'),
+    ('scripts.view'),
+    ('patches.view'), ('patches.manage'),
+    ('devices.view'), ('devices.manage'), ('devices.remote'), ('devices.files'), ('devices.terminal'),
+    ('clients.view'),
+    ('reports.view')
+) AS p(permission)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role_key, permission)
+SELECT 'admin', permission FROM (VALUES
+    ('ai_chat.use'), ('mcp.use'),
+    ('alerts.view'), ('alerts.manage'),
+    ('jobs.view'), ('jobs.create'), ('jobs.manage'),
+    ('checks.view'), ('checks.manage'),
+    ('tasks.view'), ('tasks.manage'),
+    ('policies.view'), ('policies.manage'),
+    ('scripts.view'), ('scripts.manage'),
+    ('patches.view'), ('patches.manage'), ('patches.policies.manage'),
+    ('devices.view'), ('devices.manage'), ('devices.delete'), ('devices.remote'), ('devices.files'), ('devices.terminal'),
+    ('clients.view'), ('clients.manage'),
+    ('reports.view'), ('audit.view'),
+    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('roles.manage')
+) AS p(permission)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role_key, permission)
+SELECT role_key, 'jobs.create'
+FROM role_permissions
+WHERE permission='jobs.manage'
+ON CONFLICT DO NOTHING;
 
 -- Per-user TOTP two-factor. Secret is AES-GCM encrypted at rest (enc:v1:…).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret  TEXT;
@@ -47,7 +116,7 @@ ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id
 
 -- Per-user access scope. A user with NO rows has full access (all clients);
 -- any rows restrict the user to the union of those client/site/group/agent subtrees.
--- Scopes apply to tech/readonly; admins always have full access.
+-- Scopes apply to every non-admin role; admins always have full access.
 CREATE TABLE IF NOT EXISTS user_scopes (
     id         UUID PRIMARY KEY,
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

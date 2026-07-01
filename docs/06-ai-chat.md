@@ -23,12 +23,12 @@ only exposes an `api_key_set` boolean to the UI.
 
 ## The loop
 
-`internal/ai/chat.go` — `Engine.Respond(ctx, sessionID, userContent, actor, scopeUser)`:
+`internal/ai/chat.go` — `Engine.Respond(ctx, sessionID, userContent, actor, scopeUser, permissions)`:
 
 1. Persist the user message.
 2. Load full history + a system prompt that hard-codes the guardrails.
 3. Loop (max 8 iterations):
-   - Call the model with the tool catalog.
+   - Call the model with the tool catalog filtered by the caller's permissions.
    - Persist the assistant message (including any `tool_calls`).
    - If no tool calls → return the text + `created_job_ids`.
    - Otherwise run each tool, persist a `tool` message with the result, append
@@ -37,34 +37,40 @@ only exposes an `api_key_set` boolean to the UI.
 History is replayed verbatim each turn (tool_calls and tool results stored as
 they came), so the conversation is stateless on the server beyond Postgres.
 
-### Access-scope enforcement
+### Permissions & access-scope enforcement
+
+`permissions` is the authenticated principal's permission set. The model only sees
+tools allowed by that set, and `Execute` validates again before running a tool.
+Examples: `inventory_report` requires `reports.view`, `list_patches` requires
+`patches.view`, proposal tools require `jobs.create`, and cancel requires
+`jobs.manage`.
 
 `scopeUser` is the caller's user id when they have a **restricted access scope**
 (see `07-guardrails-security`). It flows into `ToolContext.ScopeUserID`, and every
-device-targeting tool (`list_devices`, `get_inventory`, `propose_script`,
-`get_job_status`, `cancel_job`, `fleet_summary`) checks `tc.allows(ctx, agentID)`
-before reading or proposing — so a scoped user's AI sees and acts on exactly the
-devices that user can. Admins/unrestricted users pass an empty `scopeUser` and see
-everything. The same enforcement applies to the MCP server (`11-mcp`).
+device-targeting tool checks `tc.allows(ctx, agentID)` before reading or proposing
+— so a scoped user's AI sees and acts on exactly the devices that user can.
+Admins/unrestricted users pass an empty `scopeUser` and see everything allowed by
+their permissions. The same permission and scope enforcement applies to the MCP
+server (`11-mcp`).
 
 ## Tools (`internal/ai/tools.go`)
 
-| Tool | Kind | Description |
-|------|------|-------------|
-| `list_devices` | read | List agents (id, hostname, os, arch, status) |
-| `get_inventory` | read | Latest inventory for a device |
-| `get_job_status` | read | Status + result of a job |
-| `fleet_summary` | read | Aggregate counts + recent jobs (for reports) |
-| `inventory_report` | read | Fleet inventory (software/hardware/machines) by client/site/department, scope-filtered, capped at 1000 rows — see [15-reports](15-reports.md) |
-| `list_patches` | read | Missing OS patches on a device (KB/advisory, classification, status) — see [16-patch-management](16-patch-management.md). Installing is a human/policy action, not an AI tool. |
-| `cancel_job` | control | Reject a pending job or request cancel of a running one |
-| `propose_script` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
-| `propose_bulk_deploy` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
+| Tool | Required permission | Kind | Description |
+|------|---------------------|------|-------------|
+| `list_devices` | `devices.view` | read | List agents (id, hostname, os, arch, status) |
+| `get_inventory` | `devices.view` | read | Latest inventory for a device |
+| `get_job_status` | `jobs.view` | read | Status + result of a job |
+| `fleet_summary` | `devices.view` (+ `jobs.view` for recent jobs) | read | Aggregate counts + recent jobs when allowed |
+| `inventory_report` | `reports.view` | read | Fleet inventory (software/hardware/machines) by client/site/department, scope-filtered, capped at 1000 rows — see [15-reports](15-reports.md) |
+| `list_patches` | `patches.view` | read | Missing OS patches on a device (KB/advisory, classification, status) — see [16-patch-management](16-patch-management.md). Installing is a human/policy action, not an AI tool. |
+| `cancel_job` | `jobs.manage` | control | Reject a pending job or request cancel of a running one |
+| `propose_script` | `jobs.create` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
+| `propose_bulk_deploy` | `jobs.create` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
 
 ### Why the write tools only *propose*
 
-The model can read everything but the only mutating actions it can take are to
-*propose* jobs. `propose_script` calls `jobs.Propose(..., requireApproval=true)`,
+The model can only read through tools allowed by the user's permissions and scope.
+The only mutating actions it can take are to *propose* jobs. `propose_script` calls `jobs.Propose(..., requireApproval=true)`,
 which creates a job in `awaiting_approval`. Nothing reaches an endpoint until a
 human approves it via `POST /api/jobs/{id}/approve`. The tool's return value
 explicitly tells the model the job is pending approval, so it won't claim
@@ -94,17 +100,19 @@ device's OS (Windows/Linux/macOS):
 These create the **same approval-gated job** as `propose_script` (the AI can't
 execute them). Parameters are validated server-side (shell-metacharacter
 rejection, IP parsing) as defense in depth on top of the human approval gate.
-They're code-defined (no per-deployment maintenance) and, because the MCP server
-reuses the same catalog, they're available to external AI clients too. The
+They're code-defined (no per-deployment maintenance) and require `jobs.create`.
+Because the MCP server reuses the same filtered catalog, they're available to
+external AI clients only when the connector has that permission. The
 generic `propose_script` remains the fallback for anything without a dedicated
 tool. Verified end-to-end via MCP `tools/call` (correct per-OS command, injection
 rejected, job left awaiting approval).
 
 ## Report generation
 
-Reports are just the model summarizing data it fetched via `fleet_summary` /
-`get_inventory` / `get_job_status`. No special endpoint — ask for a report in
-chat and the model assembles it from tool output.
+Reports are the model summarizing data fetched via permitted read tools:
+`fleet_summary`, `get_inventory`, `get_job_status`, or `inventory_report` when the
+principal has `reports.view`. Ask for a report in chat and the model assembles it
+from tool output.
 
 **Reports are read-only and stay in the chat.** A system-prompt rule forbids the
 model from proposing a script that writes a report file on the endpoint: to

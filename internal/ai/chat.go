@@ -22,7 +22,8 @@ Capabilities (via tools):
 - Check job results and generate reports from fleet data.
 
 Hard rules:
-1. You can READ freely, but you can NEVER execute anything directly. The only way to
+1. You can only read through the tools made available to you for this user's
+   permissions and access scope. You can NEVER execute anything directly. The only way to
    act is to PROPOSE: propose_script (one device) or propose_bulk_deploy (the same
    script across MANY devices at once — e.g. "install X on every device" or "deploy
    to all companies"), each of which creates approval-gated job(s) a HUMAN must
@@ -81,7 +82,7 @@ type Reply struct {
 
 // Respond appends the user's message, runs the tool-calling loop, persists every
 // step, and returns the assistant's final text plus any jobs it proposed.
-func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, scopeUser string) (*Reply, error) {
+func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, scopeUser string, permissions map[string]bool) (*Reply, error) {
 	if err := e.store.AddChatMessage(ctx, &models.ChatMessage{
 		SessionID: sessionID, Role: "user", Content: userContent,
 	}); err != nil {
@@ -93,11 +94,12 @@ func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, sco
 		return nil, err
 	}
 
-	tc := ToolContext{Store: e.store, Jobs: e.jobs, Actor: actor, ScopeUserID: scopeUser}
+	tc := ToolContext{Store: e.store, Jobs: e.jobs, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions}
+	tools := ToolsForPermissions(permissions)
 	var createdJobs []string
 
 	for i := 0; i < maxIters; i++ {
-		msg, err := e.client.Chat(ctx, history, Tools())
+		msg, err := e.client.Chat(ctx, history, tools)
 		if err != nil {
 			return nil, err
 		}

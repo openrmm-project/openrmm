@@ -3,7 +3,8 @@
 const DESTRUCTIVE = /\b(rm\s+-rf|Remove-Item|mkfs|dd\s+if=|format\s|shutdown|reboot|Stop-Service|Disable-|Set-ExecutionPolicy|Uninstall|del\s+\/|rd\s+\/s|DROP\s+TABLE|reg\s+delete|Remove-MpPreference|Clear-RecycleBin)\b/i;
 
 function useDeviceMap() {
-  const q = useQuery(['devmap'], () => api.listDevices(), { invalidateOn: ['devices'] });
+  const { can } = useAuth();
+  const q = useQuery(['devmap'], () => can('devices.view') ? api.listDevices() : Promise.resolve({ devices: [] }), { invalidateOn: ['devices'] });
   const map = {};
   (q.data?.devices || []).forEach((d) => { map[d.id] = d; });
   return map;
@@ -123,7 +124,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
             <div className="flex items-center justify-between gap-3 pt-1">
               <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — nothing has run yet.</div>
               <div className="flex items-center gap-2">
-                {can('tech') && (
+                {can('jobs.manage') && (
                   <>
                     <Button variant="danger" icon="reject" onClick={reject} disabled={busy}>Reject</Button>
                     <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approve()}>Approve & run</Button>
@@ -137,7 +138,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
               <div className="flex items-center gap-2 text-[12.5px] text-run">
                 {job.status === 'running' ? <><Spinner size={14} className="text-run" />Executing on {device?.hostname}…</> : <><Icon name="clock" size={13} />{job.status === 'sent' ? 'Sent — starting…' : 'Queued (waiting for agent)'}</>}
               </div>
-              {can('tech') && <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>Cancel</Button>}
+              {can('jobs.manage') && <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>Cancel</Button>}
             </div>
           )}
         </div>
@@ -214,7 +215,7 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
                 <OsIcon os={devMap[j.agent_id]?.os} size={13} />
                 <span className="text-ink truncate flex-1">{devMap[j.agent_id]?.hostname || j.agent_id}</span>
                 <StatusPill status={j.status} size="sm" />
-                {j.status === 'awaiting_approval' && can('tech') && <button onClick={() => removeOne(j)} title="Remove from deployment" className="text-faint hover:text-bad p-0.5"><Icon name="close" size={14} /></button>}
+                {j.status === 'awaiting_approval' && can('jobs.manage') && <button onClick={() => removeOne(j)} title="Remove from deployment" className="text-faint hover:text-bad p-0.5"><Icon name="close" size={14} /></button>}
               </div>
             ))}
           </div>
@@ -222,7 +223,7 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
             <div className="flex items-center justify-between gap-3 pt-1">
               <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — review the targets, then approve once for all {awaiting.length}.</div>
               <div className="flex items-center gap-2">
-                {can('tech') && (
+                {can('jobs.manage') && (
                   <>
                     <Button variant="danger" icon="reject" onClick={rejectAll} disabled={busy}>Reject all</Button>
                     <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approveAll()}>Approve {awaiting.length}</Button>
@@ -242,6 +243,7 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
 
 /* ================================= AUDIT ================================== */
 function AuditScreen() {
+  const { can } = useAuth();
   const auditQ = useQuery(['audit'], () => api.listAudit(200), { invalidateOn: ['audit'], poll: 6000 });
   const [q, setQ] = useState('');
   const [actorF, setActorF] = useState('all');
@@ -249,7 +251,7 @@ function AuditScreen() {
   const actors = Array.from(new Set(entries.map((e) => e.actor)));
   // The audit log stores the actor's user id (stable); resolve it to a username
   // for display (non-user actors like "scheduler"/"agent"/"api" stay as-is).
-  const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
+  const usersQ = useQuery(['users'], () => can('users.manage') ? api.listUsers() : Promise.resolve({ users: [] }), { invalidateOn: ['users'] });
   const userMap = {};
   (usersQ.data?.users || []).forEach((u) => { userMap[u.id] = u.username; });
   const displayActor = (a) => {

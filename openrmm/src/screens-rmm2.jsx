@@ -11,7 +11,7 @@ function ScriptsScreen() {
   return (
     <Page wide>
       <PageHeader title="Script library" subtitle="Reusable scripts. Running one creates an approval-gated job."
-        actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New script</Button>} />
+        actions={can('scripts.manage') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New script</Button>} />
       <Card className="mb-4"><div className="flex items-center gap-2 p-2.5"><div className="relative flex-1"><Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search scripts…" className={cx(inputCls, 'pl-9')} /></div></div></Card>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {scripts.map((s) => (
@@ -43,7 +43,7 @@ function ScriptEditor({ script, onClose }) {
   const [body, setBody] = useState(script?.body || '');
   const [busy, setBusy] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
-  const readOnly = !can('admin');
+  const readOnly = !can('scripts.manage');
 
   const save = async () => {
     setBusy(true);
@@ -57,7 +57,7 @@ function ScriptEditor({ script, onClose }) {
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="script" size={17} /></div>
         <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : 'New script'}</div><div className="text-[12px] text-faint">{readOnly ? 'Read-only' : 'Editing'}</div></div>
-        {can('tech') && script && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>Run on device</Button>}
+        {can('jobs.create') && script && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>Run on device</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
@@ -117,7 +117,7 @@ function PoliciesScreen() {
   return (
     <Page wide>
       <PageHeader title="Policies" subtitle="Bundle checks and tasks, then assign them to clients, sites, or agents — scope is inherited."
-        actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New policy</Button>} />
+        actions={can('policies.manage') && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>New policy</Button>} />
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {policies.map((p) => <PolicyCard key={p.id} policy={p} onClick={() => setDetail(p)} />)}
       </div>
@@ -128,8 +128,9 @@ function PoliciesScreen() {
 }
 
 function PolicyCard({ policy, onClick }) {
-  const checksQ = useQuery([policy.id, 'pc'], () => api.listChecks({ policy_id: policy.id }), { invalidateOn: ['checks'] });
-  const tasksQ = useQuery([policy.id, 'pt'], () => api.listTasks({ policy_id: policy.id }), { invalidateOn: ['tasks'] });
+  const { can } = useAuth();
+  const checksQ = useQuery([policy.id, 'pc'], () => can('checks.view') ? api.listChecks({ policy_id: policy.id }) : Promise.resolve({ checks: [] }), { invalidateOn: ['checks'] });
+  const tasksQ = useQuery([policy.id, 'pt'], () => can('tasks.view') ? api.listTasks({ policy_id: policy.id }) : Promise.resolve({ tasks: [] }), { invalidateOn: ['tasks'] });
   const asgQ = useQuery([policy.id, 'pa'], () => api.listAssignments(policy.id), { invalidateOn: ['policies'] });
   return (
     <button onClick={onClick} className="text-left rounded-2xl border border-line bg-card hover:border-line2 hover:bg-elevated/40 transition p-4 group">
@@ -148,11 +149,11 @@ function PolicyDetail({ policy, onClose }) {
   const { can } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState('checks');
-  const checksQ = useQuery([policy.id, 'pcd'], () => api.listChecks({ policy_id: policy.id }), { invalidateOn: ['checks'] });
-  const tasksQ = useQuery([policy.id, 'ptd'], () => api.listTasks({ policy_id: policy.id }), { invalidateOn: ['tasks'] });
+  const checksQ = useQuery([policy.id, 'pcd'], () => can('checks.view') ? api.listChecks({ policy_id: policy.id }) : Promise.resolve({ checks: [] }), { invalidateOn: ['checks'] });
+  const tasksQ = useQuery([policy.id, 'ptd'], () => can('tasks.view') ? api.listTasks({ policy_id: policy.id }) : Promise.resolve({ tasks: [] }), { invalidateOn: ['tasks'] });
   const asgQ = useQuery([policy.id, 'pad'], () => api.listAssignments(policy.id), { invalidateOn: ['policies'] });
-  const clientsQ = useQuery(['cl-pol'], () => api.listClients(), { invalidateOn: ['org'] });
-  const sitesQ = useQuery(['st-pol'], () => api.listSites(), { invalidateOn: ['org'] });
+  const clientsQ = useQuery(['cl-pol'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
+  const sitesQ = useQuery(['st-pol'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
   const devMap = useDeviceMap();
   const [addScope, setAddScope] = useState('');
 
@@ -179,7 +180,7 @@ function PolicyDetail({ policy, onClose }) {
         {tab === 'assign' && (
           <div className="space-y-4">
             <div className="flex items-start gap-2.5 rounded-xl border border-brand/25 bg-brandsoft px-3.5 py-3"><Icon name="info" size={16} className="text-brandhi mt-0.5 shrink-0" /><div className="text-[12.5px] text-ink leading-relaxed">Assigning to a <b>client</b> or <b>site</b> pushes every check and task in this policy to <b>all agents in that scope</b>. Agent-level assignments target a single device.</div></div>
-            {can('admin') && (
+            {can('policies.manage') && (
               <div className="flex items-center gap-2">
                 <Select value={addScope} onChange={(e) => setAddScope(e.target.value)} className="flex-1"><option value="">Add an assignment…</option><optgroup label="Clients">{clients.map((c) => <option key={c.id} value={'client:' + c.id}>{c.name} (all sites)</option>)}</optgroup><optgroup label="Sites">{sites.map((s) => <option key={s.id} value={'site:' + s.id}>{s.name}</option>)}</optgroup><optgroup label="Agents">{Object.values(devMap).map((d) => <option key={d.id} value={'agent:' + d.id}>{d.hostname}</option>)}</optgroup></Select>
                 <Button variant="primary" icon="plus" onClick={addAssignment} disabled={!addScope}>Assign</Button>
@@ -190,7 +191,7 @@ function PolicyDetail({ policy, onClose }) {
                 <div key={a.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-2.5">
                   <span className={cx('inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase', a.scope_type === 'agent' ? 'text-run bg-runsoft border-run/25' : a.scope_type === 'site' ? 'text-warn bg-warnsoft border-warn/25' : 'text-brandhi bg-brandsoft border-brand/25')}>{a.scope_type}</span>
                   <span className="flex-1 text-[13px] text-ink">{scopeName(a) || a.scope_id}</span>
-                  {can('admin') && <button onClick={() => removeAssignment(a.id)} className="text-faint hover:text-bad p-1"><Icon name="trash" size={15} /></button>}
+                  {can('policies.manage') && <button onClick={() => removeAssignment(a.id)} className="text-faint hover:text-bad p-1"><Icon name="trash" size={15} /></button>}
                 </div>
               ))}
               {asg.length === 0 && <div className="text-center text-[12.5px] text-faint py-4">Not assigned anywhere yet.</div>}
@@ -198,7 +199,7 @@ function PolicyDetail({ policy, onClose }) {
           </div>
         )}
       </div>
-      {can('admin') && (
+      {can('policies.manage') && (
         <div className="px-5 py-3.5 border-t border-line flex justify-end">
           <Button variant="danger" icon="trash" onClick={() => setConfirmDel(true)}>Delete policy</Button>
         </div>
@@ -216,7 +217,7 @@ function ClientsScreen() {
   const sitesQ = useQuery(['sites'], () => api.listSites(), { invalidateOn: ['org'] });
   // Poll so newly-enrolled devices (a server-side event, not a UI mutation) show
   // up without a manual page refresh.
-  const devicesQ = useQuery(['cl-dev'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 8000 });
+  const devicesQ = useQuery(['cl-dev'], () => can('devices.view') ? api.listDevices() : Promise.resolve({ devices: [] }), { invalidateOn: ['devices'], poll: can('devices.view') ? 8000 : 0 });
   const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'], poll: 12000 });
   const groups = groupsQ.data?.groups || [];
   const [sel, setSel] = useState(null); // site id
@@ -255,9 +256,9 @@ function ClientsScreen() {
   const addClient = async () => { await api.createClient(name); setName(''); setCreatingClient(false); toast.success('Client created'); };
 
   return (
-    <Page wide>
-      <PageHeader title="Clients & Sites" subtitle="Organize your fleet into clients and sites. Enroll agents per site."
-        actions={can('admin') && <Button variant="primary" icon="plus" onClick={() => setCreatingClient(true)}>New client</Button>} />
+      <Page wide>
+        <PageHeader title="Clients & Sites" subtitle="Organize your fleet into clients and sites. Enroll agents per site."
+        actions={can('clients.manage') && <Button variant="primary" icon="plus" onClick={() => setCreatingClient(true)}>New client</Button>} />
       <div className="grid lg:grid-cols-[360px_1fr] gap-5">
         <div className="space-y-3">
           <div className="relative">
@@ -297,7 +298,7 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
             : <div className="text-[13.5px] font-semibold text-ink truncate">{client.name}</div>}
         </div>
         {!renaming && <span className="text-[11px] text-faint">{clientCount(client.id)} devices</span>}
-        {can('admin') && !renaming && (
+        {can('clients.manage') && !renaming && (
           <Dropdown align="right" width="w-48" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={16} fill /></button>}>
             <MenuItem icon="edit" onClick={() => { setRename(client.name); setRenaming(true); }}>Rename client</MenuItem>
             <div className="my-1 border-t border-line" />
@@ -329,7 +330,7 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
               </div>
             );
           })}
-          {can('admin') && (adding ? (
+          {can('clients.manage') && (adding ? (
             <div className="flex items-center gap-2 pl-10 pr-3 py-2"><Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSite(); if (e.key === 'Escape') { setAdding(false); setName(''); } }} onBlur={() => { setAdding(false); setName(''); }} placeholder="Site name" className="h-8" autoFocus /><Button size="sm" variant="primary" onMouseDown={(e) => e.preventDefault()} onClick={addSite} disabled={!name}>Add</Button></div>
           ) : <button onClick={() => setAdding(true)} className="w-full flex items-center gap-2 pl-10 pr-3.5 py-2 text-[12px] text-faint hover:text-muted transition"><Icon name="plus" size={13} />Add site</button>)}
         </div>
@@ -416,12 +417,12 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
       <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
       <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
-      {can('admin') && (
+      {(can('clients.manage') || can('devices.delete')) && (
         <span onClick={(e) => e.stopPropagation()}>
           <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
-            <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>
-            <div className="my-1 border-t border-line" />
-            <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>
+            {can('clients.manage') && <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>}
+            {can('clients.manage') && can('devices.delete') && <div className="my-1 border-t border-line" />}
+            {can('devices.delete') && <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>}
           </Dropdown>
         </span>
       )}
@@ -438,7 +439,7 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
             : <h2 className="text-[16px] font-semibold text-ink truncate">{site.name}</h2>}
           <div className="text-[12px] text-muted">{client?.name} · {devices.length} devices</div>
         </div>
-        {can('admin') && !renaming && (
+        {can('clients.manage') && !renaming && (
           <Dropdown align="right" width="w-52" trigger={<button className="text-faint hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={18} fill /></button>}>
             <MenuItem icon="edit" onClick={() => { setRename(site.name); setRenaming(true); }}>Rename site</MenuItem>
             <MenuItem icon="building" onClick={() => setCreatingDept(true)}>Create department</MenuItem>
@@ -450,7 +451,7 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       <div className="mb-5">
         <div className="flex items-center justify-between mb-2">
           <div className="text-[12px] font-semibold text-muted">Devices <span className="text-faint font-normal">· {devices.length}</span></div>
-          {can('admin') && !creatingDept && <button onClick={() => setCreatingDept(true)} className="text-[11.5px] text-faint hover:text-ink flex items-center gap-1"><Icon name="plus" size={12} />Department</button>}
+          {can('clients.manage') && !creatingDept && <button onClick={() => setCreatingDept(true)} className="text-[11.5px] text-faint hover:text-ink flex items-center gap-1"><Icon name="plus" size={12} />Department</button>}
         </div>
         {creatingDept && (
           <div className="flex items-center gap-2 mb-2.5">
@@ -484,7 +485,7 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
                     <div className="flex items-center gap-1.5 px-0.5">
                       <Icon name="building" size={12} className="text-faint" />
                       <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
-                      {can('admin') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
+                      {can('clients.manage') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
                     </div>
                     {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
                   </div>
@@ -494,7 +495,7 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
           );
         })()}
       </div>
-      {can('admin') && (
+      {can('enrollment.manage') && (
         <div>
           <div className="flex items-center justify-between mb-2">
             <div className="text-[12px] font-semibold text-muted">Enroll a new agent</div>
@@ -560,15 +561,22 @@ window.ClientsScreen = ClientsScreen;
 
 /* ============================ USERS & SETTINGS =========================== */
 function SettingsScreen() {
-  const { can, role } = useAuth();
+  const { can } = useAuth();
   const [tab, setTab] = useState('users');
+  const tabs = [
+    { value: 'users', label: 'Users' },
+    ...(can('roles.manage') ? [{ value: 'roles', label: 'Roles' }] : []),
+    ...(can('settings.manage') ? [{ value: 'config', label: 'Configuration' }] : []),
+    ...(can('enrollment.manage') ? [{ value: 'enroll', label: 'Enrollment' }] : []),
+  ];
   return (
     <Page>
       <PageHeader title="Users & Settings" subtitle="Manage access and review your instance configuration." />
-      <Tabs className="mb-5" value={tab} onChange={setTab} tabs={[{ value: 'users', label: 'Users' }, { value: 'config', label: 'Configuration' }, ...(can('admin') ? [{ value: 'enroll', label: 'Enrollment' }] : [])]} />
-      {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard />{can('admin') && <UsersPanel canAdmin />}</>}
-      {tab === 'config' && <ConfigPanel />}
-      {tab === 'enroll' && <EnrollPanel canAdmin={can('admin')} />}
+      <Tabs className="mb-5" value={tab} onChange={setTab} tabs={tabs} />
+      {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard />{can('users.manage') && <UsersPanel canAdmin />}</>}
+      {tab === 'roles' && can('roles.manage') && <RolesPanel />}
+      {tab === 'config' && can('settings.manage') && <ConfigPanel />}
+      {tab === 'enroll' && can('enrollment.manage') && <EnrollPanel canAdmin={can('enrollment.manage')} />}
     </Page>
   );
 }
@@ -710,6 +718,7 @@ function TwoFactorCard() {
 function UsersPanel({ canAdmin }) {
   const toast = useToast();
   const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
+  const rolesQ = useQuery(['roles'], () => api.listRoles(), { invalidateOn: ['roles'] });
   const [creating, setCreating] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -725,6 +734,8 @@ function UsersPanel({ canAdmin }) {
   const [pendingRole, setPendingRole] = useState(null);
   const [confirmScopeSave, setConfirmScopeSave] = useState(false);
   const users = usersQ.data?.users || [];
+  const roles = rolesQ.data?.roles || [{ key: 'readonly', name: 'Read-only' }, { key: 'tech', name: 'Technician' }, { key: 'admin', name: 'Administrator' }];
+  const roleLabel = (r) => r.name ? `${r.key} — ${r.name}` : r.key;
 
   const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setCreating(false); };
   const create = async () => {
@@ -775,7 +786,7 @@ function UsersPanel({ canAdmin }) {
         <div className="text-[13px] font-semibold text-ink">Users <span className="text-faint font-normal">({users.length})</span></div>
         {canAdmin && <Button size="sm" variant="primary" icon="plus" onClick={() => setCreating(true)}>Add user</Button>}
       </div>
-      {!canAdmin && <div className="px-4 py-2.5 text-[12px] text-faint bg-elevated/30 border-b border-line flex items-center gap-1.5"><Icon name="info" size={13} />User management requires the admin role.</div>}
+      {!canAdmin && <div className="px-4 py-2.5 text-[12px] text-faint bg-elevated/30 border-b border-line flex items-center gap-1.5"><Icon name="info" size={13} />User management permission is required.</div>}
       <table className="w-full text-left">
         <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line"><th className="font-semibold px-4 py-2.5">User</th><th className="font-semibold px-3 py-2.5">Role</th><th className="font-semibold px-3 py-2.5">Created</th><th className="font-semibold px-4 py-2.5 text-right">Actions</th></tr></thead>
         <tbody className="divide-y divide-line">
@@ -784,7 +795,7 @@ function UsersPanel({ canAdmin }) {
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><Avatar name={u.username} size={28} /><span className="text-[13px] text-ink font-medium">{u.username}</span></div></td>
               <td className="px-3 py-3">
                 {canAdmin && u.username !== 'admin'
-                  ? <Select value={u.role} disabled={roleBusy === u.id} onChange={(e) => setPendingRole({ user: u, role: e.target.value })} className="h-8 min-w-28"><option value="readonly">readonly</option><option value="tech">tech</option><option value="admin">admin</option></Select>
+                  ? <Select value={u.role} disabled={roleBusy === u.id} onChange={(e) => setPendingRole({ user: u, role: e.target.value })} className="h-8 min-w-28">{roles.map((r) => <option key={r.key} value={r.key}>{r.key}</option>)}</Select>
                   : <RoleBadge role={u.role} />}
               </td>
               <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(u.created_at)}</td>
@@ -807,7 +818,7 @@ function UsersPanel({ canAdmin }) {
           <div className="space-y-3">
             <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field>
             <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="a strong password" /></Field>
-            <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}><option value="readonly">readonly — view (+ remote)</option><option value="tech">tech — run, approve & ack</option><option value="admin">admin — manage everything</option></Select></Field>
+            <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}>{roles.map((r) => <option key={r.key} value={r.key}>{roleLabel(r)}</option>)}</Select></Field>
             {newRole === 'admin'
               ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
               : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} /></Field>}
@@ -833,11 +844,125 @@ function UsersPanel({ canAdmin }) {
   );
 }
 
+function RolesPanel() {
+  const toast = useToast();
+  const rolesQ = useQuery(['roles'], () => api.listRoles(), { invalidateOn: ['roles'] });
+  const permsQ = useQuery(['permissions'], () => api.listPermissions(), { invalidateOn: ['roles'] });
+  const [editing, setEditing] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const roles = rolesQ.data?.roles || [];
+  const permissions = permsQ.data?.permissions || [];
+
+  const cloneRole = (r) => setEditing({ key: '', name: r.name + ' copy', description: r.description || '', permissions: r.permissions || [], system: false, _new: true });
+  const del = async () => {
+    if (!confirmDel) return;
+    try { await api.deleteRole(confirmDel.key); window.dataBus.emit('roles'); toast.info('Role deleted'); }
+    catch (e) { toast.error('Delete failed', e.message); }
+    finally { setConfirmDel(null); }
+  };
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between px-4 h-12 border-b border-line">
+        <div className="text-[13px] font-semibold text-ink">Roles <span className="text-faint font-normal">({roles.length})</span></div>
+        <Button size="sm" variant="primary" icon="plus" onClick={() => setEditing({ key: '', name: '', description: '', permissions: [], _new: true })}>New role</Button>
+      </div>
+      <div className="divide-y divide-line">
+        {roles.map((r) => (
+          <div key={r.key} className="px-4 py-3 flex items-center gap-3 hover:bg-elevated/30 transition">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2"><RoleBadge role={r.key} /><span className="text-[13px] font-semibold text-ink truncate">{r.name}</span>{r.system && <span className="text-[10.5px] uppercase text-faint border border-line2 rounded px-1.5 py-0.5">system</span>}</div>
+              <div className="text-[12px] text-muted mt-1 truncate">{r.description || 'No description'}</div>
+            </div>
+            <div className="text-[11.5px] text-faint tabular hidden sm:block">{(r.permissions || []).length} permission(s)</div>
+            <Button size="sm" variant="ghost" icon="eye" onClick={() => setEditing(r)}>{r.system ? 'View' : 'Edit'}</Button>
+            <Button size="sm" variant="ghost" icon="copy" onClick={() => cloneRole(r)}>Clone</Button>
+            {!r.system && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(r)} />}
+          </div>
+        ))}
+        {!rolesQ.loading && roles.length === 0 && <EmptyState icon="shield" title="No roles" msg="Create a role to assign custom permissions." />}
+      </div>
+      {editing && <RoleEditor role={editing} roles={roles} permissions={permissions} onClose={() => setEditing(null)} />}
+      <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={del} danger title="Delete role?" body={<>Delete <b>{confirmDel?.key}</b>? Users or API tokens assigned to it must be moved first.</>} confirmLabel="Delete role" />
+    </Card>
+  );
+}
+
+function RoleEditor({ role, roles, permissions, onClose }) {
+  const toast = useToast();
+  const isNew = !!role._new;
+  const readOnly = role.system && !isNew;
+  const [name, setName] = useState(role.name || '');
+  const [description, setDescription] = useState(role.description || '');
+  const [selected, setSelected] = useState(new Set(role.permissions || []));
+  const [busy, setBusy] = useState(false);
+  const groups = permissions.reduce((acc, p) => { (acc[p.group] = acc[p.group] || []).push(p); return acc; }, {});
+  const toggle = (p) => setSelected((prev) => { const next = new Set(prev); next.has(p) ? next.delete(p) : next.add(p); return next; });
+  const slug = (v) => (v || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, '-')
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
+    .slice(0, 64)
+    .replace(/[^a-z0-9]+$/g, '');
+  const existingKeys = new Set((roles || []).map((r) => r.key).filter((k) => !(!isNew && k === role.key)));
+  const makeKey = () => {
+    const base = slug(name) || 'role';
+    let key = base.length >= 2 ? base : base + '-role';
+    let i = 2;
+    while (existingKeys.has(key)) {
+      const suffix = '-' + i++;
+      key = base.slice(0, 64 - suffix.length) + suffix;
+    }
+    return key;
+  };
+  const generatedKey = isNew ? makeKey() : role.key;
+  const save = async () => {
+    setBusy(true);
+    const body = { name, description, permissions: Array.from(selected).sort() };
+    if (isNew) body.key = generatedKey;
+    try {
+      if (isNew) await api.createRole(body); else await api.updateRole(role.key, body);
+      window.dataBus.emit('roles'); toast.success(isNew ? 'Role created' : 'Role saved'); onClose();
+    } catch (e) { toast.error('Save failed', e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Drawer open onClose={onClose} width="max-w-[760px]">
+      <div className="px-5 py-4 border-b border-line flex items-center gap-3">
+        <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="shield" size={17} /></div>
+        <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{isNew ? 'New role' : role.name}</div><div className="text-[12px] text-faint">{readOnly ? 'System role' : 'Custom role'}</div></div>
+        <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
+        <Field label="Name" hint={isNew ? <>Technical key will be generated as <span className="mono">{generatedKey}</span>.</> : <>Technical key: <span className="mono">{role.key}</span>.</>}><Input value={name} onChange={(e) => setName(e.target.value)} disabled={readOnly} placeholder="Helpdesk" /></Field>
+        <Field label="Description"><Input value={description} onChange={(e) => setDescription(e.target.value)} disabled={readOnly} placeholder="What this role can do" /></Field>
+        {Object.entries(groups).map(([group, items]) => (
+          <div key={group} className="rounded-xl border border-line bg-card overflow-hidden">
+            <div className="px-3.5 py-2.5 border-b border-line text-[12.5px] font-semibold text-ink">{group}</div>
+            <div className="grid sm:grid-cols-2 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-line">
+              {items.map((p) => (
+                <label key={p.key} className={cx('flex gap-2.5 px-3.5 py-3 cursor-pointer hover:bg-elevated/30', readOnly && 'cursor-default opacity-75')}>
+                  <input type="checkbox" checked={selected.has(p.key)} disabled={readOnly} onChange={() => toggle(p.key)} className="mt-0.5 h-4 w-4 accent-brand" />
+                  <span className="min-w-0"><span className="block text-[12.5px] text-ink font-medium">{p.label}</span><span className="block text-[11.5px] text-faint leading-snug">{p.description}</span><span className="block text-[10.5px] text-faint mono mt-1">{p.key}</span></span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {!readOnly && <div className="px-5 py-3.5 border-t border-line flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" icon="check" loading={busy} onClick={save} disabled={!slug(name) || !name}>Save role</Button></div>}
+    </Drawer>
+  );
+}
+
 // ScopePicker builds a user's access scope as a lazy-loaded, searchable tree
-// (Company → Site → Machine). Scales to thousands of machines: sites load when
-// a company is expanded, machines when a site is expanded. Empty = full access.
-// Checking a company covers all its sites/machines; checking a site covers its
-// machines. scopes is [{scope_type, scope_id}]; selection keys are "type:id".
+// (Company -> Site -> Department -> Machine). Scales to thousands of machines:
+// sites load when a company is expanded, machines when a site is expanded.
+// Empty = full access. Machines without a department stay directly under the
+// site. scopes is [{scope_type, scope_id}]; selection keys are "type:id".
 function ScopePicker({ scopes, setScopes }) {
   const [clients, setClients] = useState(null);
   const [sitesBy, setSitesBy] = useState({});   // clientId -> [sites]
@@ -953,11 +1078,17 @@ function ScopePicker({ scopes, setScopes }) {
                     <Row depth={0} icon="building" name={c.name} checked={clientCov} onCheck={() => toggle('client', cid)} />
                     {sitesUnder.map((s) => {
                       const siteCov = clientCov || sel.has('site:' + s.id);
+                      const siteDevices = devBySite[s.id] || [];
+                      const siteGroups = (groupBySite[s.id] || []).filter((g) => m(g.name) || siteDevices.some((d) => d.group_id === g.id));
+                      const ungroupedDevices = siteDevices.filter((d) => !d.group_id || !siteGroups.some((g) => g.id === d.group_id));
                       return (
                         <div key={s.id}>
                           <Row depth={1} icon="pin" name={s.name} checked={siteCov} disabled={clientCov} onCheck={() => toggle('site', s.id)} />
-                          {(groupBySite[s.id] || []).filter((g) => m(g.name)).map((g) => <Row key={g.id} depth={2} icon="building" name={g.name} hint="department" checked={siteCov || sel.has('group:' + g.id)} disabled={siteCov} onCheck={() => toggle('group', g.id)} />)}
-                          {(devBySite[s.id] || []).map((d) => { const cov = deviceCovered(siteCov, d); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
+                          {siteGroups.map((g) => {
+                            const groupDevices = siteDevices.filter((d) => d.group_id === g.id);
+                            return <div key={g.id}><Row depth={2} icon="building" name={g.name} hint="department" checked={siteCov || sel.has('group:' + g.id)} disabled={siteCov} onCheck={() => toggle('group', g.id)} />{groupDevices.map((d) => { const cov = deviceCovered(siteCov, d); return <Row key={d.id} depth={3} icon="devices" name={d.hostname} hint={d.status} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}</div>;
+                          })}
+                          {ungroupedDevices.map((d) => { const cov = deviceCovered(siteCov, d); return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={(d.status || '') + ' · no department'} checked={cov || sel.has('agent:' + d.id)} disabled={cov} onCheck={() => toggle('agent', d.id)} />; })}
                         </div>
                       );
                     })}
@@ -973,17 +1104,22 @@ function ScopePicker({ scopes, setScopes }) {
                   expandable expanded={!!expC[c.id]} onExpand={() => { setExpC((m) => ({ ...m, [c.id]: !m[c.id] })); loadSites(c.id); }} />
                 {expC[c.id] && (sitesBy[c.id] || []).filter((st) => match(st.name)).map((st) => {
                   const siteCovered = sel.has('client:' + c.id) || sel.has('site:' + st.id);
-                  const siteGroups = groupsForSite(st.id).filter((g) => match(g.name));
+                  const siteDevices = (devsBy[st.id] || []).filter((d) => match(d.hostname));
+                  const siteGroups = groupsForSite(st.id).filter((g) => match(g.name) || siteDevices.some((d) => d.group_id === g.id));
+                  const ungroupedDevices = siteDevices.filter((d) => !d.group_id || !siteGroups.some((g) => g.id === d.group_id));
                   return (
                     <div key={st.id}>
                       <Row depth={1} icon="pin" name={st.name} checked={siteCovered} disabled={sel.has('client:' + c.id)} onCheck={() => toggle('site', st.id)}
                         expandable expanded={!!expS[st.id]} onExpand={() => { setExpS((m) => ({ ...m, [st.id]: !m[st.id] })); loadDevs(st.id); }} />
-                      {expS[st.id] && siteGroups.map((g) => <Row key={g.id} depth={2} icon="building" name={g.name} hint="department" checked={siteCovered || sel.has('group:' + g.id)} disabled={siteCovered} onCheck={() => toggle('group', g.id)} />)}
-                      {expS[st.id] && (devsBy[st.id] || []).filter((d) => match(d.hostname)).map((d) => {
-                        const covered = deviceCovered(siteCovered, d);
-                        return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
+                      {expS[st.id] && siteGroups.map((g) => {
+                        const groupDevices = siteDevices.filter((d) => d.group_id === g.id);
+                        return <div key={g.id}><Row depth={2} icon="building" name={g.name} hint="department" checked={siteCovered || sel.has('group:' + g.id)} disabled={siteCovered} onCheck={() => toggle('group', g.id)} />{groupDevices.map((d) => { const covered = deviceCovered(siteCovered, d); return <Row key={d.id} depth={3} icon="devices" name={d.hostname} hint={d.status} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />; })}</div>;
                       })}
-                      {expS[st.id] && siteGroups.length === 0 && (devsBy[st.id] || []).length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no departments or devices</div>}
+                      {expS[st.id] && ungroupedDevices.map((d) => {
+                        const covered = deviceCovered(siteCovered, d);
+                        return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={(d.status || '') + ' · no department'} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
+                      })}
+                      {expS[st.id] && siteGroups.length === 0 && siteDevices.length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no departments or devices</div>}
                     </div>
                   );
                 })}
@@ -1046,21 +1182,21 @@ function ConfigPanel() {
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="sparkle" size={15} /></div><div className="text-[13px] font-semibold text-ink">AI provider</div><span className="ml-auto"><StatusPill status={c.ai.configured ? 'online' : 'warning'} label={c.ai.configured ? 'Configured' : 'Missing key'} size="sm" /></span></div>
         <div className="space-y-3">
-          <Field label="Provider"><Input value={form.ai_provider} disabled={!can('admin')} onChange={(e) => set('ai_provider', e.target.value)} placeholder="openai-compatible" /></Field>
-          <Field label="Base URL"><Input className="mono" value={form.ai_base_url} disabled={!can('admin')} onChange={(e) => set('ai_base_url', e.target.value)} placeholder="https://api.openai.com/v1" /></Field>
-          <Field label="Model"><Input className="mono" value={form.ai_model} disabled={!can('admin')} onChange={(e) => set('ai_model', e.target.value)} placeholder="gpt-4o-mini" /></Field>
-          <Field label="API key" hint={c.ai.api_key_set ? 'Already set. Leave blank to keep the current key.' : 'Write-only. It will never be displayed again.'}><Input type="password" value={form.ai_api_key} disabled={!can('admin')} onChange={(e) => set('ai_api_key', e.target.value)} placeholder={c.ai.api_key_set ? '••••••••••••••••' : 'sk-...'} autoComplete="new-password" /></Field>
+          <Field label="Provider"><Input value={form.ai_provider} disabled={!can('settings.manage')} onChange={(e) => set('ai_provider', e.target.value)} placeholder="openai-compatible" /></Field>
+          <Field label="Base URL"><Input className="mono" value={form.ai_base_url} disabled={!can('settings.manage')} onChange={(e) => set('ai_base_url', e.target.value)} placeholder="https://api.openai.com/v1" /></Field>
+          <Field label="Model"><Input className="mono" value={form.ai_model} disabled={!can('settings.manage')} onChange={(e) => set('ai_model', e.target.value)} placeholder="gpt-4o-mini" /></Field>
+          <Field label="API key" hint={c.ai.api_key_set ? 'Already set. Leave blank to keep the current key.' : 'Write-only. It will never be displayed again.'}><Input type="password" value={form.ai_api_key} disabled={!can('settings.manage')} onChange={(e) => set('ai_api_key', e.target.value)} placeholder={c.ai.api_key_set ? '••••••••••••••••' : 'sk-...'} autoComplete="new-password" /></Field>
         </div>
       </Card>
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="remote" size={15} /></div><div className="text-[13px] font-semibold text-ink">Remote access</div></div>
         <div className="space-y-3">
-          <Field label="Default provider"><Select value={form.remote_default} disabled={!can('admin')} onChange={(e) => set('remote_default', e.target.value)}>{c.remote.providers.map((p) => <option key={p} value={p}>{p}</option>)}</Select></Field>
-          <Field label="MeshCentral" hint="When disabled, the MeshCentral option is hidden from the device Remote menu."><Select value={form.meshcentral_enabled ? 'on' : 'off'} disabled={!can('admin')} onChange={(e) => set('meshcentral_enabled', e.target.value === 'on')}><option value="on">Enabled</option><option value="off">Disabled</option></Select></Field>
-          <Field label="MeshCentral URL"><Input className="mono" value={form.meshcentral_url} disabled={!can('admin')} onChange={(e) => set('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
-          <Field label="MeshCentral user"><Input value={form.meshcentral_user} disabled={!can('admin')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>
-          <Field label="MeshCentral token key" hint={c.remote.meshcentral_token_set ? 'Already set. Leave blank to keep it.' : 'Optional write-only secret for login-token embedding.'}><Input type="password" value={form.meshcentral_token_key} disabled={!can('admin')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>
-          <Field label="RustDesk" hint="Shows a RustDesk option in the device Remote menu; reads the device id on demand and opens rustdesk://<id>. The RustDesk client is installed out-of-band."><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('admin')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">Disabled</option><option value="on">Enabled</option></Select></Field>
+          <Field label="Default provider"><Select value={form.remote_default} disabled={!can('settings.manage')} onChange={(e) => set('remote_default', e.target.value)}>{c.remote.providers.map((p) => <option key={p} value={p}>{p}</option>)}</Select></Field>
+          <Field label="MeshCentral" hint="When disabled, the MeshCentral option is hidden from the device Remote menu."><Select value={form.meshcentral_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_enabled', e.target.value === 'on')}><option value="on">Enabled</option><option value="off">Disabled</option></Select></Field>
+          <Field label="MeshCentral URL"><Input className="mono" value={form.meshcentral_url} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
+          <Field label="MeshCentral user"><Input value={form.meshcentral_user} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>
+          <Field label="MeshCentral token key" hint={c.remote.meshcentral_token_set ? 'Already set. Leave blank to keep it.' : 'Optional write-only secret for login-token embedding.'}><Input type="password" value={form.meshcentral_token_key} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>
+          <Field label="RustDesk" hint="Shows a RustDesk option in the device Remote menu; reads the device id on demand and opens rustdesk://<id>. The RustDesk client is installed out-of-band."><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">Disabled</option><option value="on">Enabled</option></Select></Field>
         </div>
       </Card>
       <Card className="p-4 md:col-span-2">
@@ -1068,7 +1204,7 @@ function ConfigPanel() {
         <ConfigItem label="Version" value={c.server.version} mono /><ConfigItem label="API base URL" value={c.server.base_url} mono />
         <div className="flex items-center justify-between gap-3 mt-4">
           <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Secrets are write-only and encrypted in the database; blank secret fields preserve current values.</div>
-          {can('admin') && <Button variant="primary" icon="check" loading={saving} onClick={save}>Save configuration</Button>}
+          {can('settings.manage') && <Button variant="primary" icon="check" loading={saving} onClick={save}>Save configuration</Button>}
         </div>
       </Card>
     </div>
@@ -1080,7 +1216,7 @@ function EnrollPanel({ canAdmin }) {
   const [token, setToken] = useState(null);
   const [busy, setBusy] = useState(false);
   const gen = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Manual enrollment', uses: 100, ttl_hours: 168 }); setToken(t); toast.success('Enrollment token created', 'Shown once — copy it now.'); } finally { setBusy(false); } };
-  if (!canAdmin) return <Card><EmptyState icon="shield" title="Admin only" msg="Enrollment management requires the admin role." /></Card>;
+  if (!canAdmin) return <Card><EmptyState icon="shield" title="Access denied" msg="Enrollment management permission is required." /></Card>;
   return (
     <Card className="p-5 max-w-2xl">
       <div className="text-[14px] font-semibold text-ink mb-1">Enroll new agents</div>

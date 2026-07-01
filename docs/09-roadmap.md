@@ -7,14 +7,15 @@ Agent enrollment, persistent WebSocket, heartbeat, job queue in Postgres,
 `run_script` job executed on the endpoint, result returned. Verified end-to-end.
 
 ## ✅ Phase 1 — AI chat (done)
-Tool-calling loop; read tools + the gated `propose_script`; guardrails (approval,
-audit). The product's differentiator.
+Tool-calling loop; permission-filtered read tools + approval-gated proposal tools;
+guardrails (approval, audit). The product's differentiator.
 
 ## ✅ Phase 2 — Real RMM (done)
 - **Client → Site → Agent hierarchy** + site-bound enrollment tokens.
-- **RBAC** — users (bcrypt) + sessions; roles admin/tech/readonly; API tokens.
-  Plus **TOTP 2FA** and **per-user access scope** (Company/Site/device), enforced
-  on read + write paths and on the AI/MCP surface.
+- **RBAC** — users (bcrypt) + sessions; built-in and custom roles with granular
+  permissions; API tokens. Plus **TOTP 2FA** and **per-user access scope**
+  (Company/Site/Department/device), enforced on read + write paths and on the
+  AI/MCP surface.
 - **Script library** + run-on-device.
 - **Monitoring checks** (diskspace, memory, cpuload, ping, winservice, script)
   with thresholds, history, and a server-driven scheduler.
@@ -44,9 +45,9 @@ Remaining Phase 2 nice-to-haves:
     (Windows `WH_KEYBOARD_LL`/`WH_MOUSE_LL` hooks; Linux evdev `EVIOCGRAB`) while
     the technician's injected input still works — covers the login screen too.
   - `native` is a first-class provider; the viewer also opens in a browser tab.
-- **Elevated remote Terminal** (`terminal` provider, tech-only): a real PTY (Unix)
-  / ConPTY (Windows) shell running as the agent's service account (root/SYSTEM),
-  bridged to an xterm.js viewer.
+- **Elevated remote Terminal** (`terminal` provider, `devices.terminal`): a real
+  PTY (Unix) / ConPTY (Windows) shell running as the agent's service account
+  (root/SYSTEM), bridged to an xterm.js viewer.
 - **Remaining:** hardware-accelerated codecs (VP8/9/AV1) + media E2E (homegrown,
   no fork); macOS capture; an optional Wayland backend (XDG portal + PipeWire,
   needs CGO + a consent prompt, and still can't capture the login screen).

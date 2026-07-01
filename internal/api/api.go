@@ -51,6 +51,7 @@ const (
 	actorKey     ctxKey = "actor"
 	roleKey      ctxKey = "role"
 	scopeUserKey ctxKey = "scopeUser"
+	permsKey     ctxKey = "permissions"
 )
 
 // Server holds all HTTP dependencies.
@@ -90,17 +91,17 @@ func (s *Server) Router() http.Handler {
 	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
 
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
-	// connect here. Same bearer auth as the REST API; tech role minimum since it
-	// can propose jobs (which still require human approval).
-	mcpHandler := mcpserver.Handler(s.store, s.jobs, func(r *http.Request) (string, string) {
-		return actorOf(r), s.scopeUserID(r)
+	// connect here. Same bearer auth as the REST API; requires the MCP permission
+	// since it can propose jobs (which still require human approval).
+	mcpHandler := mcpserver.Handler(s.store, s.jobs, func(r *http.Request) (string, string, map[string]bool) {
+		return actorOf(r), s.scopeUserID(r), permissionsOf(r)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.rateLimit(mcpRateLimit))
 		r.Use(maxBody)
 		r.Use(s.mcpIPAllowlist)
 		r.Use(s.authMiddleware)
-		r.Use(s.requireRole(models.RoleTech))
+		r.Use(s.requirePermission(models.PermMCPUse))
 		r.Handle("/mcp", mcpHandler)
 		r.Handle("/mcp/*", mcpHandler)
 	})
@@ -110,143 +111,127 @@ func (s *Server) Router() http.Handler {
 		r.Use(maxBody)                       // cap request body size (anti-DoS)
 		r.Use(s.authMiddleware)
 
-		// ---- read-only (any authenticated role) ----
-		r.Group(func(r chi.Router) {
-			r.Use(s.requireRole(models.RoleReadOnly))
-			r.Post("/auth/logout", s.logout)
-			r.Get("/me", s.me)
-			r.Post("/me/password", s.changePassword)
-			r.Post("/me/2fa/setup", s.setup2FA)
-			r.Post("/me/2fa/enable", s.enable2FA)
-			r.Post("/me/2fa/disable", s.disable2FA)
-			r.Post("/me/2fa/recovery-codes", s.regenRecoveryCodes)
-			r.Get("/config", s.getConfig)
+		// ---- account self-service (all authenticated principals) ----
+		r.Post("/auth/logout", s.logout)
+		r.Get("/me", s.me)
+		r.Post("/me/password", s.changePassword)
+		r.Post("/me/2fa/setup", s.setup2FA)
+		r.Post("/me/2fa/enable", s.enable2FA)
+		r.Post("/me/2fa/disable", s.disable2FA)
+		r.Post("/me/2fa/recovery-codes", s.regenRecoveryCodes)
+		r.Get("/config", s.getConfig)
 
-			r.Get("/clients", s.listClients)
-			r.Get("/sites", s.listSites)
-			r.Get("/devices", s.listDevices)
-			r.Get("/devices/{id}", s.getDevice)
-			r.Get("/devices/{id}/inventory", s.getInventory)
-			// Remote access is allowed for readonly (remote assistance/observation);
-			// it still cannot run scripts, approve jobs, or change config.
-			r.Post("/devices/{id}/remote", s.startRemote)
-			r.Get("/jobs", s.listJobs)
-			r.Get("/jobs/{id}", s.getJob)
-			r.Get("/checks", s.listChecks)
-			r.Get("/checks/{id}/results", s.listCheckResults)
-			r.Get("/tasks", s.listTasks)
-			r.Get("/alerts", s.listAlerts)
-			r.Get("/reports/software", s.reportSoftware)
-			r.Get("/reports/hardware", s.reportHardware)
-			r.Get("/reports/machines", s.reportMachines)
-			r.Get("/reports/compliance", s.reportCompliance)
-			r.Get("/devices/{id}/patches", s.listDevicePatches)
-			r.Get("/patches", s.listPatchCatalog)
-			r.Get("/chat/sessions", s.listChatSessions)
-			r.Get("/chat/sessions/{id}/messages", s.listChatMessages)
-		})
+		r.With(s.requirePermission(models.PermClientsView)).Get("/clients", s.listClients)
+		r.With(s.requirePermission(models.PermClientsView)).Get("/sites", s.listSites)
+		r.With(s.requirePermission(models.PermClientsView)).Get("/groups", s.listGroups)
+		r.With(s.requirePermission(models.PermClientsManage)).Post("/groups", s.createGroup)
+		r.With(s.requirePermission(models.PermClientsManage)).Delete("/groups/{id}", s.deleteGroup)
+		r.With(s.requirePermission(models.PermClientsManage)).Post("/clients", s.createClient)
+		r.With(s.requirePermission(models.PermClientsManage)).Patch("/clients/{id}", s.updateClient)
+		r.With(s.requirePermission(models.PermClientsManage)).Delete("/clients/{id}", s.deleteClient)
+		r.With(s.requirePermission(models.PermClientsManage)).Post("/sites", s.createSite)
+		r.With(s.requirePermission(models.PermClientsManage)).Patch("/sites/{id}", s.updateSite)
+		r.With(s.requirePermission(models.PermClientsManage)).Delete("/sites/{id}", s.deleteSite)
 
-		// ---- tech (run things) ----
-		r.Group(func(r chi.Router) {
-			r.Use(s.requireRole(models.RoleTech))
-			// Script library: tech+ (a script body can carry sensitive commands).
-			r.Get("/scripts", s.listScripts)
-			r.Get("/scripts/{id}", s.getScript)
-			r.Post("/devices/{id}/run-script", s.runLibraryScript)
-			r.Post("/devices/{id}/patches/scan", s.scanDevicePatches)
-			r.Post("/devices/{id}/patches/install", s.installDevicePatches)
-			r.Post("/devices/{id}/reboot", s.rebootDevice)
-			r.Post("/patches/{id}/approve", s.approvePatch)
-			r.Patch("/devices/{id}", s.updateDeviceMeta) // description + note (scope-checked)
-			r.Post("/jobs", s.createJob)
-			r.Post("/jobs/bulk", s.createBulkJob)
-			r.Get("/jobs/batch/{batch_id}", s.getBatch)
-			r.Post("/jobs/batch/{batch_id}/approve", s.approveBatch)
-			r.Post("/jobs/batch/{batch_id}/reject", s.rejectBatch)
-			r.Post("/jobs/{id}/approve", s.approveJob)
-			r.Post("/jobs/{id}/reject", s.rejectJob)
-			r.Post("/jobs/{id}/cancel", s.cancelJob)
-			r.Post("/alerts/{id}/ack", s.ackAlert)
-			r.Post("/alerts/{id}/resolve", s.resolveAlert)
-			r.Post("/chat/sessions", s.createChatSession)
-			r.Delete("/chat/sessions/{id}", s.deleteChatSession)
-			r.Post("/chat/sessions/{id}/messages", s.postChatMessage)
-		})
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices", s.listDevices)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
+		r.With(s.requirePermissionAny(models.PermDevicesRemote, models.PermDevicesFiles, models.PermDevicesTerminal)).Post("/devices/{id}/remote", s.startRemote)
+		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}", s.updateDeviceMeta)
+		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)
+		r.With(s.requirePermission(models.PermDevicesDelete)).Delete("/devices/{id}", s.deleteDevice)
+		r.With(s.requirePermission(models.PermClientsManage)).Patch("/devices/{id}/group", s.setDeviceGroup)
+		r.With(s.requirePermission(models.PermClientsManage)).Patch("/devices/{id}/site", s.setDeviceSite)
 
-		// ---- admin (manage config) ----
-		r.Group(func(r chi.Router) {
-			r.Use(s.requireRole(models.RoleAdmin))
-			// Cross-tenant management data — admin-only to avoid leaking other
-			// tenants' activity/structure to restricted users.
-			r.Get("/audit", s.listAudit)
-			r.Get("/groups", s.listGroups)
-			r.Get("/policies", s.listPolicies)
-			r.Get("/policies/{id}/assignments", s.listPolicyAssignments)
-			r.Get("/patch-policies", s.listPatchPolicies)
-			r.Post("/patch-policies", s.createPatchPolicy)
-			r.Put("/patch-policies/{id}", s.updatePatchPolicy)
-			r.Delete("/patch-policies/{id}", s.deletePatchPolicy)
-			r.Get("/patch-policies/{id}/assignments", s.listPatchPolicyAssignments)
-			r.Post("/patch-policies/{id}/assignments", s.addPatchPolicyAssignment)
-			r.Delete("/patch-policies/assignments/{aid}", s.deletePatchPolicyAssignment)
-			r.Put("/config", s.updateConfig)
-			r.Post("/enroll-tokens", s.createEnrollToken)
-			r.Get("/api-tokens", s.listAPITokens)
-			r.Post("/api-tokens", s.createAPIToken)
-			r.Delete("/api-tokens/{id}", s.deleteAPIToken)
-			r.Get("/users", s.listUsers)
-			r.Post("/users", s.createUser)
-			r.Patch("/users/{id}", s.updateUser)
-			r.Get("/users/{id}/scopes", s.getUserScopes)
-			r.Put("/users/{id}/scopes", s.setUserScopes)
-			r.Post("/users/{id}/2fa/reset", s.reset2FA)
-			r.Delete("/users/{id}", s.deleteUser)
-			r.Delete("/devices/{id}", s.deleteDevice)
-			r.Patch("/devices/{id}/group", s.setDeviceGroup)
-			r.Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)
-			r.Post("/groups", s.createGroup)
-			r.Delete("/groups/{id}", s.deleteGroup)
-			r.Post("/clients", s.createClient)
-			r.Patch("/clients/{id}", s.updateClient)
-			r.Delete("/clients/{id}", s.deleteClient)
-			r.Post("/sites", s.createSite)
-			r.Patch("/sites/{id}", s.updateSite)
-			r.Delete("/sites/{id}", s.deleteSite)
-			r.Patch("/devices/{id}/site", s.setDeviceSite)
-			r.Post("/scripts", s.createScript)
-			r.Put("/scripts/{id}", s.updateScript)
-			r.Delete("/scripts/{id}", s.deleteScript)
-			r.Post("/checks", s.createCheck)
-			r.Put("/checks/{id}", s.updateCheck)
-			r.Delete("/checks/{id}", s.deleteCheck)
-			r.Post("/tasks", s.createTask)
-			r.Put("/tasks/{id}", s.updateTask)
-			r.Delete("/tasks/{id}", s.deleteTask)
-			r.Post("/policies", s.createPolicy)
-			r.Delete("/policies/{id}", s.deletePolicy)
-			r.Post("/policies/{id}/assignments", s.createPolicyAssignment)
-			r.Delete("/policies/assignments/{aid}", s.deletePolicyAssignment)
-		})
+		r.With(s.requirePermission(models.PermJobsView)).Get("/jobs", s.listJobs)
+		r.With(s.requirePermission(models.PermJobsView)).Get("/jobs/{id}", s.getJob)
+		r.With(s.requirePermission(models.PermJobsView)).Get("/jobs/batch/{batch_id}", s.getBatch)
+		r.With(s.requirePermission(models.PermJobsCreate)).Post("/jobs", s.createJob)
+		r.With(s.requirePermission(models.PermJobsCreate)).Post("/jobs/bulk", s.createBulkJob)
+		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/batch/{batch_id}/approve", s.approveBatch)
+		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/batch/{batch_id}/reject", s.rejectBatch)
+		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/approve", s.approveJob)
+		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/reject", s.rejectJob)
+		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/cancel", s.cancelJob)
+
+		r.With(s.requirePermission(models.PermAlertsView)).Get("/alerts", s.listAlerts)
+		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/{id}/ack", s.ackAlert)
+		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/{id}/resolve", s.resolveAlert)
+
+		r.With(s.requirePermission(models.PermChecksView)).Get("/checks", s.listChecks)
+		r.With(s.requirePermission(models.PermChecksView)).Get("/checks/{id}/results", s.listCheckResults)
+		r.With(s.requirePermission(models.PermChecksManage)).Post("/checks", s.createCheck)
+		r.With(s.requirePermission(models.PermChecksManage)).Put("/checks/{id}", s.updateCheck)
+		r.With(s.requirePermission(models.PermChecksManage)).Delete("/checks/{id}", s.deleteCheck)
+
+		r.With(s.requirePermission(models.PermTasksView)).Get("/tasks", s.listTasks)
+		r.With(s.requirePermission(models.PermTasksManage)).Post("/tasks", s.createTask)
+		r.With(s.requirePermission(models.PermTasksManage)).Put("/tasks/{id}", s.updateTask)
+		r.With(s.requirePermission(models.PermTasksManage)).Delete("/tasks/{id}", s.deleteTask)
+
+		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies", s.listPolicies)
+		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies/{id}/assignments", s.listPolicyAssignments)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies", s.createPolicy)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/{id}", s.deletePolicy)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/assignments", s.createPolicyAssignment)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/assignments/{aid}", s.deletePolicyAssignment)
+
+		r.With(s.requirePermission(models.PermScriptsView)).Get("/scripts", s.listScripts)
+		r.With(s.requirePermission(models.PermScriptsView)).Get("/scripts/{id}", s.getScript)
+		r.With(s.requirePermission(models.PermJobsCreate)).Post("/devices/{id}/run-script", s.runLibraryScript)
+		r.With(s.requirePermission(models.PermScriptsManage)).Post("/scripts", s.createScript)
+		r.With(s.requirePermission(models.PermScriptsManage)).Put("/scripts/{id}", s.updateScript)
+		r.With(s.requirePermission(models.PermScriptsManage)).Delete("/scripts/{id}", s.deleteScript)
+
+		r.With(s.requirePermission(models.PermPatchesView)).Get("/devices/{id}/patches", s.listDevicePatches)
+		r.With(s.requirePermission(models.PermPatchesView)).Get("/patches", s.listPatchCatalog)
+		r.With(s.requirePermission(models.PermPatchesManage)).Post("/devices/{id}/patches/scan", s.scanDevicePatches)
+		r.With(s.requirePermission(models.PermPatchesManage)).Post("/devices/{id}/patches/install", s.installDevicePatches)
+		r.With(s.requirePermission(models.PermPatchesManage)).Post("/devices/{id}/reboot", s.rebootDevice)
+		r.With(s.requirePermission(models.PermPatchesManage)).Post("/patches/{id}/approve", s.approvePatch)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Get("/patch-policies", s.listPatchPolicies)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies", s.createPatchPolicy)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Put("/patch-policies/{id}", s.updatePatchPolicy)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Delete("/patch-policies/{id}", s.deletePatchPolicy)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Get("/patch-policies/{id}/assignments", s.listPatchPolicyAssignments)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies/{id}/assignments", s.addPatchPolicyAssignment)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Delete("/patch-policies/assignments/{aid}", s.deletePatchPolicyAssignment)
+
+		r.With(s.requirePermission(models.PermReportsView)).Get("/reports/software", s.reportSoftware)
+		r.With(s.requirePermission(models.PermReportsView)).Get("/reports/hardware", s.reportHardware)
+		r.With(s.requirePermission(models.PermReportsView)).Get("/reports/machines", s.reportMachines)
+		r.With(s.requirePermissionAny(models.PermReportsView, models.PermPatchesView)).Get("/reports/compliance", s.reportCompliance)
+
+		r.With(s.requirePermission(models.PermAIChatUse)).Get("/chat/sessions", s.listChatSessions)
+		r.With(s.requirePermission(models.PermAIChatUse)).Post("/chat/sessions", s.createChatSession)
+		r.With(s.requirePermission(models.PermAIChatUse)).Get("/chat/sessions/{id}/messages", s.listChatMessages)
+		r.With(s.requirePermission(models.PermAIChatUse)).Delete("/chat/sessions/{id}", s.deleteChatSession)
+		r.With(s.requirePermission(models.PermAIChatUse)).Post("/chat/sessions/{id}/messages", s.postChatMessage)
+
+		r.With(s.requirePermission(models.PermAuditView)).Get("/audit", s.listAudit)
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config", s.updateConfig)
+		r.With(s.requirePermission(models.PermEnrollmentManage)).Post("/enroll-tokens", s.createEnrollToken)
+		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/api-tokens", s.listAPITokens)
+		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/api-tokens", s.createAPIToken)
+		r.With(s.requirePermission(models.PermAPITokensManage)).Delete("/api-tokens/{id}", s.deleteAPIToken)
+		r.With(s.requirePermission(models.PermUsersManage)).Get("/users", s.listUsers)
+		r.With(s.requirePermission(models.PermUsersManage)).Post("/users", s.createUser)
+		r.With(s.requirePermission(models.PermUsersManage)).Patch("/users/{id}", s.updateUser)
+		r.With(s.requirePermission(models.PermUsersManage)).Get("/users/{id}/scopes", s.getUserScopes)
+		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
+		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)
+		r.With(s.requirePermission(models.PermUsersManage)).Delete("/users/{id}", s.deleteUser)
+		r.With(s.requirePermissionAny(models.PermRolesManage, models.PermUsersManage, models.PermAPITokensManage)).Get("/roles", s.listRoles)
+		r.With(s.requirePermission(models.PermRolesManage)).Get("/permissions", s.listPermissions)
+		r.With(s.requirePermission(models.PermRolesManage)).Post("/roles", s.createRole)
+		r.With(s.requirePermission(models.PermRolesManage)).Put("/roles/{key}", s.updateRole)
+		r.With(s.requirePermission(models.PermRolesManage)).Delete("/roles/{key}", s.deleteRole)
 	})
 
 	return r
 }
 
 // ---------- middleware & helpers ----------
-
-// roleLevel ranks roles for comparison.
-func roleLevel(role string) int {
-	switch role {
-	case models.RoleAdmin:
-		return 3
-	case models.RoleTech:
-		return 2
-	case models.RoleReadOnly:
-		return 1
-	default:
-		return 0
-	}
-}
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -270,9 +255,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
+		perms, err := s.permissionsForRole(r.Context(), role)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		ctx := context.WithValue(r.Context(), actorKey, actor)
 		ctx = context.WithValue(ctx, roleKey, role)
 		ctx = context.WithValue(ctx, scopeUserKey, scopeUser)
+		ctx = context.WithValue(ctx, permsKey, permissionSet(perms))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -290,16 +281,61 @@ func maxBody(next http.Handler) http.Handler {
 	})
 }
 
-// requireRole rejects principals below the required role level.
-func (s *Server) requireRole(minRole string) func(http.Handler) http.Handler {
-	need := roleLevel(minRole)
+func (s *Server) permissionsForRole(ctx context.Context, role string) ([]string, error) {
+	if perms := models.DefaultRolePermissions(role); perms != nil {
+		return perms, nil
+	}
+	return s.store.RolePermissions(ctx, role)
+}
+
+func permissionSet(perms []string) map[string]bool {
+	out := make(map[string]bool, len(perms))
+	for _, p := range perms {
+		out[p] = true
+	}
+	return out
+}
+
+func hasPermission(r *http.Request, permission string) bool {
+	if v, ok := r.Context().Value(permsKey).(map[string]bool); ok {
+		return v[permission]
+	}
+	return false
+}
+
+func permissionsOf(r *http.Request) map[string]bool {
+	if v, ok := r.Context().Value(permsKey).(map[string]bool); ok {
+		out := make(map[string]bool, len(v))
+		for k, allowed := range v {
+			out[k] = allowed
+		}
+		return out
+	}
+	return nil
+}
+
+func (s *Server) requirePermission(permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if roleLevel(roleOf(r)) < need {
-				writeErr(w, http.StatusForbidden, "insufficient role")
+			if !hasPermission(r, permission) {
+				writeErr(w, http.StatusForbidden, "missing permission: "+permission)
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (s *Server) requirePermissionAny(permissions ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, p := range permissions {
+				if hasPermission(r, p) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			writeErr(w, http.StatusForbidden, "missing required permission")
 		})
 	}
 }
@@ -706,12 +742,18 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 			in.Provider = s.cfg.DefaultRemoteProvider
 		}
 	}
-	// The terminal provider opens an elevated (root/SYSTEM) shell — equivalent to
-	// running arbitrary scripts — so it needs tech+, unlike read-only remote
-	// desktop assistance which any authenticated role may start. File transfer
-	// reads and writes arbitrary endpoint files, so it is tech+ as well.
-	if (in.Provider == "terminal" || in.Provider == "files") && roleLevel(roleOf(r)) < roleLevel(models.RoleTech) {
-		writeErr(w, http.StatusForbidden, "this remote session requires the tech role")
+	// Terminal and file-transfer providers are separate device sub-permissions
+	// because they are more privileged than remote desktop observation.
+	if in.Provider == "terminal" && !hasPermission(r, models.PermDevicesTerminal) {
+		writeErr(w, http.StatusForbidden, "missing permission: "+models.PermDevicesTerminal)
+		return
+	}
+	if in.Provider == "files" && !hasPermission(r, models.PermDevicesFiles) {
+		writeErr(w, http.StatusForbidden, "missing permission: "+models.PermDevicesFiles)
+		return
+	}
+	if in.Provider != "terminal" && in.Provider != "files" && !hasPermission(r, models.PermDevicesRemote) {
+		writeErr(w, http.StatusForbidden, "missing permission: "+models.PermDevicesRemote)
 		return
 	}
 	agent, err := s.store.GetAgent(r.Context(), chi.URLParam(r, "id"))
@@ -719,7 +761,7 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	sess, err := s.remote.Start(r.Context(), in.Provider, agent, actorOf(r))
+	sess, err := s.remote.Start(r.Context(), in.Provider, agent, actorOf(r), remote.StartOptions{AllowFiles: hasPermission(r, models.PermDevicesFiles)})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -764,9 +806,10 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Approval is mandatory unless the deployer explicitly opted into unapproved
-	// jobs (RMM_ALLOW_UNAPPROVED_JOBS=true). Every ad-hoc script run is gated.
+	// jobs and the caller can also manage jobs. jobs.create alone may only create
+	// approval-gated jobs.
 	require := true
-	if in.RequireApproval != nil && s.cfg.AllowUnapprovedJobs {
+	if in.RequireApproval != nil && s.cfg.AllowUnapprovedJobs && hasPermission(r, models.PermJobsManage) {
 		require = *in.RequireApproval
 	}
 	if in.Shell == "" {
@@ -1088,7 +1131,7 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 		title = string(rs[:60]) + "…"
 	}
 	_ = s.store.MaybeTitleChatSession(r.Context(), sessionID, title)
-	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r))
+	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r), permissionsOf(r))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return

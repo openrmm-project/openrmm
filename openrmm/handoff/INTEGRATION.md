@@ -43,7 +43,7 @@ Monaco/CodeMirror**.
 
 ## Autenticação (bearer) — já implementado em apiClient.ts
 
-- `login()` faz `POST /api/auth/login`, guarda `{token, user, role}` em
+- `login()` faz `POST /api/auth/login`, guarda `{token, user, role, permissions}` em
   `localStorage["rmm-ai-auth"]`.
 - Todo request anexa `Authorization: Bearer <token>`.
 - `401` limpa a sessão (volta para o Login).
@@ -51,12 +51,13 @@ Monaco/CodeMirror**.
   (`POST /api/auth/bootstrap`). O frontend já tem a tela de login; adicione o
   ramo de bootstrap se quiser detectar "sem usuários".
 
-## Gating por papel
+## Gating por permissão
 
-`api.can("tech")` / `api.can("admin")` controlam a UI (botões de aprovar, ack,
-CRUD). O backend **também** deve retornar `403` — o frontend trata o erro e
-mostra o motivo. `readonly` = só leitura; `tech` = run/approve/ack; `admin` =
-tudo.
+`api.can("jobs.create")`, `api.can("jobs.manage")`, `api.can("alerts.manage")`, `api.can("devices.terminal")`
+e outras permission keys controlam a UI (botões de aprovar, ack, CRUD). O backend
+**também** deve retornar `403` — o frontend trata o erro e mostra o motivo. Roles
+como `readonly`, `tech` e `admin` são apenas presets; roles customizados usam a
+mesma lista de permissions.
 
 ## Polling vs WebSocket
 

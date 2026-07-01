@@ -22,30 +22,30 @@ import (
 const serverVersion = "0.1.0"
 
 // IdentifyFunc extracts the authenticated principal from a request: the actor
-// (for audit) and the scope-user id (empty = full access). The API auth
-// middleware populates these before the MCP handler runs.
-type IdentifyFunc func(*http.Request) (actor, scopeUser string)
+// (for audit), the scope-user id (empty = full access), and permission set. The
+// API auth middleware populates these before the MCP handler runs.
+type IdentifyFunc func(*http.Request) (actor, scopeUser string, permissions map[string]bool)
 
 // Handler returns an http.Handler serving the MCP endpoint over Streamable HTTP.
 // Mount it behind the same bearer auth as the REST API.
 func Handler(st *store.Store, js *jobs.Service, identify IdentifyFunc) http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		actor, scopeUser := identify(r)
-		return buildServer(st, js, actor, scopeUser)
+		actor, scopeUser, permissions := identify(r)
+		return buildServer(st, js, actor, scopeUser, permissions)
 	}, nil)
 }
 
 // buildServer constructs a per-request MCP server bound to the caller's identity.
-func buildServer(st *store.Store, js *jobs.Service, actor, scopeUser string) *mcp.Server {
+func buildServer(st *store.Store, js *jobs.Service, actor, scopeUser string, permissions map[string]bool) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "rmm-ai",
 		Title:   "OpenRMM",
 		Version: serverVersion,
 	}, nil)
 
-	tc := ai.ToolContext{Store: st, Jobs: js, Actor: "mcp:" + actor, ScopeUserID: scopeUser}
+	tc := ai.ToolContext{Store: st, Jobs: js, Actor: "mcp:" + actor, ScopeUserID: scopeUser, Permissions: permissions}
 
-	for _, t := range ai.Tools() {
+	for _, t := range ai.ToolsForPermissions(permissions) {
 		def := t // capture per iteration
 		tool := &mcp.Tool{
 			Name:        def.Function.Name,

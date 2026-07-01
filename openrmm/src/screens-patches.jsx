@@ -57,6 +57,8 @@ function ComplianceTab() {
   const rows = (q.data?.rows || []).filter((r) => !search || (r.hostname || '').toLowerCase().includes(search.toLowerCase()));
   const scan = async (id) => { try { await api.scanDevicePatches(id); toast.info('Scan requested', 'Results arrive shortly.'); } catch (e) { toast.error('Scan failed', e.message); } };
   const scanAll = async () => { for (const r of rows) { try { await api.scanDevicePatches(r.agent_id); } catch (e) { /* offline */ } } toast.info('Scan requested for online devices'); };
+  const install = async (r) => { try { await api.installDevicePatches(r.agent_id, []); toast.info('Installing approved patches', 'on ' + r.hostname); window.dataBus.emit('patches'); } catch (e) { toast.error('Install failed', e.message); } };
+  const reboot = async (r) => { try { await api.rebootDevice(r.agent_id); toast.info('Reboot requested', 'on ' + r.hostname); window.dataBus.emit('patches'); } catch (e) { toast.error('Reboot failed', e.message); } };
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
@@ -73,7 +75,7 @@ function ComplianceTab() {
             <div className="overflow-auto scroll-area max-h-[calc(100vh-260px)]">
               <table className="w-full text-[12.5px] border-collapse">
                 <thead className="sticky top-0 bg-elevated/95 backdrop-blur text-left text-faint">
-                  <tr>{['Host', 'OS', 'Status', 'Missing', 'Security', 'Failed', 'Reboot', 'Last scan', ''].map((h) => <th key={h} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
+                  <tr>{['Host', 'OS', 'Status', 'Missing', 'Security', 'Approved', 'Failed', 'Reboot', 'Last scan', ''].map((h) => <th key={h} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
@@ -83,10 +85,17 @@ function ComplianceTab() {
                       <td className="px-4 py-2"><ComplianceBadge s={r.status} /></td>
                       <td className="px-4 py-2 tabular">{r.missing_total}</td>
                       <td className={cx('px-4 py-2 tabular', r.missing_security > 0 && 'text-bad font-semibold')}>{r.missing_security}</td>
+                      <td className={cx('px-4 py-2 tabular', r.approved > 0 && 'text-ok font-semibold')}>{r.approved || '—'}</td>
                       <td className={cx('px-4 py-2 tabular', r.failed > 0 && 'text-bad')}>{r.failed}</td>
                       <td className="px-4 py-2">{r.reboot_pending ? <span className="text-warn inline-flex items-center gap-1"><Icon name="refresh" size={12} />pending</span> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2 text-faint whitespace-nowrap">{r.last_scan ? timeAgo(r.last_scan) : 'never'}</td>
-                      <td className="px-4 py-2 text-right">{can('patches.manage') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>Scan</Button>}</td>
+                      <td className="px-4 py-2 text-right whitespace-nowrap">{can('patches.manage') && (
+                        <span className="inline-flex gap-1.5 justify-end">
+                          <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>Scan</Button>
+                          <Button size="sm" variant="primary" icon="download" disabled={!r.approved} title={r.approved ? '' : 'Approve patches first (Catalog tab)'} onClick={() => install(r)}>Install{r.approved ? ` (${r.approved})` : ''}</Button>
+                          {r.reboot_pending && <Button size="sm" variant="secondary" icon="refresh" onClick={() => reboot(r)}>Reboot</Button>}
+                        </span>
+                      )}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -104,11 +113,15 @@ function CatalogTab() {
   const [search, setSearch] = useState('');
   const rows = (q.data?.patches || []).filter((p) => !search || (p.title || '').toLowerCase().includes(search.toLowerCase()) || (p.identifier || '').toLowerCase().includes(search.toLowerCase()));
   const decide = async (p, decision) => {
-    try { await api.approvePatch(p.id, { scope_type: '', scope_id: '', decision }); toast.success(decision === 'approve' ? 'Patch approved (fleet-wide)' : 'Patch declined'); window.dataBus.emit('patches'); }
+    try { await api.approvePatch(p.id, { scope_type: '', scope_id: '', decision }); toast.success(decision === 'approve' ? 'Patch approved' : 'Patch declined', decision === 'approve' ? 'Now install it per device in the Compliance tab (or via a patch policy).' : undefined); window.dataBus.emit('patches'); }
     catch (e) { toast.error('Failed', e.message); }
   };
   return (
     <Card className="overflow-hidden">
+      <div className="flex items-start gap-2.5 px-4 py-2.5 border-b border-line bg-brandsoft/40 text-[12px] text-muted">
+        <Icon name="info" size={14} className="text-brandhi mt-0.5 shrink-0" />
+        <span>Approving a patch marks it <b className="text-ink">eligible</b> across the fleet — it does not install. Install approved patches per device in the <b className="text-ink">Compliance</b> tab, or automatically via a <b className="text-ink">Patch policy</b> (maintenance window).</span>
+      </div>
       <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
         <div className="relative flex-1 max-w-xs">
           <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -134,12 +147,17 @@ function CatalogTab() {
                       <td className="px-4 py-2 tabular text-ok">{p.approved_count || ''}</td>
                       <td className="px-4 py-2">{p.reboot_required ? <Icon name="refresh" size={13} className="text-warn" /> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2 text-right">
-                        {can('patches.manage') && (
-                          <span className="inline-flex gap-1.5">
-                            <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>Approve</Button>
-                            <Button size="sm" variant="ghost" icon="reject" onClick={() => decide(p, 'decline')}>Decline</Button>
-                          </span>
-                        )}
+                        {can('patches.manage') && (() => {
+                          const fullyApproved = p.approved_count > 0 && p.approved_count >= p.missing_count;
+                          return (
+                            <span className="inline-flex gap-1.5 items-center justify-end">
+                              {fullyApproved
+                                ? <span className="inline-flex items-center gap-1 text-[11.5px] text-ok font-medium"><Icon name="approve" size={13} />Approved</span>
+                                : <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>Approve</Button>}
+                              <Button size="sm" variant="ghost" icon="reject" title={fullyApproved ? 'Revoke approval / exclude' : 'Decline'} onClick={() => decide(p, 'decline')}>Decline</Button>
+                            </span>
+                          );
+                        })()}
                       </td>
                     </tr>
                   ))}

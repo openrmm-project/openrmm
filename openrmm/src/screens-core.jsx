@@ -195,7 +195,7 @@ function ActivityRow({ entry }) {
   const m = ACTION_META[entry.action] || { icon: 'dot', c: 'text-faint' };
   const ai = entry.actor.startsWith('ai:');
   const detail = entry.detail || {};
-  const desc = detail.description || detail.message || detail.reason || detail.check || '';
+  const desc = detail.description || detail.message || detail.reason || detail.check || detail.host || detail.hostname || detail.name || '';
   return (
     <div className="flex items-start gap-3 px-2.5 py-2 rounded-lg hover:bg-elevated/40 transition">
       <div className={cx('mt-0.5 h-6 w-6 rounded-lg bg-elevated border border-line flex items-center justify-center shrink-0', m.c)}><Icon name={m.icon} size={13} /></div>

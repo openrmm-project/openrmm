@@ -164,7 +164,11 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 	if err := m.store.CreateRemoteSession(ctx, rs); err != nil {
 		return err
 	}
-	detail, _ := json.Marshal(map[string]string{"provider": rs.Provider, "agent": rs.AgentID})
+	host := ""
+	if a, err := m.store.GetAgent(ctx, rs.AgentID); err == nil && a != nil {
+		host = a.Hostname
+	}
+	detail, _ := json.Marshal(map[string]string{"provider": rs.Provider, "agent": rs.AgentID, "host": host})
 	_ = m.store.AddAudit(ctx, rs.CreatedBy, "remote.start", rs.AgentID, detail)
 	return nil
 }

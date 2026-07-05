@@ -69,7 +69,7 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 	if err != nil {
 		return nil, err
 	}
-	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "shell": shell, "requires_approval": requireApproval})
+	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": s.hostname(ctx, agentID), "shell": shell, "requires_approval": requireApproval})
 	if !requireApproval {
 		s.dispatch(ctx, j)
 	}
@@ -95,7 +95,7 @@ func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, desc
 	if err != nil {
 		return nil, err
 	}
-	s.audit(ctx, "scheduler", "job.automated", j.ID, map[string]any{"agent": agentID, "task": taskID})
+	s.audit(ctx, "scheduler", "job.automated", j.ID, map[string]any{"agent": agentID, "host": s.hostname(ctx, agentID), "task": taskID})
 	s.dispatch(ctx, j)
 	return s.store.GetJob(ctx, j.ID)
 }
@@ -112,7 +112,7 @@ func (s *Service) Approve(ctx context.Context, jobID, approver string) (*models.
 	if err := s.store.SetJobStatus(ctx, jobID, models.JobPending, &approver); err != nil {
 		return nil, err
 	}
-	s.audit(ctx, approver, "job.approve", jobID, nil)
+	s.audit(ctx, approver, "job.approve", jobID, map[string]any{"agent": j.AgentID, "host": s.hostname(ctx, j.AgentID)})
 	j, _ = s.store.GetJob(ctx, jobID)
 	s.dispatch(ctx, j)
 	return s.store.GetJob(ctx, jobID)
@@ -130,7 +130,7 @@ func (s *Service) Reject(ctx context.Context, jobID, actor string) (*models.Job,
 	if err := s.store.SetJobStatus(ctx, jobID, models.JobRejected, &actor); err != nil {
 		return nil, err
 	}
-	s.audit(ctx, actor, "job.reject", jobID, nil)
+	s.audit(ctx, actor, "job.reject", jobID, map[string]any{"agent": j.AgentID, "host": s.hostname(ctx, j.AgentID)})
 	return s.store.GetJob(ctx, jobID)
 }
 
@@ -259,7 +259,7 @@ func (s *Service) Cancel(ctx context.Context, jobID, actor string) (*models.Job,
 	}
 	frame, _ := encode(protocol.MsgJobCancel, protocol.JobCancelMsg{JobID: jobID})
 	delivered := s.hub.Send(j.AgentID, frame)
-	s.audit(ctx, actor, "job.cancel", jobID, map[string]any{"delivered": delivered})
+	s.audit(ctx, actor, "job.cancel", jobID, map[string]any{"agent": j.AgentID, "host": s.hostname(ctx, j.AgentID), "delivered": delivered})
 	if !delivered {
 		_ = s.store.SetJobResult(ctx, jobID, models.JobFailed, -1, "", "canceled (agent offline)")
 	}
@@ -298,8 +298,25 @@ func (s *Service) OnResult(ctx context.Context, res protocol.JobResultMsg) error
 	if err := s.store.SetJobResult(ctx, res.JobID, status, res.ExitCode, res.Stdout, res.Stderr); err != nil {
 		return err
 	}
-	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"exit_code": res.ExitCode, "success": res.Success})
+	host := ""
+	if j, err := s.store.GetJob(ctx, res.JobID); err == nil && j != nil {
+		host = s.hostname(ctx, j.AgentID)
+	}
+	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success})
 	return nil
+}
+
+// hostname resolves an agent's hostname for audit labels (best-effort). The
+// audit target stays the UUID; this only adds a human-readable label into detail
+// so the audit report can name the device even after it is deleted or renamed.
+func (s *Service) hostname(ctx context.Context, agentID string) string {
+	if agentID == "" {
+		return ""
+	}
+	if a, err := s.store.GetAgent(ctx, agentID); err == nil && a != nil {
+		return a.Hostname
+	}
+	return ""
 }
 
 func (s *Service) audit(ctx context.Context, actor, action, target string, detail map[string]any) {

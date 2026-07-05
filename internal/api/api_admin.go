@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -8,6 +9,24 @@ import (
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/models"
 )
+
+// auditLabel marshals a human-readable label for an audit detail. The audit
+// target stays the entity's UUID (unique, immutable); this label is an extra
+// display field so the audit report can name an entity even after it is deleted.
+func auditLabel(key, val string) []byte {
+	b, _ := json.Marshal(map[string]string{key: val})
+	return b
+}
+
+// deviceAuditLabel snapshots a device's hostname into an audit detail so the
+// report can name it even after the device is deleted. Best-effort; target stays
+// the agent UUID.
+func (s *Server) deviceAuditLabel(r *http.Request, agentID string) []byte {
+	if a, err := s.store.GetAgent(r.Context(), agentID); err == nil && a != nil {
+		return auditLabel("hostname", a.Hostname)
+	}
+	return nil
+}
 
 // ---------- API tokens (for MCP clients & integrations) ----------
 
@@ -47,7 +66,7 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "apitoken.create", id, nil)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "apitoken.create", id, auditLabel("name", in.Name))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": in.Name, "role": in.Role,
 		"token": token, "note": "store this now — it will not be shown again",
@@ -107,11 +126,15 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 // deleteGroup removes a group. Destructive and permission-gated; never AI/MCP.
 func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	label := ""
+	if g, err := s.store.GetGroup(r.Context(), id); err == nil && g != nil {
+		label = g.Name
+	}
 	if err := s.store.DeleteGroup(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "group.delete", id, nil)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "group.delete", id, auditLabel("name", label))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -170,10 +193,14 @@ func (s *Server) setDeviceRemoteIDs(w http.ResponseWriter, r *http.Request) {
 // to the AI/MCP surface.
 func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	label := ""
+	if a, err := s.store.GetAgent(r.Context(), id); err == nil && a != nil {
+		label = a.Hostname
+	}
 	if err := s.store.DeleteAgent(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "device.delete", id, nil)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "device.delete", id, auditLabel("hostname", label))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

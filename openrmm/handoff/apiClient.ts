@@ -266,6 +266,13 @@ export const api = {
   createEnrollToken: (body: { description: string; uses: number; ttl_hours: number; site_id?: string }) =>
     POST<{ token: string; [k: string]: unknown }>("/api/enroll-tokens", body),
 
+  // ---- API tokens (MCP connectors & integrations) ----
+  listAPITokens: () =>
+    GET<{ tokens: { id: string; name: string; role: string; created_at: string }[] }>("/api/api-tokens"),
+  createAPIToken: (body: { name: string; role?: string; user_id?: string }) =>
+    POST<{ id: string; name: string; role: string; token: string; note: string }>("/api/api-tokens", body),
+  deleteAPIToken: (id: string) => DELETE<{ status: string }>("/api/api-tokens/" + id),
+
   // ---- chat ----
   listSessions: () => GET<{ sessions: ChatSession[] }>("/api/chat/sessions"),
   createSession: (title: string) => POST<ChatSession>("/api/chat/sessions", { title }),

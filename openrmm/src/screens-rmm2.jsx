@@ -560,12 +560,109 @@ window.PoliciesScreen = PoliciesScreen;
 window.ClientsScreen = ClientsScreen;
 
 /* ============================ USERS & SETTINGS =========================== */
+
+// APITokensPanel manages bearer tokens for integrations and MCP connectors
+// (Claude, ChatGPT…). Gated by api_tokens.manage. The secret is returned by the
+// backend only once, so it is shown in the create modal for a one-time copy.
+function APITokensPanel() {
+  const toast = useToast();
+  const tokensQ = useQuery(['apitokens'], () => api.listAPITokens(), { invalidateOn: ['apitokens'] });
+  const rolesQ = useQuery(['roles'], () => api.listRoles(), { invalidateOn: ['roles'] });
+  const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('tech');
+  const [userId, setUserId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState(null); // { token, name, role } — shown once
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const tokens = tokensQ.data?.tokens || [];
+  const roles = rolesQ.data?.roles || [{ key: 'tech', name: 'Technician' }, { key: 'admin', name: 'Administrator' }];
+  const users = usersQ.data?.users || [];
+  const roleLabel = (r) => (r.name ? `${r.key} — ${r.name}` : r.key);
+  const selRole = roles.find((r) => r.key === role);
+  const mcpMissing = selRole && Array.isArray(selRole.permissions) && !selRole.permissions.includes('mcp.use');
+
+  const openCreate = () => { setName(''); setRole('tech'); setUserId(''); setCreated(null); setCreating(true); };
+  const closeModal = () => { if (!busy) { setCreating(false); setCreated(null); } };
+  const create = async () => {
+    setBusy(true);
+    try {
+      const r = await api.createAPIToken({ name: name.trim(), role, user_id: userId || undefined });
+      setCreated(r); // token shown once
+      tokensQ.refetch();
+      toast.success('API token created', 'Copy it now — it is shown once.');
+    } catch (e) { toast.error('Failed to create token', e.message); }
+    finally { setBusy(false); }
+  };
+  const del = async (t) => { try { await api.deleteAPIToken(t.id); toast.info('Token revoked', t.name); tokensQ.refetch(); } catch (e) { toast.error('Failed', e.message); } };
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between px-4 h-12 border-b border-line">
+        <div className="text-[13px] font-semibold text-ink">API tokens <span className="text-faint font-normal">({tokens.length})</span></div>
+        <Button size="sm" variant="primary" icon="plus" onClick={openCreate}>New token</Button>
+      </div>
+      <div className="px-4 py-2.5 text-[12px] text-muted bg-elevated/30 border-b border-line flex items-start gap-1.5">
+        <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+        <span>Bearer tokens for integrations and <b className="text-ink">MCP connectors</b> (Claude, ChatGPT…). A connector needs a role with <span className="mono">mcp.use</span>. Bind a token to a user to inherit that user's access scope. The secret is shown once — never reuse the admin token.</span>
+      </div>
+      {tokens.length === 0
+        ? <div className="px-4 py-10 text-center text-[12.5px] text-faint">No API tokens yet.</div>
+        : (
+          <table className="w-full text-left">
+            <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line"><th className="font-semibold px-4 py-2.5">Name</th><th className="font-semibold px-3 py-2.5">Role</th><th className="font-semibold px-3 py-2.5">Created</th><th className="font-semibold px-4 py-2.5 text-right">Actions</th></tr></thead>
+            <tbody className="divide-y divide-line">
+              {tokens.map((t) => (
+                <tr key={t.id} className="hover:bg-elevated/40 transition">
+                  <td className="px-4 py-3"><div className="flex items-center gap-2.5"><div className="h-7 w-7 rounded-lg bg-elevated border border-line flex items-center justify-center text-faint"><Icon name="key" size={14} /></div><span className="text-[13px] text-ink font-medium">{t.name || <span className="text-faint">unnamed</span>}</span></div></td>
+                  <td className="px-3 py-3"><RoleBadge role={t.role} /></td>
+                  <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(t.created_at)}</td>
+                  <td className="px-4 py-3 text-right"><Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(t)}>Revoke</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      <Modal open={creating} onClose={closeModal} width="max-w-lg">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-4">{created ? 'API token created' : 'New API token'}</div>
+          {created ? (
+            <div className="space-y-3">
+              <div className="text-[12.5px] text-muted">Copy this token now — it will <b className="text-ink">not be shown again</b>. Store it in your MCP client / integration.</div>
+              <div className="flex items-center gap-2 rounded-lg border border-warn/25 bg-warnsoft px-3 py-2"><Icon name="key" size={14} className="text-warn shrink-0" /><span className="text-[12.5px] mono text-ink flex-1 break-all">{created.token}</span><CopyButton value={created.token} /></div>
+              <div className="text-[11.5px] text-faint">Name: <b className="text-ink">{created.name || 'unnamed'}</b> · Role: <span className="mono">{created.role}</span></div>
+              <div className="flex justify-end mt-2"><Button variant="primary" onClick={closeModal}>Done</Button></div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <Field label="Name" hint="A label to recognize this connector in the list and the audit log."><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="claude-desktop" autoFocus /></Field>
+              <Field label="Role"><Select value={role} onChange={(e) => setRole(e.target.value)}>{roles.map((r) => <option key={r.key} value={r.key}>{roleLabel(r)}</option>)}</Select></Field>
+              {mcpMissing && <div className="text-[11.5px] text-warn flex items-start gap-1.5"><Icon name="alert" size={13} className="mt-0.5 shrink-0" />This role has no <span className="mono">mcp.use</span> permission — it can't connect over MCP (still usable for REST integrations).</div>}
+              <Field label="Bind to user" hint="Optional. The token inherits this user's access scope (least privilege). Leave as None for the role's full scope.">
+                <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
+                  <option value="">None (full role scope)</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.username}</option>)}
+                </Select>
+              </Field>
+              <div className="flex justify-end gap-2 mt-2"><Button variant="ghost" onClick={closeModal} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!name.trim()} onClick={create}>Create token</Button></div>
+            </div>
+          )}
+        </div>
+      </Modal>
+      <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => { del(confirmDel); setConfirmDel(null); }} danger title="Revoke API token?" body={<>This immediately revokes <b>{confirmDel?.name || 'this token'}</b>. Any MCP connector or integration using it stops working. This cannot be undone.</>} confirmLabel="Revoke token" />
+    </Card>
+  );
+}
+
 function SettingsScreen() {
   const { can } = useAuth();
   const [tab, setTab] = useState('users');
   const tabs = [
     { value: 'users', label: 'Users' },
     ...(can('roles.manage') ? [{ value: 'roles', label: 'Roles' }] : []),
+    ...(can('api_tokens.manage') ? [{ value: 'tokens', label: 'API tokens' }] : []),
     ...(can('settings.manage') ? [{ value: 'config', label: 'Configuration' }] : []),
     ...(can('enrollment.manage') ? [{ value: 'enroll', label: 'Enrollment' }] : []),
   ];
@@ -575,6 +672,7 @@ function SettingsScreen() {
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={tabs} />
       {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard />{can('users.manage') && <UsersPanel canAdmin />}</>}
       {tab === 'roles' && can('roles.manage') && <RolesPanel />}
+      {tab === 'tokens' && can('api_tokens.manage') && <APITokensPanel />}
       {tab === 'config' && can('settings.manage') && <ConfigPanel />}
       {tab === 'enroll' && can('enrollment.manage') && <EnrollPanel canAdmin={can('enrollment.manage')} />}
     </Page>

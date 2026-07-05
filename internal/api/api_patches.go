@@ -34,7 +34,7 @@ func (s *Server) scanDevicePatches(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "device is offline")
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.scan", id, nil)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.scan", id, s.deviceAuditLabel(r, id))
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "scanning"})
 }
 
@@ -55,7 +55,7 @@ func (s *Server) installDevicePatches(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.install", id, nil)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.install", id, s.deviceAuditLabel(r, id))
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "installing"})
 }
 
@@ -72,7 +72,7 @@ func (s *Server) rebootDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "reboot", id, nil)
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "reboot", id, s.deviceAuditLabel(r, id))
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "rebooting"})
 }
 

@@ -260,10 +260,19 @@ function AuditScreen() {
     return userMap[a] || a;
   };
   // target is the id of whatever the action acted on (device, job, batch, user…).
-  // Resolve the ones we can name (device -> hostname, user -> username); the rest
-  // (job/batch/token ids) stay as the raw id.
+  // For a faithful audit report we prefer the label snapshotted into detail at
+  // write time (survives device deletion/rename), then fall back to live
+  // resolution (device -> hostname, user -> username), then the raw UUID. The
+  // UUID always stays the unique key — shown on hover (title) and in the CSV.
   const devMap = useDeviceMap();
-  const displayTarget = (t) => (t && (devMap[t]?.hostname || userMap[t])) || t;
+  const displayTarget = (e) => {
+    const t = e.target;
+    const d = e.detail || {};
+    const snap = d.hostname || d.host || d.name;            // captured at event time
+    const live = t && (devMap[t]?.hostname || userMap[t]);  // resolve if still exists
+    const byAgent = d.agent && devMap[d.agent]?.hostname;   // job/patch -> its device
+    return snap || live || byAgent || t;
+  };
 
   const filtered = entries.filter((e) => {
     if (actorF !== 'all' && e.actor !== actorF) return false;
@@ -276,7 +285,7 @@ function AuditScreen() {
     const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
     const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
     const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
-    const rows = filtered.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e.target), e.target, detailStr(e.detail)]);
+    const rows = filtered.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e), e.target, detailStr(e.detail)]);
     const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
     downloadText('audit-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv');
   };
@@ -311,7 +320,7 @@ function AuditScreen() {
                   <td className="px-4 py-2.5 text-[12px] text-muted whitespace-nowrap tabular">{fmtTime(e.created_at)}</td>
                   <td className="px-3 py-2.5"><span className={cx('text-[12.5px] font-medium', ai ? 'text-brandhi' : 'text-ink')} title={e.actor}>{displayActor(e.actor)}</span></td>
                   <td className="px-3 py-2.5"><span className={cx('inline-flex items-center gap-1.5 text-[12px]', m.c)}><Icon name={m.icon} size={13} /><span className="mono text-muted">{e.action}</span></span></td>
-                  <td className="px-3 py-2.5 text-[12px] mono text-faint" title={e.target}>{displayTarget(e.target)}</td>
+                  <td className="px-3 py-2.5 text-[12px] mono text-faint" title={e.target}>{displayTarget(e)}</td>
                   <td className="px-4 py-2.5 text-[12px] text-muted max-w-[360px]"><span className="line-clamp-2">{Object.entries(e.detail || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') || '—'}</span></td>
                 </tr>
               );

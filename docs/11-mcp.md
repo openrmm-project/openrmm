@@ -16,14 +16,20 @@ scoped tokens and IP allowlisting.
 
 - **URL**: `https://<your-host>/mcp`
 - **Auth**: `Authorization: Bearer <token>` with `mcp.use` permission.
-  Use a **dedicated, revocable API token** (not the bootstrap/admin token):
-  ```bash
-  curl -X POST https://host/api/api-tokens \
-    -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
-    -d '{"name":"claude-desktop","role":"tech"}'
-  # -> returns {"token":"..."}  (shown once; store it)
-  ```
-  Revoke anytime: `DELETE /api/api-tokens/{id}`.
+  Use a **dedicated, revocable API token** (not the bootstrap/admin token).
+  Mint one in the UI (recommended) or via the API:
+  - **UI**: *Settings ▸ API tokens ▸ New token* — pick a role that has `mcp.use`
+    (the built-in `tech` does), optionally bind it to a user to inherit that
+    user's access scope, then copy the secret (shown once). Requires
+    `api_tokens.manage`.
+  - **API**:
+    ```bash
+    curl -X POST https://host/api/api-tokens \
+      -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+      -d '{"name":"claude-desktop","role":"tech"}'
+    # -> returns {"token":"..."}  (shown once; store it)
+    ```
+  Revoke anytime from the same UI panel or `DELETE /api/api-tokens/{id}`.
 - **Access scope**: if the API token is bound to a user with a restricted access
   scope, the MCP tools see and act on **only** that user's Companies/Sites/devices —
   the same enforcement as the in-app AI (see `06-ai-chat` and `07-guardrails-security`).

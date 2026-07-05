@@ -229,6 +229,11 @@ const api = {
   /* ---- enroll ---- */
   createEnrollToken(body) { return POST('/api/enroll-tokens', body); },
 
+  /* ---- API tokens (MCP connectors & integrations) ---- */
+  listAPITokens() { return GET('/api/api-tokens'); },
+  createAPIToken(body) { return POST('/api/api-tokens', body); },
+  deleteAPIToken(id) { return DELETE('/api/api-tokens/' + id); },
+
   /* ---- chat ---- */
   listSessions() { return GET('/api/chat/sessions'); },
   createSession(title) { return POST('/api/chat/sessions', { title }); },

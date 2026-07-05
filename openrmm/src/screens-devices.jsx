@@ -538,7 +538,11 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
     let lastMove = 0;
     const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
-    const onDown = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: true }); };
+    // preventDefault() cancels the browser's default focus, so clicking the
+    // remote screen would leave focus stuck in the chat input (typing() then
+    // stays true and keystrokes keep going to the chat box, not the host).
+    // Focus the canvas explicitly so a click on the screen takes over input.
+    const onDown = (e) => { e.preventDefault(); cv.focus(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: true }); };
     const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
     const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
     const onCtx = (e) => e.preventDefault();

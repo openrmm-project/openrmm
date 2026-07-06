@@ -14,7 +14,7 @@ import (
 
 // ListAPITokens returns all API tokens (without the secret).
 func (s *Store) ListAPITokens(ctx context.Context) ([]models.APITokenInfo, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, role, created_at FROM api_tokens ORDER BY created_at DESC`)
+	rows, err := s.pool.Query(ctx, `SELECT id, name, role, created_at, expires_at FROM api_tokens ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -22,7 +22,7 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]models.APITokenInfo, error
 	var out []models.APITokenInfo
 	for rows.Next() {
 		var t models.APITokenInfo
-		if err := rows.Scan(&t.ID, &t.Name, &t.Role, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.Role, &t.CreatedAt, &t.ExpiresAt); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

@@ -73,10 +73,11 @@ type UserScope struct {
 
 // APITokenInfo is a stored API token (without the secret).
 type APITokenInfo struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Role      string    `json:"role"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Role      string     `json:"role"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"` // nil = never expires
 }
 
 // DeviceGroup is a department under a site (Company > Site > Department).

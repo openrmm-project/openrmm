@@ -177,7 +177,8 @@ func (s *Store) DeleteUserSessionsExcept(ctx context.Context, userID, keepTokenH
 // APITokenRole returns the role and bound user id (empty if unscoped) for an API
 // token hash, if it exists.
 func (s *Store) APITokenRole(ctx context.Context, hash string) (role, userID string, ok bool, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT role, COALESCE(user_id::text, '') FROM api_tokens WHERE token_hash=$1`, hash).Scan(&role, &userID)
+	err = s.pool.QueryRow(ctx, `SELECT role, COALESCE(user_id::text, '') FROM api_tokens
+		WHERE token_hash=$1 AND (expires_at IS NULL OR expires_at > now())`, hash).Scan(&role, &userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", false, nil
 	}

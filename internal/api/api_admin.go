@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -42,9 +43,10 @@ func (s *Server) listAPITokens(w http.ResponseWriter, r *http.Request) {
 // createAPIToken issues a scoped, revocable token. The secret is returned ONCE.
 func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name   string `json:"name"`
-		Role   string `json:"role"`
-		UserID string `json:"user_id"` // optional: bind to a user to inherit their access scope
+		Name          string `json:"name"`
+		Role          string `json:"role"`
+		UserID        string `json:"user_id"`         // optional: bind to a user to inherit their access scope
+		ExpiresInDays int    `json:"expires_in_days"` // optional: 0/omitted = never expires
 	}
 	_ = decode(r, &in)
 	if in.Role == "" {
@@ -60,15 +62,20 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 	if in.UserID != "" {
 		boundUser = &in.UserID
 	}
+	var expiresAt *time.Time
+	if in.ExpiresInDays > 0 {
+		t := time.Now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
 	token := auth.NewToken()
-	id, err := s.store.CreateAPIToken(r.Context(), auth.Hash(token), in.Name, in.Role, boundUser)
+	id, err := s.store.CreateAPIToken(r.Context(), auth.Hash(token), in.Name, in.Role, boundUser, expiresAt)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "apitoken.create", id, auditLabel("name", in.Name))
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id": id, "name": in.Name, "role": in.Role,
+		"id": id, "name": in.Name, "role": in.Role, "expires_at": expiresAt,
 		"token": token, "note": "store this now — it will not be shown again",
 	})
 }

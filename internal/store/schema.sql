@@ -457,3 +457,41 @@ CREATE TABLE IF NOT EXISTS patch_policy_assignments (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_patch_policy_assign ON patch_policy_assignments(policy_id);
+
+-- ===================== MCP OAuth 2.1 (Authorization Server) =====================
+-- The RMM acts as its own OAuth AS + Resource Server so cloud MCP clients (Claude
+-- web, ChatGPT) can connect via the standard connector flow. Codes and tokens are
+-- stored HASHED (SHA-256), never in the clear — same pattern as api_tokens/sessions.
+
+-- Registered OAuth clients (via Dynamic Client Registration, RFC 7591).
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',
+    redirect_uris TEXT[] NOT NULL DEFAULT '{}',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Short-lived authorization codes (PKCE S256). Deleted on exchange.
+CREATE TABLE IF NOT EXISTS oauth_codes (
+    code_hash      TEXT PRIMARY KEY,      -- SHA-256 of the authorization code
+    client_id      TEXT NOT NULL,
+    user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri   TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,         -- PKCE code_challenge (S256)
+    scope          TEXT NOT NULL DEFAULT '',
+    expires_at     TIMESTAMPTZ NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Access + refresh tokens issued to a connector, bound to a user (inherits that
+-- user's role + access scope). An expired/absent access token stops authenticating.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    token_hash   TEXT PRIMARY KEY,        -- SHA-256 of the access token
+    refresh_hash TEXT UNIQUE,             -- SHA-256 of the refresh token (nullable)
+    client_id    TEXT NOT NULL,
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope        TEXT NOT NULL DEFAULT '',
+    expires_at   TIMESTAMPTZ NOT NULL,    -- access-token expiry
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);

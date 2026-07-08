@@ -81,6 +81,13 @@ func (s *Server) Router() http.Handler {
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 
+	// MCP OAuth 2.1 discovery metadata (unauthenticated, RFC 8414 / RFC 9728).
+	// Gated by RMM_MCP_OAUTH_ENABLED so the AS is opt-in. See docs/17-mcp-oauth.md.
+	if s.cfg.MCPOAuthEnabled {
+		r.Get("/.well-known/oauth-authorization-server", s.oauthAuthServerMeta)
+		r.Get("/.well-known/oauth-protected-resource", s.oauthProtectedResourceMeta)
+	}
+
 	// WebSocket endpoints authenticate via their own protocol / tokens.
 	r.Get("/ws/agent", s.handleAgentWS)
 	r.Get("/ws/remote", s.handleRelayWS)

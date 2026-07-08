@@ -384,3 +384,37 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
+
+-- ===================== MCP OAuth 2.1 (Authorization Server) =====================
+-- The RMM acts as its own OAuth AS + Resource Server so cloud MCP clients (Claude
+-- web, ChatGPT) can connect via the standard connector flow. Codes and tokens are
+-- stored HASHED (SHA-256), never in the clear — same pattern as api_tokens/sessions.
+
+CREATE TABLE IF NOT EXISTS oauth_clients (
+    client_id     TEXT PRIMARY KEY,
+    name          TEXT NOT NULL DEFAULT '',
+    redirect_uris TEXT[] NOT NULL DEFAULT '{}',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS oauth_codes (
+    code_hash      TEXT PRIMARY KEY,
+    client_id      TEXT NOT NULL,
+    user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri   TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    scope          TEXT NOT NULL DEFAULT '',
+    expires_at     TIMESTAMPTZ NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+    token_hash   TEXT PRIMARY KEY,
+    refresh_hash TEXT UNIQUE,
+    client_id    TEXT NOT NULL,
+    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope        TEXT NOT NULL DEFAULT '',
+    expires_at   TIMESTAMPTZ NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);

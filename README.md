@@ -104,6 +104,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [14-frontend-design-brief](docs/14-frontend-design-brief.md) | Frontend brief: product context, screens, design language, full API contract |
 | [15-reports](docs/15-reports.md) | Fleet inventory reports (software/hardware/machines) by client/site/department, scoped, CSV export, AI tool |
 | [16-patch-management](docs/16-patch-management.md) | Patch inventory, approval/classification, policies (windows/auto-approve), reboot orchestration, compliance |
+| [17-mcp-oauth](docs/17-mcp-oauth.md) | MCP OAuth 2.1 — OpenRMM as its own Authorization Server so cloud clients (Claude web, ChatGPT) connect natively |
 
 To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 

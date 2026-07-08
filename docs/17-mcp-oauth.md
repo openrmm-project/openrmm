@@ -1,8 +1,10 @@
 # 17 — MCP OAuth 2.1 (OpenRMM as its own Authorization Server)
 
-> **Status: in progress.** Phase 1 (discovery metadata + schema + config flag)
-> is implemented behind `RMM_MCP_OAUTH_ENABLED` (off by default). Phases 2–4
-> (registration, authorize/consent, token, and `/mcp` acceptance) follow.
+> **Status: implemented** behind `RMM_MCP_OAUTH_ENABLED` (off by default).
+> Discovery metadata, Dynamic Client Registration, the login+consent
+> authorization endpoint (PKCE S256), the token endpoint (code exchange +
+> refresh with rotation), and `/mcp` acceptance of OAuth access tokens are all
+> built and verified end-to-end. Enable it only with an **HTTPS** `RMM_PUBLIC_URL`.
 
 ## Why
 
@@ -65,13 +67,21 @@ per-user access scope.
 
 ## Phased plan
 
-1. **Foundation (done)** — discovery metadata, `oauth_*` schema, `RMM_MCP_OAUTH_ENABLED`.
-2. **Registration** — `POST /oauth/register` (validate + store clients); store methods.
-3. **Authorize + token** — login+consent UI, PKCE code issue, `/oauth/token`
-   (code exchange + refresh), all audited (`oauth.authorize` / `oauth.token`).
-4. **Resource acceptance** — `authMiddleware` also accepts a valid `oauth_tokens`
-   access token (→ user's role/scope), so `/mcp` works with the OAuth credential.
-5. **Docs + verify** — update [11-mcp](11-mcp.md); end-to-end against a real client.
+1. ✅ **Foundation** — discovery metadata, `oauth_*` schema, `RMM_MCP_OAUTH_ENABLED`.
+2. ✅ **Registration** — `POST /oauth/register` (validate + store clients).
+3. ✅ **Authorize + token** — login+consent page, PKCE code issue, `/oauth/token`
+   (code exchange + refresh with rotation), audited (`oauth.authorize` / `oauth.token`).
+4. ✅ **Resource acceptance** — `authMiddleware` also accepts a valid `oauth_tokens`
+   access token (→ the bound user's role/scope), so `/mcp` works with the OAuth
+   credential.
+5. **Remaining** — expiry-based cleanup of stale codes/rows (harmless today, they
+   just can't be used); optional narrowing so an `mcp`-scoped token only reaches
+   `/mcp` (today it authenticates as the user across the API, gated by the same
+   role permissions). Connect a real Claude web / ChatGPT connector to confirm.
+
+Verified end-to-end (curl): register → authorize (login+consent) → code → token
+(PKCE checked; wrong verifier → `invalid_grant`) → `/mcp initialize` with the
+access token → `refresh_token` rotation.
 
 ## Security notes
 

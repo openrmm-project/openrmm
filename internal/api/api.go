@@ -97,6 +97,16 @@ func (s *Server) Router() http.Handler {
 	r.With(authLimiter, maxBody).Post("/api/auth/login", s.login)
 	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
 
+	// MCP OAuth 2.1 flow (register / authorize+consent / token). Public clients +
+	// PKCE; the authorize POST verifies user credentials, so it's rate-limited like
+	// login. Gated by RMM_MCP_OAUTH_ENABLED. See docs/17-mcp-oauth.md.
+	if s.cfg.MCPOAuthEnabled {
+		r.With(authLimiter, maxBody).Post("/oauth/register", s.oauthRegister)
+		r.With(authLimiter).Get("/oauth/authorize", s.oauthAuthorize)
+		r.With(authLimiter, maxBody).Post("/oauth/authorize", s.oauthAuthorizeSubmit)
+		r.With(authLimiter, maxBody).Post("/oauth/token", s.oauthToken)
+	}
+
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; requires the MCP permission
 	// since it can propose jobs (which still require human approval).
@@ -257,6 +267,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				actor, role, scopeUser = uid, rl, uid
 			} else if rl, uid, ok, _ := s.store.APITokenRole(r.Context(), hash); ok {
 				actor, role, scopeUser = "api", rl, uid // uid set only for tokens bound to a user
+			} else if uid, rl, ok, _ := s.store.OAuthTokenPrincipal(r.Context(), hash); ok {
+				actor, role, scopeUser = uid, rl, uid // MCP OAuth token — bound to a user
 			} else {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return

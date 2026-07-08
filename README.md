@@ -105,6 +105,11 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [15-reports](docs/15-reports.md) | Fleet inventory reports (software/hardware/machines) by client/site/department, scoped, CSV export, AI tool |
 | [16-patch-management](docs/16-patch-management.md) | Patch inventory, approval/classification, policies (windows/auto-approve), reboot orchestration, compliance |
 
+For production deployment, see [`deploy/README-production.md`](deploy/README-production.md):
+a **split-ingress topology** (three doors on three ports) so the firewall keeps the
+**agents** door public while the **console** door is restricted to your IPs/VPN and
+the **MCP** door is exposed per your choice.
+
 To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 
 ## License

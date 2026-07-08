@@ -62,6 +62,15 @@ Then add `https://rmm.yourdomain.com/mcp` as a custom connector in the client.
 Set `RMM_PUBLIC_URL=https://rmm.yourdomain.com` and, if behind the proxy,
 `RMM_TRUST_PROXY_HEADERS=true`.
 
+### Production: put `/mcp` on its own door
+For a real deployment, use the **split-ingress topology**
+([`deploy/README-production.md`](../deploy/README-production.md)): `/mcp` gets its
+**own port/door**, separate from the console (UI + REST API) and the agents' WS.
+That lets you expose the MCP door **publicly** for cloud clients (Claude web,
+ChatGPT) *or* restrict it to **specific IPs** for on-prem clients — a firewall
+choice independent of the console, which stays locked to your own IPs/VPN. Keep
+`RMM_MCP_ALLOWED_IPS` set as an app-level second layer.
+
 ## Security controls (layered)
 
 1. **IP allowlist (built in).** Restrict `/mcp` to known source IPs/CIDRs:

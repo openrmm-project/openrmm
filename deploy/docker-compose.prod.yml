@@ -63,6 +63,9 @@ services:
       - "${AGENTS_PORT:-8443}:80"
       # Console door — restrict THIS host port to your IPs/VPN at the firewall.
       - "${CONSOLE_PORT:-9443}:81"
+      # MCP door — deployer's choice: open for cloud clients (Claude web) OR
+      # restrict to specific client IPs at the firewall.
+      - "${MCP_PORT:-7443}:82"
     restart: unless-stopped
 
 volumes:

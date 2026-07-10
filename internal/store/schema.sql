@@ -486,12 +486,15 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 -- Access + refresh tokens issued to a connector, bound to a user (inherits that
 -- user's role + access scope). An expired/absent access token stops authenticating.
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-    token_hash   TEXT PRIMARY KEY,        -- SHA-256 of the access token
-    refresh_hash TEXT UNIQUE,             -- SHA-256 of the refresh token (nullable)
-    client_id    TEXT NOT NULL,
-    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    scope        TEXT NOT NULL DEFAULT '',
-    expires_at   TIMESTAMPTZ NOT NULL,    -- access-token expiry
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    token_hash         TEXT PRIMARY KEY,        -- SHA-256 of the access token
+    refresh_hash       TEXT UNIQUE,             -- SHA-256 of the refresh token (nullable)
+    client_id          TEXT NOT NULL,
+    user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope              TEXT NOT NULL DEFAULT '',
+    expires_at         TIMESTAMPTZ NOT NULL,    -- access-token expiry (short)
+    refresh_expires_at TIMESTAMPTZ,             -- refresh-token expiry (longer; NULL = no refresh)
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
+-- Bounded refresh-token lifetime (added after the initial oauth_tokens table).
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS refresh_expires_at TIMESTAMPTZ;

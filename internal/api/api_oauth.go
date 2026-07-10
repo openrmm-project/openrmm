@@ -27,10 +27,11 @@ import (
 // RMM_MCP_OAUTH_ENABLED.
 
 const (
-	oauthCodeTTL   = 5 * time.Minute
-	oauthTokenTTL  = time.Hour
-	oauthScope     = "mcp"
-	oauthChallenge = "S256"
+	oauthCodeTTL    = 5 * time.Minute
+	oauthTokenTTL   = time.Hour           // access token
+	oauthRefreshTTL = 30 * 24 * time.Hour // refresh token
+	oauthScope      = "mcp"
+	oauthChallenge  = "S256"
 )
 
 var (
@@ -346,7 +347,9 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, client
 	access := auth.NewToken()
 	refresh := auth.NewToken()
 	rh := auth.Hash(refresh)
-	if err := s.store.CreateOAuthToken(r.Context(), auth.Hash(access), &rh, clientID, userID, scope, time.Now().Add(oauthTokenTTL)); err != nil {
+	now := time.Now()
+	if err := s.store.CreateOAuthToken(r.Context(), auth.Hash(access), &rh, clientID, userID, scope,
+		now.Add(oauthTokenTTL), now.Add(oauthRefreshTTL)); err != nil {
 		oauthTokenErr(w, "server_error")
 		return
 	}

@@ -61,11 +61,11 @@ func (s *Store) ConsumeOAuthCode(ctx context.Context, codeHash string) (clientID
 
 // --- access + refresh tokens ---
 
-func (s *Store) CreateOAuthToken(ctx context.Context, tokenHash string, refreshHash *string, clientID, userID, scope string, expiresAt time.Time) error {
+func (s *Store) CreateOAuthToken(ctx context.Context, tokenHash string, refreshHash *string, clientID, userID, scope string, expiresAt, refreshExpiresAt time.Time) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO oauth_tokens (token_hash, refresh_hash, client_id, user_id, scope, expires_at)
-		 VALUES ($1,$2,$3,$4,$5,$6)`,
-		tokenHash, refreshHash, clientID, userID, scope, expiresAt)
+		`INSERT INTO oauth_tokens (token_hash, refresh_hash, client_id, user_id, scope, expires_at, refresh_expires_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		tokenHash, refreshHash, clientID, userID, scope, expiresAt, refreshExpiresAt)
 	return err
 }
 
@@ -85,11 +85,31 @@ func (s *Store) OAuthTokenPrincipal(ctx context.Context, tokenHash string) (user
 	return userID, role, true, nil
 }
 
+// PurgeExpiredOAuth deletes expired authorization codes and access tokens. Codes
+// are one-shot and tokens carry an expiry, so stale rows are already unusable;
+// this just keeps the tables from growing. Returns the number of rows removed.
+func (s *Store) PurgeExpiredOAuth(ctx context.Context) (int64, error) {
+	ct, err := s.pool.Exec(ctx, `DELETE FROM oauth_codes WHERE expires_at <= now()`)
+	if err != nil {
+		return 0, err
+	}
+	n := ct.RowsAffected()
+	// A row is dead only once its refresh token is also expired (or absent) — the
+	// access token expires sooner but the refresh keeps the row alive until then.
+	ct, err = s.pool.Exec(ctx, `DELETE FROM oauth_tokens
+		WHERE (refresh_expires_at IS NULL OR refresh_expires_at <= now()) AND expires_at <= now()`)
+	if err != nil {
+		return n, err
+	}
+	return n + ct.RowsAffected(), nil
+}
+
 // ConsumeOAuthRefresh atomically deletes a refresh token (rotation) and returns
 // its binding, so the caller can issue a fresh access+refresh pair.
 func (s *Store) ConsumeOAuthRefresh(ctx context.Context, refreshHash string) (clientID, userID, scope string, ok bool, err error) {
 	err = s.pool.QueryRow(ctx,
 		`DELETE FROM oauth_tokens WHERE refresh_hash=$1
+		 AND (refresh_expires_at IS NULL OR refresh_expires_at > now())
 		 RETURNING client_id, user_id::text, scope`, refreshHash).
 		Scan(&clientID, &userID, &scope)
 	if errors.Is(err, pgx.ErrNoRows) {

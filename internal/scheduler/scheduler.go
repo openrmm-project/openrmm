@@ -27,13 +27,17 @@ const (
 	patchScanInterval = 6 * time.Hour
 )
 
+// oauthPurgeEvery is how often expired OAuth codes/tokens are swept.
+const oauthPurgeEvery = time.Hour
+
 // Scheduler evaluates checks/tasks and manages alerts.
 type Scheduler struct {
-	store         *store.Store
-	hub           *hub.Hub
-	jobs          *jobs.Service
-	patches       *patches.Service
-	lastPatchTick time.Time
+	store          *store.Store
+	hub            *hub.Hub
+	jobs           *jobs.Service
+	patches        *patches.Service
+	lastPatchTick  time.Time
+	lastOAuthPurge time.Time
 }
 
 // New builds the scheduler.
@@ -78,6 +82,14 @@ func (s *Scheduler) tick(ctx context.Context) {
 	if now.Sub(s.lastPatchTick) >= patchTickEvery {
 		s.lastPatchTick = now
 		s.patchTick(ctx, agents, now)
+	}
+	if now.Sub(s.lastOAuthPurge) >= oauthPurgeEvery {
+		s.lastOAuthPurge = now
+		if n, err := s.store.PurgeExpiredOAuth(ctx); err != nil {
+			log.Printf("scheduler: purge expired oauth: %v", err)
+		} else if n > 0 {
+			log.Printf("scheduler: purged %d expired oauth code(s)/token(s)", n)
+		}
 	}
 }
 

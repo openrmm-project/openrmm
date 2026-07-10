@@ -409,12 +409,14 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
 );
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-    token_hash   TEXT PRIMARY KEY,
-    refresh_hash TEXT UNIQUE,
-    client_id    TEXT NOT NULL,
-    user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    scope        TEXT NOT NULL DEFAULT '',
-    expires_at   TIMESTAMPTZ NOT NULL,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    token_hash         TEXT PRIMARY KEY,
+    refresh_hash       TEXT UNIQUE,
+    client_id          TEXT NOT NULL,
+    user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope              TEXT NOT NULL DEFAULT '',
+    expires_at         TIMESTAMPTZ NOT NULL,
+    refresh_expires_at TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
+ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS refresh_expires_at TIMESTAMPTZ;

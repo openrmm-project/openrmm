@@ -268,7 +268,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			} else if rl, uid, ok, _ := s.store.APITokenRole(r.Context(), hash); ok {
 				actor, role, scopeUser = "api", rl, uid // uid set only for tokens bound to a user
 			} else if uid, rl, ok, _ := s.store.OAuthTokenPrincipal(r.Context(), hash); ok {
-				actor, role, scopeUser = uid, rl, uid // MCP OAuth token — bound to a user
+				// MCP OAuth token — bound to a user, scoped to the MCP resource only.
+				// It authenticates /mcp, not the rest of the API/UI surface.
+				if !strings.HasPrefix(r.URL.Path, "/mcp") {
+					writeErr(w, http.StatusForbidden, "this token is only valid for the MCP endpoint")
+					return
+				}
+				actor, role, scopeUser = uid, rl, uid
 			} else {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return

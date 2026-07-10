@@ -52,7 +52,9 @@ per-user access scope.
 - `oauth_codes` — short-lived authorization codes (hashed), with the PKCE
   `code_challenge`, bound `user_id`, `redirect_uri`, `scope`; deleted on exchange.
 - `oauth_tokens` — access + refresh tokens (both hashed), bound to a `user_id`,
-  with `expires_at`. An expired/absent access token stops authenticating.
+  with `expires_at` (access, 1h) and `refresh_expires_at` (refresh, 30d). An
+  expired/absent access token stops authenticating; the row is swept once both
+  are expired.
 
 ## Endpoints
 
@@ -74,10 +76,13 @@ per-user access scope.
 4. ✅ **Resource acceptance** — `authMiddleware` also accepts a valid `oauth_tokens`
    access token (→ the bound user's role/scope), so `/mcp` works with the OAuth
    credential.
-5. **Remaining** — expiry-based cleanup of stale codes/rows (harmless today, they
-   just can't be used); optional narrowing so an `mcp`-scoped token only reaches
-   `/mcp` (today it authenticates as the user across the API, gated by the same
-   role permissions). Connect a real Claude web / ChatGPT connector to confirm.
+5. ✅ **Hardening** — the scheduler sweeps expired codes/tokens hourly
+   (`PurgeExpiredOAuth`, only once both access **and** refresh are expired); the
+   refresh token has its own bounded lifetime (`refresh_expires_at`, 30 days);
+   and an OAuth access token is **narrowed to `/mcp`** — it returns `403` on the
+   rest of the API/UI (it authenticates the MCP resource only, still gated by the
+   bound user's role + scope). **Remaining:** connect a real Claude web / ChatGPT
+   connector to confirm interop.
 
 Verified end-to-end (curl): register → authorize (login+consent) → code → token
 (PKCE checked; wrong verifier → `invalid_grant`) → `/mcp initialize` with the

@@ -113,6 +113,10 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 -- Bind an API token (e.g. an MCP connector) to a user so it inherits that
 -- user's access scope. NULL = unscoped (full, current behavior).
 ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+-- Optional expiry: an expired token stops authenticating (checked in APITokenRole).
+-- NULL = never expires (current behavior). Short-lived tokens shrink the blast
+-- radius of a leaked MCP connector secret (esp. for public/cloud exposure).
+ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
 -- Per-user access scope. A user with NO rows has full access (all clients);
 -- any rows restrict the user to the union of those client/site/group/agent subtrees.

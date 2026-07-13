@@ -96,6 +96,12 @@ choice independent of the console, which stays locked to your own IPs/VPN. Keep
 - [ ] `RMM_MCP_ALLOWED_IPS` set to your client / proxy egress IPs.
 - [ ] Dedicated API token per connector with only the needed role; rotate/revoke
   as needed.
+- [ ] **Set an expiry** on the connector token (Settings ▸ API tokens ▸ *Expires*,
+  or `expires_in_days` on the API). An expired token stops authenticating, so a
+  leaked secret has a bounded blast radius — strongly recommended for **public /
+  cloud** exposure where an IP allowlist can't apply (cloud clients connect from
+  the provider's shared, dynamic egress IPs).
+- [ ] Bind the token to a **scoped user** so it only sees that user's fleet.
 - [ ] `RMM_ALLOW_UNAPPROVED_JOBS=false` (default) — approval stays mandatory.
 - [ ] Watch the audit log for `apitoken.create` / `job.propose` / `job.approve`.
 

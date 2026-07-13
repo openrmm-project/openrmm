@@ -698,7 +698,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
             </div>
           )}
         </div>
-        {chatOpen && <div className="w-72 shrink-0 border-l border-line bg-bg flex flex-col">
+        {chatOpen && <div className="w-72 shrink-0 border-l border-line bg-app flex flex-col">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title="Collapse chat"><Icon name="chevright" size={16} /></button></div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}

@@ -1,6 +1,15 @@
 /* app.jsx — shell: auth, sidebar, router, topbar. Mounts the app. */
 const { useState: uS, useEffect: uE, useContext: uC, createContext: cCtx } = React;
 
+// Apply the persisted theme at module load so every entry point matches the
+// user's choice — including the standalone remote tab (?dev=…), which renders
+// before the console's theme effect runs and would otherwise fall back to dark.
+(function applyStoredTheme() {
+  const t = localStorage.getItem('rmm-theme') || 'dark';
+  document.documentElement.classList.toggle('dark', t === 'dark');
+  document.documentElement.classList.toggle('light', t !== 'dark');
+})();
+
 const AUTH_KEY = 'rmm-ai-auth';
 const AuthCtx = cCtx(null);
 function useAuth() { return uC(AuthCtx); }

@@ -50,8 +50,9 @@ handoff/
   apiClient.ts          # versão TypeScript do mesmo cliente (para um futuro projeto Vite/TS)
   INTEGRATION.md        # passo a passo + tabela de endpoints + papéis
 assets/
-  icone_openrmm.png      # logo (BrandMark no sidebar/login, em app.jsx)
-  icone_page_openrmm.png # favicon (referenciado no index.html)
+  logo_open_rmm_edit3.png # logo atual sem fundo (BrandMark em app.jsx) + favicon (index.html)
+  icone_openrmm.png      # logo anterior (não usada)
+  icone_page_openrmm.png # favicon anterior (não usada)
   icone_rmm_fundo.png    # ícone de marca adicional
 ```
 

@@ -52,6 +52,12 @@ type Config struct {
 	// TrustProxyHeaders enables reading X-Forwarded-For for the IP allowlist
 	// (only enable when behind a trusted reverse proxy).
 	TrustProxyHeaders bool
+	// MCPOAuthEnabled turns on the built-in OAuth 2.1 Authorization Server for
+	// MCP (RMM acts as its own AS + Resource Server), so cloud MCP clients
+	// (Claude web, ChatGPT) can connect via the standard OAuth connector flow
+	// instead of a pasted static token. Off by default. The issuer is PublicURL,
+	// which MUST be an HTTPS URL when enabled.
+	MCPOAuthEnabled bool
 	// CORSOrigins is the allowed browser origins for the API (comma-separated).
 	// Default ["*"] (fine for bearer-token auth, which doesn't use cookies).
 	CORSOrigins []string
@@ -104,6 +110,7 @@ func Load() (*Config, error) {
 		MCPAllowedIPs:         splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:   os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:     os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",
+		MCPOAuthEnabled:       os.Getenv("RMM_MCP_OAUTH_ENABLED") == "true",
 		CORSOrigins:           splitCSV(env("RMM_CORS_ORIGINS", "*")),
 		SettingsEncryptionKey: os.Getenv("RMM_SETTINGS_ENCRYPTION_KEY"),
 		APIRateLimit:          envInt("RMM_API_RATE_LIMIT", 600),

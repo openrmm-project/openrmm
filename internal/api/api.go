@@ -81,6 +81,13 @@ func (s *Server) Router() http.Handler {
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 
+	// MCP OAuth 2.1 discovery metadata (unauthenticated, RFC 8414 / RFC 9728).
+	// Gated by RMM_MCP_OAUTH_ENABLED so the AS is opt-in. See docs/17-mcp-oauth.md.
+	if s.cfg.MCPOAuthEnabled {
+		r.Get("/.well-known/oauth-authorization-server", s.oauthAuthServerMeta)
+		r.Get("/.well-known/oauth-protected-resource", s.oauthProtectedResourceMeta)
+	}
+
 	// WebSocket endpoints authenticate via their own protocol / tokens.
 	r.Get("/ws/agent", s.handleAgentWS)
 	r.Get("/ws/remote", s.handleRelayWS)
@@ -89,6 +96,16 @@ func (s *Server) Router() http.Handler {
 	authLimiter := s.rateLimit(authRateLimit)
 	r.With(authLimiter, maxBody).Post("/api/auth/login", s.login)
 	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
+
+	// MCP OAuth 2.1 flow (register / authorize+consent / token). Public clients +
+	// PKCE; the authorize POST verifies user credentials, so it's rate-limited like
+	// login. Gated by RMM_MCP_OAUTH_ENABLED. See docs/17-mcp-oauth.md.
+	if s.cfg.MCPOAuthEnabled {
+		r.With(authLimiter, maxBody).Post("/oauth/register", s.oauthRegister)
+		r.With(authLimiter).Get("/oauth/authorize", s.oauthAuthorize)
+		r.With(authLimiter, maxBody).Post("/oauth/authorize", s.oauthAuthorizeSubmit)
+		r.With(authLimiter, maxBody).Post("/oauth/token", s.oauthToken)
+	}
 
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; requires the MCP permission
@@ -250,6 +267,14 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				actor, role, scopeUser = uid, rl, uid
 			} else if rl, uid, ok, _ := s.store.APITokenRole(r.Context(), hash); ok {
 				actor, role, scopeUser = "api", rl, uid // uid set only for tokens bound to a user
+			} else if uid, rl, ok, _ := s.store.OAuthTokenPrincipal(r.Context(), hash); ok {
+				// MCP OAuth token — bound to a user, scoped to the MCP resource only.
+				// It authenticates /mcp, not the rest of the API/UI surface.
+				if !strings.HasPrefix(r.URL.Path, "/mcp") {
+					writeErr(w, http.StatusForbidden, "this token is only valid for the MCP endpoint")
+					return
+				}
+				actor, role, scopeUser = uid, rl, uid
 			} else {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
 				return

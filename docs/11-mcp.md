@@ -62,6 +62,13 @@ Then add `https://rmm.yourdomain.com/mcp` as a custom connector in the client.
 Set `RMM_PUBLIC_URL=https://rmm.yourdomain.com` and, if behind the proxy,
 `RMM_TRUST_PROXY_HEADERS=true`.
 
+**Cloud connectors (Claude web / ChatGPT) — use OAuth.** These clients expect the
+OAuth connector flow rather than a pasted token. Turn on the built-in OAuth 2.1
+Authorization Server with `RMM_MCP_OAUTH_ENABLED=true` (HTTPS `RMM_PUBLIC_URL`
+required): the user logs into OpenRMM (password + 2FA) and consents, and the
+client receives a short-lived, scoped, refreshable token bound to that user — no
+static secret to paste. See [17-mcp-oauth](17-mcp-oauth.md).
+
 ### Production: put `/mcp` on its own door
 For a real deployment, use the **split-ingress topology**
 ([`deploy/README-production.md`](../deploy/README-production.md)): `/mcp` gets its

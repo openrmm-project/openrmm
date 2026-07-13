@@ -906,18 +906,38 @@ func (s *Store) ListCheckResults(ctx context.Context, checkID, agentID string, l
 
 // ===================== Tasks =====================
 
-const taskCols = `id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, enabled, created_at`
+const taskCols = `id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, created_at`
+
+// int32s / ints bridge the INTEGER[] column (pgx wants []int32) and the model's
+// []int field, so callers never deal with the width mismatch.
+func int32s(in []int) []int32 {
+	out := make([]int32, len(in))
+	for i, v := range in {
+		out[i] = int32(v)
+	}
+	return out
+}
+
+func ints(in []int32) []int {
+	out := make([]int, len(in))
+	for i, v := range in {
+		out[i] = int(v)
+	}
+	return out
+}
 
 func scanTask(row pgx.Row) (*models.Task, error) {
 	var t models.Task
+	var mins []int32
 	err := row.Scan(&t.ID, &t.AgentID, &t.PolicyID, &t.Name, &t.ScriptID, &t.Shell, &t.Script,
-		&t.ScheduleKind, &t.IntervalSec, &t.RunAtMinute, &t.Enabled, &t.CreatedAt)
+		&t.ScheduleKind, &t.IntervalSec, &t.RunAtMinute, &t.DaysOfWeek, &mins, &t.Enabled, &t.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	t.RunAtMinutes = ints(mins)
 	return &t, nil
 }
 
@@ -925,9 +945,9 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 func (s *Store) CreateTask(ctx context.Context, t *models.Task) (*models.Task, error) {
 	t.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, enabled)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.Enabled)
+		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -990,8 +1010,8 @@ func (s *Store) TasksForAgent(ctx context.Context, agentID string, siteID, clien
 // UpdateTask edits a task.
 func (s *Store) UpdateTask(ctx context.Context, t *models.Task) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE tasks SET name=$2, script_id=$3, shell=$4, script=$5, schedule_kind=$6, interval_sec=$7, run_at_minute=$8, enabled=$9 WHERE id=$1`,
-		t.ID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.Enabled)
+		`UPDATE tasks SET name=$2, script_id=$3, shell=$4, script=$5, schedule_kind=$6, interval_sec=$7, run_at_minute=$8, days_of_week=$9, run_at_minutes=$10, enabled=$11 WHERE id=$1`,
+		t.ID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled)
 	return err
 }
 
@@ -999,6 +1019,34 @@ func (s *Store) UpdateTask(ctx context.Context, t *models.Task) error {
 func (s *Store) DeleteTask(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM tasks WHERE id=$1`, id)
 	return err
+}
+
+// AgentIDsForPolicy resolves every agent a policy applies to, expanding its
+// assignments the same way policyFilter does (agent / site / client scope). Used
+// by "run now" to fan a policy task out to its current targets.
+func (s *Store) AgentIDsForPolicy(ctx context.Context, policyID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT a.id FROM agents a
+		 LEFT JOIN sites si ON si.id = a.site_id
+		 WHERE EXISTS (
+		   SELECT 1 FROM policy_assignments pa
+		   WHERE pa.policy_id=$1 AND (
+		        (pa.scope_type='agent'  AND pa.scope_id = a.id)
+		     OR (pa.scope_type='site'   AND pa.scope_id = a.site_id)
+		     OR (pa.scope_type='client' AND pa.scope_id = si.client_id)))`, policyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // LastTaskRunTime returns when a task last produced a job on an agent.

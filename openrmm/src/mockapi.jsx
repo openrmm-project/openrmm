@@ -302,6 +302,8 @@ const api = {
   createTask(body) { return POST('/api/tasks', body); },
   updateTask(id, body) { return PUT('/api/tasks/' + id, body); },
   deleteTask(id) { return DELETE('/api/tasks/' + id); },
+  taskTargets(id) { return GET('/api/tasks/' + id + '/targets'); },
+  runTask(id) { return POST('/api/tasks/' + id + '/run', {}); },
 
   /* ---- policies ---- */
   listPolicies() { return GET('/api/policies'); },

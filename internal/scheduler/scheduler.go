@@ -234,6 +234,31 @@ func (s *Scheduler) taskDue(t *models.Task, last, now time.Time) bool {
 		}
 		// Due once per UTC day.
 		return last.IsZero() || last.UTC().YearDay() != now.UTC().YearDay() || last.UTC().Year() != now.UTC().Year()
+	case models.ScheduleWeekly:
+		// Find the most recent scheduled occurrence at or before now across
+		// (active weekday × run_at_minutes), scanning back up to 8 days. Due when
+		// that occurrence is newer than the last run — so each day/time slot fires
+		// once and a missed slot still runs on the next tick.
+		var recent time.Time
+		for d := 0; d < 8; d++ {
+			day := now.UTC().AddDate(0, 0, -d)
+			if t.DaysOfWeek&(1<<uint(day.Weekday())) == 0 {
+				continue
+			}
+			for _, m := range t.RunAtMinutes {
+				occ := time.Date(day.Year(), day.Month(), day.Day(), m/60, m%60, 0, 0, time.UTC)
+				if occ.After(now) {
+					continue
+				}
+				if occ.After(recent) {
+					recent = occ
+				}
+			}
+		}
+		if recent.IsZero() {
+			return false
+		}
+		return last.Before(recent)
 	default: // interval
 		if t.IntervalSec <= 0 {
 			return false

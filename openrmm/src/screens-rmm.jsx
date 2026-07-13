@@ -1,5 +1,9 @@
 /* screens-rmm.jsx — Part 2: Alerts, Checks, Scheduled tasks */
 
+// Weekday labels indexed to match Go's time.Weekday (0=Sunday), so bit i of a
+// task's days_of_week bitmask lines up with WEEKDAYS[i] on both ends.
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 const SEV = {
   error: { c: 'bad', icon: 'alert', label: 'Error' },
   warning: { c: 'warn', icon: 'alert', label: 'Warning' },
@@ -221,11 +225,11 @@ function CheckEditor({ check, onClose, devMap, policies }) {
           <Field label="Type"><Select value={type} onChange={(e) => setType(e.target.value)}>{Object.entries(CHECK_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select></Field>
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t.label} /></Field>
         </div>
-        <Field label="Apply to"><Select value={target} onChange={(e) => setTarget(e.target.value)}>
-          <option value="">Select target…</option>
-          <optgroup label="Devices">{devices.map((d) => <option key={d.id} value={'dev:' + d.id}>{d.hostname}</option>)}</optgroup>
-          <optgroup label="Policies">{policies.map((p) => <option key={p.id} value={'pol:' + p.id}>{p.name} (policy)</option>)}</optgroup>
-        </Select></Field>
+        <Field label="Apply to"><Combobox value={target} onChange={setTarget} placeholder="Select target…"
+          options={[
+            ...devices.map((d) => ({ value: 'dev:' + d.id, label: d.hostname, group: 'Devices' })),
+            ...policies.map((p) => ({ value: 'pol:' + p.id, label: p.name + ' (policy)', group: 'Policies' })),
+          ]} /></Field>
         {t.cfg && <Field label={t.cfgLabel}>{t.cfg === 'script' ? <CodeEditor value={cfgVal} onChange={setCfgVal} shell="bash" minHeight={120} /> : <Input value={cfgVal} onChange={(e) => setCfgVal(e.target.value)} placeholder={t.cfgPh} className="mono" />}</Field>}
         {t.dir !== 'state' && t.dir !== 'script' && (
           <div className="grid grid-cols-3 gap-3">
@@ -255,8 +259,25 @@ function TasksScreen() {
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
   const scriptMap = {}; (scriptsQ.data?.scripts || []).forEach((s) => scriptMap[s.id] = s);
 
-  const schedule = (t) => t.schedule_kind === 'daily' ? 'Daily at ' + minuteToHHMM(t.run_at_minute) : 'Every ' + (t.interval_sec < 3600 ? Math.round(t.interval_sec / 60) + 'm' : Math.round(t.interval_sec / 3600) + 'h');
+  const schedule = (t) => {
+    if (t.schedule_kind === 'daily') return 'Daily at ' + minuteToHHMM(t.run_at_minute);
+    if (t.schedule_kind === 'weekly') {
+      const days = WEEKDAYS.filter((_, i) => (t.days_of_week & (1 << i)) !== 0).join(' ');
+      const at = (t.run_at_minutes || []).map(minuteToHHMM).join(', ');
+      return (days || '—') + ' at ' + (at || '—');
+    }
+    return 'Every ' + (t.interval_sec < 3600 ? Math.round(t.interval_sec / 60) + 'm' : Math.round(t.interval_sec / 3600) + 'h');
+  };
   const toggle = async (t) => { await api.updateTask(t.id, { enabled: !t.enabled }); toast.success(t.enabled ? 'Task disabled' : 'Task enabled'); };
+  const [runningTask, setRunningTask] = useState(null); // { task, count } pending confirm
+  const askRun = async (t) => {
+    try { const { count } = await api.taskTargets(t.id); setRunningTask({ task: t, count }); }
+    catch (e) { toast.error('Failed to resolve targets', e.message); }
+  };
+  const doRun = async (t) => {
+    try { const { queued } = await api.runTask(t.id); toast.success('Task queued', 'Running on ' + queued + ' agent' + (queued === 1 ? '' : 's') + '.'); }
+    catch (e) { toast.error('Run failed', e.message); }
+  };
 
   return (
       <Page wide>
@@ -279,7 +300,7 @@ function TasksScreen() {
                   <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{schedule(t)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[12px] text-faint">{sc?.name || 'inline'}</td>
                   <td className="px-3 py-3"><Toggle checked={t.enabled} onChange={() => toggle(t)} disabled={!can('tasks.manage')} /></td>
-                  <td className="px-4 py-3 text-right">{can('tasks.manage') && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(t)}>Edit</Button>}</td>
+                  <td className="px-4 py-3 text-right">{can('tasks.manage') && <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" icon="play" onClick={() => askRun(t)}>Run now</Button><Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(t)}>Edit</Button></div>}</td>
                 </tr>
               );
             })}
@@ -288,6 +309,11 @@ function TasksScreen() {
         {!tasksQ.loading && tasks.length === 0 && <EmptyState icon="tasks" title="No scheduled tasks" msg="Create a task to automate routine scripts." />}
       </Card>
       {editing && <TaskEditor task={editing === 'new' ? null : editing} onClose={() => setEditing(null)} devMap={devMap} policies={policiesQ.data?.policies || []} scripts={scriptsQ.data?.scripts || []} />}
+      <ConfirmDialog open={!!runningTask} onClose={() => setRunningTask(null)} onConfirm={() => doRun(runningTask.task)}
+        title="Run task now?" confirmLabel="Run now"
+        body={runningTask && (runningTask.count === 0
+          ? <>This task has <b>no target agents</b> in scope right now — nothing will run.</>
+          : <>Run <b>{runningTask.task.name}</b> immediately on <b>{runningTask.count}</b> agent{runningTask.count === 1 ? '' : 's'}? This runs the script outside the schedule; offline agents get it on reconnect.</>)} />
     </Page>
   );
 }
@@ -301,14 +327,17 @@ function TaskEditor({ task, onClose, devMap, policies, scripts }) {
   const [kind, setKind] = useState(task?.schedule_kind || 'interval');
   const [intervalSec, setIntervalSec] = useState(task?.interval_sec || 3600);
   const [minute, setMinute] = useState(task?.run_at_minute || 180);
+  const [daysOfWeek, setDaysOfWeek] = useState(task?.days_of_week || 0);
+  const [times, setTimes] = useState(task?.run_at_minutes?.length ? task.run_at_minutes : [180]);
   const [enabled, setEnabled] = useState(task?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const devices = Object.values(devMap);
 
   const save = async () => {
+    if (kind === 'weekly' && (daysOfWeek === 0 || times.length === 0)) { toast.error('Pick at least one weekday and one time'); return; }
     setBusy(true);
     const sc = scripts.find((s) => s.id === scriptId);
-    const body = { name: name || 'Task', script_id: scriptId || undefined, shell: sc?.shell || 'bash', schedule_kind: kind, interval_sec: Number(intervalSec), run_at_minute: Number(minute), enabled };
+    const body = { name: name || 'Task', script_id: scriptId || undefined, shell: sc?.shell || 'bash', schedule_kind: kind, interval_sec: Number(intervalSec), run_at_minute: Number(minute), days_of_week: kind === 'weekly' ? daysOfWeek : 0, run_at_minutes: kind === 'weekly' ? times : [], enabled };
     if (target.startsWith('dev:')) body.agent_id = target.slice(4); else if (target.startsWith('pol:')) body.policy_id = target.slice(4);
     try { if (task) await api.updateTask(task.id, body); else await api.createTask(body); toast.success(task ? 'Task updated' : 'Task created'); onClose(); }
     catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); }
@@ -321,17 +350,44 @@ function TaskEditor({ task, onClose, devMap, policies, scripts }) {
       <div className="p-5 space-y-4">
         <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nightly cleanup" /></Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Target"><Select value={target} onChange={(e) => setTarget(e.target.value)}><option value="">Select…</option><optgroup label="Devices">{devices.map((d) => <option key={d.id} value={'dev:' + d.id}>{d.hostname}</option>)}</optgroup><optgroup label="Policies">{policies.map((p) => <option key={p.id} value={'pol:' + p.id}>{p.name}</option>)}</optgroup></Select></Field>
-          <Field label="Script"><Select value={scriptId} onChange={(e) => setScriptId(e.target.value)}><option value="">Choose script…</option>{scripts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
+          <Field label="Target"><Combobox value={target} onChange={setTarget} placeholder="Select…"
+            options={[
+              ...devices.map((d) => ({ value: 'dev:' + d.id, label: d.hostname, group: 'Devices' })),
+              ...policies.map((p) => ({ value: 'pol:' + p.id, label: p.name, group: 'Policies' })),
+            ]} /></Field>
+          <Field label="Script"><Combobox value={scriptId} onChange={setScriptId} placeholder="Choose script…"
+            options={scripts.map((s) => ({ value: s.id, label: s.name }))} /></Field>
         </div>
         <Field label="Schedule">
           <div className="flex gap-1 p-0.5 bg-app rounded-lg border border-line2 w-fit mb-2">
-            {[['interval', 'Interval'], ['daily', 'Daily at time']].map(([v, l]) => <button key={v} onClick={() => setKind(v)} className={cx('h-7 px-3 rounded-md text-[12px] font-medium transition', kind === v ? 'bg-elevated text-ink' : 'text-faint hover:text-muted')}>{l}</button>)}
+            {[['interval', 'Interval'], ['daily', 'Daily at time'], ['weekly', 'Weekly']].map(([v, l]) => <button key={v} onClick={() => setKind(v)} className={cx('h-7 px-3 rounded-md text-[12px] font-medium transition', kind === v ? 'bg-elevated text-ink' : 'text-faint hover:text-muted')}>{l}</button>)}
           </div>
-          {kind === 'interval' ? (
+          {kind === 'interval' && (
             <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted">Every</span><Input type="number" value={Math.round(intervalSec / 60)} onChange={(e) => setIntervalSec(Number(e.target.value) * 60)} className="w-24" /><span className="text-[12.5px] text-muted">minutes</span></div>
-          ) : (
+          )}
+          {kind === 'daily' && (
             <div className="flex items-center gap-2"><span className="text-[12.5px] text-muted">At</span><Input type="time" value={minuteToHHMM(minute)} onChange={(e) => { const [h, m] = e.target.value.split(':').map(Number); setMinute(h * 60 + m); }} className="w-32" /></div>
+          )}
+          {kind === 'weekly' && (
+            <div className="space-y-3">
+              <div className="flex gap-1">
+                {WEEKDAYS.map((d, i) => {
+                  const on = (daysOfWeek & (1 << i)) !== 0;
+                  return <button key={i} type="button" onClick={() => setDaysOfWeek(daysOfWeek ^ (1 << i))}
+                    className={cx('h-8 w-10 rounded-md text-[11.5px] font-medium transition', on ? 'bg-brand text-white' : 'bg-app border border-line2 text-muted hover:text-ink')}>{d}</button>;
+                })}
+              </div>
+              <div className="space-y-2">
+                {times.map((m, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="text-[12.5px] text-muted">At</span>
+                    <Input type="time" value={minuteToHHMM(m)} onChange={(e) => { const [h, mm] = e.target.value.split(':').map(Number); const next = times.slice(); next[idx] = h * 60 + mm; setTimes(next); }} className="w-32" />
+                    {times.length > 1 && <button type="button" onClick={() => setTimes(times.filter((_, i) => i !== idx))} className="text-faint hover:text-bad p-1"><Icon name="trash" size={15} /></button>}
+                  </div>
+                ))}
+                <Button variant="ghost" size="sm" icon="plus" onClick={() => setTimes([...times, 540])}>Add time</Button>
+              </div>
+            </div>
           )}
         </Field>
         <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={setEnabled} /><span className="text-[13px] text-ink">Enabled</span></label>

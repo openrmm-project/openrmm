@@ -266,8 +266,10 @@ boolean `*_set` flags.
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | GET | `/api/tasks?agent_id=&policy_id=` | `tasks.view` | List tasks |
-| POST | `/api/tasks` | `tasks.manage` | Create (`name, script_id` or `shell+script`, `schedule_kind, interval_sec, run_at_minute`, `agent_id` or `policy_id`) |
+| GET | `/api/tasks/{id}/targets` | `tasks.view` | Count of agents a run would hit (in caller scope) |
+| POST | `/api/tasks` | `tasks.manage` | Create (`name, script_id` or `shell+script`, `schedule_kind` + `interval_sec` / `run_at_minute` / `days_of_week`+`run_at_minutes`, `agent_id` or `policy_id`) |
 | PUT | `/api/tasks/{id}` | `tasks.manage` | Update |
+| POST | `/api/tasks/{id}/run` | `tasks.manage` | Run now on all target agents (returns `{queued}`) |
 | DELETE | `/api/tasks/{id}` | `tasks.manage` | Delete |
 
 ## Policies

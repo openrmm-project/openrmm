@@ -11,7 +11,10 @@ function useDeviceMap() {
 }
 
 function JobsScreen({ route }) {
-  const [tab, setTab] = useState('awaiting');
+  // Deep-linking to a specific job (e.g. from a device's Jobs tab) must land on
+  // "All jobs" — an already-executed job isn't in the awaiting-approval list, so
+  // defaulting to that tab would hide it and drop the user on the approval queue.
+  const [tab, setTab] = useState(route?.params?.focus ? 'all' : 'awaiting');
   const jobsQ = useQuery(['jobs-all'], () => api.listJobs(), { invalidateOn: ['jobs'], poll: 2500 });
   const devMap = useDeviceMap();
   const [focus, setFocus] = useState(route?.params?.focus || null);

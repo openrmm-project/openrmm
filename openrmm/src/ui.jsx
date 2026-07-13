@@ -207,6 +207,68 @@ function Select({ children, ...props }) {
     </div>
   );
 }
+// Combobox is a searchable single-select. Drop-in for <Select> when the option
+// list is long: options are [{ value, label, group? }]; typing filters by label
+// (and group). Keeps the native Select styling so the two read the same.
+function Combobox({ value, onChange, options = [], placeholder = 'Select…', disabled, className }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+  const inputRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  useEffect(() => { if (open && inputRef.current) inputRef.current.focus(); }, [open]);
+  const selected = options.find((o) => o.value === value);
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? options.filter((o) => o.label.toLowerCase().includes(ql) || (o.group || '').toLowerCase().includes(ql)) : options;
+  const groups = [];
+  filtered.forEach((o) => {
+    const g = o.group || '';
+    let bucket = groups.find((x) => x.name === g);
+    if (!bucket) { bucket = { name: g, items: [] }; groups.push(bucket); }
+    bucket.items.push(o);
+  });
+  const pick = (v) => { onChange(v); setOpen(false); setQ(''); };
+  return (
+    <div className={cx('relative', className)} ref={ref}>
+      <button type="button" disabled={disabled} onClick={() => setOpen((v) => !v)}
+        className={cx(inputCls, 'appearance-none pr-8 text-left flex items-center', disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer', !selected && 'text-faint')}>
+        <span className="truncate">{selected ? selected.label : placeholder}</span>
+      </button>
+      <Icon name="chevdown" size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
+      {open && (
+        <div className="absolute z-30 mt-1 w-full rounded-lg bg-elevated border border-line shadow-xl overflow-hidden">
+          <div className="p-1.5 border-b border-line">
+            <div className="relative">
+              <Icon name="search" size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+              <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
+                className={cx(inputCls, 'h-8 pl-8')} onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); } }} />
+            </div>
+          </div>
+          <div className="max-h-60 overflow-auto py-1">
+            {groups.length === 0 && <div className="px-3 py-2 text-[12px] text-faint">No matches</div>}
+            {groups.map((g) => (
+              <div key={g.name || '_'}>
+                {g.name && <div className="px-3 pt-1.5 pb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-faint">{g.name}</div>}
+                {g.items.map((o) => (
+                  <button key={o.value} type="button" onClick={() => pick(o.value)}
+                    className={cx('w-full text-left px-3 py-1.5 text-[13px] flex items-center gap-2 hover:bg-app transition', o.value === value ? 'text-brandhi' : 'text-ink')}>
+                    <span className="truncate flex-1">{o.label}</span>
+                    {o.value === value && <Icon name="check" size={14} className="text-brandhi shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 function Toggle({ checked, onChange, disabled }) {
   return (
     <button type="button" disabled={disabled} onClick={() => onChange(!checked)}
@@ -477,7 +539,7 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = '
 
 Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, useQuery, useMutation, useToast, ToastProvider,
-  Button, Spinner, StatusPill, STATUS_META, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Toggle,
+  Button, Spinner, StatusPill, STATUS_META, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle,
   Avatar, RoleBadge, Kbd, Skeleton, EmptyState, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
   csvEscape, toCSV, downloadText,
 });

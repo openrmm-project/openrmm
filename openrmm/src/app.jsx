@@ -96,8 +96,8 @@ function LoginScreen({ onAuthed }) {
 
 function BrandMark({ size = 32 }) {
   return (
-    <img src="assets/icone_openrmm.png" alt="OpenRMM" width={size} height={size}
-      className="rounded-xl shrink-0 shadow-lg shadow-brand/20 object-cover"
+    <img src="assets/logo_open_rmm_edit3.png" alt="OpenRMM" width={size} height={size}
+      className="shrink-0 object-contain"
       style={{ width: size, height: size }} />
   );
 }

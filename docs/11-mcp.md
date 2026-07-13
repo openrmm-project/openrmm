@@ -69,6 +69,15 @@ required): the user logs into OpenRMM (password + 2FA) and consents, and the
 client receives a short-lived, scoped, refreshable token bound to that user — no
 static secret to paste. See [17-mcp-oauth](17-mcp-oauth.md).
 
+### Production: put `/mcp` on its own door
+For a real deployment, use the **split-ingress topology**
+([`deploy/README-production.md`](../deploy/README-production.md)): `/mcp` gets its
+**own port/door**, separate from the console (UI + REST API) and the agents' WS.
+That lets you expose the MCP door **publicly** for cloud clients (Claude web,
+ChatGPT) *or* restrict it to **specific IPs** for on-prem clients — a firewall
+choice independent of the console, which stays locked to your own IPs/VPN. Keep
+`RMM_MCP_ALLOWED_IPS` set as an app-level second layer.
+
 ## Security controls (layered)
 
 1. **IP allowlist (built in).** Restrict `/mcp` to known source IPs/CIDRs:
@@ -94,6 +103,12 @@ static secret to paste. See [17-mcp-oauth](17-mcp-oauth.md).
 - [ ] `RMM_MCP_ALLOWED_IPS` set to your client / proxy egress IPs.
 - [ ] Dedicated API token per connector with only the needed role; rotate/revoke
   as needed.
+- [ ] **Set an expiry** on the connector token (Settings ▸ API tokens ▸ *Expires*,
+  or `expires_in_days` on the API). An expired token stops authenticating, so a
+  leaked secret has a bounded blast radius — strongly recommended for **public /
+  cloud** exposure where an IP allowlist can't apply (cloud clients connect from
+  the provider's shared, dynamic egress IPs).
+- [ ] Bind the token to a **scoped user** so it only sees that user's fleet.
 - [ ] `RMM_ALLOW_UNAPPROVED_JOBS=false` (default) — approval stays mandatory.
 - [ ] Watch the audit log for `apitoken.create` / `job.propose` / `job.approve`.
 

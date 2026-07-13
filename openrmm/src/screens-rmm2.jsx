@@ -573,6 +573,7 @@ function APITokensPanel() {
   const [name, setName] = useState('');
   const [role, setRole] = useState('tech');
   const [userId, setUserId] = useState('');
+  const [expiresDays, setExpiresDays] = useState('0'); // '0' = never
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null); // { token, name, role } — shown once
   const [confirmDel, setConfirmDel] = useState(null);
@@ -581,15 +582,21 @@ function APITokensPanel() {
   const roles = rolesQ.data?.roles || [{ key: 'tech', name: 'Technician' }, { key: 'admin', name: 'Administrator' }];
   const users = usersQ.data?.users || [];
   const roleLabel = (r) => (r.name ? `${r.key} — ${r.name}` : r.key);
+  const expLabel = (t) => {
+    if (!t.expires_at) return <span className="text-faint">Never</span>;
+    if (new Date(t.expires_at) <= new Date()) return <span className="text-bad font-medium">Expired</span>;
+    return <span className="text-muted tabular">{fmtTime(t.expires_at)}</span>;
+  };
+  const EXPIRY_OPTIONS = [['0', 'Never'], ['30', '30 days'], ['90', '90 days'], ['365', '1 year']];
   const selRole = roles.find((r) => r.key === role);
   const mcpMissing = selRole && Array.isArray(selRole.permissions) && !selRole.permissions.includes('mcp.use');
 
-  const openCreate = () => { setName(''); setRole('tech'); setUserId(''); setCreated(null); setCreating(true); };
+  const openCreate = () => { setName(''); setRole('tech'); setUserId(''); setExpiresDays('0'); setCreated(null); setCreating(true); };
   const closeModal = () => { if (!busy) { setCreating(false); setCreated(null); } };
   const create = async () => {
     setBusy(true);
     try {
-      const r = await api.createAPIToken({ name: name.trim(), role, user_id: userId || undefined });
+      const r = await api.createAPIToken({ name: name.trim(), role, user_id: userId || undefined, expires_in_days: Number(expiresDays) || 0 });
       setCreated(r); // token shown once
       tokensQ.refetch();
       toast.success('API token created', 'Copy it now — it is shown once.');
@@ -612,13 +619,14 @@ function APITokensPanel() {
         ? <div className="px-4 py-10 text-center text-[12.5px] text-faint">No API tokens yet.</div>
         : (
           <table className="w-full text-left">
-            <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line"><th className="font-semibold px-4 py-2.5">Name</th><th className="font-semibold px-3 py-2.5">Role</th><th className="font-semibold px-3 py-2.5">Created</th><th className="font-semibold px-4 py-2.5 text-right">Actions</th></tr></thead>
+            <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line"><th className="font-semibold px-4 py-2.5">Name</th><th className="font-semibold px-3 py-2.5">Role</th><th className="font-semibold px-3 py-2.5">Created</th><th className="font-semibold px-3 py-2.5">Expires</th><th className="font-semibold px-4 py-2.5 text-right">Actions</th></tr></thead>
             <tbody className="divide-y divide-line">
               {tokens.map((t) => (
                 <tr key={t.id} className="hover:bg-elevated/40 transition">
                   <td className="px-4 py-3"><div className="flex items-center gap-2.5"><div className="h-7 w-7 rounded-lg bg-elevated border border-line flex items-center justify-center text-faint"><Icon name="key" size={14} /></div><span className="text-[13px] text-ink font-medium">{t.name || <span className="text-faint">unnamed</span>}</span></div></td>
                   <td className="px-3 py-3"><RoleBadge role={t.role} /></td>
                   <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(t.created_at)}</td>
+                  <td className="px-3 py-3 text-[12px]">{expLabel(t)}</td>
                   <td className="px-4 py-3 text-right"><Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(t)}>Revoke</Button></td>
                 </tr>
               ))}
@@ -632,7 +640,7 @@ function APITokensPanel() {
             <div className="space-y-3">
               <div className="text-[12.5px] text-muted">Copy this token now — it will <b className="text-ink">not be shown again</b>. Store it in your MCP client / integration.</div>
               <div className="flex items-center gap-2 rounded-lg border border-warn/25 bg-warnsoft px-3 py-2"><Icon name="key" size={14} className="text-warn shrink-0" /><span className="text-[12.5px] mono text-ink flex-1 break-all">{created.token}</span><CopyButton value={created.token} /></div>
-              <div className="text-[11.5px] text-faint">Name: <b className="text-ink">{created.name || 'unnamed'}</b> · Role: <span className="mono">{created.role}</span></div>
+              <div className="text-[11.5px] text-faint">Name: <b className="text-ink">{created.name || 'unnamed'}</b> · Role: <span className="mono">{created.role}</span> · Expires: <span className="text-ink">{created.expires_at ? fmtTime(created.expires_at) : 'never'}</span></div>
               <div className="flex justify-end mt-2"><Button variant="primary" onClick={closeModal}>Done</Button></div>
             </div>
           ) : (
@@ -644,6 +652,11 @@ function APITokensPanel() {
                 <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
                   <option value="">None (full role scope)</option>
                   {users.map((u) => <option key={u.id} value={u.id}>{u.username}</option>)}
+                </Select>
+              </Field>
+              <Field label="Expires" hint="A short-lived token limits the damage if the secret leaks — recommended for public/cloud MCP connectors.">
+                <Select value={expiresDays} onChange={(e) => setExpiresDays(e.target.value)}>
+                  {EXPIRY_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </Select>
               </Field>
               <div className="flex justify-end gap-2 mt-2"><Button variant="ghost" onClick={closeModal} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!name.trim()} onClick={create}>Create token</Button></div>

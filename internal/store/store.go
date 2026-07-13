@@ -237,9 +237,9 @@ func (s *Store) ConsumeEnrollToken(ctx context.Context, token string) (siteID *s
 // ---------- API tokens ----------
 
 // CreateAPIToken stores a hashed API token.
-func (s *Store) CreateAPIToken(ctx context.Context, hash, name, role string, userID *string) (string, error) {
+func (s *Store) CreateAPIToken(ctx context.Context, hash, name, role string, userID *string, expiresAt *time.Time) (string, error) {
 	id := newID()
-	_, err := s.pool.Exec(ctx, `INSERT INTO api_tokens (id, token_hash, name, role, user_id) VALUES ($1,$2,$3,$4,$5)`, id, hash, name, role, userID)
+	_, err := s.pool.Exec(ctx, `INSERT INTO api_tokens (id, token_hash, name, role, user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)`, id, hash, name, role, userID, expiresAt)
 	return id, err
 }
 

@@ -94,7 +94,12 @@ These are known gaps to close before production — documented, not silently
 omitted:
 
 1. **TLS** — terminate HTTPS/WSS at a reverse proxy (Caddy/nginx/Traefik). Tokens
-   and traffic must not cross the wire in clear text.
+   and traffic must not cross the wire in clear text. For production, prefer the
+   **split-ingress topology** ([`deploy/README-production.md`](../deploy/README-production.md)):
+   three doors on three ports so the firewall can keep the **agents** door public
+   (agents live on untrusted networks) while the **console** door is restricted to
+   your IPs/VPN and the **MCP** door is exposed per your choice — the app never
+   holds the IP allowlist.
 2. ~~**RBAC / multi-tenancy**~~ — **DONE**: default and custom roles with granular
    permissions plus per-user Company/Site/Department/device access scope, enforced
    on read and write paths and on the AI/MCP surface. See *RBAC & per-user access

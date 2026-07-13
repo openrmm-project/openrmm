@@ -268,9 +268,9 @@ export const api = {
 
   // ---- API tokens (MCP connectors & integrations) ----
   listAPITokens: () =>
-    GET<{ tokens: { id: string; name: string; role: string; created_at: string }[] }>("/api/api-tokens"),
-  createAPIToken: (body: { name: string; role?: string; user_id?: string }) =>
-    POST<{ id: string; name: string; role: string; token: string; note: string }>("/api/api-tokens", body),
+    GET<{ tokens: { id: string; name: string; role: string; created_at: string; expires_at?: string | null }[] }>("/api/api-tokens"),
+  createAPIToken: (body: { name: string; role?: string; user_id?: string; expires_in_days?: number }) =>
+    POST<{ id: string; name: string; role: string; token: string; note: string; expires_at?: string | null }>("/api/api-tokens", body),
   deleteAPIToken: (id: string) => DELETE<{ status: string }>("/api/api-tokens/" + id),
 
   // ---- chat ----

@@ -170,6 +170,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/approve", s.approveJob)
 		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/reject", s.rejectJob)
 		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/cancel", s.cancelJob)
+		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/complete", s.completeJob)
 
 		r.With(s.requirePermission(models.PermAlertsView)).Get("/alerts", s.listAlerts)
 		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/{id}/ack", s.ackAlert)
@@ -1058,6 +1059,25 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job, err := s.jobs.Cancel(r.Context(), chi.URLParam(r, "id"), actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+// completeJob force-finalizes a stuck in-flight job. Body: {"success": bool}
+// (defaults to true — mark completed).
+func (s *Server) completeJob(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJobAgent(w, r, chi.URLParam(r, "id")) {
+		return
+	}
+	body := struct {
+		Success *bool `json:"success"`
+	}{}
+	_ = decode(r, &body)
+	success := body.Success == nil || *body.Success
+	job, err := s.jobs.CompleteManual(r.Context(), chi.URLParam(r, "id"), actorOf(r), success)
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return

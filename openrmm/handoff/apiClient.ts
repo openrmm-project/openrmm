@@ -259,6 +259,8 @@ export const api = {
   rejectBatch: (batchId: string) => POST<{ rejected: number }>(`/api/jobs/batch/${batchId}/reject`),
   approveJob: (id: string) => POST<Job>(`/api/jobs/${id}/approve`),
   rejectJob: (id: string) => POST<Job>(`/api/jobs/${id}/reject`),
+  cancelJob: (id: string) => POST<Job>(`/api/jobs/${id}/cancel`),
+  completeJob: (id: string, success = true) => POST<Job>(`/api/jobs/${id}/complete`, { success }),
 
   // ---- audit ----
   listAudit: (limit = 100) => GET<{ entries: AuditEntry[] }>(`/api/audit${qs({ limit })}`),

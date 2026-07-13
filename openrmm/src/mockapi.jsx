@@ -222,6 +222,7 @@ const api = {
   approveJob(id) { return POST('/api/jobs/' + id + '/approve'); },
   rejectJob(id) { return POST('/api/jobs/' + id + '/reject'); },
   cancelJob(id) { return POST('/api/jobs/' + id + '/cancel'); },
+  completeJob(id, success = true) { return POST('/api/jobs/' + id + '/complete', { success }); },
 
   /* ---- audit ---- */
   listAudit(limit = 100) { return GET('/api/audit' + qs({ limit })); },

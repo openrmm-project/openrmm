@@ -66,6 +66,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
   const toast = useToast();
   const [open, setOpen] = useState(defaultOpen);
   const [confirm, setConfirm] = useState(false);
+  const [askComplete, setAskComplete] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef(null);
   useEffect(() => { if (focused && ref.current) ref.current.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, []);
@@ -90,6 +91,11 @@ function JobCard({ job, device, defaultOpen, focused }) {
     setBusy(true);
     try { await api.cancelJob(job.id); toast.info('Canceling', 'Stopping the job on ' + (device?.hostname || job.agent_id) + '…'); }
     catch (e) { toast.error('Could not cancel', e.message); } finally { setBusy(false); }
+  };
+  const complete = async () => {
+    setBusy(true);
+    try { await api.completeJob(job.id, true); toast.success('Marked complete', 'Job finalized manually.'); }
+    catch (e) { toast.error('Could not complete', e.message); } finally { setBusy(false); }
   };
 
   return (
@@ -141,7 +147,10 @@ function JobCard({ job, device, defaultOpen, focused }) {
               <div className="flex items-center gap-2 text-[12.5px] text-run">
                 {job.status === 'running' ? <><Spinner size={14} className="text-run" />Executing on {device?.hostname}…</> : <><Icon name="clock" size={13} />{job.status === 'sent' ? 'Sent — starting…' : 'Queued (waiting for agent)'}</>}
               </div>
-              {can('jobs.manage') && <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>Cancel</Button>}
+              {can('jobs.manage') && <div className="flex items-center gap-2">
+                <Button variant="ghost" icon="approve" onClick={() => setAskComplete(true)} disabled={busy}>Mark complete</Button>
+                <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>Cancel</Button>
+              </div>}
             </div>
           )}
         </div>
@@ -149,6 +158,8 @@ function JobCard({ job, device, defaultOpen, focused }) {
 
       <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approve} danger requireType="RUN" confirmLabel="Approve & run"
         title="This script looks destructive" body={<>It matches patterns that modify or remove data on <b>{device?.hostname}</b>. Re-read the script above, then type <b>RUN</b> to confirm you want to execute it.</>} />
+      <ConfirmDialog open={askComplete} onClose={() => setAskComplete(false)} onConfirm={complete} confirmLabel="Mark complete"
+        title="Mark job as completed?" body={<>Only do this if you've confirmed on <b>{device?.hostname || job.agent_id}</b> that the script finished — the agent's result never arrived (it can be lost on a disconnect). This finalizes the job as completed and is recorded in the audit log.</>} />
     </Card>
   );
 }

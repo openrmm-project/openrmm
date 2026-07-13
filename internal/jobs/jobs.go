@@ -266,6 +266,35 @@ func (s *Service) Cancel(ctx context.Context, jobID, actor string) (*models.Job,
 	return s.store.GetJob(ctx, jobID)
 }
 
+// CompleteManual force-finalizes an in-flight job as completed (or failed) when
+// the agent's result never arrived — e.g. the job_result frame was lost on a
+// disconnect, stranding the job in 'sent'. Only in-flight jobs qualify; terminal
+// and not-yet-approved jobs are rejected. Recorded in the audit trail as a manual
+// action so the override is never silent.
+func (s *Service) CompleteManual(ctx context.Context, jobID, actor string, success bool) (*models.Job, error) {
+	j, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	switch j.Status {
+	case models.JobPending, models.JobSent, models.JobRunning:
+		// in-flight — allowed
+	default:
+		return nil, fmt.Errorf("job is %s, cannot complete manually", j.Status)
+	}
+	status := models.JobCompleted
+	note := "marked complete manually by " + actor
+	if !success {
+		status = models.JobFailed
+		note = "marked failed manually by " + actor
+	}
+	if err := s.store.SetJobResult(ctx, jobID, status, 0, note, ""); err != nil {
+		return nil, err
+	}
+	s.audit(ctx, actor, "job.complete_manual", jobID, map[string]any{"agent": j.AgentID, "host": s.hostname(ctx, j.AgentID), "success": success})
+	return s.store.GetJob(ctx, jobID)
+}
+
 // dispatch attempts to push a pending job to a connected agent.
 func (s *Service) dispatch(ctx context.Context, j *models.Job) {
 	msg := protocol.JobMsg{JobID: j.ID, Type: j.Type, Shell: j.Shell, Script: j.Script}

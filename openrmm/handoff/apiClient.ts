@@ -78,7 +78,8 @@ export type CheckResult = {
 export type Task = {
   id: string; agent_id?: string; policy_id?: string; name: string;
   script_id?: string; shell: string; script: string;
-  schedule_kind: "interval" | "daily"; interval_sec: number; run_at_minute: number;
+  schedule_kind: "interval" | "daily" | "weekly"; interval_sec: number; run_at_minute: number;
+  days_of_week: number; run_at_minutes: number[];
   enabled: boolean; created_at: string;
 };
 
@@ -331,6 +332,8 @@ export const api = {
   createTask: (body: Partial<Task>) => POST<Task>("/api/tasks", body),
   updateTask: (id: string, body: Partial<Task>) => PUT<Task>(`/api/tasks/${id}`, body),
   deleteTask: (id: string) => DELETE<void>(`/api/tasks/${id}`),
+  taskTargets: (id: string) => GET<{ count: number }>(`/api/tasks/${id}/targets`),
+  runTask: (id: string) => POST<{ queued: number }>(`/api/tasks/${id}/run`, {}),
 
   // ---- policies ----
   listPolicies: () => GET<{ policies: Policy[] }>("/api/policies"),

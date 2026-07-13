@@ -182,8 +182,10 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermChecksManage)).Delete("/checks/{id}", s.deleteCheck)
 
 		r.With(s.requirePermission(models.PermTasksView)).Get("/tasks", s.listTasks)
+		r.With(s.requirePermission(models.PermTasksView)).Get("/tasks/{id}/targets", s.taskTargets)
 		r.With(s.requirePermission(models.PermTasksManage)).Post("/tasks", s.createTask)
 		r.With(s.requirePermission(models.PermTasksManage)).Put("/tasks/{id}", s.updateTask)
+		r.With(s.requirePermission(models.PermTasksManage)).Post("/tasks/{id}/run", s.runTask)
 		r.With(s.requirePermission(models.PermTasksManage)).Delete("/tasks/{id}", s.deleteTask)
 
 		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies", s.listPolicies)

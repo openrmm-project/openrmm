@@ -68,10 +68,29 @@ agent returns a raw value/output; the server computes `passing`/`warning`/
 ## Scheduled tasks
 
 A **task** runs a script (from the library via `script_id`, or inline) on a
-schedule (`interval` or `daily`). The scheduler dispatches due tasks as
-**pre-approved** jobs (`tasks.manage` automation — distinct from AI-proposed
-scripts, which always require human approval). Each run is linked via
-`jobs.task_id`. Tasks may be owned by an agent or a policy.
+schedule. The scheduler dispatches due tasks as **pre-approved** jobs
+(`tasks.manage` automation — distinct from AI-proposed scripts, which always
+require human approval). Each run is linked via `jobs.task_id`. Tasks may be
+owned by an agent or a policy.
+
+**Schedule kinds** (`schedule_kind`):
+
+| Kind | Fields | Fires |
+|------|--------|-------|
+| `interval` | `interval_sec` | every N seconds |
+| `daily` | `run_at_minute` (minutes since UTC midnight) | once per day at that time |
+| `weekly` | `days_of_week` (bitmask, bit N = `time.Weekday` N, 0=Sun) + `run_at_minutes[]` | on each selected weekday, at every listed time |
+
+Weekly is due-computed in `scheduler.taskDue` by finding the most recent
+`(active weekday × time)` occurrence at/before now (scanning back ≤8 days) and
+comparing it to the last run — so every day/time slot fires once and a missed
+slot still runs on the next tick.
+
+**Run on demand.** `POST /api/tasks/{id}/run` (`tasks.manage`) enqueues the task
+immediately on all its current target agents, outside the schedule (offline
+agents get it on reconnect); `GET /api/tasks/{id}/targets` returns the agent
+count so the UI can confirm before firing. Both resolve a policy task's agents
+via `AgentIDsForPolicy` and are narrowed to the caller's access scope.
 
 ## Policies (inheritance)
 

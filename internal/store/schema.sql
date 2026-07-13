@@ -316,13 +316,19 @@ CREATE TABLE IF NOT EXISTS tasks (
     script_id     UUID REFERENCES scripts(id) ON DELETE SET NULL,
     shell         TEXT NOT NULL DEFAULT 'bash',
     script        TEXT NOT NULL DEFAULT '',     -- inline fallback if no script_id
-    schedule_kind TEXT NOT NULL DEFAULT 'interval', -- interval | daily
+    schedule_kind TEXT NOT NULL DEFAULT 'interval', -- interval | daily | weekly
     interval_sec  INTEGER NOT NULL DEFAULT 3600,
     run_at_minute INTEGER NOT NULL DEFAULT 0,    -- for daily: minutes since midnight (UTC)
+    days_of_week  SMALLINT NOT NULL DEFAULT 0,   -- for weekly: bitmask, bit N = time.Weekday N (0=Sun)
+    run_at_minutes INTEGER[] NOT NULL DEFAULT '{}', -- for weekly: times of day (minutes since midnight, UTC)
     enabled       BOOLEAN NOT NULL DEFAULT true,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id);
+-- Weekly schedule (days-of-week bitmask + multiple times per day). Added after
+-- the original interval/daily kinds; back-fills empty on existing rows.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS days_of_week SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS run_at_minutes INTEGER[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_tasks_policy ON tasks(policy_id);
 
 -- ===================== Alerts =====================

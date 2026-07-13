@@ -33,6 +33,7 @@ const (
 const (
 	ScheduleInterval = "interval"
 	ScheduleDaily    = "daily"
+	ScheduleWeekly   = "weekly"
 )
 
 // Policy scope types.
@@ -172,6 +173,8 @@ type Task struct {
 	ScheduleKind string    `json:"schedule_kind"`
 	IntervalSec  int       `json:"interval_sec"`
 	RunAtMinute  int       `json:"run_at_minute"`
+	DaysOfWeek   int       `json:"days_of_week"`    // weekly: bitmask, bit N = time.Weekday N (0=Sun)
+	RunAtMinutes []int     `json:"run_at_minutes"`  // weekly: times of day, minutes since midnight (UTC)
 	Enabled      bool      `json:"enabled"`
 	CreatedAt    time.Time `json:"created_at"`
 }

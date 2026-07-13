@@ -182,7 +182,12 @@ function PolicyDetail({ policy, onClose }) {
             <div className="flex items-start gap-2.5 rounded-xl border border-brand/25 bg-brandsoft px-3.5 py-3"><Icon name="info" size={16} className="text-brandhi mt-0.5 shrink-0" /><div className="text-[12.5px] text-ink leading-relaxed">Assigning to a <b>client</b> or <b>site</b> pushes every check and task in this policy to <b>all agents in that scope</b>. Agent-level assignments target a single device.</div></div>
             {can('policies.manage') && (
               <div className="flex items-center gap-2">
-                <Select value={addScope} onChange={(e) => setAddScope(e.target.value)} className="flex-1"><option value="">Add an assignment…</option><optgroup label="Clients">{clients.map((c) => <option key={c.id} value={'client:' + c.id}>{c.name} (all sites)</option>)}</optgroup><optgroup label="Sites">{sites.map((s) => <option key={s.id} value={'site:' + s.id}>{s.name}</option>)}</optgroup><optgroup label="Agents">{Object.values(devMap).map((d) => <option key={d.id} value={'agent:' + d.id}>{d.hostname}</option>)}</optgroup></Select>
+                <Combobox value={addScope} onChange={setAddScope} className="flex-1" placeholder="Add an assignment…"
+                  options={[
+                    ...clients.map((c) => ({ value: 'client:' + c.id, label: c.name + ' (all sites)', group: 'Clients' })),
+                    ...sites.map((s) => ({ value: 'site:' + s.id, label: s.name, group: 'Sites' })),
+                    ...Object.values(devMap).map((d) => ({ value: 'agent:' + d.id, label: d.hostname, group: 'Agents' })),
+                  ]} />
                 <Button variant="primary" icon="plus" onClick={addAssignment} disabled={!addScope}>Assign</Button>
               </div>
             )}

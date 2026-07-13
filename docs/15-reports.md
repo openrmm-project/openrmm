@@ -19,8 +19,10 @@ JSONB carries `cpu_model`, `cpu_cores`, `mem_total_bytes`, `platform`,
 `software[]` (each `{name, version}`, collected per-OS) and a nested
 `hardware{}` object (`manufacturer`, `system_model`, `serial_number`, `bios`,
 `motherboard{}`, `storage_devices[]`, `gpus[]`). The hardware report flattens
-that object — joining GPU/storage names into a single cell. A GIN index
-(`idx_inventory_data`) backs the JSONB lookups.
+that object — joining GPU and storage-device names into single cells (`gpu` /
+`storage`) and, separately, **summing every storage device's `size_bytes`** into
+a total-capacity `storage_bytes` column (rendered with a byte formatter). A GIN
+index (`idx_inventory_data`) backs the JSONB lookups.
 
 > The nested `hardware{}` object requires an agent build that collects it
 > (`collectHardware`, agent ≥ 0.4.1). Older agents report only the top-level
@@ -32,8 +34,15 @@ that object — joining GPU/storage names into a single cell. A GIN index
 | Report | One row per | Columns |
 |--------|-------------|---------|
 | `software` | (package, machine) | name, version, hostname, client, site, department |
-| `hardware` | machine with inventory | hostname, os, manufacturer, model, serial_number, cpu_model, cpu_cores, mem_total_bytes, gpu, storage, bios, platform, platform_version, kernel_version, client, site, department |
+| `hardware` | machine with inventory | hostname, os, arch, manufacturer, model, serial_number, cpu_model, cpu_cores, mem_total_bytes, gpu, storage, storage_bytes, bios, platform, platform_version, kernel_version, ip, mac, client, site, department |
 | `machines` | machine (online or not) | hostname, os, arch, status, agent_version, cpu_model, mem_total_bytes, ip, mac, client, site, department, last_seen, collected_at |
+
+The UI labels the `hardware` tab **Hardware & System** and the `machines` tab
+**Agents** (the report keys `hardware` / `machines` are unchanged). The Agents
+tab is scoped to fleet-management columns (host, status, agent, client/site/
+department, last seen); the per-machine detail (OS, arch, CPU, RAM, IP, MAC)
+lives on Hardware & System. Both reports still *return* every field over REST —
+only the column set each tab exposes to the picker differs.
 
 `software`/`hardware` are based on `inventory` (only machines that have
 reported); `machines` is based on `agents` (LEFT JOIN inventory), so a device

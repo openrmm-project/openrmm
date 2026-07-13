@@ -111,6 +111,7 @@ func (s *Store) SoftwareReport(ctx context.Context, f ReportFilter) ([]SoftwareR
 type HardwareRow struct {
 	Hostname     string `json:"hostname"`
 	OS           string `json:"os"`
+	Arch         string `json:"arch"`
 	Manufacturer string `json:"manufacturer"`
 	Model        string `json:"model"`
 	Serial       string `json:"serial_number"`
@@ -118,11 +119,14 @@ type HardwareRow struct {
 	CPUCores     int    `json:"cpu_cores"`
 	MemTotalByte int64  `json:"mem_total_bytes"`
 	GPU          string `json:"gpu"`
-	Storage      string `json:"storage"`
+	Storage      string `json:"storage"`      // joined storage-device models
+	StorageBytes int64  `json:"storage_bytes"` // total capacity across all storage devices
 	BIOS         string `json:"bios"`
 	Platform     string `json:"platform"`
 	PlatformVer  string `json:"platform_version"`
 	Kernel       string `json:"kernel_version"`
+	IP           string `json:"ip"`
+	MAC          string `json:"mac"`
 	Client       string `json:"client"`
 	Site         string `json:"site"`
 	Department   string `json:"department"`
@@ -140,7 +144,7 @@ const netIfaces = `CASE WHEN jsonb_typeof(inv.data->'network_interfaces')='array
 func (s *Store) HardwareReport(ctx context.Context, f ReportFilter) ([]HardwareRow, error) {
 	where, args := f.where()
 	q := `
-		SELECT a.hostname, a.os,
+		SELECT a.hostname, a.os, a.arch,
 		       COALESCE(inv.data->'hardware'->>'manufacturer',''),
 		       COALESCE(inv.data->'hardware'->>'system_model',''),
 		       COALESCE(inv.data->'hardware'->>'serial_number',''),
@@ -151,10 +155,16 @@ func (s *Store) HardwareReport(ctx context.Context, f ReportFilter) ([]HardwareR
 		                 FROM jsonb_array_elements(` + hwGPUs + `) gp), ''),
 		       COALESCE((SELECT string_agg(NULLIF(sd->>'model',''), ', ')
 		                 FROM jsonb_array_elements(` + hwStorage + `) sd), ''),
+		       COALESCE((SELECT SUM((sd->>'size_bytes')::bigint)
+		                 FROM jsonb_array_elements(` + hwStorage + `) sd), 0),
 		       COALESCE(inv.data->'hardware'->>'bios',''),
 		       COALESCE(inv.data->>'platform',''),
 		       COALESCE(inv.data->>'platform_version',''),
 		       COALESCE(inv.data->>'kernel_version',''),
+		       COALESCE((SELECT string_agg(NULLIF(ni->>'ipv4',''), ', ')
+		                 FROM jsonb_array_elements(` + netIfaces + `) ni), ''),
+		       COALESCE((SELECT string_agg(NULLIF(ni->>'mac',''), ', ')
+		                 FROM jsonb_array_elements(` + netIfaces + `) ni), ''),
 		       COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,'')
 		FROM inventory inv
 		JOIN agents a ON a.id = inv.agent_id` + reportJoins +
@@ -168,9 +178,9 @@ func (s *Store) HardwareReport(ctx context.Context, f ReportFilter) ([]HardwareR
 	var out []HardwareRow
 	for rows.Next() {
 		var r HardwareRow
-		if err := rows.Scan(&r.Hostname, &r.OS, &r.Manufacturer, &r.Model, &r.Serial,
-			&r.CPUModel, &r.CPUCores, &r.MemTotalByte, &r.GPU, &r.Storage, &r.BIOS,
-			&r.Platform, &r.PlatformVer, &r.Kernel, &r.Client, &r.Site, &r.Department); err != nil {
+		if err := rows.Scan(&r.Hostname, &r.OS, &r.Arch, &r.Manufacturer, &r.Model, &r.Serial,
+			&r.CPUModel, &r.CPUCores, &r.MemTotalByte, &r.GPU, &r.Storage, &r.StorageBytes, &r.BIOS,
+			&r.Platform, &r.PlatformVer, &r.Kernel, &r.IP, &r.MAC, &r.Client, &r.Site, &r.Department); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

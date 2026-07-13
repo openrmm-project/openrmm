@@ -29,7 +29,7 @@ The agent stores `{agent_id, agent_token}` in its state file (`-state`, default
 |------|------|--------|
 | `heartbeat` | `{}` | refresh `last_seen`, mark online |
 | `inventory` | `{ "data": {...} }` | upsert the inventory snapshot |
-| `job_result` | `{ job_id, exit_code, stdout, stderr, success }` | finalize the job |
+| `job_result` | `{ job_id, exit_code, stdout, stderr, success }` | finalize the job (server replies `job_result_ack`) |
 | `patch_report` | `{ os, patches:[{identifier,title,classification,kb,reboot_required,...}] }` | upsert the device's missing patches ([16](16-patch-management.md)) |
 | `patch_result` | `{ request_id, results:[{identifier,success,reboot_required,error}], reboot_required }` | record an install run |
 | `remote_status` | (reserved) | native remote-session state |
@@ -42,6 +42,7 @@ once on connect).
 | type | data | effect |
 |------|------|--------|
 | `job` | `{ job_id, type, shell, script }` | run it, reply with `job_result` |
+| `job_result_ack` | `{ job_id }` | confirm a `job_result` was durably recorded; the agent drops it from its retry outbox |
 | `remote_start` | `{ session_id, token, relay_url, kind }` | connect a remote module to the relay |
 | `patch_scan` | `{}` | scan for missing OS patches, reply with `patch_report` |
 | `patch_install` | `{ request_id, identifiers }` | install patches (empty = all approved), reply with `patch_result` |
@@ -59,6 +60,15 @@ and bridges it to the relay. See [08-remote-access](08-remote-access.md).
   agent's pong resets the deadline. Dead links are detected and cleaned up.
 - Approved jobs for an offline agent stay `pending` and are delivered on
   reconnect (`DispatchPending`).
+- **Job results are delivered at-least-once.** The agent keeps each `job_result`
+  in a disk-backed **outbox** and re-sends it on every (re)connect and on the
+  heartbeat timer until the server replies `job_result_ack`. This means a
+  connection dropped between execution and delivery — or an agent restart — can't
+  strand a finished job in `sent`; the result is redelivered and the job
+  finalizes automatically. The server's handling is idempotent (a re-sent result
+  for an already-terminal job is a no-op but is still acked), so duplicates are
+  harmless. (For a result that never arrives at all, an operator can still force
+  the outcome via manual complete — see [10](10-monitoring-policies.md).)
 - The agent reconnects automatically with a 5s backoff.
 
 ## Self-update

@@ -49,6 +49,14 @@ type agent struct {
 	quit        chan struct{}
 	mu          sync.Mutex
 	running     map[string]context.CancelFunc // job_id -> cancel, for in-flight jobs
+
+	// outbox holds job results the server hasn't acked yet, keyed by job_id, and
+	// is persisted to disk. Results are re-sent on every (re)connect and on a
+	// timer until acked, so a dropped connection (or an agent restart) can't lose
+	// a finished job's result and strand it in "sent" server-side.
+	obmu       sync.Mutex
+	outbox     map[string]protocol.JobResultMsg
+	outboxPath string
 }
 
 // program adapts the agent to the service interface.
@@ -76,8 +84,9 @@ func main() {
 
 	cleanupOldBinary() // remove leftovers from a previous self-update
 
-	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}}
+	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}, outbox: map[string]protocol.JobResultMsg{}, outboxPath: *statePath + ".outbox"}
 	a.loadState()
+	a.loadOutbox()
 
 	svcArgs := []string{"-server", *wsURL, "-state", *statePath}
 	if *enroll != "" {
@@ -151,6 +160,10 @@ func (a *agent) runOnce() error {
 	go a.telemetryLoop(done)
 	go a.updateLoop(done)
 
+	// Re-send any results the server never acked (e.g. lost on a previous
+	// disconnect or an agent restart) as soon as the link is back.
+	a.flushOutbox()
+
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -220,6 +233,11 @@ func (a *agent) handleFrame(raw []byte) {
 		if json.Unmarshal(env.Data, &c) == nil {
 			a.cancelJob(c.JobID)
 		}
+	case protocol.MsgJobResultAck:
+		var ack protocol.JobResultAckMsg
+		if json.Unmarshal(env.Data, &ack) == nil {
+			a.ackResult(ack.JobID)
+		}
 	case protocol.MsgRunCheck:
 		var chk protocol.RunCheckMsg
 		if json.Unmarshal(env.Data, &chk) == nil {
@@ -276,9 +294,61 @@ func (a *agent) runJob(job protocol.JobMsg) {
 			exitCode = -1
 		}
 	}
-	a.queue(protocol.MsgJobResult, protocol.JobResultMsg{
+	a.reportResult(protocol.JobResultMsg{
 		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0,
 	})
+}
+
+// reportResult persists a job result to the outbox and sends it. The result
+// stays in the outbox — re-sent on reconnect and on the heartbeat timer — until
+// the server acks it (job_result_ack), giving at-least-once delivery.
+func (a *agent) reportResult(res protocol.JobResultMsg) {
+	a.obmu.Lock()
+	a.outbox[res.JobID] = res
+	a.saveOutbox()
+	a.obmu.Unlock()
+	a.queue(protocol.MsgJobResult, res)
+}
+
+// ackResult drops an acked result from the outbox so it stops being re-sent.
+func (a *agent) ackResult(jobID string) {
+	a.obmu.Lock()
+	if _, ok := a.outbox[jobID]; ok {
+		delete(a.outbox, jobID)
+		a.saveOutbox()
+	}
+	a.obmu.Unlock()
+}
+
+// flushOutbox re-sends every unacked result. Called on each (re)connect and on
+// the heartbeat timer; usually a no-op. Sends happen outside the lock, and a
+// full send buffer just leaves the item to retry on the next pass.
+func (a *agent) flushOutbox() {
+	a.obmu.Lock()
+	pending := make([]protocol.JobResultMsg, 0, len(a.outbox))
+	for _, res := range a.outbox {
+		pending = append(pending, res)
+	}
+	a.obmu.Unlock()
+	for _, res := range pending {
+		a.queue(protocol.MsgJobResult, res)
+	}
+}
+
+func (a *agent) loadOutbox() {
+	b, err := os.ReadFile(a.outboxPath)
+	if err != nil {
+		return
+	}
+	_ = json.Unmarshal(b, &a.outbox)
+}
+
+// saveOutbox persists the outbox; callers hold a.obmu.
+func (a *agent) saveOutbox() {
+	b, _ := json.Marshal(a.outbox)
+	if err := os.WriteFile(a.outboxPath, b, 0o600); err != nil {
+		log.Printf("warning: could not persist outbox: %v", err)
+	}
 }
 
 // cancelJob kills the process of an in-flight job, if any.
@@ -310,6 +380,7 @@ func (a *agent) telemetryLoop(done <-chan struct{}) {
 			return
 		case <-hb.C:
 			a.queue(protocol.MsgHeartbeat, struct{}{})
+			a.flushOutbox() // retry any results still waiting for an ack
 		case <-inv.C:
 			sendInventory()
 		}

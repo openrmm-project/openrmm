@@ -71,6 +71,21 @@ function Gate({ min, children, fallback = null }) {
 }
 
 /* =============================== DASHBOARD ================================= */
+// Dashboard sections the user can show/hide via "Customize". Each also has a
+// permission gate; a widget only appears when permitted AND not hidden. The
+// hidden set is persisted per browser in localStorage.
+const DASH_WIDGETS = [
+  { id: 'ai', label: 'AI assistant', perm: 'ai_chat.use' },
+  { id: 'stats', label: 'Stat tiles', perm: null },
+  { id: 'awaiting', label: 'Awaiting approval', perm: 'jobs.view' },
+  { id: 'activity', label: 'Recent activity', perm: 'audit.view' },
+  { id: 'alerts', label: 'Open alerts', perm: 'alerts.view' },
+];
+const DASH_HIDDEN_KEY = 'rmm-dash-hidden';
+function loadDashHidden() {
+  try { return JSON.parse(localStorage.getItem(DASH_HIDDEN_KEY)) || []; } catch { return []; }
+}
+
 function DashboardScreen({ navigate }) {
   const { can, role } = useAuth();
   const devicesQ = useQuery(['dash-dev', role], () => can('devices.view') ? api.listDevices() : Promise.resolve({ devices: [] }), { invalidateOn: ['devices'], poll: can('devices.view') ? 10000 : 0 });
@@ -78,6 +93,14 @@ function DashboardScreen({ navigate }) {
   const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit(8) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
   const alertsQ = useQuery(['dash-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
   const [ask, setAsk] = useState('');
+  const [hidden, setHidden] = useState(loadDashHidden);
+  const show = (id) => !hidden.includes(id);
+  const toggleWidget = (id) => setHidden((h) => {
+    const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id];
+    try { localStorage.setItem(DASH_HIDDEN_KEY, JSON.stringify(next)); } catch {}
+    return next;
+  });
+  const customizable = DASH_WIDGETS.filter((w) => !w.perm || can(w.perm));
 
   const devices = devicesQ.data?.devices || [];
   const jobs = jobsQ.data?.jobs || [];
@@ -91,9 +114,22 @@ function DashboardScreen({ navigate }) {
 
   return (
     <Page wide>
-      <PageHeader title="Dashboard" subtitle="Fleet health at a glance" />
+      <PageHeader title="Dashboard" subtitle="Fleet health at a glance" actions={
+        <Dropdown align="right" width="w-56" trigger={<Button variant="ghost" icon="settings">Customize</Button>}>
+          <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">Show panels</div>
+          {customizable.map((w) => (
+            <button key={w.id} onClick={(e) => { e.stopPropagation(); toggleWidget(w.id); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-muted hover:text-ink hover:bg-card transition">
+              <span className={cx('h-4 w-4 rounded border flex items-center justify-center shrink-0', show(w.id) ? 'bg-brand border-brand text-white' : 'border-line2')}>
+                {show(w.id) && <Icon name="check" size={12} />}
+              </span>
+              <span className="flex-1">{w.label}</span>
+            </button>
+          ))}
+        </Dropdown>
+      } />
 
-      {can('ai_chat.use') && (
+      {show('ai') && can('ai_chat.use') && (
         <Card className="p-4 mb-5 relative overflow-hidden grain">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0"><Icon name="sparkle" size={18} /></div>
@@ -105,6 +141,7 @@ function DashboardScreen({ navigate }) {
         </Card>
       )}
 
+      {show('stats') && (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {can('devices.view') && <StatTile label="Total devices" value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
         {can('devices.view') && <StatTile label="Online" value={online} icon="dot" tone="ok" sub={`${devices.length - online} offline`} onClick={() => navigate('devices')} />}
@@ -112,11 +149,26 @@ function DashboardScreen({ navigate }) {
         {can('alerts.view') && <StatTile label="Open alerts" value={openAlerts.length} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
         {can('jobs.view') && <StatTile label="Recent failures" value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
       </div>
+      )}
 
+      {(() => {
+        const showAwaiting = can('jobs.view') && show('awaiting');
+        const showActivity = can('audit.view') && show('activity');
+        const showAlerts = can('alerts.view') && show('alerts');
+        const leftHasContent = showAwaiting || showActivity;
+        if (!leftHasContent && !showAlerts) {
+          // Only surface the "everything hidden" hint when the stats/AI rows are
+          // also gone — otherwise the grid just collapses silently.
+          const nothingElse = !show('stats') && !(show('ai') && can('ai_chat.use'));
+          return nothingElse
+            ? <Card className="p-10"><EmptyState icon="dashboard" title="All panels hidden" msg="Use Customize (top-right) to bring dashboard panels back." /></Card>
+            : null;
+        }
+        return (
       <div className="grid lg:grid-cols-3 gap-5">
         {/* Approval queue preview */}
-        <div className={cx(can('jobs.view') ? 'lg:col-span-2' : 'lg:col-span-3', 'space-y-5')}>
-          {can('jobs.view') && <Card>
+        {leftHasContent && <div className={cx(showAlerts ? 'lg:col-span-2' : 'lg:col-span-3', 'space-y-5')}>
+          {showAwaiting && <Card>
             <div className="flex items-center justify-between px-4 h-12 border-b border-line">
               <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="flash" size={15} className="text-warn" />Awaiting approval</div>
               <button onClick={() => navigate('jobs')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">View all <Icon name="chevright" size={13} /></button>
@@ -142,7 +194,7 @@ function DashboardScreen({ navigate }) {
             </div>
           </Card>}
 
-          {can('audit.view') && (
+          {showActivity && (
             <Card>
               <div className="px-4 h-12 flex items-center justify-between border-b border-line">
                 <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="history" size={15} className="text-muted" />Recent activity</div>
@@ -153,9 +205,9 @@ function DashboardScreen({ navigate }) {
               </div>
             </Card>
           )}
-        </div>
+        </div>}
 
-        {can('alerts.view') && <div className="space-y-5">
+        {showAlerts && <div className="space-y-5">
           <Card>
             <div className="px-4 h-12 flex items-center justify-between border-b border-line">
               <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="alert" size={15} className="text-bad" />Open alerts</div>
@@ -179,6 +231,8 @@ function DashboardScreen({ navigate }) {
           </Card>
         </div>}
       </div>
+        );
+      })()}
     </Page>
   );
 }

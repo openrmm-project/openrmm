@@ -23,6 +23,7 @@ const REPORT_COLUMNS = {
   hardware: [
     { key: 'hostname', label: 'Host', text: (r) => r.hostname, className: 'text-ink font-medium' },
     { key: 'os', label: 'OS', text: (r) => r.os, cell: (r) => <span className="inline-flex items-center gap-1.5"><OsIcon os={r.os} />{r.os}</span> },
+    { key: 'arch', label: 'Arch', text: (r) => r.arch, className: 'mono text-muted' },
     { key: 'manufacturer', label: 'Manufacturer', text: (r) => r.manufacturer },
     { key: 'model', label: 'Model', text: (r) => r.model },
     { key: 'serial_number', label: 'Serial', text: (r) => r.serial_number, className: 'mono text-muted' },
@@ -31,23 +32,20 @@ const REPORT_COLUMNS = {
     { key: 'mem', label: 'RAM', text: (r) => fmtBytes(r.mem_total_bytes), className: 'tabular' },
     { key: 'gpu', label: 'GPU', text: (r) => r.gpu },
     { key: 'storage', label: 'Storage', text: (r) => r.storage },
+    { key: 'storage_size', label: 'Disk total', text: (r) => fmtBytes(r.storage_bytes), className: 'tabular' },
     { key: 'bios', label: 'BIOS', text: (r) => r.bios, className: 'mono text-muted' },
     { key: 'platform', label: 'Platform', text: (r) => [r.platform, r.platform_version].filter(Boolean).join(' ') },
     { key: 'kernel_version', label: 'Kernel', text: (r) => r.kernel_version, className: 'mono text-muted' },
+    { key: 'ip', label: 'IP address', text: (r) => r.ip, className: 'mono text-muted' },
+    { key: 'mac', label: 'MAC', text: (r) => r.mac, className: 'mono text-muted' },
     { key: 'client', label: 'Client', text: (r) => r.client },
     { key: 'site', label: 'Site', text: (r) => r.site },
     { key: 'department', label: 'Department', text: (r) => r.department },
   ],
   machines: [
     { key: 'hostname', label: 'Host', text: (r) => r.hostname, className: 'text-ink font-medium' },
-    { key: 'os', label: 'OS', text: (r) => r.os, cell: (r) => <span className="inline-flex items-center gap-1.5"><OsIcon os={r.os} />{r.os}</span> },
-    { key: 'arch', label: 'Arch', text: (r) => r.arch, className: 'mono text-muted' },
     { key: 'status', label: 'Status', text: (r) => r.status, cell: (r) => <StatusPill status={r.status} size="sm" /> },
     { key: 'agent_version', label: 'Agent', text: (r) => r.agent_version, className: 'mono text-muted' },
-    { key: 'cpu_model', label: 'CPU', text: (r) => r.cpu_model },
-    { key: 'mem', label: 'RAM', text: (r) => fmtBytes(r.mem_total_bytes), className: 'tabular' },
-    { key: 'ip', label: 'IP address', text: (r) => r.ip, className: 'mono text-muted' },
-    { key: 'mac', label: 'MAC', text: (r) => r.mac, className: 'mono text-muted' },
     { key: 'client', label: 'Client', text: (r) => r.client },
     { key: 'site', label: 'Site', text: (r) => r.site },
     { key: 'department', label: 'Department', text: (r) => r.department },
@@ -159,8 +157,8 @@ function ReportsScreen() {
         className="mb-4"
         tabs={[
           { value: 'software', label: 'Software' },
-          { value: 'hardware', label: 'Hardware' },
-          { value: 'machines', label: 'Machines' },
+          { value: 'hardware', label: 'Hardware & System' },
+          { value: 'machines', label: 'Agents' },
         ]}
       />
 

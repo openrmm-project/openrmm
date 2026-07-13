@@ -269,7 +269,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 {can('devices.remote') && <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>}
                 {can('devices.remote') && <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>}
                 {can('devices.terminal') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
-                {can('devices.files') && <MenuItem icon="devices" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
+                {can('devices.files') && <MenuItem icon="folder" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
                 {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>}
                 {can('devices.remote') && rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
                 {can('devices.manage') && meshEnabled && <>
@@ -638,7 +638,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         <div className="absolute inset-0 z-[5] bg-black/55 flex items-center justify-center" onClick={() => filesOnly ? onClose() : setFb(null)}>
           <div className="w-[760px] h-[80vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
-              <Icon name="devices" size={15} className="text-muted" />
+              <Icon name="folder" size={15} className="text-muted" />
               <span className="text-[12.5px] font-semibold text-ink">File transfer · {hostname}</span>
               <button onClick={() => filesOnly ? onClose() : setFb(null)} className="ml-auto text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
             </div>
@@ -648,11 +648,11 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
               <Button variant="ghost" size="sm" icon="refresh" title="Refresh" onClick={() => browse(fb.path)} />
               <Button variant="ghost" size="sm" icon="plus" title="New folder" disabled={!fb.path} onClick={doMkdir} />
               <div className="w-px h-5 bg-line mx-1" />
-              <Button variant="ghost" size="sm" icon="external" title="Upload here" disabled={!fb.path} onClick={() => fileInputRef.current?.click()} />
-              <Button variant="ghost" size="sm" icon="link" title="Download" disabled={!fbSel.length} onClick={doDownloadSel} />
+              <Button variant="ghost" size="sm" icon="upload" title="Upload here" disabled={!fb.path} onClick={() => fileInputRef.current?.click()} />
+              <Button variant="ghost" size="sm" icon="download" title="Download" disabled={!fbSel.length} onClick={doDownloadSel} />
               <Button variant="ghost" size="sm" icon="copy" title="Copy" disabled={!fbSel.length} onClick={() => doClip('copy')} />
-              <Button variant="ghost" size="sm" icon="edit" title="Cut" disabled={!fbSel.length} onClick={() => doClip('cut')} />
-              <Button variant="ghost" size="sm" icon="script" title="Rename" disabled={fbSel.length !== 1} onClick={doRename} />
+              <Button variant="ghost" size="sm" icon="scissors" title="Cut" disabled={!fbSel.length} onClick={() => doClip('cut')} />
+              <Button variant="ghost" size="sm" icon="edit" title="Rename" disabled={fbSel.length !== 1} onClick={doRename} />
               <Button variant="ghost" size="sm" icon="trash" title="Delete" disabled={!fbSel.length} onClick={doDelete} />
               {fbClip && <Button variant="secondary" size="sm" icon="approve" onClick={doPaste}>Paste {fbClip.names.length}</Button>}
               <span className="ml-auto text-[11px] text-faint pr-1">{fbSel.length ? fbSel.length + ' selected' : (fb.entries ? fb.entries.length + ' items' : '')}</span>
@@ -670,7 +670,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
                 <div key={i} className={cx('flex items-center gap-2 px-3 py-1.5 border-b border-line/40', fbSel.includes(en.name) ? 'bg-brand/10' : 'hover:bg-elevated')}>
                   <input type="checkbox" checked={fbSel.includes(en.name)} onChange={() => toggleSel(en.name)} className="h-3.5 w-3.5 accent-brand shrink-0" />
                   <button onClick={() => en.dir ? browse(joinPath(fb.path, en.name)) : toggleSel(en.name)} onDoubleClick={() => !en.dir && downloadEntry(en.name)} className="flex items-center gap-2 flex-1 text-left min-w-0">
-                    <Icon name={en.dir ? 'pin' : 'script'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
+                    <Icon name={en.dir ? 'folder' : 'file'} size={14} className={en.dir ? 'text-brand' : 'text-faint'} />
                     <span className="text-[12.5px] text-ink truncate">{en.name}</span>
                   </button>
                   <span className="text-[11px] text-faint w-32 text-right shrink-0 hidden sm:block">{en.mod || ''}</span>

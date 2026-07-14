@@ -318,8 +318,20 @@ func (s *Service) DispatchPending(ctx context.Context, agentID string) {
 	}
 }
 
-// OnResult records the outcome reported by an agent.
+// OnResult records the outcome reported by an agent. It is idempotent: the agent
+// now retries unacked results (at-least-once delivery), so a result for a job
+// that is already terminal — finished earlier, or closed via manual complete —
+// is accepted without re-writing state or the audit trail. A nil return means
+// "durably handled", which is the caller's signal to ack so the agent drops it.
 func (s *Service) OnResult(ctx context.Context, res protocol.JobResultMsg) error {
+	j, err := s.store.GetJob(ctx, res.JobID)
+	if err != nil {
+		return err
+	}
+	switch j.Status {
+	case models.JobCompleted, models.JobFailed, models.JobRejected:
+		return nil // already finalized — idempotent no-op, still ack
+	}
 	status := models.JobCompleted
 	if !res.Success {
 		status = models.JobFailed
@@ -327,11 +339,7 @@ func (s *Service) OnResult(ctx context.Context, res protocol.JobResultMsg) error
 	if err := s.store.SetJobResult(ctx, res.JobID, status, res.ExitCode, res.Stdout, res.Stderr); err != nil {
 		return err
 	}
-	host := ""
-	if j, err := s.store.GetJob(ctx, res.JobID); err == nil && j != nil {
-		host = s.hostname(ctx, j.AgentID)
-	}
-	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success})
+	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": s.hostname(ctx, j.AgentID), "exit_code": res.ExitCode, "success": res.Success})
 	return nil
 }
 

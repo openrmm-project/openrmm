@@ -140,6 +140,13 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, raw []byt
 		if json.Unmarshal(env.Data, &res) == nil {
 			if err := s.jobs.OnResult(ctx, res); err != nil {
 				log.Printf("job result error: %v", err)
+			} else {
+				// Durably recorded — ack so the agent drops it from its retry
+				// outbox. If this ack is lost, the agent re-sends and OnResult is
+				// a no-op (idempotent), so we simply ack again.
+				data, _ := json.Marshal(protocol.JobResultAckMsg{JobID: res.JobID})
+				frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgJobResultAck, Data: data})
+				s.hub.Send(agentID, frame)
 			}
 		}
 	case protocol.MsgCheckResult:

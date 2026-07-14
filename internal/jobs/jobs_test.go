@@ -257,8 +257,24 @@ func TestOnResult(t *testing.T) {
 	if got.Status != models.JobCompleted {
 		t.Errorf("status after success = %q, want completed", got.Status)
 	}
-	_ = svc.OnResult(context.Background(), protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1})
+	// Idempotent: a re-sent result for an already-finalized job (the agent retries
+	// unacked results at-least-once) is a no-op and never flips a terminal status.
+	if err := svc.OnResult(context.Background(), protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1}); err != nil {
+		t.Fatalf("duplicate OnResult error: %v", err)
+	}
 	got, _ = svc.store.GetJob(context.Background(), j.ID)
+	if got.Status != models.JobCompleted {
+		t.Errorf("status after duplicate = %q, want completed (idempotent)", got.Status)
+	}
+}
+
+func TestOnResultFailure(t *testing.T) {
+	svc, _, _ := newSvc()
+	j, _ := svc.Propose(context.Background(), "a1", "bash", "echo", "d", "admin", false)
+	if err := svc.OnResult(context.Background(), protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1}); err != nil {
+		t.Fatalf("OnResult error: %v", err)
+	}
+	got, _ := svc.store.GetJob(context.Background(), j.ID)
 	if got.Status != models.JobFailed {
 		t.Errorf("status after failure = %q, want failed", got.Status)
 	}

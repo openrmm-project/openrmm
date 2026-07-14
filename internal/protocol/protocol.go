@@ -14,6 +14,7 @@ const (
 	MsgJob          = "job"           // server -> agent
 	MsgJobCancel    = "job_cancel"    // server -> agent: kill a running job
 	MsgJobResult    = "job_result"    // agent -> server
+	MsgJobResultAck = "job_result_ack" // server -> agent: job_result persisted, drop it from the outbox
 	MsgRemoteStart  = "remote_start"  // server -> agent: open a remote session
 	MsgRemoteStatus = "remote_status" // agent -> server: remote session state
 
@@ -131,6 +132,14 @@ type JobResultMsg struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	Success  bool   `json:"success"`
+}
+
+// JobResultAckMsg confirms the server durably recorded a job_result, so the
+// agent can drop it from its retry outbox. Without this the agent keeps the
+// result and re-sends it after a reconnect until acknowledged (at-least-once
+// delivery), so a dropped connection can't strand a finished job in "sent".
+type JobResultAckMsg struct {
+	JobID string `json:"job_id"`
 }
 
 // InventoryMsg carries a snapshot of agent state.

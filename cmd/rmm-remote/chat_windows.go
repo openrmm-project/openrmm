@@ -34,6 +34,8 @@ var (
 	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
 	procSetBkColor      = gdi32.NewProc("SetBkColor")
 	procSetTextColor    = gdi32.NewProc("SetTextColor")
+	procSetWindowLongPtr   = user32.NewProc("SetWindowLongPtrW")
+	procCallWindowProc     = user32.NewProc("CallWindowProcW")
 
 	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
 	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
@@ -77,7 +79,12 @@ const (
 	wmClose   = 0x0010
 	wmCommand = 0x0111
 	wmSetFont = 0x0030
+	wmKeyDown = 0x0100
+	wmChar    = 0x0102
 	wmApp     = 0x8000
+
+	vkReturn     = 0x0D
+	gwlpWndProc  = ^uintptr(3) // GWLP_WNDPROC (-4) for SetWindowLongPtr
 
 	emReplaceSel = 0x00C2
 	emSetSel     = 0x00B1
@@ -184,6 +191,11 @@ func (cw *chatWindow) create(title string) {
 		wsChild|wsVisible, 8, 376, 252, 28, hwnd, idInput, hInst, 0)
 	btn, _, _ := procCreateWindow.Call(0, uintptr(unsafe.Pointer(u16("BUTTON"))), uintptr(unsafe.Pointer(u16("Send"))),
 		wsChild|wsVisible, 268, 376, 68, 28, hwnd, idSend, hInst, 0)
+	// Subclass the input box so Enter submits (a single-line EDIT ignores it by
+	// default). We forward Enter as a Send button click and swallow the keystroke.
+	newEditProc := syscall.NewCallback(editSubclassProc)
+	op, _, _ := procSetWindowLongPtr.Call(cw.input, gwlpWndProc, newEditProc)
+	origEditProc = op
 
 	// Use a modern UI font instead of the dated default (System/MS Sans Serif).
 	font, _, _ := procCreateFont.Call(
@@ -193,6 +205,26 @@ func (cw *chatWindow) create(title string) {
 		procSendMessage.Call(h, wmSetFont, font, 1)
 	}
 	procShowWindow.Call(hwnd, swShow)
+}
+
+// origEditProc holds the input EDIT's original window procedure so the subclass
+// can defer non-Enter messages to it.
+var origEditProc uintptr
+
+// editSubclassProc intercepts Enter in the input box and turns it into a Send
+// click; everything else falls through to the stock EDIT behavior.
+func editSubclassProc(hwnd, msg, wparam, lparam uintptr) uintptr {
+	if msg == wmKeyDown && wparam == vkReturn {
+		if activeChat != nil {
+			procSendMessage.Call(activeChat.hwnd, wmCommand, idSend, 0)
+		}
+		return 0
+	}
+	if msg == wmChar && wparam == vkReturn { // swallow the CR so the edit doesn't beep
+		return 0
+	}
+	r, _, _ := procCallWindowProc.Call(origEditProc, hwnd, msg, wparam, lparam)
+	return r
 }
 
 func (cw *chatWindow) loop() {

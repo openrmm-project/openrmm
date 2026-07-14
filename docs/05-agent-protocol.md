@@ -68,7 +68,8 @@ and bridges it to the relay. See [08-remote-access](08-remote-access.md).
   finalizes automatically. The server's handling is idempotent (a re-sent result
   for an already-terminal job is a no-op but is still acked), so duplicates are
   harmless. (For a result that never arrives at all, an operator can still force
-  the outcome via manual complete — see [10](10-monitoring-policies.md).)
+  the outcome via manual complete — `POST /api/jobs/{id}/complete`, see
+  [04-api-reference](04-api-reference.md).)
 - The agent reconnects automatically with a 5s backoff.
 
 ## Self-update

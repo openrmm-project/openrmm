@@ -96,6 +96,7 @@ disabled unless the caller also has `devices.files`. Also supports `files`
 | POST | `/api/jobs/{id}/approve` | `jobs.manage` | Approve → dispatch |
 | POST | `/api/jobs/{id}/reject` | `jobs.manage` | Reject a proposal |
 | POST | `/api/jobs/{id}/cancel` | `jobs.manage` | Reject if pending, or request cancel of a running job |
+| POST | `/api/jobs/{id}/complete` | `jobs.manage` | Force-finalize an in-flight job as completed (or failed with `{"success":false}`) when the agent's result never arrived — audited as `job.complete_manual` |
 | GET | `/api/jobs/batch/{batch_id}` | `jobs.view` | The jobs in a bulk batch (scope-filtered) |
 | POST | `/api/jobs/batch/{batch_id}/approve` | `jobs.manage` | Approve every awaiting job in the batch |
 | POST | `/api/jobs/batch/{batch_id}/reject` | `jobs.manage` | Reject every awaiting job in the batch |

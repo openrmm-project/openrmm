@@ -175,7 +175,9 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   window** (`chat_linux.go`) — a CGO-free, toolkit-free window drawn with core-X
   requests on its own X connection, so it works on any X server the sidecar
   reaches (the user session and the display-manager greeter), mirroring the
-  Win32 chat window.
+  Win32 chat window. The host user submits a reply with **Enter** (Windows and
+  Linux); the Linux window is **drag-to-move** from anywhere (many WMs give it no
+  title bar).
 - **Input lock (Windows):** the **Lock input** button in the viewer blocks the
   host's **physical** keyboard and mouse for the duration of the session, so the
   person at the machine can't fight the technician. It uses system-wide

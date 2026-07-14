@@ -23,21 +23,25 @@ import (
 
 // X core request opcodes used here.
 const (
-	opCreateWindow   = 1
-	opMapWindow      = 8
-	opInternAtom     = 16
-	opChangeProperty = 18
-	opOpenFont       = 45
-	opCreateGC       = 55
-	opClearArea      = 61
-	opImageText8     = 76
+	opCreateWindow    = 1
+	opMapWindow       = 8
+	opConfigureWindow = 12
+	opInternAtom      = 16
+	opChangeProperty  = 18
+	opOpenFont        = 45
+	opCreateGC        = 55
+	opClearArea       = 61
+	opImageText8      = 76
 
 	xaWMName    = 39 // predefined atom WM_NAME
 	xaString    = 31 // predefined atom STRING
 	xaAtom      = 4  // predefined atom ATOM
 	xaCardinal  = 6  // predefined atom CARDINAL
-	evtExpose   = 12
-	evtKeyPress = 2
+	evtKeyPress      = 2
+	evtButtonPress   = 4
+	evtButtonRelease = 5
+	evtMotionNotify  = 6
+	evtExpose        = 12
 
 	chatW, chatH = 420, 320
 	chatLineH    = 15
@@ -66,6 +70,12 @@ type chatLinux struct {
 	input  []rune
 	closed bool
 	onSend func(string)
+
+	// Drag state: click-and-drag anywhere on the window moves it (many WMs give
+	// this utility window no title bar, so there's no other way to reposition it).
+	dragging   bool
+	dragX      int16 // pointer offset within the window at grab time
+	dragY      int16
 }
 
 // newChatWindowLinux opens and maps a chat window on the given display/auth.
@@ -236,7 +246,9 @@ func (c *chatLinux) keysym(keycode int, shift bool) uint32 {
 // ---- X requests ----
 
 func (c *chatLinux) createWindow() {
-	const eventMask = 0x8001 // Exposure | KeyPress
+	// Exposure | KeyPress | ButtonPress | ButtonRelease | Button1Motion — the
+	// button/motion bits let us implement drag-to-move (see eventLoop).
+	const eventMask = 0x8000 | 0x0001 | 0x0004 | 0x0008 | 0x0100
 	req := make([]byte, 40)
 	req[0] = opCreateWindow
 	req[1] = 0 // depth = CopyFromParent
@@ -254,6 +266,18 @@ func (c *chatLinux) createWindow() {
 	le.PutUint32(req[28:], 0x0002|0x0800) // BackPixel | EventMask
 	le.PutUint32(req[32:], c.white)       // background pixel
 	le.PutUint32(req[36:], eventMask)
+	c.write(req)
+}
+
+// moveWindow repositions the window to root coordinates (x,y) via ConfigureWindow.
+func (c *chatLinux) moveWindow(x, y int16) {
+	req := make([]byte, 20)
+	req[0] = opConfigureWindow
+	le.PutUint16(req[2:], 5) // request length in 4-byte units
+	le.PutUint32(req[4:], c.win)
+	le.PutUint16(req[8:], 0x0003) // value-mask: X | Y
+	le.PutUint32(req[12:], uint32(int32(x)))
+	le.PutUint32(req[16:], uint32(int32(y)))
 	c.write(req)
 }
 
@@ -450,6 +474,21 @@ func (c *chatLinux) eventLoop() {
 			}
 		case evtKeyPress:
 			c.onKey(int(ev[1]), le.Uint16(ev[28:])&0x01 != 0)
+		case evtButtonPress:
+			// Start a drag: remember where inside the window we grabbed (event-x/y).
+			if ev[1] == 1 { // button 1
+				c.dragging = true
+				c.dragX = int16(le.Uint16(ev[24:]))
+				c.dragY = int16(le.Uint16(ev[26:]))
+			}
+		case evtButtonRelease:
+			c.dragging = false
+		case evtMotionNotify:
+			// Move the window so the grab point stays under the pointer
+			// (root-x/y minus the in-window offset).
+			if c.dragging {
+				c.moveWindow(int16(le.Uint16(ev[20:]))-c.dragX, int16(le.Uint16(ev[22:]))-c.dragY)
+			}
 		}
 	}
 }

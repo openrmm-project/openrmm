@@ -101,6 +101,7 @@ function ChatScreen({ navigate }) {
   const sessions = sessionsQ.data?.sessions || [];
   const toast = useToast();
   const [confirmDel, setConfirmDel] = useState(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
 
   // initialize selection + handle dashboard "ask the AI" handoff
   useEffect(() => {
@@ -113,7 +114,7 @@ function ChatScreen({ navigate }) {
     if (!active && sessions.length) setActive(sessions[0].id);
   }, [sessions.length]);
 
-  const newChat = async () => { const s = await api.createSession(''); setActive(s.id); };
+  const newChat = async () => { const s = await api.createSession(''); setActive(s.id); setSessionsOpen(false); };
   const delSession = async () => {
     const sess = confirmDel; if (!sess) return;
     try { await api.deleteSession(sess.id); if (active === sess.id) setActive(null); toast.info('Conversation deleted'); }
@@ -121,16 +122,17 @@ function ChatScreen({ navigate }) {
   };
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex relative overflow-hidden">
       {/* sessions */}
-      <div className="w-[252px] shrink-0 border-r border-line bg-panel flex flex-col">
-        <div className="p-3 border-b border-line">
+      <div className={cx('absolute inset-0 z-20 w-full border-r border-line bg-panel flex-col sm:static sm:z-auto sm:flex sm:w-[252px] sm:shrink-0', sessionsOpen ? 'flex' : 'hidden')}>
+        <div className="p-3 border-b border-line flex gap-2">
           <Button variant="primary" icon="plus" className="w-full" onClick={newChat}>New conversation</Button>
+          <Button variant="ghost" size="icon" icon="close" className="sm:hidden" onClick={() => setSessionsOpen(false)} aria-label="Close conversations" />
         </div>
         <div className="flex-1 overflow-y-auto scroll-area p-2">
           {sessions.map((s) => (
             <div key={s.id} className={cx('group w-full rounded-lg px-2.5 py-2 mb-0.5 transition flex items-center gap-1', active === s.id ? 'bg-elevated' : 'hover:bg-elevated/50')}>
-              <button onClick={() => setActive(s.id)} className="flex-1 min-w-0 text-left">
+              <button onClick={() => { setActive(s.id); setSessionsOpen(false); }} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-2">
                   <Icon name="chat" size={13} className={active === s.id ? 'text-brandhi' : 'text-faint'} />
                   <span className={cx('text-[12.5px] truncate flex-1', active === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.title || 'New conversation'}</span>
@@ -145,8 +147,8 @@ function ChatScreen({ navigate }) {
 
       {/* thread */}
       <div className="flex-1 min-w-0 flex flex-col bg-app">
-        {active ? <ChatThread key={active} sessionId={active} navigate={navigate} /> : (
-          <div className="flex-1 flex items-center justify-center"><EmptyState icon="sparkle" title="Start a conversation" msg="Ask the AI to inspect or act on your fleet. It proposes; you approve." action={<Button variant="primary" icon="plus" onClick={newChat}>New conversation</Button>} /></div>
+        {active ? <ChatThread key={active} sessionId={active} navigate={navigate} onOpenSessions={() => setSessionsOpen(true)} /> : (
+          <div className="flex-1 flex flex-col"><div className="sm:hidden p-2 border-b border-line"><Button variant="ghost" icon="menu" onClick={() => setSessionsOpen(true)}>Conversations</Button></div><div className="flex-1 flex items-center justify-center"><EmptyState icon="sparkle" title="Start a conversation" msg="Ask the AI to inspect or act on your fleet. It proposes; you approve." action={<Button variant="primary" icon="plus" onClick={newChat}>New conversation</Button>} /></div></div>
         )}
       </div>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={delSession} danger title="Delete conversation?" body={<>This permanently removes <b>{confirmDel?.title || 'this conversation'}</b> and its messages. This cannot be undone.</>} confirmLabel="Delete conversation" />
@@ -161,7 +163,7 @@ const SUGGESTIONS = [
   'Restart the print spooler on the domain controller',
 ];
 
-function ChatThread({ sessionId, navigate }) {
+function ChatThread({ sessionId, navigate, onOpenSessions }) {
   const msgsQ = useQuery([sessionId, 'msgs'], () => api.getMessages(sessionId), { invalidateOn: ['chat'], poll: 1200 });
   const [input, setInput] = useState('');
   const [working, setWorking] = useState(false);
@@ -185,13 +187,14 @@ function ChatThread({ sessionId, navigate }) {
 
   return (
     <>
+      <div className="sm:hidden p-2 border-b border-line bg-panel"><Button variant="ghost" icon="menu" onClick={onOpenSessions}>Conversations</Button></div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden scroll-area">
-        <div className="max-w-[760px] mx-auto px-5 py-6 min-w-0">
+        <div className="max-w-[760px] mx-auto px-3 sm:px-5 py-4 sm:py-6 min-w-0">
           {empty && !working && (
             <div className="pt-10">
               <div className="flex items-center gap-2.5 mb-2"><div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi"><Icon name="sparkle" size={18} /></div><div className="text-[15px] font-semibold text-ink">How can I help with your fleet?</div></div>
-              <p className="text-[13px] text-muted ml-[46px] mb-5">I can inspect devices, propose scripts, and queue actions. I never run anything without your approval.</p>
-              <div className="grid sm:grid-cols-2 gap-2 ml-[46px]">
+              <p className="text-[13px] text-muted sm:ml-[46px] mb-5">I can inspect devices, propose scripts, and queue actions. I never run anything without your approval.</p>
+              <div className="grid sm:grid-cols-2 gap-2 sm:ml-[46px]">
                 {SUGGESTIONS.map((s) => <button key={s} onClick={() => send(s)} className="text-left rounded-xl border border-line bg-card hover:border-line2 hover:bg-elevated transition px-3.5 py-2.5 text-[12.5px] text-muted hover:text-ink flex items-center gap-2"><Icon name="arrowright" size={13} className="text-faint shrink-0" />{s}</button>)}
               </div>
             </div>
@@ -203,10 +206,10 @@ function ChatThread({ sessionId, navigate }) {
         </div>
       </div>
 
-      <div className="border-t border-line bg-panel/70 backdrop-blur px-5 py-3.5">
+      <div className="border-t border-line bg-panel/70 backdrop-blur px-2 sm:px-5 py-2.5 sm:py-3.5">
         <div className="max-w-[760px] mx-auto">
           <div className="flex items-end gap-2 rounded-2xl border border-line2 bg-app px-3 py-2 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/25 transition">
-            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="Ask the AI to inspect or act…" className="flex-1 bg-transparent resize-none outline-none text-[13.5px] text-ink placeholder:text-faint py-1.5 max-h-32" style={{ minHeight: 24 }} />
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="Ask the AI to inspect or act…" className="flex-1 bg-transparent resize-none outline-none text-[13.5px] text-ink placeholder:text-faint py-1.5 max-h-32 chat-input" />
             <Button variant="primary" size="icon" onClick={() => send()} disabled={!input.trim() || working}><Icon name="send" size={16} /></Button>
           </div>
           <div className="text-[11px] text-faint mt-1.5 text-center flex items-center justify-center gap-1.5"><Icon name="shield" size={11} />The AI proposes actions as approval-gated jobs. Nothing runs until you approve it.</div>
@@ -222,7 +225,7 @@ function WorkingIndicator() {
       <div className="h-7 w-7 rounded-lg bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0 mt-0.5"><Icon name="sparkle" size={14} /></div>
       <div className="flex items-center gap-1.5 h-7">
         <span className="text-[12.5px] text-muted">Working</span>
-        <span className="flex gap-1">{[0, 1, 2].map((i) => <span key={i} className="h-1.5 w-1.5 rounded-full bg-brandhi/70 animate-bounce" style={{ animationDelay: i * 140 + 'ms' }} />)}</span>
+        <span className="flex gap-1">{[0, 1, 2].map((i) => <span key={i} className={cx('h-1.5 w-1.5 rounded-full bg-brandhi/70 animate-bounce', i && `typing-delay-${i}`)} />)}</span>
       </div>
     </div>
   );

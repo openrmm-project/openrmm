@@ -7,7 +7,7 @@
  *   - No protótipo atual (Babel/HTML): exponha como `window.api = api` no fim
  *     do arquivo e remova o conteúdo simulado de src/mockapi.jsx.
  *
- * Auth: o token de POST /api/auth/login é salvo em localStorage e enviado como
+ * Auth: o token de POST /api/auth/login é salvo em sessionStorage e enviado como
  * `Authorization: Bearer <token>` em toda chamada /api/*. Em 401, limpa a sessão.
  */
 
@@ -112,13 +112,13 @@ const PERM_ALIASES: Record<string, PermissionKey> = { admin: "settings.manage", 
 type Session = { token: string; user: User; role: Role; permissions: PermissionKey[] };
 
 let session: Session | null = (() => {
-  try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || "null"); } catch { return null; }
+  try { return JSON.parse(sessionStorage.getItem(TOKEN_KEY) || "null"); } catch { return null; }
 })();
 
 function setSession(s: typeof session) {
   session = s;
-  if (s) localStorage.setItem(TOKEN_KEY, JSON.stringify(s));
-  else localStorage.removeItem(TOKEN_KEY);
+  if (s) sessionStorage.setItem(TOKEN_KEY, JSON.stringify(s));
+  else sessionStorage.removeItem(TOKEN_KEY);
 }
 
 function normalizeSession(token: string, r: Partial<User> & { user?: User; role?: Role; permissions?: PermissionKey[] }): Session {

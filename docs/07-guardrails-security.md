@@ -58,10 +58,14 @@ tamper-evidence in production.
   codes** (shown once, stored SHA-256-hashed, single-use) usable in place of the
   TOTP code at login; a user can regenerate them, and a user manager can reset a
   locked-out user's 2FA.
-- Editable runtime secrets (AI API key, MeshCentral token key, TOTP secrets) are
-  write-only fields gated by `settings.manage`, **encrypted with AES-256-GCM**
-  (`enc:v1:` prefix, `internal/settings`) before storage; `/api/config` returns
-  only boolean `*_set` flags.
+- TOTP enrollment and rotation use an encrypted **pending** candidate. Setup
+  requires the current password and, when a factor is already active, its current
+  TOTP. The old factor remains active until a code from the candidate is verified
+  and promotion/recovery-code replacement commits atomically.
+- Editable runtime config secrets (AI API key, MeshCentral token key) are
+  write-only fields gated by `settings.manage`; TOTP secrets are stored on the
+  user. Both use **AES-256-GCM** (`enc:v1:` prefix, `internal/settings`) before
+  storage; `/api/config` returns only boolean `*_set` flags for config secrets.
 - Agents: a random 32-byte token minted at enrollment, stored **hashed**
   (SHA-256) server-side; compared in constant time. Enroll tokens are
   single/limited-use and can expire.
@@ -87,19 +91,28 @@ tamper-evidence in production.
   cannot see or touch out-of-scope devices. **The AI/MCP respects the same scope**
   (see `06-ai-chat`). Chat sessions are owned (`created_by`) and private to their
   creator.
+- **Delegation cannot widen authority.** A scoped user manager cannot create an
+  unrestricted user, delegate global `admin`, assign permissions it lacks, or
+  manage a user whose scopes escape its own. A scoped API-token manager can issue
+  only a permission-subset token bound to itself. Role and scope are orthogonal.
+- The built-in `readonly` role includes `devices.remote`; it can start remote
+  desktop and is therefore not purely observational. It lacks file transfer and
+  terminal. Use a custom role without `devices.remote` for strict observation.
 
 ## Threat-model notes / hardening TODO
 
-These are known gaps to close before production — documented, not silently
-omitted:
+These are required deployment controls and known limitations — documented, not
+silently omitted:
 
-1. **TLS** — terminate HTTPS/WSS at a reverse proxy (Caddy/nginx/Traefik). Tokens
-   and traffic must not cross the wire in clear text. For production, prefer the
+1. **TLS** — terminate HTTPS/WSS at a trusted edge. Tokens and traffic must not
+   cross the client-facing wire in clear text. Production Compose publishes its
+   three listeners on loopback by default; source ACLs belong to that TLS edge,
+   not to UFW rules on loopback backend ports. Prefer the
    **split-ingress topology** ([`deploy/README-production.md`](../deploy/README-production.md)):
-   three doors on three ports so the firewall can keep the **agents** door public
+   three doors on three ports so edge policy can keep the **agents** door public
    (agents live on untrusted networks) while the **console** door is restricted to
-   your IPs/VPN and the **MCP** door is exposed per your choice — the app never
-   holds the IP allowlist.
+   your IPs/VPN and the **MCP** door is exposed per your choice. The app still
+   offers `RMM_MCP_ALLOWED_IPS` as defense in depth.
 2. ~~**RBAC / multi-tenancy**~~ — **DONE**: default and custom roles with granular
    permissions plus per-user Company/Site/Department/device access scope, enforced
    on read and write paths and on the AI/MCP surface. See *RBAC & per-user access
@@ -107,12 +120,18 @@ omitted:
 3. **Script sandboxing** — scripts run with the agent's privileges. Consider an
    allowlist of vetted scripts, signing, or a constrained execution mode for
    AI-authored scripts.
-4. **Rate limiting / quotas** on the chat and job endpoints.
-5. **Relay authorization** — `/ws/remote` validates the session token; add
-   principal binding and consider end-to-end encryption in the media layer (the
-   native engine is homegrown/CGO-free, so media E2E is future work — no fork).
-6. **Agent token rotation** and revocation (disable a compromised agent).
-7. **Output size limits** — cap stdout/stderr persisted per job.
+4. **Per-user quotas** are not implemented. Per-IP limits exist for auth, MCP and
+   the authenticated API, but they are not usage/account quotas.
+5. ~~**Relay authorization**~~ — **DONE**: role-specific one-time tickets are
+   principal-bound and supplied only in the WebSocket handshake. End-to-end media
+   encryption remains future work (the relay is still the trust boundary).
+6. ~~**Agent token rotation and revocation**~~ — **DONE**: revocation fences live
+   control/relay attachment; rotation is single-flight and commits on reconnect.
+7. **Output size limits** — the reference agent caps stdout and stderr at 1 MiB
+   each. A server-side cap remains desirable for non-reference agent clients.
+8. **Single replica / observability** — hub, relay and scheduler are process-local;
+   there is no supported HA mode. `/healthz` is liveness only and there is no
+   metrics/tracing/readiness endpoint or built-in log/backup alerting.
 
 ## Safe-script guidance for the AI
 
@@ -156,12 +175,20 @@ exposes no secrets).
   user sees 0 out-of-scope jobs/alerts/clients).
 - **Two-factor (TOTP)** added for user logins; secrets encrypted at rest.
 
+**Relay auth (hardened):**
+- **Relay auth** (`/ws/remote`): each native session has separate, one-time
+  viewer and agent tickets, stored only as hashes. Viewer tickets are supplied
+  only in the WebSocket handshake rather than the URL; the viewer additionally
+  presents its authenticated session identity, which must match the principal that
+  created the remote session. An agent-only URL-ticket bridge is opt-in through
+  `RMM_ALLOW_LEGACY_AGENT_RELAY` for upgrades and is disabled by default. Both
+  ticket roles are invalidated by expiry or device revocation.
+
 **Remaining (tracked):**
-- **Relay auth** (`/ws/remote`): authenticated only by a short-lived (2 min)
-  session token in the URL, with no principal binding. Browser WebSockets can't
-  send custom auth headers, so a URL token is the standard pattern — but it can
-  leak via logs/history. Mitigated by the short TTL; binding the session to the
-  technician principal + agent identity is still pending.
-- **TLS** must be terminated by a reverse proxy / tunnel (see docs/11-mcp.md).
-- **Script sandboxing** and **agent token rotation/revocation** remain roadmap
-  items.
+- **TLS** and source ACLs must be enforced by the trusted edge in production (see
+  the deploy runbook).
+- **Script sandboxing** remains a roadmap item; privileged jobs and the terminal
+  intentionally run with the system-service account today.
+- Native relay media is not end-to-end encrypted; the relay and TLS edge remain
+  trust boundaries.
+- Release Ed25519 signatures are not Authenticode or Apple notarization.

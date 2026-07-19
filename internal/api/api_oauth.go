@@ -15,6 +15,7 @@ import (
 
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/settings"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 // MCP OAuth 2.1 Authorization Server — the RMM is its own AS + Resource Server so
@@ -37,11 +38,13 @@ const (
 var (
 	errBadCredentials = errors.New("invalid credentials")
 	errTOTPRequired   = errors.New("two-factor code required")
+	errAuthStore      = errors.New("authentication store unavailable")
 )
 
-// issuerBase is the OAuth issuer — the public origin, trimmed of a trailing slash.
+// issuerBase is the OAuth issuer — always the dedicated MCP origin, trimmed of a
+// trailing slash. It must never point cloud clients at the public agents door.
 func (s *Server) issuerBase() string {
-	return strings.TrimRight(s.cfg.PublicURL, "/")
+	return strings.TrimRight(s.cfg.MCPPublicURL, "/")
 }
 
 // oauthAuthServerMeta serves RFC 8414 Authorization Server Metadata.
@@ -216,6 +219,10 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	userID, _, err := s.verifyUserCredentials(r.Context(),
 		r.PostForm.Get("username"), r.PostForm.Get("password"), r.PostForm.Get("code"))
 	if err != nil {
+		if errors.Is(err, errAuthStore) {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
 		msg := "Invalid username or password."
 		if errors.Is(err, errTOTPRequired) {
 			msg = "Enter your two-factor code."
@@ -264,17 +271,27 @@ func (s *Server) verifyUserCredentials(ctx context.Context, username, password, 
 	id, rl, hash, e := s.store.GetUserAuth(ctx, username)
 	if e != nil {
 		auth.CheckPassword("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidin", password)
+		if !errors.Is(e, store.ErrNotFound) {
+			return "", "", errAuthStore
+		}
 		return "", "", errBadCredentials
 	}
 	if !auth.CheckPassword(hash, password) {
 		return "", "", errBadCredentials
 	}
-	if encSecret, enabled, _ := s.store.GetUserTOTP(ctx, id); enabled {
+	encSecret, enabled, e := s.store.GetUserTOTP(ctx, id)
+	if e != nil {
+		return "", "", errAuthStore
+	}
+	if enabled {
 		secret, derr := settings.Decrypt(s.cfg, encSecret)
 		ok := derr == nil && auth.ValidateTOTP(secret, code)
 		if !ok {
 			used, uerr := s.store.UseRecoveryCode(ctx, id, auth.Hash(auth.NormalizeRecoveryCode(code)))
-			if uerr == nil && used {
+			if uerr != nil {
+				return "", "", errAuthStore
+			}
+			if used {
 				ok = true
 				_ = s.store.AddAudit(ctx, id, "user.2fa.recovery.used", id, nil)
 			}

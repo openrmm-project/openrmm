@@ -68,6 +68,9 @@ func (s *Scheduler) tick(ctx context.Context) {
 	now := time.Now()
 	for i := range agents {
 		a := &agents[i]
+		if a.Status == models.AgentRevoked {
+			continue
+		}
 		s.evaluateOffline(ctx, a, now)
 		if !s.hub.IsOnline(a.ID) {
 			continue // only dispatch to live agents
@@ -111,6 +114,9 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 	}
 	for i := range agents {
 		a := &agents[i]
+		if a.Status == models.AgentRevoked {
+			continue
+		}
 		pols, err := s.store.PatchPoliciesForAgent(ctx, a.ID)
 		if err != nil || len(pols) == 0 {
 			continue
@@ -133,6 +139,10 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 			}
 		} else if rebootAllowed && pendingReboot[a.ID] {
 			// Nothing left to install; clear a pending reboot inside the window.
+			live, err := s.store.HasLiveNativeRemoteSession(ctx, a.ID)
+			if err != nil || live {
+				continue // never interrupt an operator's active remote session automatically
+			}
 			if err := s.patches.DispatchReboot(ctx, a.ID, 60); err != nil {
 				log.Printf("patch reboot %s: %v", a.ID, err)
 			}

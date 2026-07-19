@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -9,9 +10,15 @@ import (
 
 // Config holds all runtime configuration, loaded from environment variables.
 type Config struct {
-	HTTPAddr    string // address the HTTP/API server listens on
-	PublicURL   string // externally reachable base URL (used to build connect URLs)
-	DatabaseURL string // PostgreSQL connection string
+	HTTPAddr string // address the HTTP/API server listens on
+	// PublicURL is the externally reachable agents origin, returned to the console
+	// for enrollment commands. Installed agents derive relay URLs from the
+	// WebSocket origin passed as their -server setting.
+	PublicURL string
+	// MCPPublicURL is the externally reachable OAuth issuer/resource origin.
+	// It is intentionally separate from PublicURL in split-ingress deployments.
+	MCPPublicURL string
+	DatabaseURL  string // PostgreSQL connection string
 
 	// Bootstrap admin API token. On first start this is accepted as a valid
 	// bearer token so you can create real tokens / enroll agents.
@@ -52,11 +59,17 @@ type Config struct {
 	// TrustProxyHeaders enables reading X-Forwarded-For for the IP allowlist
 	// (only enable when behind a trusted reverse proxy).
 	TrustProxyHeaders bool
+	// AllowLegacyAgentRelay permits pre-ticket sidecars to send their agent ticket
+	// in a relay URL during a controlled rollout. Keep false outside that window.
+	AllowLegacyAgentRelay bool
+	// EnforceConsoleRelayIngress requires browser relay peers to enter through a
+	// proxy-marked console door. Enable it for the split-ingress deployment.
+	EnforceConsoleRelayIngress bool
 	// MCPOAuthEnabled turns on the built-in OAuth 2.1 Authorization Server for
 	// MCP (RMM acts as its own AS + Resource Server), so cloud MCP clients
 	// (Claude web, ChatGPT) can connect via the standard OAuth connector flow
-	// instead of a pasted static token. Off by default. The issuer is PublicURL,
-	// which MUST be an HTTPS URL when enabled.
+	// instead of a pasted static token. Off by default. MCPPublicURL MUST be an
+	// HTTPS URL when enabled.
 	MCPOAuthEnabled bool
 	// CORSOrigins is the allowed browser origins for the API (comma-separated).
 	// Default ["*"] (fine for bearer-token auth, which doesn't use cookies).
@@ -90,36 +103,111 @@ func envInt(key string, def int) int {
 	return def
 }
 
+// secretEnv reads either KEY or KEY_FILE. File-backed values keep secrets out
+// of container metadata and process environments.
+func secretEnv(key string) (string, error) {
+	value, valueSet := os.LookupEnv(key)
+	path, fileSet := os.LookupEnv(key + "_FILE")
+	if valueSet && fileSet && path != "" {
+		return "", fmt.Errorf("%s and %s_FILE are mutually exclusive", key, key)
+	}
+	if !fileSet || path == "" {
+		return value, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s_FILE: %w", key, err)
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
+}
+
+func databaseURLWithPassword(raw, password string) (string, error) {
+	if password == "" {
+		return raw, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse RMM_DATABASE_URL: %w", err)
+	}
+	if u.User == nil || u.User.Username() == "" {
+		return "", fmt.Errorf("RMM_DATABASE_URL must include a username when RMM_DATABASE_PASSWORD_FILE is set")
+	}
+	u.User = url.UserPassword(u.User.Username(), password)
+	return u.String(), nil
+}
+
 // Load reads configuration from the environment and validates required fields.
 func Load() (*Config, error) {
+	adminToken, err := secretEnv("RMM_ADMIN_TOKEN")
+	if err != nil {
+		return nil, err
+	}
+	settingsKey, err := secretEnv("RMM_SETTINGS_ENCRYPTION_KEY")
+	if err != nil {
+		return nil, err
+	}
+	aiAPIKey, err := secretEnv("RMM_AI_API_KEY")
+	if err != nil {
+		return nil, err
+	}
+	meshTokenKey, err := secretEnv("RMM_MESHCENTRAL_TOKEN_KEY")
+	if err != nil {
+		return nil, err
+	}
+	databasePassword, err := secretEnv("RMM_DATABASE_PASSWORD")
+	if err != nil {
+		return nil, err
+	}
+	databaseURL, err := databaseURLWithPassword(env("RMM_DATABASE_URL", "postgres://rmm:rmm@localhost:5432/rmm?sslmode=disable"), databasePassword)
+	if err != nil {
+		return nil, err
+	}
+
 	c := &Config{
-		HTTPAddr:              env("RMM_HTTP_ADDR", ":8080"),
-		PublicURL:             env("RMM_PUBLIC_URL", "http://localhost:8080"),
-		DatabaseURL:           env("RMM_DATABASE_URL", "postgres://rmm:rmm@localhost:5432/rmm?sslmode=disable"),
-		AdminToken:            os.Getenv("RMM_ADMIN_TOKEN"),
-		AIProvider:            env("RMM_AI_PROVIDER", "openai-compatible"),
-		AIBaseURL:             env("RMM_AI_BASE_URL", "https://api.openai.com/v1"),
-		AIAPIKey:              os.Getenv("RMM_AI_API_KEY"),
-		AIModel:               env("RMM_AI_MODEL", "gpt-4o-mini"),
-		DefaultRemoteProvider: env("RMM_REMOTE_PROVIDER", "native"),
-		MeshCentralURL:        os.Getenv("RMM_MESHCENTRAL_URL"),
-		MeshCentralTokenKey:   os.Getenv("RMM_MESHCENTRAL_TOKEN_KEY"),
-		MeshCentralUser:       env("RMM_MESHCENTRAL_USER", "admin"),
-		MeshCentralEnabled:    os.Getenv("RMM_MESHCENTRAL_ENABLED") != "false",
-		RustDeskEnabled:       os.Getenv("RMM_RUSTDESK_ENABLED") == "true",
-		MCPAllowedIPs:         splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
-		AllowUnapprovedJobs:   os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
-		TrustProxyHeaders:     os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",
-		MCPOAuthEnabled:       os.Getenv("RMM_MCP_OAUTH_ENABLED") == "true",
-		CORSOrigins:           splitCSV(env("RMM_CORS_ORIGINS", "*")),
-		SettingsEncryptionKey: os.Getenv("RMM_SETTINGS_ENCRYPTION_KEY"),
-		APIRateLimit:          envInt("RMM_API_RATE_LIMIT", 600),
+		HTTPAddr:                   env("RMM_HTTP_ADDR", ":8080"),
+		PublicURL:                  env("RMM_PUBLIC_URL", "http://localhost:8080"),
+		MCPPublicURL:               strings.TrimRight(os.Getenv("RMM_MCP_PUBLIC_URL"), "/"),
+		DatabaseURL:                databaseURL,
+		AdminToken:                 adminToken,
+		AIProvider:                 env("RMM_AI_PROVIDER", "openai-compatible"),
+		AIBaseURL:                  env("RMM_AI_BASE_URL", "https://api.openai.com/v1"),
+		AIAPIKey:                   aiAPIKey,
+		AIModel:                    env("RMM_AI_MODEL", "gpt-4o-mini"),
+		DefaultRemoteProvider:      env("RMM_REMOTE_PROVIDER", "native"),
+		MeshCentralURL:             os.Getenv("RMM_MESHCENTRAL_URL"),
+		MeshCentralTokenKey:        meshTokenKey,
+		MeshCentralUser:            env("RMM_MESHCENTRAL_USER", "admin"),
+		MeshCentralEnabled:         os.Getenv("RMM_MESHCENTRAL_ENABLED") != "false",
+		RustDeskEnabled:            os.Getenv("RMM_RUSTDESK_ENABLED") == "true",
+		MCPAllowedIPs:              splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
+		AllowUnapprovedJobs:        os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
+		TrustProxyHeaders:          os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",
+		AllowLegacyAgentRelay:      os.Getenv("RMM_ALLOW_LEGACY_AGENT_RELAY") == "true",
+		EnforceConsoleRelayIngress: os.Getenv("RMM_ENFORCE_CONSOLE_RELAY_INGRESS") == "true",
+		MCPOAuthEnabled:            os.Getenv("RMM_MCP_OAUTH_ENABLED") == "true",
+		CORSOrigins:                splitCSV(env("RMM_CORS_ORIGINS", "*")),
+		SettingsEncryptionKey:      settingsKey,
+		APIRateLimit:               envInt("RMM_API_RATE_LIMIT", 600),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")
 	}
 	if len(c.AdminToken) < 32 {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is too weak: use at least 32 characters (e.g. `openssl rand -hex 32`)")
+	}
+	if os.Getenv("RMM_REQUIRE_SETTINGS_ENCRYPTION_KEY") == "true" && len(c.SettingsEncryptionKey) < 32 {
+		return nil, fmt.Errorf("RMM_SETTINGS_ENCRYPTION_KEY is required and must contain at least 32 characters")
+	}
+	if c.MCPOAuthEnabled {
+		if c.MCPPublicURL == "" {
+			return nil, fmt.Errorf("RMM_MCP_PUBLIC_URL is required when RMM_MCP_OAUTH_ENABLED=true")
+		}
+		if !strings.HasPrefix(strings.ToLower(c.MCPPublicURL), "https://") {
+			return nil, fmt.Errorf("RMM_MCP_PUBLIC_URL must use https:// when RMM_MCP_OAUTH_ENABLED=true")
+		}
+	}
+	if c.EnforceConsoleRelayIngress && !c.TrustProxyHeaders {
+		return nil, fmt.Errorf("RMM_ENFORCE_CONSOLE_RELAY_INGRESS requires RMM_TRUST_PROXY_HEADERS=true behind a trusted proxy")
 	}
 	return c, nil
 }

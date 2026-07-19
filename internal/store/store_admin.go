@@ -30,10 +30,41 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]models.APITokenInfo, error
 	return out, rows.Err()
 }
 
+// ListAPITokensForUser returns only tokens inheriting the specified user's
+// tenant scope.
+func (s *Store) ListAPITokensForUser(ctx context.Context, userID string) ([]models.APITokenInfo, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, name, role, created_at, expires_at
+		FROM api_tokens WHERE user_id=$1 ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []models.APITokenInfo
+	for rows.Next() {
+		var token models.APITokenInfo
+		if err := rows.Scan(&token.ID, &token.Name, &token.Role, &token.CreatedAt, &token.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, token)
+	}
+	return out, rows.Err()
+}
+
 // DeleteAPIToken revokes an API token by id.
 func (s *Store) DeleteAPIToken(ctx context.Context, id string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM api_tokens WHERE id=$1`, id)
-	return err
+	ct, err := s.pool.Exec(ctx, `DELETE FROM api_tokens WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteAPITokenForUser(ctx context.Context, id, userID string) (bool, error) {
+	ct, err := s.pool.Exec(ctx, `DELETE FROM api_tokens WHERE id=$1 AND user_id=$2`, id, userID)
+	return err == nil && ct.RowsAffected() == 1, err
 }
 
 // ===================== Device deletion =====================
@@ -147,6 +178,24 @@ func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 
 // SetAgentGroup assigns an agent to a group (or clears it with nil).
 func (s *Store) SetAgentGroup(ctx context.Context, agentID string, groupID *string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agents SET group_id=$2 WHERE id=$1`, agentID, groupID)
-	return err
+	if groupID == nil || *groupID == "" {
+		ct, err := s.pool.Exec(ctx, `UPDATE agents SET group_id=NULL WHERE id=$1`, agentID)
+		if err != nil {
+			return err
+		}
+		if ct.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+	ct, err := s.pool.Exec(ctx, `UPDATE agents AS a SET group_id=g.id
+		FROM device_groups g
+		WHERE a.id=$1 AND g.id=$2 AND a.site_id=g.site_id`, agentID, *groupID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
 }

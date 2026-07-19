@@ -119,7 +119,7 @@ type HardwareRow struct {
 	CPUCores     int    `json:"cpu_cores"`
 	MemTotalByte int64  `json:"mem_total_bytes"`
 	GPU          string `json:"gpu"`
-	Storage      string `json:"storage"`      // joined storage-device models
+	Storage      string `json:"storage"`       // joined storage-device models
 	StorageBytes int64  `json:"storage_bytes"` // total capacity across all storage devices
 	BIOS         string `json:"bios"`
 	Platform     string `json:"platform"`

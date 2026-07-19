@@ -1,5 +1,5 @@
 -- RMM-AI database schema (PostgreSQL)
--- Idempotent: safe to run on every server start.
+-- Version 1 baseline: idempotent for adoption of pre-migration databases.
 
 -- ===================== Identity / RBAC =====================
 
@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS agents (
     group_id     UUID REFERENCES device_groups(id) ON DELETE SET NULL,
     tags         TEXT[] NOT NULL DEFAULT '{}',
     mesh_id      TEXT,
+    token_rotation_canceling BOOLEAN NOT NULL DEFAULT FALSE,
     last_seen    TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -187,9 +188,10 @@ CREATE TABLE IF NOT EXISTS agents (
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE SET NULL;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS note        TEXT NOT NULL DEFAULT '';
--- The RustDesk provider was dropped; remove its column from existing installs.
-ALTER TABLE agents DROP COLUMN IF EXISTS rustdesk_id;
-
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS pending_token_hash TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS token_rotation_id TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS pending_token_expires_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS token_rotation_canceling BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS enroll_tokens (
     id          UUID PRIMARY KEY,
     token       TEXT NOT NULL UNIQUE,
@@ -236,8 +238,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-CREATE INDEX IF NOT EXISTS idx_jobs_task ON jobs(task_id);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_id UUID;
+CREATE INDEX IF NOT EXISTS idx_jobs_task ON jobs(task_id);
 -- Bulk/mass-deployment grouping: jobs created together share a batch_id.
 -- (ADD COLUMN before the index so it works on pre-existing jobs tables too.)
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS batch_id UUID;
@@ -363,6 +365,16 @@ CREATE TABLE IF NOT EXISTS remote_sessions (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at  TIMESTAMPTZ NOT NULL
 );
+
+-- Native relay tickets are separate per peer, hashed at rest, and consumed once.
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS viewer_ticket_hash TEXT;
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS agent_ticket_hash TEXT;
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS viewer_used_at TIMESTAMPTZ;
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS agent_used_at TIMESTAMPTZ;
+
+-- A revoked device loses its control credential immediately. Keep the timestamp
+-- rather than deleting the row so the audit and inventory history remain intact.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
 -- ===================== Audit =====================
 

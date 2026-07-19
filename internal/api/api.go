@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,13 +46,16 @@ const (
 // single authenticated caller from forcing unbounded memory with a huge body.
 const maxAPIBodyBytes = 1 << 20
 
+var errTokenMCPOnly = errors.New("OAuth token is restricted to MCP")
+
 type ctxKey string
 
 const (
-	actorKey     ctxKey = "actor"
-	roleKey      ctxKey = "role"
-	scopeUserKey ctxKey = "scopeUser"
-	permsKey     ctxKey = "permissions"
+	actorKey          ctxKey = "actor"
+	roleKey           ctxKey = "role"
+	scopeUserKey      ctxKey = "scopeUser"
+	permsKey          ctxKey = "permissions"
+	relayPrincipalKey ctxKey = "relayPrincipal"
 )
 
 // Server holds all HTTP dependencies.
@@ -65,11 +69,23 @@ type Server struct {
 	chat    *ai.Engine
 	sched   *scheduler.Scheduler
 	patches *patches.Service
+
+	// agentLifecycle stores one stable lock per agent. It linearizes that agent's
+	// authentication, lease attachment, frames, revocation, and credential
+	// transitions without allowing slow DB I/O from one endpoint to stall others.
+	agentLifecycle sync.Map // agent id -> *sync.Mutex
 }
 
 // New builds the API server.
 func New(cfg *config.Config, s *store.Store, h *hub.Hub, j *jobs.Service, rm *remote.Manager, relay *remote.Relay, chat *ai.Engine, sched *scheduler.Scheduler, patchSvc *patches.Service) *Server {
 	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, chat: chat, sched: sched, patches: patchSvc}
+}
+
+func (s *Server) lockAgentLifecycle(agentID string) func() {
+	value, _ := s.agentLifecycle.LoadOrStore(agentID, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // Router builds the chi router.
@@ -110,8 +126,32 @@ func (s *Server) Router() http.Handler {
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; requires the MCP permission
 	// since it can propose jobs (which still require human approval).
-	mcpHandler := mcpserver.Handler(s.store, s.jobs, func(r *http.Request) (string, string, map[string]bool) {
-		return actorOf(r), s.scopeUserID(r), permissionsOf(r)
+	mcpHandler := mcpserver.Handler(s.store, s.jobs, func(r *http.Request) mcpserver.Identity {
+		principal := ""
+		if token := bearer(r); token != "" && roleOf(r) != "" {
+			principal = "token:" + auth.Hash(token)
+		}
+		return mcpserver.Identity{
+			Actor: actorOf(r), ScopeUser: s.scopeUserID(r),
+			Principal: principal, Permissions: permissionsOf(r),
+		}
+	}, func(authorization string) mcpserver.AuthorizeFunc {
+		token := strings.TrimPrefix(authorization, "Bearer ")
+		return func(ctx context.Context) (mcpserver.Identity, error) {
+			identity, err := s.authenticateToken(ctx, "/mcp", token)
+			if err != nil {
+				return mcpserver.Identity{}, err
+			}
+			perms, err := s.permissionsForRole(ctx, identity.role)
+			if err != nil {
+				return mcpserver.Identity{}, err
+			}
+			set := permissionSet(perms)
+			if !set[models.PermMCPUse] {
+				return mcpserver.Identity{}, errors.New("MCP permission revoked")
+			}
+			return mcpserver.Identity{Actor: identity.actor, ScopeUser: identity.scopeUser, Principal: "token:" + auth.Hash(token), Permissions: set}, nil
+		}
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.rateLimit(mcpRateLimit))
@@ -153,9 +193,13 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices", s.listDevices)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/remote-capabilities", s.getRemoteCapabilities)
 		r.With(s.requirePermissionAny(models.PermDevicesRemote, models.PermDevicesFiles, models.PermDevicesTerminal)).Post("/devices/{id}/remote", s.startRemote)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}", s.updateDeviceMeta)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)
+		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/revoke", s.revokeDevice)
+		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/rotate-credential", s.rotateDeviceCredential)
+		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/cancel-credential-rotation", s.cancelDeviceCredentialRotation)
 		r.With(s.requirePermission(models.PermDevicesDelete)).Delete("/devices/{id}", s.deleteDevice)
 		r.With(s.requirePermission(models.PermClientsManage)).Patch("/devices/{id}/group", s.setDeviceGroup)
 		r.With(s.requirePermission(models.PermClientsManage)).Patch("/devices/{id}/site", s.setDeviceSite)
@@ -253,6 +297,64 @@ func (s *Server) Router() http.Handler {
 
 // ---------- middleware & helpers ----------
 
+type authenticatedIdentity struct {
+	actor, role, scopeUser, relayPrincipal string
+}
+
+func (s *Server) authenticateToken(ctx context.Context, path, token string) (authenticatedIdentity, error) {
+	if token == "" {
+		return authenticatedIdentity{}, store.ErrNotFound
+	}
+	if auth.ConstantTimeEqual(token, s.cfg.AdminToken) {
+		return authenticatedIdentity{actor: "admin", role: models.RoleAdmin, relayPrincipal: "admin"}, nil
+	}
+	hash := auth.Hash(token)
+	if uid, role, err := s.store.SessionPrincipal(ctx, hash); err == nil {
+		scopeUser, err := s.effectiveScopeUser(ctx, uid)
+		if err != nil {
+			return authenticatedIdentity{}, err
+		}
+		return authenticatedIdentity{actor: uid, role: role, scopeUser: scopeUser, relayPrincipal: uid}, nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return authenticatedIdentity{}, err
+	}
+	if role, uid, ok, err := s.store.APITokenRole(ctx, hash); err != nil {
+		return authenticatedIdentity{}, err
+	} else if ok {
+		principal := "api:" + hash
+		scopeUser := ""
+		if uid != "" {
+			principal = uid
+			scopeUser, err = s.effectiveScopeUser(ctx, uid)
+			if err != nil {
+				return authenticatedIdentity{}, err
+			}
+		}
+		return authenticatedIdentity{actor: "api", role: role, scopeUser: scopeUser, relayPrincipal: principal}, nil
+	}
+	if uid, role, ok, err := s.store.OAuthTokenPrincipal(ctx, hash); err != nil {
+		return authenticatedIdentity{}, err
+	} else if ok {
+		if !strings.HasPrefix(path, "/mcp") {
+			return authenticatedIdentity{}, errTokenMCPOnly
+		}
+		scopeUser, err := s.effectiveScopeUser(ctx, uid)
+		if err != nil {
+			return authenticatedIdentity{}, err
+		}
+		return authenticatedIdentity{actor: uid, role: role, scopeUser: scopeUser, relayPrincipal: uid}, nil
+	}
+	return authenticatedIdentity{}, store.ErrNotFound
+}
+
+func (s *Server) effectiveScopeUser(ctx context.Context, userID string) (string, error) {
+	restricted, err := s.store.UserHasScopes(ctx, userID)
+	if err != nil || !restricted {
+		return "", err
+	}
+	return userID, nil
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearer(r)
@@ -260,38 +362,27 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		var actor, role, scopeUser string
-		switch {
-		case auth.ConstantTimeEqual(token, s.cfg.AdminToken):
-			actor, role = "admin", models.RoleAdmin
-		default:
-			hash := auth.Hash(token)
-			if uid, rl, err := s.store.SessionPrincipal(r.Context(), hash); err == nil {
-				actor, role, scopeUser = uid, rl, uid
-			} else if rl, uid, ok, _ := s.store.APITokenRole(r.Context(), hash); ok {
-				actor, role, scopeUser = "api", rl, uid // uid set only for tokens bound to a user
-			} else if uid, rl, ok, _ := s.store.OAuthTokenPrincipal(r.Context(), hash); ok {
-				// MCP OAuth token — bound to a user, scoped to the MCP resource only.
-				// It authenticates /mcp, not the rest of the API/UI surface.
-				if !strings.HasPrefix(r.URL.Path, "/mcp") {
-					writeErr(w, http.StatusForbidden, "this token is only valid for the MCP endpoint")
-					return
-				}
-				actor, role, scopeUser = uid, rl, uid
-			} else {
+		identity, err := s.authenticateToken(r.Context(), r.URL.Path, token)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
 				writeErr(w, http.StatusUnauthorized, "invalid token")
-				return
+			} else if errors.Is(err, errTokenMCPOnly) {
+				writeErr(w, http.StatusForbidden, "this token is only valid for the MCP endpoint")
+			} else {
+				writeErr(w, http.StatusInternalServerError, err.Error())
 			}
+			return
 		}
-		perms, err := s.permissionsForRole(r.Context(), role)
+		perms, err := s.permissionsForRole(r.Context(), identity.role)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		ctx := context.WithValue(r.Context(), actorKey, actor)
-		ctx = context.WithValue(ctx, roleKey, role)
-		ctx = context.WithValue(ctx, scopeUserKey, scopeUser)
+		ctx := context.WithValue(r.Context(), actorKey, identity.actor)
+		ctx = context.WithValue(ctx, roleKey, identity.role)
+		ctx = context.WithValue(ctx, scopeUserKey, identity.scopeUser)
 		ctx = context.WithValue(ctx, permsKey, permissionSet(perms))
+		ctx = context.WithValue(ctx, relayPrincipalKey, identity.relayPrincipal)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -459,6 +550,9 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 // an empty secret field preserves the existing value, and responses only expose
 // boolean "*_set" flags.
 func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "global configuration") {
+		return
+	}
 	var in settings.SaveRequest
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -580,6 +674,16 @@ func actorOf(r *http.Request) string {
 	return "unknown"
 }
 
+// relayPrincipalOf is a stable identity for binding a one-time viewer ticket to
+// the caller that brokered it. It differs from the generic "api" audit actor for
+// unbound API tokens, which must not be interchangeable at the relay.
+func relayPrincipalOf(r *http.Request) string {
+	if v, ok := r.Context().Value(relayPrincipalKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 func roleOf(r *http.Request) string {
 	if v, ok := r.Context().Value(roleKey).(string); ok {
 		return v
@@ -588,16 +692,21 @@ func roleOf(r *http.Request) string {
 }
 
 // scopeUserID returns the user id whose access scope restricts this request, or
-// "" when the principal has full access (admin role, bootstrap/admin token, or
-// an unscoped API token).
+// "" when the principal has no user_scopes rows. Role and scope are orthogonal:
+// an admin role bound to scope rows remains restricted.
 func (s *Server) scopeUserID(r *http.Request) string {
-	if roleOf(r) == models.RoleAdmin {
-		return ""
-	}
 	if v, ok := r.Context().Value(scopeUserKey).(string); ok {
 		return v
 	}
 	return ""
+}
+
+func (s *Server) requireUnrestricted(w http.ResponseWriter, r *http.Request, resource string) bool {
+	if s.scopeUserID(r) == "" {
+		return true
+	}
+	writeErr(w, http.StatusForbidden, "restricted principals cannot mutate "+resource)
+	return false
 }
 
 // agentAllowed reports whether the request's principal may access the agent.
@@ -613,6 +722,13 @@ func (s *Server) agentAllowed(r *http.Request, agentID string) bool {
 // requireAgent 403s when the principal may not access the agent. Returns false
 // when it has already written the response.
 func (s *Server) requireAgent(w http.ResponseWriter, r *http.Request, agentID string) bool {
+	if s.scopeUserID(r) == "" {
+		if _, err := s.store.GetAgent(r.Context(), agentID); err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return false
+		}
+		return true
+	}
 	if s.agentAllowed(r, agentID) {
 		return true
 	}
@@ -620,22 +736,141 @@ func (s *Server) requireAgent(w http.ResponseWriter, r *http.Request, agentID st
 	return false
 }
 
-// scopedAgentSet returns (set, true) for a restricted principal — the agent ids
-// it may see — used to filter list endpoints. Returns (nil, false) for full access.
-func (s *Server) scopedAgentSet(r *http.Request) (map[string]bool, bool) {
+// scopedAgentSet returns the visible agent ids for a restricted principal.
+func (s *Server) scopedAgentSet(r *http.Request) (map[string]bool, bool, error) {
 	uid := s.scopeUserID(r)
 	if uid == "" {
-		return nil, false
+		return nil, false, nil
 	}
-	agents, _ := s.store.ListAgentsForUser(r.Context(), uid)
+	agents, err := s.store.ListAgentsForUser(r.Context(), uid)
+	if err != nil {
+		return nil, true, err
+	}
 	set := make(map[string]bool, len(agents))
 	for _, a := range agents {
 		set[a.ID] = true
 	}
-	return set, true
+	return set, true, nil
 }
 
 func inScope(set map[string]bool, id *string) bool { return id != nil && set[*id] }
+
+func validScopeType(scopeType string) bool {
+	return oneOf(scopeType, models.ScopeClient, models.ScopeSite, models.ScopeGroup, models.ScopeAgent)
+}
+
+// requireScope requires control of the complete referenced scope. This is
+// stricter than visibility: an agent-only grant cannot mutate its parent site.
+func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scopeType, scopeID string) bool {
+	if !validScopeType(scopeType) || scopeID == "" {
+		writeErr(w, http.StatusBadRequest, "invalid scope reference")
+		return false
+	}
+	uid := s.scopeUserID(r)
+	if uid == "" {
+		ok, err := s.store.ScopeExists(r.Context(), scopeType, scopeID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return false
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "scope not found")
+			return false
+		}
+		return true
+	}
+	ok, err := s.store.ScopeAllowedForUser(r.Context(), uid, scopeType, scopeID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !ok {
+		writeErr(w, http.StatusForbidden, "scope is outside your access scope")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requireVisibleScope(w http.ResponseWriter, r *http.Request, scopeType, scopeID string) bool {
+	if !validScopeType(scopeType) || scopeID == "" {
+		writeErr(w, http.StatusBadRequest, "invalid scope reference")
+		return false
+	}
+	uid := s.scopeUserID(r)
+	var ok bool
+	var err error
+	if uid == "" {
+		ok, err = s.store.ScopeExists(r.Context(), scopeType, scopeID)
+	} else {
+		switch scopeType {
+		case models.ScopeClient:
+			var rows []models.Client
+			rows, err = s.store.ListClientsForUser(r.Context(), uid)
+			for _, row := range rows {
+				ok = ok || row.ID == scopeID
+			}
+		case models.ScopeSite:
+			var rows []models.Site
+			rows, err = s.store.ListSitesForUser(r.Context(), uid, "")
+			for _, row := range rows {
+				ok = ok || row.ID == scopeID
+			}
+		case models.ScopeGroup:
+			var rows []models.DeviceGroup
+			rows, err = s.store.ListGroupsForUser(r.Context(), uid)
+			for _, row := range rows {
+				ok = ok || row.ID == scopeID
+			}
+		case models.ScopeAgent:
+			ok, err = s.store.AgentAllowedForUser(r.Context(), uid, scopeID)
+		}
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !ok {
+		writeErr(w, http.StatusForbidden, "scope is outside your access scope")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requirePolicy(w http.ResponseWriter, r *http.Request, policyID string, manage bool) bool {
+	uid := s.scopeUserID(r)
+	if manage && uid != "" {
+		writeErr(w, http.StatusForbidden, "restricted principals cannot mutate global policies")
+		return false
+	}
+	if uid == "" {
+		ok, err := s.store.PolicyExists(r.Context(), policyID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return false
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "policy not found")
+			return false
+		}
+		return true
+	}
+	var ok bool
+	var err error
+	if manage {
+		ok, err = s.store.PolicyManageAllowedForUser(r.Context(), uid, policyID)
+	} else {
+		ok, err = s.store.PolicyAllowedForUser(r.Context(), uid, policyID)
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !ok {
+		writeErr(w, http.StatusForbidden, "policy is outside your access scope")
+		return false
+	}
+	return true
+}
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	denilSlices(v)
@@ -695,6 +930,21 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 	if in.Uses <= 0 {
 		in.Uses = 1
 	}
+	if uid := s.scopeUserID(r); uid != "" {
+		if in.SiteID == nil || *in.SiteID == "" {
+			writeErr(w, http.StatusForbidden, "scoped users must bind enrollment tokens to an allowed site")
+			return
+		}
+		allowed, err := s.store.SiteEnrollmentAllowedForUser(r.Context(), uid, *in.SiteID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !allowed {
+			writeErr(w, http.StatusForbidden, "site is outside your enrollment scope")
+			return
+		}
+	}
 	var expires *time.Time
 	if in.TTLHours > 0 {
 		t := time.Now().Add(time.Duration(in.TTLHours) * time.Hour)
@@ -713,6 +963,9 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	var agents []models.Agent
 	var err error
+	if siteID := r.URL.Query().Get("site_id"); siteID != "" && !s.requireVisibleScope(w, r, models.ScopeSite, siteID) {
+		return
+	}
 	switch {
 	case r.URL.Query().Get("site_id") != "": // lazy load for the scope tree
 		agents, err = s.store.ListAgentsBySite(r.Context(), r.URL.Query().Get("site_id"))
@@ -726,6 +979,18 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
+		filtered := agents[:0]
+		for _, agent := range agents {
+			if set[agent.ID] {
+				filtered = append(filtered, agent)
+			}
+		}
+		agents = filtered
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": agents})
 }
@@ -752,6 +1017,19 @@ func (s *Server) getInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, inv)
+}
+
+func (s *Server) getRemoteCapabilities(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireAgent(w, r, id) {
+		return
+	}
+	caps, err := s.remote.Capabilities(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, caps)
 }
 
 func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
@@ -789,7 +1067,16 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	sess, err := s.remote.Start(r.Context(), in.Provider, agent, actorOf(r), remote.StartOptions{AllowFiles: hasPermission(r, models.PermDevicesFiles)})
+	if agent.Status == models.AgentRevoked {
+		writeErr(w, http.StatusConflict, "device credential is revoked; enroll it again to restore access")
+		return
+	}
+	principal := relayPrincipalOf(r)
+	if principal == "" {
+		writeErr(w, http.StatusUnauthorized, "remote session requires an authenticated principal")
+		return
+	}
+	sess, err := s.remote.Start(r.Context(), in.Provider, agent, principal, remote.StartOptions{AllowFiles: hasPermission(r, models.PermDevicesFiles)})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -800,13 +1087,20 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 // ---------- jobs ----------
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID != "" && !s.requireAgent(w, r, agentID) {
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	js, err := s.store.ListJobs(r.Context(), r.URL.Query().Get("agent_id"), limit)
+	js, err := s.store.ListJobs(r.Context(), agentID, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
 		f := js[:0]
 		for _, j := range js {
 			if set[j.AgentID] {
@@ -878,10 +1172,16 @@ func (s *Server) createBulkJob(w http.ResponseWriter, r *http.Request) {
 	targets := map[string]bool{}
 	for _, id := range in.AgentIDs {
 		if id != "" {
+			if !s.requireAgent(w, r, id) {
+				return
+			}
 			targets[id] = true
 		}
 	}
 	if in.GroupID != "" {
+		if !s.requireScope(w, r, models.ScopeGroup, in.GroupID) {
+			return
+		}
 		ags, err := s.store.ListAgentsByGroup(r.Context(), in.GroupID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
@@ -892,6 +1192,9 @@ func (s *Server) createBulkJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.SiteID != "" {
+		if !s.requireScope(w, r, models.ScopeSite, in.SiteID) {
+			return
+		}
 		ags, err := s.store.ListAgentsBySite(r.Context(), in.SiteID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
@@ -901,7 +1204,10 @@ func (s *Server) createBulkJob(w http.ResponseWriter, r *http.Request) {
 			targets[a.ID] = true
 		}
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
 		for id := range targets {
 			if !set[id] {
 				delete(targets, id)
@@ -941,7 +1247,11 @@ func (s *Server) createBulkJob(w http.ResponseWriter, r *http.Request) {
 
 // batchScopeOK 403s a scoped caller if the batch targets any out-of-scope device.
 func (s *Server) batchScopeOK(w http.ResponseWriter, r *http.Request, batchID string) bool {
-	set, scoped := s.scopedAgentSet(r)
+	set, scoped, err := s.scopedAgentSet(r)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
 	if !scoped {
 		return true
 	}
@@ -966,7 +1276,10 @@ func (s *Server) getBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
 		out := make([]models.Job, 0, len(jobs))
 		for _, j := range jobs {
 			if set[j.AgentID] {
@@ -1088,6 +1401,10 @@ func (s *Server) completeJob(w http.ResponseWriter, r *http.Request) {
 // ---------- audit ----------
 
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "restricted principals cannot read the global audit log")
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	entries, err := s.store.ListAudit(r.Context(), limit)
 	if err != nil {

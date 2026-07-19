@@ -27,6 +27,9 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
 	var sc models.Script
 	if err := decode(r, &sc); err != nil || sc.Name == "" {
 		writeErr(w, http.StatusBadRequest, "name required")
@@ -44,6 +47,9 @@ func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateScript(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
 	var sc models.Script
 	if err := decode(r, &sc); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -59,6 +65,9 @@ func (s *Server) updateScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteScript(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
 	if err := s.store.DeleteScript(r.Context(), chi.URLParam(r, "id")); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

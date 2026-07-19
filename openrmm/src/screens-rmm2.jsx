@@ -347,12 +347,21 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
 
 // Cross-platform install commands for an enrollment token. Linux & macOS share
 // the bash install.sh (it auto-detects via uname); Windows uses install.ps1.
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\"'\"'") + "'";
+}
 function EnrollCommands({ token, site }) {
   const [os, setOs] = useState('linux');
-  const base = api.API_BASE;
-  const siteArg = site ? ` \\\n  --site "${site.name}"` : '';
-  const nixCmd = `curl -fsSL ${base}/install.sh | sudo bash -s -- \\\n  --server ${base} \\\n  --token ${token}${siteArg}`;
-  const winCmd = `# Run PowerShell as Administrator\n& ([scriptblock]::Create((iwr -useb ${base}/install.ps1))) -Server ${base} -Token ${token}`;
+  const configQ = useQuery(['config'], () => api.getConfig(), {});
+  // Enrollment, updates, and the agent-side relay live on the agents origin in
+  // split ingress, not on the console origin serving this screen.
+  if (configQ.loading) return <div className="text-[12px] text-faint py-2">Loading the agents install URL...</div>;
+  const base = configQ.data?.server?.base_url;
+  if (!base) return <div className="text-[12px] text-bad py-2">Could not load the agents install URL. Refresh the page before copying an enrollment command.</div>;
+  const agentsBase = base.replace(/\/$/, '');
+  const siteArg = site ? ` \\\n  --site ${shellQuote(site.name)}` : '';
+  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${siteArg}`;
+  const winCmd = `# Run PowerShell as Administrator\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}`;
   const isWin = os === 'windows';
   const cmd = isWin ? winCmd : nixCmd;
   const OSES = [{ v: 'linux', l: 'Linux' }, { v: 'macos', l: 'macOS' }, { v: 'windows', l: 'Windows' }];
@@ -410,7 +419,7 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       window.dataBus.emit('devices'); setMoveDevice(null); toast.success('Device moved');
     } catch (e) { toast.error('Failed to move device', e.message); }
   };
-  const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 50, ttl_hours: 168 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+  const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 1, ttl_hours: 24 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
 
   // Group the site's devices by department; ungrouped devices fall under "No department".
   const deptIds = new Set(depts.map((g) => g.id));
@@ -705,9 +714,9 @@ function ChangePasswordCard() {
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
-  const tooShort = next.length > 0 && next.length < 8;
+  const tooShort = next.length > 0 && next.length < 12;
   const mismatch = confirm.length > 0 && next !== confirm;
-  const canSubmit = cur && next.length >= 8 && next === confirm && !busy;
+  const canSubmit = cur && next.length >= 12 && next === confirm && !busy;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -726,10 +735,10 @@ function ChangePasswordCard() {
         <Icon name="key" size={16} className="text-muted" />
         <div className="text-[14px] font-semibold text-ink">Change password</div>
       </div>
-      <div className="text-[12.5px] text-muted mb-3">Set a new password for your account. Minimum 8 characters; other sessions are signed out.</div>
+      <div className="text-[12.5px] text-muted mb-3">Set a new password for your account. Minimum 12 characters; other sessions are signed out.</div>
       <div className="space-y-2.5 max-w-md">
         <Field label="Current password"><Input type="password" value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" placeholder="••••••••" /></Field>
-        <Field label="New password" hint={tooShort ? 'At least 8 characters' : undefined}>
+        <Field label="New password" hint={tooShort ? 'At least 12 characters' : undefined}>
           <Input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" placeholder="••••••••" className={tooShort ? 'border-bad' : ''} />
         </Field>
         <Field label="Confirm new password" hint={mismatch ? "Passwords don't match" : undefined}>
@@ -749,6 +758,7 @@ function TwoFactorCard() {
   const enabled = !!meQ.data?.totp_enabled;
   const [setup, setSetup] = useState(null); // { secret, uri } during enrollment
   const [code, setCode] = useState('');
+  const [pw, setPw] = useState(''); // current password — required to enable or disable 2FA
   const [busy, setBusy] = useState(false);
   const [recovery, setRecovery] = useState(null); // string[] shown once after enable/regen
   const qrRef = useRef(null);
@@ -760,9 +770,9 @@ function TwoFactorCard() {
     }
   }, [setup]);
 
-  const start = async () => { setBusy(true); try { setSetup(await api.setup2FA()); setCode(''); } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); } };
+  const start = async () => { setBusy(true); try { setSetup(await api.setup2FA(pw)); setPw(''); setCode(''); } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); } };
   const activate = async () => { setBusy(true); try { const r = await api.enable2FA(code.trim()); setSetup(null); setCode(''); meQ.refetch(); setRecovery(r.recovery_codes || []); toast.success('Two-factor enabled'); } catch (e) { toast.error('Could not enable', e.message); } finally { setBusy(false); } };
-  const disable = async () => { setBusy(true); try { await api.disable2FA(code.trim()); setCode(''); meQ.refetch(); toast.info('Two-factor disabled'); } catch (e) { toast.error('Could not disable', e.message); } finally { setBusy(false); } };
+  const disable = async () => { setBusy(true); try { await api.disable2FA(pw, code.trim()); setPw(''); setCode(''); meQ.refetch(); toast.info('Two-factor disabled'); } catch (e) { toast.error('Could not disable', e.message); } finally { setBusy(false); } };
   const regen = async () => { setBusy(true); try { const r = await api.regenRecoveryCodes(code.trim()); setCode(''); setRecovery(r.recovery_codes || []); toast.success('New recovery codes generated'); } catch (e) { toast.error('Could not regenerate', e.message); } finally { setBusy(false); } };
 
   // downloadCodes saves the recovery codes as a text file (client-side).
@@ -802,13 +812,21 @@ function TwoFactorCard() {
           <div className="flex items-end gap-2">
             <Field label="Enter a current code" className="flex-1"><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" inputMode="numeric" className="mono tracking-widest" /></Field>
             <Button variant="secondary" icon="refresh" loading={busy} disabled={code.trim().length !== 6} onClick={regen} title="Generate a new set of recovery codes (invalidates the old ones)">New recovery codes</Button>
-            <Button variant="danger" loading={busy} disabled={code.trim().length !== 6} onClick={disable}>Disable 2FA</Button>
           </div>
-          <div className="text-[11px] text-faint">A code disables 2FA or regenerates your recovery codes.</div>
+          <div className="flex items-end gap-2">
+            <Field label="Account password" className="flex-1"><Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" placeholder="••••••••" /></Field>
+            <Button variant="danger" loading={busy} disabled={code.trim().length !== 6 || !pw} onClick={disable}>Disable 2FA</Button>
+          </div>
+          <div className="text-[11px] text-faint">A current code regenerates your recovery codes. Disabling 2FA also requires your account password.</div>
         </div>
       )}
 
-      {!enabled && !setup && <Button variant="primary" icon="shield" loading={busy} onClick={start}>Enable 2FA</Button>}
+      {!enabled && !setup && (
+        <div className="flex items-end gap-2 max-w-md">
+          <Field label="Account password" className="flex-1"><Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoComplete="current-password" placeholder="••••••••" /></Field>
+          <Button variant="primary" icon="shield" loading={busy} disabled={!pw} onClick={start}>Enable 2FA</Button>
+        </div>
+      )}
 
       {setup && (
         <div className="space-y-3 animate-fade-in">
@@ -933,13 +951,13 @@ function UsersPanel({ canAdmin }) {
           <div className="text-[15px] font-semibold text-ink mb-4">Add user</div>
           <div className="space-y-3">
             <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field>
-            <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="a strong password" /></Field>
+            <Field label="Password" hint={password.length > 0 && password.length < 12 ? 'At least 12 characters' : undefined}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 12 characters" className={password.length > 0 && password.length < 12 ? 'border-bad' : ''} /></Field>
             <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}>{roles.map((r) => <option key={r.key} value={r.key}>{roleLabel(r)}</option>)}</Select></Field>
             {newRole === 'admin'
               ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
               : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} /></Field>}
           </div>
-          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || !password}>Create user</Button></div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || password.length < 12}>Create user</Button></div>
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
@@ -1152,7 +1170,7 @@ function ScopePicker({ scopes, setScopes }) {
   const deviceCovered = (siteCovered, d) => siteCovered || (d.group_id && sel.has('group:' + d.group_id));
 
   const Row = ({ depth, icon, name, checked, disabled, onCheck, expandable, expanded, onExpand, hint }) => (
-    <div className="flex items-center gap-1.5 py-1 hover:bg-elevated rounded" style={{ paddingLeft: depth * 18 + 4 }}>
+    <div className={cx('flex items-center gap-1.5 py-1 hover:bg-elevated rounded', `tree-depth-${depth}`)}>
       {expandable
         ? <button onClick={onExpand} className="text-faint hover:text-ink w-4"><Icon name={expanded ? 'chevdown' : 'chevright'} size={14} /></button>
         : <span className="w-4" />}
@@ -1235,11 +1253,11 @@ function ScopePicker({ scopes, setScopes }) {
                         const covered = deviceCovered(siteCovered, d);
                         return <Row key={d.id} depth={2} icon="devices" name={d.hostname} hint={(d.status || '') + ' · no department'} checked={covered || sel.has('agent:' + d.id)} disabled={covered} onCheck={() => toggle('agent', d.id)} />;
                       })}
-                      {expS[st.id] && siteGroups.length === 0 && siteDevices.length === 0 && <div style={{ paddingLeft: 2 * 18 + 26 }} className="text-[11px] text-faint py-1">no departments or devices</div>}
+                      {expS[st.id] && siteGroups.length === 0 && siteDevices.length === 0 && <div className="tree-empty-depth-2 text-[11px] text-faint py-1">no departments or devices</div>}
                     </div>
                   );
                 })}
-                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div style={{ paddingLeft: 18 + 26 }} className="text-[11px] text-faint py-1">no sites</div>}
+                {expC[c.id] && (sitesBy[c.id] || []).length === 0 && <div className="tree-empty-depth-1 text-[11px] text-faint py-1">no sites</div>}
               </div>
             ))}
             </>}
@@ -1317,7 +1335,7 @@ function ConfigPanel() {
       </Card>
       <Card className="p-4 md:col-span-2">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="shield" size={15} /></div><div className="text-[13px] font-semibold text-ink">Server</div></div>
-        <ConfigItem label="Version" value={c.server.version} mono /><ConfigItem label="API base URL" value={c.server.base_url} mono />
+        <ConfigItem label="Version" value={c.server.version} mono /><ConfigItem label="Agents public URL" value={c.server.base_url} mono />
         <div className="flex items-center justify-between gap-3 mt-4">
           <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Secrets are write-only and encrypted in the database; blank secret fields preserve current values.</div>
           {can('settings.manage') && <Button variant="primary" icon="check" loading={saving} onClick={save}>Save configuration</Button>}
@@ -1331,7 +1349,7 @@ function EnrollPanel({ canAdmin }) {
   const toast = useToast();
   const [token, setToken] = useState(null);
   const [busy, setBusy] = useState(false);
-  const gen = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Manual enrollment', uses: 100, ttl_hours: 168 }); setToken(t); toast.success('Enrollment token created', 'Shown once — copy it now.'); } finally { setBusy(false); } };
+  const gen = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Manual enrollment', uses: 1, ttl_hours: 24 }); setToken(t); toast.success('Enrollment token created', 'Shown once — copy it now.'); } finally { setBusy(false); } };
   if (!canAdmin) return <Card><EmptyState icon="shield" title="Access denied" msg="Enrollment management permission is required." /></Card>;
   return (
     <Card className="p-5 max-w-2xl">

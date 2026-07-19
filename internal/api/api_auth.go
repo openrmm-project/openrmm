@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -10,21 +13,26 @@ import (
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/settings"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 const sessionTTL = 7 * 24 * time.Hour
 
+const minPasswordLength = 12
+
+func validPassword(password, username string) bool {
+	if len([]rune(password)) < minPasswordLength {
+		return false
+	}
+	lower := strings.ToLower(password)
+	if lower == strings.ToLower(username) || lower == "passwordpassword" || lower == "123456789012" || lower == "qwertyuiop12" {
+		return false
+	}
+	return true
+}
+
 // bootstrapAdmin creates the very first admin user, only when no users exist.
 func (s *Server) bootstrapAdmin(w http.ResponseWriter, r *http.Request) {
-	n, err := s.store.CountUsers(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if n > 0 {
-		writeErr(w, http.StatusForbidden, "users already exist; use an admin to create more")
-		return
-	}
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -33,19 +41,22 @@ func (s *Server) bootstrapAdmin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if !validPassword(in.Password, in.Username) {
+		writeErr(w, http.StatusBadRequest, "password must be at least 12 characters and not be a common password")
+		return
+	}
 	hash, err := auth.HashPassword(in.Password)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	u, err := s.store.CreateUser(r.Context(), in.Username, hash, models.RoleAdmin)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	token := auth.NewToken()
+	u, err := s.store.BootstrapAdmin(r.Context(), in.Username, hash, auth.Hash(token), time.Now().Add(sessionTTL))
+	if errors.Is(err, store.ErrConflict) {
+		writeErr(w, http.StatusForbidden, "users already exist; use an admin to create more")
 		return
 	}
-	// Issue a session immediately so the caller is logged in (matches login shape).
-	token := auth.NewToken()
-	if err := s.store.CreateSession(r.Context(), u.ID, auth.Hash(token), time.Now().Add(sessionTTL)); err != nil {
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -83,7 +94,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	// Second factor: if enabled, a valid TOTP code — or a one-time recovery
 	// code — is required.
-	if encSecret, enabled, _ := s.store.GetUserTOTP(r.Context(), id); enabled {
+	encSecret, enabled, err := s.store.GetUserTOTP(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if enabled {
 		if in.Code == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "two-factor code required", "totp_required": true})
 			return
@@ -93,7 +109,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			// Fall back to a recovery code (consumed on use).
 			used, uerr := s.store.UseRecoveryCode(r.Context(), id, auth.Hash(auth.NormalizeRecoveryCode(in.Code)))
-			if uerr == nil && used {
+			if uerr != nil {
+				writeErr(w, http.StatusInternalServerError, uerr.Error())
+				return
+			}
+			if used {
 				ok = true
 				_ = s.store.AddAudit(r.Context(), id, "user.2fa.recovery.used", id, nil)
 			}
@@ -108,10 +128,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	user, _ := s.store.GetUserByID(r.Context(), id)
-	if user == nil {
-		user = &models.User{ID: id, Username: in.Username, Role: role}
-	}
+	user := &models.User{ID: id, Username: in.Username, Role: role, TOTPEnabled: enabled}
 	perms, err := s.permissionsForRole(r.Context(), role)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -162,8 +179,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if len(in.NewPassword) < 8 {
-		writeErr(w, http.StatusBadRequest, "new password must be at least 8 characters")
+	if !validPassword(in.NewPassword, "") {
+		writeErr(w, http.StatusBadRequest, "new password must be at least 12 characters and not be a common password")
 		return
 	}
 	userID := actorOf(r)
@@ -199,7 +216,91 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.scopeUserID(r) != "" {
+		filtered := users[:0]
+		for _, user := range users {
+			ok, err := s.userManageAllowed(r, &user)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if ok {
+				filtered = append(filtered, user)
+			}
+		}
+		users = filtered
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+}
+
+func (s *Server) userManageAllowed(r *http.Request, user *models.User) (bool, error) {
+	uid := s.scopeUserID(r)
+	if uid == "" {
+		return true, nil
+	}
+	perms, err := s.permissionsForRole(r.Context(), user.Role)
+	if err != nil || !permissionsSubset(perms, permissionsOf(r)) {
+		return false, err
+	}
+	scopes, err := s.store.ListUserScopes(r.Context(), user.ID)
+	if err != nil || len(scopes) == 0 {
+		return false, err
+	}
+	for _, scope := range scopes {
+		ok, err := s.store.ScopeAllowedForUser(r.Context(), uid, scope.ScopeType, scope.ScopeID)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (s *Server) requireUserManage(w http.ResponseWriter, r *http.Request, userID string) (*models.User, bool) {
+	user, err := s.store.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return nil, false
+	}
+	ok, err := s.userManageAllowed(r, user)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if !ok {
+		writeErr(w, http.StatusForbidden, "user is outside your delegated scope")
+		return nil, false
+	}
+	return user, true
+}
+
+func (s *Server) validateDelegatedScopes(w http.ResponseWriter, r *http.Request, scopes []models.UserScope) bool {
+	if s.scopeUserID(r) != "" && len(scopes) == 0 {
+		writeErr(w, http.StatusForbidden, "scoped users cannot delegate full fleet access")
+		return false
+	}
+	for _, scope := range scopes {
+		if !s.requireScope(w, r, scope.ScopeType, scope.ScopeID) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) validateDelegatedRole(w http.ResponseWriter, r *http.Request, role string) bool {
+	if s.scopeUserID(r) != "" && role == models.RoleAdmin {
+		writeErr(w, http.StatusForbidden, "restricted principals cannot delegate the global admin role")
+		return false
+	}
+	perms, err := s.permissionsForRole(r.Context(), role)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !permissionsSubset(perms, permissionsOf(r)) {
+		writeErr(w, http.StatusForbidden, "role exceeds the issuer's permissions")
+		return false
+	}
+	return true
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +314,10 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	if !validPassword(in.Password, in.Username) {
+		writeErr(w, http.StatusBadRequest, "password must be at least 12 characters and not be a common password")
+		return
+	}
 	if in.Role == "" {
 		in.Role = models.RoleTech
 	} else if ok, err := s.roleExists(r.Context(), in.Role); err != nil {
@@ -222,27 +327,27 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid role")
 		return
 	}
+	if !s.validateDelegatedRole(w, r, in.Role) || !s.validateDelegatedScopes(w, r, in.Scopes) {
+		return
+	}
 	hash, err := auth.HashPassword(in.Password)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	u, err := s.store.CreateUser(r.Context(), in.Username, hash, in.Role)
+	u, err := s.store.CreateUserWithScopes(r.Context(), in.Username, hash, in.Role, in.Scopes)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	if len(in.Scopes) > 0 {
-		if err := s.store.ReplaceUserScopes(r.Context(), u.ID, in.Scopes); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 	}
 	writeJSON(w, http.StatusCreated, u)
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	target := chi.URLParam(r, "id")
+	if _, ok := s.requireUserManage(w, r, target); !ok {
+		return
+	}
 	var in struct {
 		Role string `json:"role"`
 	}
@@ -255,6 +360,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if !ok {
 		writeErr(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+	if !s.validateDelegatedRole(w, r, in.Role) {
 		return
 	}
 	if target == actorOf(r) {
@@ -275,12 +383,6 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	if in.Role == models.RoleAdmin {
-		if err := s.store.ReplaceUserScopes(r.Context(), target, nil); err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
 	detail, _ := json.Marshal(map[string]string{"from": old.Role, "to": in.Role})
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.role.update", target, detail)
 	writeJSON(w, http.StatusOK, u)
@@ -288,7 +390,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 
 // getUserScopes returns a user's access scopes (empty = full access).
 func (s *Server) getUserScopes(w http.ResponseWriter, r *http.Request) {
-	scopes, err := s.store.ListUserScopes(r.Context(), chi.URLParam(r, "id"))
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireUserManage(w, r, id); !ok {
+		return
+	}
+	scopes, err := s.store.ListUserScopes(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -298,6 +404,10 @@ func (s *Server) getUserScopes(w http.ResponseWriter, r *http.Request) {
 
 // setUserScopes replaces a user's access scopes.
 func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireUserManage(w, r, id); !ok {
+		return
+	}
 	var in struct {
 		Scopes []models.UserScope `json:"scopes"`
 	}
@@ -305,7 +415,10 @@ func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.store.ReplaceUserScopes(r.Context(), chi.URLParam(r, "id"), in.Scopes); err != nil {
+	if !s.validateDelegatedScopes(w, r, in.Scopes) {
+		return
+	}
+	if err := s.store.ReplaceUserScopes(r.Context(), id, in.Scopes); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -315,11 +428,40 @@ func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
 // setup2FA generates a pending TOTP secret for the current user (not yet
 // enabled) and returns the secret + otpauth URI for the authenticator app.
 func (s *Server) setup2FA(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		CurrentPassword string `json:"current_password"`
+		Code            string `json:"code"`
+	}
+	if err := decode(r, &in); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
 	uid := actorOf(r)
 	user, err := s.store.GetUserByID(r.Context(), uid)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "only real user accounts can enable 2FA")
 		return
+	}
+	currentSecret, enabled, err := s.store.GetUserTOTP(r.Context(), uid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	hash, err := s.store.GetUserPasswordHash(r.Context(), uid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !auth.CheckPassword(hash, in.CurrentPassword) {
+		writeErr(w, http.StatusUnauthorized, "current password is required")
+		return
+	}
+	if enabled {
+		secret, derr := settings.Decrypt(s.cfg, currentSecret)
+		if derr != nil || !auth.ValidateTOTP(secret, in.Code) {
+			writeErr(w, http.StatusUnauthorized, "current password and two-factor code are required")
+			return
+		}
 	}
 	secret := auth.GenerateTOTPSecret()
 	enc, err := settings.Encrypt(s.cfg, secret)
@@ -327,7 +469,7 @@ func (s *Server) setup2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.store.SetUserTOTP(r.Context(), uid, enc, false); err != nil {
+	if err := s.store.SetPendingUserTOTP(r.Context(), uid, enc); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -344,9 +486,13 @@ func (s *Server) enable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decode(r, &in)
 	uid := actorOf(r)
-	enc, _, err := s.store.GetUserTOTP(r.Context(), uid)
-	if err != nil || enc == "" {
+	enc, err := s.store.GetPendingUserTOTP(r.Context(), uid)
+	if errors.Is(err, store.ErrNotFound) || enc == "" {
 		writeErr(w, http.StatusBadRequest, "run 2FA setup first")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	secret, err := settings.Decrypt(s.cfg, enc)
@@ -354,12 +500,12 @@ func (s *Server) enable2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid code")
 		return
 	}
-	if err := s.store.SetUserTOTP(r.Context(), uid, enc, true); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+	codes := auth.GenerateRecoveryCodes(10)
+	hashes := make([]string, len(codes))
+	for i, code := range codes {
+		hashes[i] = auth.Hash(auth.NormalizeRecoveryCode(code))
 	}
-	codes, err := s.issueRecoveryCodes(r, uid)
-	if err != nil {
+	if err := s.store.EnablePendingUserTOTP(r.Context(), uid, enc, hashes); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -390,7 +536,11 @@ func (s *Server) regenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	_ = decode(r, &in)
 	uid := actorOf(r)
 	enc, enabled, err := s.store.GetUserTOTP(r.Context(), uid)
-	if err != nil || !enabled {
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !enabled {
 		writeErr(w, http.StatusBadRequest, "2FA is not enabled")
 		return
 	}
@@ -412,12 +562,11 @@ func (s *Server) regenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 // locked-out user can sign in with their password and re-enroll.
 func (s *Server) reset2FA(w http.ResponseWriter, r *http.Request) {
 	target := chi.URLParam(r, "id")
-	if err := s.store.SetUserTOTP(r.Context(), target, "", false); err != nil {
-		writeErr(w, httpStatusFor(err), err.Error())
+	if _, ok := s.requireUserManage(w, r, target); !ok {
 		return
 	}
-	if err := s.store.DeleteRecoveryCodes(r.Context(), target); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := s.store.DisableUserTOTP(r.Context(), target); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.2fa.reset", target, nil)
@@ -427,31 +576,44 @@ func (s *Server) reset2FA(w http.ResponseWriter, r *http.Request) {
 // disable2FA turns 2FA off, requiring a current code to do so.
 func (s *Server) disable2FA(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Code string `json:"code"`
+		CurrentPassword string `json:"current_password"`
+		Code            string `json:"code"`
 	}
 	_ = decode(r, &in)
 	uid := actorOf(r)
 	enc, enabled, err := s.store.GetUserTOTP(r.Context(), uid)
-	if err != nil || !enabled {
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !enabled {
 		writeErr(w, http.StatusBadRequest, "2FA is not enabled")
 		return
 	}
 	secret, err := settings.Decrypt(s.cfg, enc)
-	if err != nil || !auth.ValidateTOTP(secret, in.Code) {
-		writeErr(w, http.StatusBadRequest, "invalid code")
+	hash, hashErr := s.store.GetUserPasswordHash(r.Context(), uid)
+	if hashErr != nil {
+		writeErr(w, http.StatusInternalServerError, hashErr.Error())
 		return
 	}
-	if err := s.store.SetUserTOTP(r.Context(), uid, "", false); err != nil {
+	if err != nil || !auth.CheckPassword(hash, in.CurrentPassword) || !auth.ValidateTOTP(secret, in.Code) {
+		writeErr(w, http.StatusUnauthorized, "current password and two-factor code are required")
+		return
+	}
+	if err := s.store.DisableUserTOTP(r.Context(), uid); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_ = s.store.DeleteRecoveryCodes(r.Context(), uid)
 	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.disable", uid, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": false})
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteUser(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireUserManage(w, r, id); !ok {
+		return
+	}
+	if err := s.store.DeleteUser(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

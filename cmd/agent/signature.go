@@ -24,48 +24,61 @@ const (
 //	-ldflags "-X main.updatePublicKey=<base64-ed25519-public-key>"
 //
 // RMM_UPDATE_PUBLIC_KEY overrides it at runtime. Verification is controlled by
-// RMM_UPDATE_VERIFY: "warn" (default), "strict", or "off".
+// RMM_UPDATE_VERIFY: "strict" (default), "warn", or "off". Production service
+// configuration only accepts strict mode; weaker modes require explicit lab mode.
 var updatePublicKey string
+var runtimeUpdatePublicKey string
+var runtimeUpdateVerify string
 
 func enforceArtifactSignature(src, path string) error {
+	_, err := verifiedArtifactSignature(src, path)
+	return err
+}
+
+func verifiedArtifactSignature(src, path string) ([]byte, error) {
 	mode := updateVerifyMode()
 	if mode == "off" {
-		return nil
+		return nil, nil
 	}
 	pub, ok, err := configuredUpdatePublicKey()
 	if err != nil {
-		return signatureFailure(mode, "invalid update public key: %v", err)
+		return nil, signatureFailure(mode, "invalid update public key: %v", err)
 	}
 	if !ok {
-		return signatureFailure(mode, "no update public key configured")
+		return nil, signatureFailure(mode, "no update public key configured")
 	}
 	sig, err := fetchArtifactSignature(src + ".sig")
 	if err != nil {
-		return signatureFailure(mode, "could not fetch signature for %s: %v", src, err)
+		return nil, signatureFailure(mode, "could not fetch signature for %s: %v", src, err)
 	}
 	if err := verifyFileSignature(path, pub, sig); err != nil {
-		return signatureFailure(mode, "signature verification failed for %s: %v", src, err)
+		return nil, signatureFailure(mode, "signature verification failed for %s: %v", src, err)
 	}
 	log.Printf("security: verified update signature for %s", src)
-	return nil
+	return sig, nil
 }
 
 func updateVerifyMode() string {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("RMM_UPDATE_VERIFY"))) {
+	v := runtimeUpdateVerify
+	if v == "" {
+		v = os.Getenv("RMM_UPDATE_VERIFY")
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "off", "false", "0", "no":
 		return "off"
 	case "strict", "require", "required", "true", "1", "yes":
 		return "strict"
-	default:
+	case "warn", "warning":
 		return "warn"
+	case "":
+		return "strict"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
 	}
 }
 
 func configuredUpdatePublicKey() (ed25519.PublicKey, bool, error) {
-	v := strings.TrimSpace(os.Getenv("RMM_UPDATE_PUBLIC_KEY"))
-	if v == "" {
-		v = strings.TrimSpace(updatePublicKey)
-	}
+	v := effectiveUpdatePublicKey()
 	if v == "" {
 		return nil, false, nil
 	}
@@ -81,6 +94,17 @@ func configuredUpdatePublicKey() (ed25519.PublicKey, bool, error) {
 		return nil, true, fmt.Errorf("expected %d bytes, got %d", ed25519.PublicKeySize, len(raw))
 	}
 	return ed25519.PublicKey(raw), true, nil
+}
+
+func effectiveUpdatePublicKey() string {
+	v := strings.TrimSpace(runtimeUpdatePublicKey)
+	if v == "" {
+		v = strings.TrimSpace(os.Getenv("RMM_UPDATE_PUBLIC_KEY"))
+	}
+	if v == "" {
+		v = strings.TrimSpace(updatePublicKey)
+	}
+	return v
 }
 
 func signatureFailure(mode, format string, args ...any) error {

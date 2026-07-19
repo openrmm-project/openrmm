@@ -24,6 +24,10 @@ func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createClient(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "scoped users cannot create top-level clients")
+		return
+	}
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -40,6 +44,10 @@ func (s *Server) createClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateClient(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireScope(w, r, models.ScopeClient, id) {
+		return
+	}
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -47,7 +55,7 @@ func (s *Server) updateClient(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name required")
 		return
 	}
-	if err := s.store.RenameClient(r.Context(), chi.URLParam(r, "id"), in.Name); err != nil {
+	if err := s.store.RenameClient(r.Context(), id, in.Name); err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
@@ -55,7 +63,11 @@ func (s *Server) updateClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteClient(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteClient(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if !s.requireScope(w, r, models.ScopeClient, id) {
+		return
+	}
+	if err := s.store.DeleteClient(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -63,12 +75,16 @@ func (s *Server) deleteClient(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
+	clientID := r.URL.Query().Get("client_id")
+	if clientID != "" && !s.requireVisibleScope(w, r, models.ScopeClient, clientID) {
+		return
+	}
 	var sites []models.Site
 	var err error
 	if uid := s.scopeUserID(r); uid != "" {
-		sites, err = s.store.ListSitesForUser(r.Context(), uid, r.URL.Query().Get("client_id"))
+		sites, err = s.store.ListSitesForUser(r.Context(), uid, clientID)
 	} else {
-		sites, err = s.store.ListSites(r.Context(), r.URL.Query().Get("client_id"))
+		sites, err = s.store.ListSites(r.Context(), clientID)
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -86,6 +102,9 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "client_id and name required")
 		return
 	}
+	if !s.requireScope(w, r, models.ScopeClient, in.ClientID) {
+		return
+	}
 	site, err := s.store.CreateSite(r.Context(), in.ClientID, in.Name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -95,6 +114,10 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireScope(w, r, models.ScopeSite, id) {
+		return
+	}
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -102,7 +125,7 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name required")
 		return
 	}
-	if err := s.store.RenameSite(r.Context(), chi.URLParam(r, "id"), in.Name); err != nil {
+	if err := s.store.RenameSite(r.Context(), id, in.Name); err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
@@ -110,7 +133,11 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteSite(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if !s.requireScope(w, r, models.ScopeSite, id) {
+		return
+	}
+	if err := s.store.DeleteSite(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -118,6 +145,10 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setDeviceSite(w http.ResponseWriter, r *http.Request) {
+	agentID := chi.URLParam(r, "id")
+	if !s.requireAgent(w, r, agentID) {
+		return
+	}
 	var in struct {
 		SiteID *string `json:"site_id"`
 	}
@@ -125,7 +156,14 @@ func (s *Server) setDeviceSite(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if err := s.store.SetAgentSite(r.Context(), chi.URLParam(r, "id"), in.SiteID); err != nil {
+	if s.scopeUserID(r) != "" && (in.SiteID == nil || *in.SiteID == "") {
+		writeErr(w, http.StatusForbidden, "scoped users cannot remove a device from its site")
+		return
+	}
+	if in.SiteID != nil && *in.SiteID != "" && !s.requireScope(w, r, models.ScopeSite, *in.SiteID) {
+		return
+	}
+	if err := s.store.SetAgentSite(r.Context(), agentID, in.SiteID); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -151,6 +189,10 @@ func (s *Server) updateDeviceMeta(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out, _ := s.store.GetAgent(r.Context(), id)
+	out, err := s.store.GetAgent(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }

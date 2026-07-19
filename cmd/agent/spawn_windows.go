@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -77,10 +78,10 @@ type processInformation struct {
 	dwThreadID  uint32
 }
 
-func launchSidecar(bin, relay string, extra ...string) error {
-	if err := launchInUserSession(bin, relay, extra); err != nil {
+func launchSidecar(bin, relay, ticket string, extra ...string) error {
+	if err := launchInUserSession(bin, relay, ticket, extra); err != nil {
 		log.Printf("remote: user-session launch failed (%v); falling back to direct launch", err)
-		cmd := exec.Command(bin, append([]string{"-relay", relay}, extra...)...)
+		cmd := exec.Command(bin, sidecarArgs(relay, ticket, extra)...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if e := cmd.Start(); e != nil {
 			return e
@@ -90,7 +91,7 @@ func launchSidecar(bin, relay string, extra ...string) error {
 	return nil
 }
 
-func launchInUserSession(bin, relay string, extra []string) error {
+func launchInUserSession(bin, relay, ticket string, extra []string) error {
 	sid, _, _ := procWTSGetActiveSession.Call()
 	if sid == invalidSessionID {
 		return fmt.Errorf("no active console session")
@@ -125,10 +126,7 @@ func launchInUserSession(bin, relay string, extra []string) error {
 		defer procDestroyEnvironmentBlock.Call(env)
 	}
 
-	args := fmt.Sprintf("\"%s\" -relay %s", bin, relay)
-	for _, a := range extra {
-		args += " " + a
-	}
+	args := fmt.Sprintf("\"%s\" %s", bin, strings.Join(sidecarArgs(relay, ticket, extra), " "))
 	cmdline, _ := syscall.UTF16PtrFromString(args)
 	desktop, _ := syscall.UTF16PtrFromString("winsta0\\default")
 	si := startupInfoW{lpDesktop: uintptr(unsafe.Pointer(desktop))}

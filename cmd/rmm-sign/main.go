@@ -18,6 +18,7 @@ const signatureVersion = "rmm-ed25519-sha256-v1"
 
 func main() {
 	genKey := flag.Bool("gen-key", false, "generate a new Ed25519 signing keypair")
+	printPublicKey := flag.Bool("print-public-key", false, "print the public key derived from the configured private key")
 	key := flag.String("key", os.Getenv("RMM_SIGNING_KEY"), "base64 Ed25519 private key; defaults to RMM_SIGNING_KEY")
 	flag.Parse()
 
@@ -28,6 +29,15 @@ func main() {
 		}
 		fmt.Printf("RMM_UPDATE_PUBLIC_KEY=%s\n", base64.StdEncoding.EncodeToString(pub))
 		fmt.Printf("RMM_SIGNING_KEY=%s\n", base64.StdEncoding.EncodeToString(priv))
+		return
+	}
+	if *printPublicKey {
+		priv, err := decodePrivateKey(*key)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pub := priv.Public().(ed25519.PublicKey)
+		fmt.Println(base64.StdEncoding.EncodeToString(pub))
 		return
 	}
 

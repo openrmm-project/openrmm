@@ -159,6 +159,13 @@ func TestProposeUnknownAgent(t *testing.T) {
 	}
 }
 
+func TestProposeRejectsUnknownShell(t *testing.T) {
+	svc, _, _ := newSvc()
+	if _, err := svc.Propose(context.Background(), "a1", "python", "print(1)", "d", "admin", true); err == nil {
+		t.Fatal("unsupported shell must be rejected")
+	}
+}
+
 func TestApproveDispatchesOnce(t *testing.T) {
 	svc, fs, fk := newSvc()
 	j, _ := svc.Propose(context.Background(), "a1", "bash", "echo", "d", "ai:claude", true)
@@ -250,7 +257,7 @@ func TestRunAutomatedIsPreApproved(t *testing.T) {
 func TestOnResult(t *testing.T) {
 	svc, _, _ := newSvc()
 	j, _ := svc.Propose(context.Background(), "a1", "bash", "echo", "d", "admin", false)
-	if err := svc.OnResult(context.Background(), protocol.JobResultMsg{JobID: j.ID, Success: true, ExitCode: 0}); err != nil {
+	if err := svc.OnResult(context.Background(), "a1", protocol.JobResultMsg{JobID: j.ID, Success: true, ExitCode: 0}); err != nil {
 		t.Fatalf("OnResult error: %v", err)
 	}
 	got, _ := svc.store.GetJob(context.Background(), j.ID)
@@ -259,7 +266,7 @@ func TestOnResult(t *testing.T) {
 	}
 	// Idempotent: a re-sent result for an already-finalized job (the agent retries
 	// unacked results at-least-once) is a no-op and never flips a terminal status.
-	if err := svc.OnResult(context.Background(), protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1}); err != nil {
+	if err := svc.OnResult(context.Background(), "a1", protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1}); err != nil {
 		t.Fatalf("duplicate OnResult error: %v", err)
 	}
 	got, _ = svc.store.GetJob(context.Background(), j.ID)
@@ -271,11 +278,24 @@ func TestOnResult(t *testing.T) {
 func TestOnResultFailure(t *testing.T) {
 	svc, _, _ := newSvc()
 	j, _ := svc.Propose(context.Background(), "a1", "bash", "echo", "d", "admin", false)
-	if err := svc.OnResult(context.Background(), protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1}); err != nil {
+	if err := svc.OnResult(context.Background(), "a1", protocol.JobResultMsg{JobID: j.ID, Success: false, ExitCode: 1}); err != nil {
 		t.Fatalf("OnResult error: %v", err)
 	}
 	got, _ := svc.store.GetJob(context.Background(), j.ID)
 	if got.Status != models.JobFailed {
 		t.Errorf("status after failure = %q, want failed", got.Status)
+	}
+}
+
+func TestOnResultRejectsAnotherAgentsJob(t *testing.T) {
+	svc, fs, _ := newSvc()
+	fs.agents["a2"] = true
+	j, _ := svc.Propose(context.Background(), "a1", "bash", "echo", "d", "admin", false)
+	if err := svc.OnResult(context.Background(), "a2", protocol.JobResultMsg{JobID: j.ID, Success: true}); err == nil {
+		t.Fatal("result from another agent must be rejected")
+	}
+	got, _ := fs.GetJob(context.Background(), j.ID)
+	if got.Status == models.JobCompleted {
+		t.Fatal("foreign result must not complete the job")
 	}
 }

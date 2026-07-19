@@ -51,3 +51,13 @@ func TestParseArtifactSignature(t *testing.T) {
 		t.Fatal("unsupported signature version accepted")
 	}
 }
+
+func TestUpdateVerifyModeDefaultsToStrict(t *testing.T) {
+	old := runtimeUpdateVerify
+	runtimeUpdateVerify = ""
+	t.Setenv("RMM_UPDATE_VERIFY", "")
+	t.Cleanup(func() { runtimeUpdateVerify = old })
+	if got := updateVerifyMode(); got != "strict" {
+		t.Fatalf("updateVerifyMode() = %q, want strict", got)
+	}
+}

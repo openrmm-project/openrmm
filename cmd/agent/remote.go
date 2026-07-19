@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -26,16 +27,8 @@ var sidecarRefresh sync.Mutex
 // desktop). This is a swappable integration point: replace the sidecar binary
 // and nothing here changes.
 func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
-	relay := a.relayURL(rs.Token)
+	relay, ticket := a.relayForStart(rs)
 	allowFiles := rs.AllowFiles == nil || *rs.AllowFiles
-	if rs.Kind != protocol.RemoteKindFiles && !allowFiles {
-		if u, err := url.Parse(relay); err == nil {
-			q := u.Query()
-			q.Set("allow_files", "0")
-			u.RawQuery = q.Encode()
-			relay = u.String()
-		}
-	}
 	bin, err := a.ensureSidecar()
 	if err != nil {
 		log.Printf("remote: sidecar unavailable: %v", err)
@@ -51,25 +44,70 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	} else {
 		log.Printf("remote: launching media sidecar for session %s", rs.SessionID)
 	}
+	if rs.Kind != protocol.RemoteKindFiles && !allowFiles {
+		extra = append(extra, "-no-files")
+	}
 	// launchSidecar is per-OS: on Windows it spawns into the interactive user
 	// session (CreateProcessAsUser) so a session-0 service can still capture the
 	// desktop, falling back to a direct launch; elsewhere it's a plain exec.
-	if err := launchSidecar(bin, relay, extra...); err != nil {
+	if ticket != "" && !sidecarSupportsTicket(bin) {
+		// A cached pre-ticket sidecar cannot parse -ticket. Keep this agent-only
+		// bridge during rollout; browser viewers never receive a URL ticket.
+		log.Printf("remote: cached sidecar needs the legacy agent relay handshake")
+		relay = a.legacyRelayURL(ticket)
+		ticket = ""
+	}
+	if err := launchSidecar(bin, relay, ticket, extra...); err != nil {
 		log.Printf("remote: failed to start sidecar: %v", err)
 	}
 }
 
+func (a *agent) relayForStart(rs protocol.RemoteStartMsg) (relay, ticket string) {
+	if rs.AgentTicket != "" {
+		return a.relayURL(rs.SessionID), rs.AgentTicket
+	}
+	if rs.Token == "" {
+		return a.relayURL(rs.SessionID), ""
+	}
+	if rs.RelayURL != "" {
+		return rs.RelayURL, ""
+	}
+	return a.legacyRelayURL(rs.Token), ""
+}
+
 // relayURL points the sidecar at the relay on the SAME host the agent dials for
-// /ws/agent — the server's RemoteStartMsg.RelayURL is built from the public URL
-// (which may be localhost), so we derive ours from the agent's own server URL.
-func (a *agent) relayURL(token string) string {
+// /ws/agent. The session id is an identifier only; the ticket is sent in the
+// WebSocket handshake instead of the URL.
+func (a *agent) relayURL(sessionID string) string {
 	u, err := url.Parse(a.wsURL)
 	if err != nil {
 		return a.wsURL
 	}
 	u.Path = "/ws/remote"
-	u.RawQuery = "token=" + url.QueryEscape(token) + "&role=agent"
+	u.RawQuery = "session=" + url.QueryEscape(sessionID) + "&role=agent"
 	return u.String()
+}
+
+func (a *agent) legacyRelayURL(ticket string) string {
+	u, err := url.Parse(a.wsURL)
+	if err != nil {
+		return a.wsURL
+	}
+	u.Path = "/ws/remote"
+	u.RawQuery = "role=agent&token=" + url.QueryEscape(ticket)
+	return u.String()
+}
+
+func sidecarSupportsTicket(path string) bool {
+	return exec.Command(path, "-print-version").Run() == nil
+}
+
+func sidecarArgs(relay, ticket string, extra []string) []string {
+	args := []string{"-relay", relay}
+	if ticket != "" {
+		args = append(args, "-ticket", ticket)
+	}
+	return append(args, extra...)
 }
 
 func sidecarName() string {
@@ -156,6 +194,17 @@ func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
 	}
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(tmp, 0o755)
+	}
+	candidateVersion, err := binaryVersion(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sidecar validation failed: %w", err)
+	}
+	if currentVersion, err := binaryVersion(path); err == nil {
+		if err := validateUpgradeVersion(currentVersion, candidateVersion); err != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("sidecar update refused: %w", err)
+		}
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)

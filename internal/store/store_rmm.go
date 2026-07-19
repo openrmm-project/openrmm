@@ -24,11 +24,73 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash, role str
 	return &models.User{ID: id, Username: username, Role: role, CreatedAt: time.Now()}, nil
 }
 
+// CreateUserWithScopes creates a delegated user without a transient full-access
+// window if inserting one of its scope rows fails.
+func (s *Store) CreateUserWithScopes(ctx context.Context, username, passwordHash, role string, scopes []models.UserScope) (*models.User, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	u := &models.User{ID: newID(), Username: username, Role: role, CreatedAt: time.Now()}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO users (id, username, password_hash, role) VALUES ($1,$2,$3,$4)`,
+		u.ID, username, passwordHash, role); err != nil {
+		return nil, err
+	}
+	for _, scope := range scopes {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_scopes (id, user_id, scope_type, scope_id) VALUES ($1,$2,$3,$4)`,
+			newID(), u.ID, scope.ScopeType, scope.ScopeID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
 // CountUsers reports how many users exist (used to bootstrap the first admin).
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `SELECT count(1) FROM users`).Scan(&n)
 	return n, err
+}
+
+// BootstrapAdmin atomically creates the first user and its initial session.
+// The transaction-scoped advisory lock serializes concurrent bootstrap calls.
+func (s *Store) BootstrapAdmin(ctx context.Context, username, passwordHash, tokenHash string, expires time.Time) (*models.User, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(724686667797)`); err != nil {
+		return nil, err
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrConflict
+	}
+	u := &models.User{ID: newID(), Username: username, Role: models.RoleAdmin, CreatedAt: time.Now()}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO users (id, username, password_hash, role) VALUES ($1,$2,$3,$4)`,
+		u.ID, u.Username, passwordHash, u.Role); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES ($1,$2,$3,$4)`,
+		newID(), u.ID, tokenHash, expires); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 // GetUserAuth returns the id, role and password hash for a username.
@@ -78,14 +140,83 @@ func (s *Store) GetUserTOTP(ctx context.Context, id string) (secret string, enab
 	return secret, enabled, err
 }
 
-// SetUserTOTP stores the (encrypted) secret and enabled flag; pass "" to clear.
-func (s *Store) SetUserTOTP(ctx context.Context, id, secret string, enabled bool) error {
-	var sec *string
-	if secret != "" {
-		sec = &secret
+// SetPendingUserTOTP stores an encrypted candidate without changing the active
+// secret or weakening an already-enabled second factor.
+func (s *Store) SetPendingUserTOTP(ctx context.Context, id, secret string) error {
+	ct, err := s.pool.Exec(ctx, `UPDATE users SET totp_pending_secret=$2 WHERE id=$1`, id, secret)
+	if err != nil {
+		return err
 	}
-	_, err := s.pool.Exec(ctx, `UPDATE users SET totp_secret=$2, totp_enabled=$3 WHERE id=$1`, id, sec, enabled)
-	return err
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetPendingUserTOTP(ctx context.Context, id string) (string, error) {
+	var secret *string
+	err := s.pool.QueryRow(ctx, `SELECT totp_pending_secret FROM users WHERE id=$1`, id).Scan(&secret)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if secret == nil {
+		return "", nil
+	}
+	return *secret, nil
+}
+
+// EnablePendingUserTOTP atomically promotes the expected pending secret and
+// replaces recovery codes.
+func (s *Store) EnablePendingUserTOTP(ctx context.Context, id, secret string, recoveryHashes []string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	ct, err := tx.Exec(ctx, `UPDATE users SET totp_secret=totp_pending_secret,
+		totp_pending_secret=NULL, totp_enabled=TRUE
+		WHERE id=$1 AND totp_pending_secret=$2`, id, secret)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM user_recovery_codes WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	for _, hash := range recoveryHashes {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO user_recovery_codes (id, user_id, code_hash) VALUES ($1,$2,$3)`,
+			newID(), id, hash); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// DisableUserTOTP atomically clears the secret and all recovery codes.
+func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	ct, err := tx.Exec(ctx, `UPDATE users SET totp_secret=NULL, totp_pending_secret=NULL,
+		totp_enabled=FALSE WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM user_recovery_codes WHERE user_id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // GetUserByID returns a user by id (no password hash).
@@ -238,15 +369,26 @@ func (s *Store) ReplaceRecoveryCodes(ctx context.Context, userID string, hashes 
 // UseRecoveryCode consumes a single unused recovery code by its hash, returning
 // true if a matching unused code was found and marked used.
 func (s *Store) UseRecoveryCode(ctx context.Context, userID, codeHash string) (bool, error) {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE user_recovery_codes SET used_at=now()
-		 WHERE id = (SELECT id FROM user_recovery_codes
-		             WHERE user_id=$1 AND code_hash=$2 AND used_at IS NULL LIMIT 1)`,
-		userID, codeHash)
+	var id string
+	err := s.pool.QueryRow(ctx, `UPDATE user_recovery_codes SET used_at=now()
+		WHERE user_id=$1 AND code_hash=$2 AND used_at IS NULL
+		RETURNING id`, userID, codeHash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	return true, nil
+}
+
+// UserHasScopes distinguishes a user bound to an actual restricted scope from
+// an unrestricted user, for whom no user_scopes rows exist.
+func (s *Store) UserHasScopes(ctx context.Context, userID string) (bool, error) {
+	var restricted bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)`, userID).Scan(&restricted)
+	return restricted, err
 }
 
 // CountUnusedRecoveryCodes returns how many recovery codes the user has left.
@@ -287,14 +429,75 @@ func (s *Store) ListUserScopes(ctx context.Context, userID string) ([]models.Use
 func (s *Store) AgentAllowedForUser(ctx context.Context, userID, agentID string) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT (NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1))
+		SELECT EXISTS (SELECT 1 FROM agents WHERE id=$2) AND ((NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1))
 		    OR EXISTS (
 		      SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
 		        (us.scope_type='agent'  AND us.scope_id=$2) OR
 		        (us.scope_type='group'  AND us.scope_id=(SELECT group_id FROM agents WHERE id=$2)) OR
 		        (us.scope_type='site'   AND us.scope_id=(SELECT site_id FROM agents WHERE id=$2)) OR
 		        (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM agents a JOIN sites s ON s.id=a.site_id WHERE a.id=$2))
-		      ))`, userID, agentID).Scan(&ok)
+		      )))`, userID, agentID).Scan(&ok)
+	return ok, err
+}
+
+// ScopeAllowedForUser reports whether a user controls the complete referenced
+// scope. Narrow child scopes do not authorize operations affecting their parent.
+func (s *Store) ScopeExists(ctx context.Context, scopeType, scopeID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT CASE $1
+		WHEN 'client' THEN EXISTS (SELECT 1 FROM clients WHERE id=$2)
+		WHEN 'site' THEN EXISTS (SELECT 1 FROM sites WHERE id=$2)
+		WHEN 'group' THEN EXISTS (SELECT 1 FROM device_groups WHERE id=$2)
+		WHEN 'agent' THEN EXISTS (SELECT 1 FROM agents WHERE id=$2)
+		ELSE FALSE END`, scopeType, scopeID).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) ScopeAllowedForUser(ctx context.Context, userID, scopeType, scopeID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT CASE $2
+		WHEN 'client' THEN EXISTS (SELECT 1 FROM clients c WHERE c.id=$3) AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1 AND scope_type='client' AND scope_id=$3))
+		WHEN 'site' THEN EXISTS (SELECT 1 FROM sites si WHERE si.id=$3) AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='site' AND us.scope_id=$3)
+		    OR (us.scope_type='client' AND us.scope_id=(SELECT client_id FROM sites WHERE id=$3)))))
+		WHEN 'group' THEN EXISTS (SELECT 1 FROM device_groups g WHERE g.id=$3) AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='group' AND us.scope_id=$3)
+		    OR (us.scope_type='site' AND us.scope_id=(SELECT site_id FROM device_groups WHERE id=$3))
+		    OR (us.scope_type='client' AND us.scope_id=(SELECT si.client_id FROM device_groups g JOIN sites si ON si.id=g.site_id WHERE g.id=$3)))))
+		WHEN 'agent' THEN EXISTS (SELECT 1 FROM agents a WHERE a.id=$3) AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='agent' AND us.scope_id=$3)
+		    OR (us.scope_type='group' AND us.scope_id=(SELECT group_id FROM agents WHERE id=$3))
+		    OR (us.scope_type='site' AND us.scope_id=(SELECT site_id FROM agents WHERE id=$3))
+		    OR (us.scope_type='client' AND us.scope_id=(SELECT si.client_id FROM agents a JOIN sites si ON si.id=a.site_id WHERE a.id=$3)))))
+		ELSE FALSE END`, userID, scopeType, scopeID).Scan(&ok)
+	return ok, err
+}
+
+// ScopeIntersectsUser reports whether a referenced scope contains at least one
+// device visible to the user. It is suitable for filtering assignment reads.
+func (s *Store) ScopeIntersectsUser(ctx context.Context, userID, scopeType, scopeID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT
+		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR EXISTS (SELECT 1 FROM agents a LEFT JOIN sites si ON si.id=a.site_id
+		  WHERE (($2='agent' AND a.id=$3)
+		    OR ($2='group' AND a.group_id=$3)
+		    OR ($2='site' AND a.site_id=$3)
+		    OR ($2='client' AND si.client_id=$3))
+		  AND EXISTS (SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='agent' AND us.scope_id=a.id)
+		    OR (us.scope_type='group' AND us.scope_id=a.group_id)
+		    OR (us.scope_type='site' AND us.scope_id=a.site_id)
+		    OR (us.scope_type='client' AND us.scope_id=si.client_id))))`,
+		userID, scopeType, scopeID).Scan(&ok)
 	return ok, err
 }
 
@@ -404,6 +607,22 @@ func (s *Store) ListSitesForUser(ctx context.Context, userID, clientID string) (
 		out = append(out, st)
 	}
 	return out, rows.Err()
+}
+
+// SiteEnrollmentAllowedForUser reports whether a scoped user may mint an
+// enrollment token for a site. Agent/group scope deliberately does not qualify:
+// a site-bound token would otherwise create a new endpoint outside that narrow
+// scope. Users with no scopes retain full access.
+func (s *Store) SiteEnrollmentAllowedForUser(ctx context.Context, userID, siteID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sites WHERE id=$2) AND (NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		OR EXISTS (
+		  SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='site' AND us.scope_id=$2)
+		    OR (us.scope_type='client' AND us.scope_id=(SELECT client_id FROM sites WHERE id=$2))
+		  )
+		))`, userID, siteID).Scan(&ok)
+	return ok, err
 }
 
 // DeleteClient removes a client (cascades to sites).
@@ -623,9 +842,15 @@ func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]model
 
 // PolicyAllowedForUser reports whether a policy applies to at least one agent in
 // the user's access scope. Users with no scope rows can see any policy.
+func (s *Store) PolicyExists(ctx context.Context, policyID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM policies WHERE id=$1)`, policyID).Scan(&ok)
+	return ok, err
+}
+
 func (s *Store) PolicyAllowedForUser(ctx context.Context, userID, policyID string) (bool, error) {
 	var ok bool
-	err := s.pool.QueryRow(ctx, `SELECT
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM policies WHERE id=$2) AND (
 		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
 		OR EXISTS (
 		  SELECT 1
@@ -644,8 +869,31 @@ func (s *Store) PolicyAllowedForUser(ctx context.Context, userID, policyID strin
 		      (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
 		    )
 		  )
-		)`, userID, policyID).Scan(&ok)
+		))`, userID, policyID).Scan(&ok)
 	return ok, err
+}
+
+// PolicyManageAllowedForUser requires every assignment to be wholly controlled
+// by the user. Unassigned global policies are not manageable by scoped users.
+func (s *Store) PolicyManageAllowedForUser(ctx context.Context, userID, policyID string) (bool, error) {
+	assignments, err := s.ListPolicyAssignments(ctx, policyID)
+	if err != nil {
+		return false, err
+	}
+	if len(assignments) == 0 {
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM policies WHERE id=$1)`, policyID).Scan(&exists); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	for _, a := range assignments {
+		ok, err := s.ScopeAllowedForUser(ctx, userID, a.ScopeType, a.ScopeID)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // DeletePolicy removes a policy (cascades to its checks/tasks/assignments).
@@ -683,6 +931,21 @@ func (s *Store) ListPolicyAssignments(ctx context.Context, policyID string) ([]m
 		out = append(out, pa)
 	}
 	return out, rows.Err()
+}
+
+// GetPolicyAssignment fetches one assignment for authorization before deletion.
+func (s *Store) GetPolicyAssignment(ctx context.Context, id string) (*models.PolicyAssignment, error) {
+	var a models.PolicyAssignment
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, policy_id, scope_type, scope_id, created_at FROM policy_assignments WHERE id=$1`, id).
+		Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 // ListPolicyAssignmentsForUser returns only assignments that intersect the

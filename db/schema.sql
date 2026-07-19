@@ -1,5 +1,5 @@
 -- RMM-AI database schema (PostgreSQL)
--- Idempotent: safe to run on every server start.
+-- Current canonical schema snapshot. Versioned migrations live in internal/store/migrations.
 
 -- ===================== Identity / RBAC =====================
 
@@ -83,6 +83,9 @@ ON CONFLICT DO NOTHING;
 -- Per-user TOTP two-factor. Secret is AES-GCM encrypted at rest (enc:v1:…).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret  TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+-- A replacement secret remains pending until it is confirmed. The active
+-- secret and enabled flag are never weakened during rotation.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_secret TEXT;
 
 -- One-time 2FA recovery codes. Stored hashed (SHA-256); single-use (used_at set
 -- on consumption). Used to log in when the authenticator is lost.
@@ -180,15 +183,18 @@ CREATE TABLE IF NOT EXISTS agents (
     group_id     UUID REFERENCES device_groups(id) ON DELETE SET NULL,
     tags         TEXT[] NOT NULL DEFAULT '{}',
     mesh_id      TEXT,
+    token_rotation_canceling BOOLEAN NOT NULL DEFAULT FALSE,
     last_seen    TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- For pre-existing installs:
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE SET NULL;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
--- The RustDesk provider was dropped; remove its column from existing installs.
-ALTER TABLE agents DROP COLUMN IF EXISTS rustdesk_id;
-
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS note        TEXT NOT NULL DEFAULT '';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS pending_token_hash TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS token_rotation_id TEXT;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS pending_token_expires_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS token_rotation_canceling BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS enroll_tokens (
     id          UUID PRIMARY KEY,
     token       TEXT NOT NULL UNIQUE,
@@ -235,8 +241,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-CREATE INDEX IF NOT EXISTS idx_jobs_task ON jobs(task_id);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS task_id UUID;
+CREATE INDEX IF NOT EXISTS idx_jobs_task ON jobs(task_id);
 -- Bulk/mass-deployment grouping: jobs created together share a batch_id.
 -- (ADD COLUMN before the index so it works on pre-existing jobs tables too.)
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS batch_id UUID;
@@ -249,6 +255,8 @@ CREATE TABLE IF NOT EXISTS inventory (
     data         JSONB NOT NULL DEFAULT '{}',
     collected_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Speeds up the inventory reports' JSONB lookups (software/hardware aggregation).
+CREATE INDEX IF NOT EXISTS idx_inventory_data ON inventory USING gin (data);
 
 -- ===================== Policies =====================
 
@@ -361,6 +369,16 @@ CREATE TABLE IF NOT EXISTS remote_sessions (
     expires_at  TIMESTAMPTZ NOT NULL
 );
 
+-- Native relay tickets are separate per peer, hashed at rest, and consumed once.
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS viewer_ticket_hash TEXT;
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS agent_ticket_hash TEXT;
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS viewer_used_at TIMESTAMPTZ;
+ALTER TABLE remote_sessions ADD COLUMN IF NOT EXISTS agent_used_at TIMESTAMPTZ;
+
+-- A revoked device loses its control credential immediately. Keep the timestamp
+-- rather than deleting the row so the audit and inventory history remain intact.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+
 -- ===================== Audit =====================
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -395,11 +413,82 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
 
+-- ===================== Patch management =====================
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS reboot_pending  BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_patch_scan TIMESTAMPTZ;
+
+-- Catalog of distinct patches seen across the fleet, deduped per (os, identifier).
+CREATE TABLE IF NOT EXISTS patches (
+    id              UUID PRIMARY KEY,
+    os              TEXT NOT NULL,
+    identifier      TEXT NOT NULL,                  -- KB id / package name / advisory id
+    title           TEXT NOT NULL DEFAULT '',
+    classification  TEXT NOT NULL DEFAULT 'other',  -- security|critical|important|moderate|optional|other
+    kb              TEXT NOT NULL DEFAULT '',
+    cves            TEXT[] NOT NULL DEFAULT '{}',
+    reboot_required BOOLEAN NOT NULL DEFAULT FALSE,
+    first_seen      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (os, identifier)
+);
+
+-- Per-device missing/available patch state.
+CREATE TABLE IF NOT EXISTS agent_patches (
+    agent_id          UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    patch_id          UUID NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    status            TEXT NOT NULL DEFAULT 'missing', -- missing|approved|installing|installed|failed|excluded
+    available_version TEXT NOT NULL DEFAULT '',
+    detected_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    installed_at      TIMESTAMPTZ,
+    error             TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (agent_id, patch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_patches_agent  ON agent_patches(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_patches_status ON agent_patches(status);
+
+-- Approval decisions, scoped (global when scope_type/scope_id are empty).
+CREATE TABLE IF NOT EXISTS patch_approvals (
+    id          UUID PRIMARY KEY,
+    patch_id    UUID NOT NULL REFERENCES patches(id) ON DELETE CASCADE,
+    scope_type  TEXT NOT NULL DEFAULT '',  -- ''=global | client|site|agent
+    scope_id    TEXT NOT NULL DEFAULT '',
+    decision    TEXT NOT NULL DEFAULT 'approve', -- approve|decline
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual|policy
+    actor       TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (patch_id, scope_type, scope_id)
+);
+
+-- Patch policies (maintenance window, auto-approval, exclusions, reboot).
+CREATE TABLE IF NOT EXISTS patch_policies (
+    id                    UUID PRIMARY KEY,
+    name                  TEXT NOT NULL,
+    enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+    auto_approve          TEXT[] NOT NULL DEFAULT '{}', -- classifications to auto-approve
+    auto_approve_age_days INT NOT NULL DEFAULT 7,
+    exclusions            TEXT[] NOT NULL DEFAULT '{}', -- identifiers or classifications to never install
+    window_days           INT[] NOT NULL DEFAULT '{}',  -- 0=Sun..6=Sat; empty = any day
+    window_start_min      INT NOT NULL DEFAULT 0,       -- minutes from midnight (server time)
+    window_end_min        INT NOT NULL DEFAULT 1439,
+    reboot                TEXT NOT NULL DEFAULT 'if_required', -- never|if_required|always
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS patch_policy_assignments (
+    id          UUID PRIMARY KEY,
+    policy_id   UUID NOT NULL REFERENCES patch_policies(id) ON DELETE CASCADE,
+    scope_type  TEXT NOT NULL,  -- client|site|agent
+    scope_id    UUID NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_patch_policy_assign ON patch_policy_assignments(policy_id);
+
 -- ===================== MCP OAuth 2.1 (Authorization Server) =====================
 -- The RMM acts as its own OAuth AS + Resource Server so cloud MCP clients (Claude
 -- web, ChatGPT) can connect via the standard connector flow. Codes and tokens are
 -- stored HASHED (SHA-256), never in the clear — same pattern as api_tokens/sessions.
 
+-- Registered OAuth clients (via Dynamic Client Registration, RFC 7591).
 CREATE TABLE IF NOT EXISTS oauth_clients (
     client_id     TEXT PRIMARY KEY,
     name          TEXT NOT NULL DEFAULT '',
@@ -407,26 +496,30 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Short-lived authorization codes (PKCE S256). Deleted on exchange.
 CREATE TABLE IF NOT EXISTS oauth_codes (
-    code_hash      TEXT PRIMARY KEY,
+    code_hash      TEXT PRIMARY KEY,      -- SHA-256 of the authorization code
     client_id      TEXT NOT NULL,
     user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     redirect_uri   TEXT NOT NULL,
-    code_challenge TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,         -- PKCE code_challenge (S256)
     scope          TEXT NOT NULL DEFAULT '',
     expires_at     TIMESTAMPTZ NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Access + refresh tokens issued to a connector, bound to a user (inherits that
+-- user's role + access scope). An expired/absent access token stops authenticating.
 CREATE TABLE IF NOT EXISTS oauth_tokens (
-    token_hash         TEXT PRIMARY KEY,
-    refresh_hash       TEXT UNIQUE,
+    token_hash         TEXT PRIMARY KEY,        -- SHA-256 of the access token
+    refresh_hash       TEXT UNIQUE,             -- SHA-256 of the refresh token (nullable)
     client_id          TEXT NOT NULL,
     user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     scope              TEXT NOT NULL DEFAULT '',
-    expires_at         TIMESTAMPTZ NOT NULL,
-    refresh_expires_at TIMESTAMPTZ,
+    expires_at         TIMESTAMPTZ NOT NULL,    -- access-token expiry (short)
+    refresh_expires_at TIMESTAMPTZ,             -- refresh-token expiry (longer; NULL = no refresh)
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
+-- Bounded refresh-token lifetime (added after the initial oauth_tokens table).
 ALTER TABLE oauth_tokens ADD COLUMN IF NOT EXISTS refresh_expires_at TIMESTAMPTZ;

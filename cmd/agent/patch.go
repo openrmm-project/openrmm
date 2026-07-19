@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"runtime"
@@ -18,19 +20,26 @@ import (
 // scanPatches returns the OS patches currently missing on this host. Each OS
 // scanner shells out to the native tool (WUA / apt / dnf / softwareupdate) — all
 // CGO-free. NOTE: validate the exact parsing on real endpoints per OS.
-func scanPatches() protocol.PatchReportMsg {
+func scanPatches() (protocol.PatchReportMsg, error) {
 	rep := protocol.PatchReportMsg{OS: runtime.GOOS}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	switch runtime.GOOS {
 	case "windows":
-		rep.Patches = scanWindowsPatches(ctx)
+		var err error
+		rep.Patches, err = scanWindowsPatches(ctx)
+		return rep, err
 	case "linux":
-		rep.Patches = scanLinuxPatches(ctx)
+		var err error
+		rep.Patches, err = scanLinuxPatches(ctx)
+		return rep, err
 	case "darwin":
-		rep.Patches = scanDarwinPatches(ctx)
+		var err error
+		rep.Patches, err = scanDarwinPatches(ctx)
+		return rep, err
+	default:
+		return rep, fmt.Errorf("patch scanning is unsupported on %s", runtime.GOOS)
 	}
-	return rep
 }
 
 const wuaScanPS = `$ErrorActionPreference='Stop'
@@ -52,14 +61,14 @@ foreach ($u in $r.Updates) {
 }
 $out | ConvertTo-Json -Compress`
 
-func scanWindowsPatches(ctx context.Context) []protocol.PatchItem {
+func scanWindowsPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", wuaScanPS).Output()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("windows update scan: %w", err)
 	}
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" {
-		return nil
+		return nil, nil
 	}
 	if strings.HasPrefix(trimmed, "{") {
 		trimmed = "[" + trimmed + "]"
@@ -69,7 +78,7 @@ func scanWindowsPatches(ctx context.Context) []protocol.PatchItem {
 		Reboot                                      bool
 	}
 	if json.Unmarshal([]byte(trimmed), &arr) != nil {
-		return nil
+		return nil, fmt.Errorf("windows update scan returned invalid JSON")
 	}
 	var items []protocol.PatchItem
 	for _, u := range arr {
@@ -84,7 +93,7 @@ func scanWindowsPatches(ctx context.Context) []protocol.PatchItem {
 			RebootRequired: u.Reboot,
 		})
 	}
-	return items
+	return items, nil
 }
 
 func classifyWindows(severity, categories string) string {
@@ -105,14 +114,14 @@ func classifyWindows(severity, categories string) string {
 	}
 }
 
-func scanLinuxPatches(ctx context.Context) []protocol.PatchItem {
+func scanLinuxPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 	if hasCmd("apt-get") {
 		return scanAptPatches(ctx)
 	}
 	if hasCmd("dnf") {
 		return scanDnfPatches(ctx)
 	}
-	return nil
+	return nil, fmt.Errorf("no supported Linux package manager found")
 }
 
 func hasCmd(name string) bool {
@@ -122,8 +131,11 @@ func hasCmd(name string) bool {
 
 // scanAptPatches parses `apt-get -s upgrade`'s "Inst" lines. Security is inferred
 // from the package origin suite (…-security).
-func scanAptPatches(ctx context.Context) []protocol.PatchItem {
-	out, _ := exec.CommandContext(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=true", "upgrade").Output()
+func scanAptPatches(ctx context.Context) ([]protocol.PatchItem, error) {
+	out, err := exec.CommandContext(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=true", "upgrade").Output()
+	if err != nil {
+		return nil, fmt.Errorf("apt patch scan: %w", err)
+	}
 	var items []protocol.PatchItem
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.HasPrefix(line, "Inst ") {
@@ -152,12 +164,15 @@ func scanAptPatches(ctx context.Context) []protocol.PatchItem {
 			Identifier: pkg, Title: pkg + " " + ver, Classification: class, Version: ver,
 		})
 	}
-	return items
+	return items, nil
 }
 
 // scanDnfPatches parses `dnf -q updateinfo list` (advisory type/severity pkg).
-func scanDnfPatches(ctx context.Context) []protocol.PatchItem {
-	out, _ := exec.CommandContext(ctx, "dnf", "-q", "updateinfo", "list", "--available").Output()
+func scanDnfPatches(ctx context.Context) ([]protocol.PatchItem, error) {
+	out, err := exec.CommandContext(ctx, "dnf", "-q", "updateinfo", "list", "--available").Output()
+	if err != nil {
+		return nil, fmt.Errorf("dnf patch scan: %w", err)
+	}
 	var items []protocol.PatchItem
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
@@ -171,7 +186,7 @@ func scanDnfPatches(ctx context.Context) []protocol.PatchItem {
 			Classification: classifyDnf(typ),
 		})
 	}
-	return items
+	return items, nil
 }
 
 func classifyDnf(typ string) string {
@@ -192,8 +207,11 @@ func classifyDnf(typ string) string {
 	}
 }
 
-func scanDarwinPatches(ctx context.Context) []protocol.PatchItem {
-	out, _ := exec.CommandContext(ctx, "softwareupdate", "-l").CombinedOutput()
+func scanDarwinPatches(ctx context.Context) ([]protocol.PatchItem, error) {
+	out, err := exec.CommandContext(ctx, "softwareupdate", "-l").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("macOS softwareupdate scan: %w", err)
+	}
 	var items []protocol.PatchItem
 	lines := strings.Split(string(out), "\n")
 	for i, line := range lines {
@@ -216,14 +234,18 @@ func scanDarwinPatches(ctx context.Context) []protocol.PatchItem {
 			Identifier: label, Title: title, Classification: class, RebootRequired: reboot,
 		})
 	}
-	return items
+	return items, nil
 }
 
 // ---------- install ----------
 
-// installPatches installs the given patch identifiers (empty = all available) and
-// returns per-patch results plus whether a reboot is now required.
+// installPatches installs explicit server-approved patch identifiers and returns
+// per-patch results plus whether a reboot is now required. Empty identifiers are
+// rejected so no OS package manager can interpret them as "install everything".
 func installPatches(identifiers []string) ([]protocol.PatchResultItem, bool) {
+	if len(identifiers) == 0 {
+		return nil, false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 	switch runtime.GOOS {
@@ -259,7 +281,7 @@ $coll = New-Object -ComObject Microsoft.Update.UpdateColl
 $map = @{}
 foreach ($u in $r.Updates) {
   $id = if ($u.KBArticleIDs.Count) { "KB" + $u.KBArticleIDs.Item(0) } else { $u.Identity.UpdateID }
-  if ($want.Count -eq 0 -or $want -contains $id) { [void]$coll.Add($u); $map[$u.Identity.UpdateID]=$id }
+  if ($want -contains $id) { [void]$coll.Add($u); $map[$u.Identity.UpdateID]=$id }
 }
 $results=@()
 if ($coll.Count -gt 0) {
@@ -364,10 +386,32 @@ func fileExists(p string) bool {
 
 // handlePatchInstall runs an install request and reports the per-patch outcome.
 func (a *agent) handlePatchInstall(m protocol.PatchInstallMsg) {
+	a.patchMu.Lock()
+	defer a.patchMu.Unlock()
+	if len(m.Identifiers) == 0 {
+		log.Printf("patch install %s rejected: explicit approved identifiers are required", m.RequestID)
+		return
+	}
 	results, reboot := installPatches(m.Identifiers)
 	a.queue(protocol.MsgPatchResult, protocol.PatchResultMsg{
 		RequestID: m.RequestID, Results: results, RebootRequired: reboot,
 	})
+}
+
+func (a *agent) runPatchScan() {
+	a.patchMu.Lock()
+	defer a.patchMu.Unlock()
+	report, err := scanPatches()
+	if err != nil {
+		report.Error = err.Error()
+	}
+	a.queue(protocol.MsgPatchReport, report)
+}
+
+func (a *agent) handlePatchReboot(m protocol.RebootMsg) {
+	a.patchMu.Lock()
+	defer a.patchMu.Unlock()
+	rebootHost(m.DelaySeconds)
 }
 
 // ---------- reboot ----------

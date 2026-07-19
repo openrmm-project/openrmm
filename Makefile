@@ -1,12 +1,14 @@
-.PHONY: build server agent signer run vet tidy test security-check clean agent-all remote-all remote-all-darwin remote-dist remote-dist-darwin agent-dist sign-dist agent-dist-signed remote-dist-signed dist-signed
+.PHONY: build server agent signer run vet tidy test security-check clean dist-clean checksums require-release-config agent-all remote-all remote-all-darwin remote-dist remote-dist-darwin agent-dist sign-dist agent-dist-signed remote-dist-signed dist-signed
 
 # Go toolchain. Override if `go` isn't on PATH, e.g.:
 #   make remote-dist GO=$(ls -d $HOME/go/pkg/mod/golang.org/toolchain@*/bin/go | head -1)
 GO ?= go
-AGENT_BUILD_FLAGS := -buildvcs=false
+VERSION ?= 0.4.5
+AGENT_LDFLAGS := -X main.agentVersion=$(patsubst v%,%,$(VERSION))
 ifdef RMM_UPDATE_PUBLIC_KEY
-AGENT_BUILD_FLAGS += -ldflags "-X main.updatePublicKey=$(RMM_UPDATE_PUBLIC_KEY)"
+AGENT_LDFLAGS += -X main.updatePublicKey=$(RMM_UPDATE_PUBLIC_KEY)
 endif
+AGENT_BUILD_FLAGS := -buildvcs=false -ldflags '$(AGENT_LDFLAGS)'
 
 build: server agent
 
@@ -25,6 +27,7 @@ agent-all:
 	GOOS=windows GOARCH=arm64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-windows-arm64.exe ./cmd/agent
 	GOOS=linux   GOARCH=amd64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-linux-amd64       ./cmd/agent
 	GOOS=linux   GOARCH=arm64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-linux-arm64       ./cmd/agent
+	GOOS=darwin  GOARCH=amd64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-darwin-amd64      ./cmd/agent
 	GOOS=darwin  GOARCH=arm64 $(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent-darwin-arm64      ./cmd/agent
 
 # Cross-compile the native remote media sidecar (cmd/rmm-remote). Windows
@@ -69,19 +72,46 @@ agent-dist:
 	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-darwin-amd64       ./cmd/agent
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-darwin-arm64       ./cmd/agent
 
-sign-dist: signer
-	@test -n "$$RMM_SIGNING_KEY" || (echo "RMM_SIGNING_KEY is required (generate with: bin/rmm-sign -gen-key)" && exit 1)
-	find deploy/public -maxdepth 1 -type f \( -name 'rmm-agent-*' -o -name 'rmm-remote-*' \) ! -name '*.sig' -exec ./bin/rmm-sign {} +
+sign-dist: require-release-config
+	@test -f deploy/public/SHA256SUMS || (echo "deploy/public/SHA256SUMS is required; run make checksums" && exit 1)
+	@set -e; files=""; for file in deploy/public/rmm-agent-* deploy/public/rmm-remote-*; do case "$$file" in *.sig) continue;; esac; test ! -f "$$file" || files="$$files $$file"; done; test -n "$$files"; ./bin/rmm-sign $$files deploy/public/SHA256SUMS
 
-agent-dist-signed: agent-dist signer
-	@test -n "$$RMM_SIGNING_KEY" || (echo "RMM_SIGNING_KEY is required (generate with: bin/rmm-sign -gen-key)" && exit 1)
-	find deploy/public -maxdepth 1 -type f -name 'rmm-agent-*' ! -name '*.sig' -exec ./bin/rmm-sign {} +
+require-release-config: signer
+	@case "$(origin VERSION)" in "command line"|environment) ;; *) echo "VERSION=vX.Y.Z must be set explicitly for a signed release"; exit 1;; esac
+	@printf '%s\n' '$(VERSION)' | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$$' || (echo "VERSION must be semantic (vX.Y.Z)"; exit 1)
+	@test -n "$$RMM_SIGNING_KEY" || (echo "RMM_SIGNING_KEY is required"; exit 1)
+	@test -n "$$RMM_UPDATE_PUBLIC_KEY" || (echo "RMM_UPDATE_PUBLIC_KEY is required"; exit 1)
+	@test "$$($(CURDIR)/bin/rmm-sign -print-public-key)" = "$$RMM_UPDATE_PUBLIC_KEY" || (echo "signing key does not match RMM_UPDATE_PUBLIC_KEY"; exit 1)
 
-remote-dist-signed: remote-dist signer
-	@test -n "$$RMM_SIGNING_KEY" || (echo "RMM_SIGNING_KEY is required (generate with: bin/rmm-sign -gen-key)" && exit 1)
-	find deploy/public -maxdepth 1 -type f -name 'rmm-remote-*' ! -name '*.sig' -exec ./bin/rmm-sign {} +
+agent-dist-signed:
+	@$(MAKE) require-release-config
+	@$(MAKE) dist-clean
+	@$(MAKE) agent-dist
+	@$(MAKE) checksums
+	@$(MAKE) sign-dist
 
-dist-signed: agent-dist remote-dist sign-dist
+remote-dist-signed:
+	@$(MAKE) require-release-config
+	@$(MAKE) dist-clean
+	@$(MAKE) remote-dist
+	@$(MAKE) checksums
+	@$(MAKE) sign-dist
+
+dist-clean:
+	rm -f deploy/public/rmm-agent-* deploy/public/rmm-remote-* deploy/public/SHA256SUMS deploy/public/SHA256SUMS.new deploy/public/SHA256SUMS.sig deploy/public/SBOM.* deploy/public/*.intoto.jsonl
+
+checksums:
+	@set -e; tmp=deploy/public/SHA256SUMS.new; : > "$$tmp"; for file in deploy/public/rmm-agent-* deploy/public/rmm-remote-*; do case "$$file" in *.sig) continue;; esac; if test -f "$$file"; then hash=$$(openssl dgst -sha256 "$$file" | cut -d ' ' -f 2); printf '%s  %s\n' "$$hash" "$${file##*/}" >> "$$tmp"; fi; done; test -s "$$tmp"; mv "$$tmp" deploy/public/SHA256SUMS
+
+# Builds every CGO-free target. On macOS it also includes both native
+# CoreGraphics sidecars; other hosts leave those to the native release job.
+dist-signed:
+	@$(MAKE) require-release-config
+	@$(MAKE) dist-clean
+	@$(MAKE) agent-dist remote-dist
+	@if test "$$(uname -s)" = Darwin; then $(MAKE) remote-dist-darwin; fi
+	@$(MAKE) checksums
+	@$(MAKE) sign-dist
 
 run: server
 	./bin/rmm-server

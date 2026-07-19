@@ -1,58 +1,91 @@
-# Running the frontend against the real backend
+# Running the frontend against the backend
 
-`src/mockapi.jsx` is now the **real fetch client** (`window.api`) talking to the
-Go backend — the mock/in-memory data is gone. Verified end-to-end against the
-running backend (auth, CORS, config, devices, alerts).
+`src/mockapi.jsx` is the real browser API client. Production uses the npm-built
+`dist/` bundle; source `.jsx` files are not loaded by the browser.
 
-## 1. Start the backend
-From the repo root (`..`):
+## Development Compose
+
+From the repository root:
+
 ```bash
-cp .env.example .env            # set RMM_ADMIN_TOKEN; AI keys optional
-docker compose up -d            # postgres + server on :8080
-# (or: make build && RMM_ADMIN_TOKEN=... ./bin/rmm-server)
+cp .env.example .env
+# Replace RMM_ADMIN_TOKEN with a random value of at least 32 characters.
+docker compose up -d --build
+curl -fsS http://localhost:3005/healthz
 ```
 
-## 2. Create the first admin user
+Create the first user only while the database has no users:
+
 ```bash
-curl -X POST http://localhost:8080/api/auth/bootstrap \
+curl -X POST http://localhost:3005/api/auth/bootstrap \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<a-strong-password>"}'
 ```
-(Only works while no users exist. After this, sign in with these credentials.)
 
-## 3. Serve the frontend
-It's a no-build prototype (React + Babel via CDN). Serve the folder statically:
+Open `http://localhost:3005`. This Compose proxy serves the built console and
+API from the same origin.
+
+## Local build
+
+Start PostgreSQL and the Go server, then build and serve `dist/`:
+
 ```bash
-cd openrmm
-python3 -m http.server 5500
-# open http://localhost:5500
+export RMM_ADMIN_TOKEN="$(openssl rand -hex 32)"
+export RMM_SETTINGS_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+export RMM_DATABASE_URL='postgres://rmm:rmm@localhost:5432/rmm?sslmode=disable'
+make build
+./bin/rmm-server
 ```
-Then sign in with the admin credentials from step 2 (password mode).
 
-## Pointing at a non-default backend URL
-The client reads `window.__API_BASE__` (default `http://localhost:8080`). To
-override without editing code, add this **before** the script tags in
-`index.html`:
-```html
-<script>window.__API_BASE__ = 'https://rmm.yourhost.com';</script>
+Build and inspect the artifact:
+
+```bash
+npm --prefix openrmm ci
+npm --prefix openrmm test
+npm --prefix openrmm run build
+python3 -m http.server 5500 --directory openrmm/dist
 ```
-The backend allows browser origins via CORS (`RMM_CORS_ORIGINS`, default `*`;
-tighten in production).
 
-## Notes / known polish items (real backend vs prototype)
-- **Inventory tab**: the real agent reports a flatter inventory than the
-  prototype's mock. `getInventory` adapts it (CPU, memory, disks, platform,
-  **network interfaces** and **installed software** — agent ≥ 0.2.1). Live CPU
-  load is still not collected. Software is gathered per-OS (registry on Windows,
-  dpkg/rpm on Linux, system_profiler on macOS), capped at 600 entries.
-  (Backend roadmap: osquery-grade inventory.)
-- **Checks status pill**: `listChecks` fetches each check's latest result
-  (one extra request per check) to show the pill, since the list endpoint
-  doesn't embed it. Fine for typical fleets; revisit if you have hundreds.
-- **Create user form**: the backend requires a `password` when creating a user
-  (`POST /api/users`). Ensure the Users screen sends a password field.
-- **Run-script (device detail)**: ad-hoc runs post to `/api/jobs` and are
-  **approval-gated by default** (the backend ignores `require_approval:false`
-  unless `RMM_ALLOW_UNAPPROVED_JOBS=true`).
-- **AI Chat**: requires the backend AI provider configured (`RMM_AI_API_KEY` or
-  a local OpenAI-compatible endpoint). Proposed jobs still require approval.
+The Python server only serves static output; it does not proxy `/api` or
+`/ws/remote`, so it is not a complete connected deployment. The enforcing CSP
+uses `connect-src 'self'`; use a same-origin reverse proxy (as Compose does) for a
+functional console. Changing `dist/config.js` to a cross-origin backend is not
+enough: that topology also requires a deliberate CSP change and matching
+`RMM_CORS_ORIGINS`. The direct server uses `:8080`; the development Compose proxy
+uses `:3005`.
+
+## Non-root base path
+
+Build and serve with the same canonical path:
+
+```bash
+OPENRMM_BASE_PATH=/console/ npm --prefix openrmm run build
+```
+
+The output is under `openrmm/dist/console/`. A static server/proxy must serve
+that directory at `/console/`, serve `/console/config.js`, and route `/api/*`
+plus `/ws/remote` to the backend. Production Compose wires this automatically
+from `OPENRMM_BASE_PATH` in `deploy/.env`.
+
+## Verification
+
+```bash
+npm --prefix openrmm run smoke
+```
+
+The Docker/Compose healthcheck verifies built `index.html` and
+`assets/app.js`; it is not a backend dependency or browser-functional readiness
+probe. Verify login, a scoped list, an approval-gated job, and remote WebSocket
+through the actual edge as separate checks.
+
+## Current integration limitations
+
+- The session bearer is in `sessionStorage`, while non-secret preferences use
+  `localStorage`.
+- The built-in `readonly` role includes remote desktop permission.
+- Check status causes one latest-result request per check.
+- The 2FA backend safely stages a pending secret and now requires current
+  password (plus current TOTP when rotating/disabling). The current frontend card
+  does not collect/send those reauthentication fields, so those UI actions are
+  not functional yet. Use the REST API with the documented bodies.
+- Live CPU load and osquery-grade inventory are not implemented.

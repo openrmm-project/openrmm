@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net/http"
 	"os/user"
 	"runtime"
 
@@ -35,10 +36,14 @@ type termSession interface {
 //	agent  -> viewer: binary = raw stdout/stderr bytes
 //	                  text   = JSON {"t":"hello",...} on connect, {"t":"exit"} at end
 func (a *agent) startTerminalSession(rs protocol.RemoteStartMsg) {
-	relay := a.relayURL(rs.Token)
+	relay, ticket := a.relayForStart(rs)
 	log.Printf("terminal: opening elevated shell for session %s", rs.SessionID)
 
-	conn, _, err := websocket.DefaultDialer.Dial(relay, nil)
+	var headers http.Header
+	if ticket != "" {
+		headers = http.Header{"Authorization": []string{"Remote-Agent " + ticket}}
+	}
+	conn, _, err := websocket.DefaultDialer.Dial(relay, headers)
 	if err != nil {
 		log.Printf("terminal: dial relay: %v", err)
 		return

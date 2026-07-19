@@ -1,0 +1,250 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+env:
+  GO_VERSION: '1.25'
+
+jobs:
+  gates:
+    name: Release gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rmm
+          POSTGRES_PASSWORD: rmm
+          POSTGRES_DB: rmm_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rmm -d rmm_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RMM_TEST_DATABASE_URL: postgres://rmm:rmm@localhost:5432/rmm_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Validate tag and main ancestry
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          tag_commit="$(git rev-list -n1 "$GITHUB_REF_NAME")"
+          test "$(git rev-parse HEAD)" = "$tag_commit"
+          git merge-base --is-ancestor "$tag_commit" origin/main
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race ./... -count=1
+      - name: Build validation
+        run: |
+          CGO_ENABLED=0 go build ./cmd/server
+          CGO_ENABLED=0 go build ./cmd/agent
+      - name: Migration gates
+        run: go test ./internal/store -run 'Test(CanonicalSchemaCopy|MigrationsPostgres)$' -count=1
+      - name: Installer and operational script gates
+        run: |
+          bash -n deploy/public/install.sh
+          shellcheck -x deploy/public/install.sh deploy/ops/*.sh
+          for script in deploy/ops/*.sh; do bash -n "$script"; done
+      - name: Deployment and frontend gates
+        run: |
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+          image='nginx:1.27.5-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10'
+          docker run --rm --add-host server:127.0.0.1 -v "$PWD/deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro" "$image" nginx -t
+          docker run --rm --add-host server:127.0.0.1 -e OPENRMM_BASE_PATH=/ -e NGINX_ENVSUBST_FILTER='^OPENRMM_BASE_PATH$' -v "$PWD/deploy/nginx.prod.conf:/etc/nginx/templates/default.conf.template:ro" "$image" nginx -t
+          npm --prefix openrmm ci
+          npm --prefix openrmm test
+          npm --prefix openrmm run build
+
+  installer-windows:
+    name: Windows installer gate
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install and verify OpenSSL 3 prerequisite
+        shell: pwsh
+        run: |
+          choco install openssl --no-progress -y
+          $openssl = Get-ChildItem 'C:\Program Files\OpenSSL*\bin\openssl.exe' | Select-Object -First 1
+          if (-not $openssl) { throw 'OpenSSL installation not found' }
+          $version = & $openssl.FullName version
+          if ($version -notmatch '^OpenSSL 3\.') { throw "OpenSSL 3.x required, got: $version" }
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+      - name: Exercise Ed25519 verification
+        shell: pwsh
+        run: |
+          $openssl = Get-ChildItem 'C:\Program Files\OpenSSL*\bin\openssl.exe' | Select-Object -First 1
+          go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
+          $keys = & .\rmm-sign.exe -gen-key
+          $public = ($keys | Where-Object { $_ -like 'RMM_UPDATE_PUBLIC_KEY=*' }) -replace '^RMM_UPDATE_PUBLIC_KEY=', ''
+          $env:RMM_SIGNING_KEY = (($keys | Where-Object { $_ -like 'RMM_SIGNING_KEY=*' }) -replace '^RMM_SIGNING_KEY=', '')
+          [IO.File]::WriteAllBytes('artifact.bin', [byte[]](1..128))
+          $hash = (Get-FileHash -Algorithm SHA256 artifact.bin).Hash.ToLowerInvariant()
+          "$hash  artifact.bin" | Set-Content -Encoding ascii -NoNewline SHA256SUMS
+          & .\rmm-sign.exe SHA256SUMS
+          $fields = ((Get-Content -Raw SHA256SUMS.sig).Trim() -split '\s+')
+          $prefix = [byte[]](0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00)
+          [IO.File]::WriteAllBytes('public.der', $prefix + [Convert]::FromBase64String($public))
+          [IO.File]::WriteAllBytes('signature.bin', [Convert]::FromBase64String($fields[1]))
+          & $openssl.FullName dgst -sha256 -binary -out manifest.digest SHA256SUMS
+          & $openssl.FullName pkeyutl -verify -pubin -inkey public.der -keyform DER -rawin -in manifest.digest -sigfile signature.bin
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Ed25519 verification failed' }
+
+  installer-macos:
+    name: macOS installer gate
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: brew install openssl@3 shellcheck
+      - name: Validate installer
+        run: |
+          export PATH="$(brew --prefix openssl@3)/bin:$PATH"
+          openssl version | grep '^OpenSSL 3\.'
+          bash -n deploy/public/install.sh
+          shellcheck deploy/public/install.sh
+          tmp="$(mktemp -d)"
+          go build -buildvcs=false -o "$tmp/rmm-sign" ./cmd/rmm-sign
+          keys="$("$tmp/rmm-sign" -gen-key)"
+          public_line="${keys%%$'\n'*}"
+          private_line="${keys#*$'\n'}"
+          public_key="${public_line#*=}"
+          export RMM_SIGNING_KEY="${private_line#*=}"
+          printf 'macOS installer signature test' > "$tmp/artifact"
+          "$tmp/rmm-sign" "$tmp/artifact" >/dev/null
+          read -r format signature < "$tmp/artifact.sig"
+          test "$format" = rmm-ed25519-sha256-v1
+          printf '\060\052\060\005\006\003\053\145\160\003\041\000' > "$tmp/public.der"
+          printf '%s' "$public_key" | openssl base64 -d -A >> "$tmp/public.der"
+          printf '%s' "$signature" | openssl base64 -d -A > "$tmp/signature.bin"
+          openssl dgst -sha256 -binary "$tmp/artifact" > "$tmp/artifact.digest"
+          openssl pkeyutl -verify -pubin -inkey "$tmp/public.der" -keyform DER -rawin -in "$tmp/artifact.digest" -sigfile "$tmp/signature.bin"
+
+  portable:
+    name: Portable release binaries
+    needs: [gates, installer-windows, installer-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RMM_UPDATE_PUBLIC_KEY: ${{ secrets.RMM_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: test -n "$RMM_UPDATE_PUBLIC_KEY"
+      - name: Build agents and CGO-free sidecars
+        run: |
+          make dist-clean
+          make VERSION="${GITHUB_REF_NAME}" agent-dist
+          make remote-dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-binaries
+          path: |
+            deploy/public/rmm-agent-*
+            deploy/public/rmm-remote-*
+
+  macos-sidecar:
+    name: macOS sidecar (${{ matrix.arch }})
+    needs: [gates, installer-windows, installer-macos]
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: GOOS=darwin GOARCH=${{ matrix.arch }} CGO_ENABLED=1 go build -buildvcs=false -o rmm-remote-darwin-${{ matrix.arch }} ./cmd/rmm-remote
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-sidecar-${{ matrix.arch }}
+          path: rmm-remote-darwin-${{ matrix.arch }}
+
+  publish:
+    name: Sign, attest and publish
+    needs: [portable, macos-sidecar]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      RMM_UPDATE_PUBLIC_KEY: ${{ secrets.RMM_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: '*-binaries'
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: 'macos-sidecar-*'
+          path: release
+          merge-multiple: true
+      - name: Assemble unsigned release
+        run: |
+          test -n "$RMM_UPDATE_PUBLIC_KEY"
+          cp deploy/public/install.sh deploy/public/install.ps1 release/
+          go build -buildvcs=false -o rmm-sign ./cmd/rmm-sign
+      - uses: anchore/sbom-action/download-syft@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
+      - name: Generate SBOM and checksums
+        run: |
+          syft dir:release -o spdx-json=release/SBOM.spdx.json
+          (cd release && sha256sum rmm-agent-* rmm-remote-* install.sh install.ps1 SBOM.spdx.json > SHA256SUMS)
+      - name: Sign release artifacts
+        env:
+          RMM_SIGNING_KEY: ${{ secrets.RMM_SIGNING_KEY }}
+        run: |
+          test -n "$RMM_SIGNING_KEY"
+          test "$(./rmm-sign -print-public-key)" = "$RMM_UPDATE_PUBLIC_KEY"
+          ./rmm-sign release/rmm-agent-* release/rmm-remote-* release/SHA256SUMS
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: 'release/*'
+      - uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2
+        with:
+          fail_on_unmatched_files: true
+          files: release/*

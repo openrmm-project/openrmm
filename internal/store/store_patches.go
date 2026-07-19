@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
@@ -33,6 +36,10 @@ func agentScopeClause(scopeType, scopeID string, n int) (string, []any) {
 // excluded state), and clears patches no longer reported (treated as resolved/
 // installed). It also stamps last_patch_scan.
 func (s *Store) UpsertPatchReport(ctx context.Context, agentID string, rep *protocol.PatchReportMsg) error {
+	if rep.Error != "" {
+		// A failed scan is not an empty scan. Preserve the last trusted snapshot.
+		return fmt.Errorf("patch scan failed: %s", rep.Error)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -139,6 +146,26 @@ type PatchCatalogRow struct {
 	ApprovedCount int `json:"approved_count"`
 }
 
+// PatchAllowedForUser reports whether a patch exists on any visible device.
+func (s *Store) PatchAllowedForUser(ctx context.Context, userID, patchID string) (bool, error) {
+	var ok bool
+	if userID == "" {
+		err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM patches WHERE id=$1)`, patchID).Scan(&ok)
+		return ok, err
+	}
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM agent_patches ap JOIN agents a ON a.id=ap.agent_id
+		WHERE ap.patch_id=$2 AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='agent' AND us.scope_id=a.id)
+		    OR (us.scope_type='group' AND us.scope_id=a.group_id)
+		    OR (us.scope_type='site' AND us.scope_id=a.site_id)
+		    OR (us.scope_type='client' AND us.scope_id=(SELECT si.client_id FROM sites si WHERE si.id=a.site_id)))))
+		)`, userID, patchID).Scan(&ok)
+	return ok, err
+}
+
 // PatchCatalog lists distinct patches with per-state device counts, filtered to
 // the caller's scope (reuses ReportFilter).
 func (s *Store) PatchCatalog(ctx context.Context, f ReportFilter) ([]PatchCatalogRow, error) {
@@ -223,11 +250,30 @@ func (s *Store) ApprovedIdentifiers(ctx context.Context, agentID string) ([]stri
 	return out, rows.Err()
 }
 
-// MarkInstalling flips approved patches (by identifier) to installing for a device.
-func (s *Store) MarkInstalling(ctx context.Context, agentID string, identifiers []string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agent_patches ap SET status='installing', error=''
+// ClaimApprovedPatches atomically moves approved patches into installing and
+// returns the exact identifiers claimed. Callers must dispatch only this list;
+// never pass an empty list to an endpoint package manager as "install all".
+func (s *Store) ClaimApprovedPatches(ctx context.Context, agentID string, identifiers []string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `UPDATE agent_patches ap SET status='installing', error=''
 		FROM patches p WHERE p.id=ap.patch_id AND ap.agent_id=$1 AND ap.status='approved'
-		AND ($2::text[] IS NULL OR p.identifier = ANY($2))`, agentID, nilIfEmpty(identifiers))
+		AND ($2::text[] IS NULL OR p.identifier = ANY($2))
+		RETURNING p.identifier`, agentID, nilIfEmpty(identifiers))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanStrings(rows)
+}
+
+// RequeueClaimedPatches restores a claim when the command could not be queued
+// to a live agent. It never changes a result that has already been processed.
+func (s *Store) RequeueClaimedPatches(ctx context.Context, agentID string, identifiers []string) error {
+	if len(identifiers) == 0 {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE agent_patches ap SET status='approved'
+		FROM patches p WHERE p.id=ap.patch_id AND ap.agent_id=$1 AND ap.status='installing'
+		AND p.identifier = ANY($2)`, agentID, identifiers)
 	return err
 }
 
@@ -310,6 +356,22 @@ func scanIDs(rows interface {
 	return out, rows.Err()
 }
 
+func scanStrings(rows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}) ([]string, error) {
+	var out []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+	}
+	return out, rows.Err()
+}
+
 // ===================== Patch policies =====================
 
 const patchPolicyCols = `id, name, enabled, auto_approve, auto_approve_age_days, exclusions,
@@ -374,6 +436,52 @@ func (s *Store) ListPatchPolicies(ctx context.Context) ([]models.PatchPolicy, er
 	return out, rows.Err()
 }
 
+func (s *Store) PatchPolicyExists(ctx context.Context, policyID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM patch_policies WHERE id=$1)`, policyID).Scan(&ok)
+	return ok, err
+}
+
+// PatchPolicyAllowedForUser reports whether at least one assignment intersects
+// the user's visible devices. It is intended for reads, not mutations.
+func (s *Store) PatchPolicyAllowedForUser(ctx context.Context, userID, policyID string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM patch_policy_assignments pa
+		JOIN agents a ON (
+		  (pa.scope_type='agent' AND pa.scope_id=a.id)
+		  OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
+		  OR (pa.scope_type='client' AND pa.scope_id=(SELECT si.client_id FROM sites si WHERE si.id=a.site_id)))
+		WHERE pa.policy_id=$2 AND (
+		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
+		  OR EXISTS (SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
+		    (us.scope_type='agent' AND us.scope_id=a.id)
+		    OR (us.scope_type='group' AND us.scope_id=a.group_id)
+		    OR (us.scope_type='site' AND us.scope_id=a.site_id)
+		    OR (us.scope_type='client' AND us.scope_id=(SELECT si.client_id FROM sites si WHERE si.id=a.site_id)))))
+		)`, userID, policyID).Scan(&ok)
+	return ok, err
+}
+
+// PatchPolicyManageAllowedForUser requires every assignment to be wholly
+// controlled by the user. Unassigned global policies are not scoped resources.
+func (s *Store) PatchPolicyManageAllowedForUser(ctx context.Context, userID, policyID string) (bool, error) {
+	assignments, err := s.ListPatchPolicyAssignments(ctx, policyID)
+	if err != nil {
+		return false, err
+	}
+	if len(assignments) == 0 {
+		return false, nil
+	}
+	for _, a := range assignments {
+		ok, err := s.ScopeAllowedForUser(ctx, userID, a.ScopeType, a.ScopeID)
+		if err != nil || !ok {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func (s *Store) ListPatchPolicyAssignments(ctx context.Context, policyID string) ([]models.PatchPolicyAssignment, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, policy_id, scope_type, scope_id, created_at
 		FROM patch_policy_assignments WHERE policy_id=$1`, policyID)
@@ -390,6 +498,20 @@ func (s *Store) ListPatchPolicyAssignments(ctx context.Context, policyID string)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) GetPatchPolicyAssignment(ctx context.Context, id string) (*models.PatchPolicyAssignment, error) {
+	var a models.PatchPolicyAssignment
+	err := s.pool.QueryRow(ctx, `SELECT id, policy_id, scope_type, scope_id, created_at
+		FROM patch_policy_assignments WHERE id=$1`, id).
+		Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 func (s *Store) AddPatchPolicyAssignment(ctx context.Context, policyID, scopeType, scopeID string) error {

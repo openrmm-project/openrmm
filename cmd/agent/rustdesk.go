@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -26,10 +27,47 @@ func (a *agent) handleRemoteQuery(q protocol.RemoteQueryMsg) {
 		} else {
 			res.Value = id
 		}
+	case protocol.RemoteQueryCapabilities:
+		caps, err := json.Marshal(nativeRemoteCapabilities())
+		if err != nil {
+			res.Error = err.Error()
+		} else {
+			res.Value = string(caps)
+		}
 	default:
 		res.Error = "unknown query kind: " + q.Kind
 	}
 	a.queue(protocol.MsgRemoteQueryResult, res)
+}
+
+func nativeRemoteCapabilities() protocol.RemoteCapabilities {
+	switch runtime.GOOS {
+	case "windows":
+		return protocol.RemoteCapabilities{Capture: "available", Input: "available", Backend: "windows_gdi", DisplayServer: "unknown"}
+	case "linux":
+		xorg := processRunning("Xorg") || processRunning("X")
+		wayland := processRunning("Xwayland")
+		switch {
+		case wayland && !xorg:
+			return protocol.RemoteCapabilities{Capture: "unavailable", Input: "unavailable", Backend: "wayland", DisplayServer: "wayland", ReasonCode: "wayland_unsupported"}
+		case xorg && !wayland:
+			return protocol.RemoteCapabilities{Capture: "available", Input: "available", Backend: "xorg", DisplayServer: "xorg"}
+		case xorg && wayland:
+			return protocol.RemoteCapabilities{Capture: "unknown", Input: "unknown", Backend: "none", DisplayServer: "unknown", ReasonCode: "mixed_xorg_wayland"}
+		default:
+			return protocol.RemoteCapabilities{Capture: "unavailable", Input: "unavailable", Backend: "none", DisplayServer: "headless", ReasonCode: "no_xorg"}
+		}
+	case "darwin":
+		// TCC is identity/session-specific; do not claim availability from a
+		// background agent without an interactive preflight.
+		return protocol.RemoteCapabilities{Capture: "unknown", Input: "unknown", Backend: "coregraphics", DisplayServer: "unknown", ReasonCode: "permissions_not_verified"}
+	default:
+		return protocol.RemoteCapabilities{Capture: "unavailable", Input: "unavailable", Backend: "none", DisplayServer: "unknown", ReasonCode: "unsupported_os"}
+	}
+}
+
+func processRunning(name string) bool {
+	return exec.Command("pgrep", "-x", name).Run() == nil
 }
 
 // rustDeskID runs the locally-installed RustDesk client to read this machine's

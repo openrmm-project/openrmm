@@ -166,7 +166,7 @@ function Modal({ open, onClose, children, width = 'max-w-lg' }) {
   return (
     <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-fade-in" onClick={onClose} />
-      <div className={cx('relative w-full rounded-2xl border border-line bg-panel shadow-2xl animate-scale-in', width)}>{children}</div>
+      <div className={cx('relative w-full max-h-[calc(100vh-2rem)] overflow-y-auto scroll-area rounded-2xl border border-line bg-panel shadow-2xl animate-scale-in', width)}>{children}</div>
     </div>
   );
 }
@@ -281,8 +281,8 @@ function Toggle({ checked, onChange, disabled }) {
 /* ------------------------------ misc bits --------------------------------- */
 function Avatar({ name, size = 28 }) {
   const initials = (name || '?').split(/[@\s._-]/).filter(Boolean).slice(0, 2).map((s) => s[0].toUpperCase()).join('');
-  const hue = (name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  return <span className="inline-flex items-center justify-center rounded-full font-semibold text-white shrink-0" style={{ width: size, height: size, fontSize: size * 0.38, background: `linear-gradient(135deg, hsl(${hue} 55% 52%), hsl(${(hue + 40) % 360} 55% 42%))` }}>{initials}</span>;
+  const tone = (name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 8;
+  return <span className={cx('inline-flex items-center justify-center rounded-full font-semibold text-white shrink-0', `avatar-${size}`, `avatar-tone-${tone}`)}>{initials}</span>;
 }
 function RoleBadge({ role }) {
   const map = { admin: 'text-brandhi bg-brandsoft border-brand/30', tech: 'text-run bg-runsoft border-run/25', readonly: 'text-faint bg-elevated border-line2' };
@@ -332,9 +332,7 @@ function execCopy(value) {
     const ta = document.createElement('textarea');
     ta.value = value;
     ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.top = '-1000px';
-    ta.style.opacity = '0';
+    ta.className = 'clipboard-fallback';
     document.body.appendChild(ta);
     ta.select();
     ta.setSelectionRange(0, value.length);
@@ -365,7 +363,7 @@ function CopyButton({ value, label = 'Copy', size = 'sm', variant = 'subtle' }) 
 }
 
 /* ============================ CODE HIGHLIGHTER ============================= */
-const CODE_COLORS = { comment: '#5b6477', string: '#9ece6a', variable: '#bb9af7', number: '#ff9e64', flag: '#7dcfff', keyword: '#7aa2f7', builtin: '#73daca', op: '#89ddff' };
+const CODE_COLORS = { comment: 'code-comment', string: 'code-string', variable: 'code-variable', number: 'code-number', flag: 'code-flag', keyword: 'code-keyword', builtin: 'code-builtin', op: 'code-op' };
 const BASH_KW = new Set(['set', 'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'do', 'done', 'case', 'esac', 'function', 'return', 'exit', 'local', 'export', 'in', 'sudo', 'source']);
 const BASH_BUILTIN = new Set(['echo', 'apt', 'apt-get', 'find', 'awk', 'df', 'du', 'grep', 'sed', 'cat', 'curl', 'wget', 'systemctl', 'service', 'uptime', 'btrfs', 'mdls', 'defaults', 'rm', 'ls', 'ps', 'kill', 'chmod', 'chown', 'head', 'tail', 'printf', 'ipconfig']);
 const PS_KW = new Set(['if', 'else', 'elseif', 'foreach', 'param', 'function', 'try', 'catch', 'finally', 'return', 'while', 'for', 'switch', 'in', 'iex']);
@@ -375,7 +373,7 @@ function tokenizeLine(line, shell) {
   const isCmd = shell === 'cmd';
   const nodes = []; let key = 0;
   // whole-line comment for cmd REM / ::
-  if (isCmd && /^\s*(rem|::)/i.test(line)) { return [<span key={0} style={{ color: CODE_COLORS.comment }}>{line}</span>]; }
+  if (isCmd && /^\s*(rem|::)/i.test(line)) { return [<span key={0} className={CODE_COLORS.comment}>{line}</span>]; }
   const re = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\$\{[^}]+\}|\$[A-Za-z_][\w]*|\$[!@#?*]?)|(\b\d+(?:\.\d+)?\b)|(--?[A-Za-z][\w-]*)|([A-Za-z_][\w-]*)/g;
   let last = 0, m;
   while ((m = re.exec(line))) {
@@ -391,7 +389,7 @@ function tokenizeLine(line, shell) {
       if (isPS) { if (/^[A-Z][a-z]+-[A-Za-z]+$/.test(w)) color = CODE_COLORS.builtin; else if (PS_KW.has(w.toLowerCase())) color = CODE_COLORS.keyword; }
       else { if (BASH_KW.has(w)) color = CODE_COLORS.keyword; else if (BASH_BUILTIN.has(w)) color = CODE_COLORS.builtin; }
     }
-    nodes.push(color ? <span key={key++} style={{ color }}>{txt}</span> : <span key={key++}>{txt}</span>);
+    nodes.push(color ? <span key={key++} className={color}>{txt}</span> : <span key={key++}>{txt}</span>);
     last = m.index + m[0].length;
   }
   if (last < line.length) nodes.push(<span key={key++}>{line.slice(last)}</span>);
@@ -412,7 +410,7 @@ function CodeBlock({ code = '', shell = 'bash', maxHeight = 320, showCopy = true
           {showCopy && <CopyButton value={code} variant="ghost" size="sm" />}
         </div>
       )}
-      <div className="overflow-auto scroll-area mono text-[12.5px] leading-[1.65]" style={{ maxHeight }}>
+      <div className={cx('overflow-auto scroll-area mono text-[12.5px] leading-[1.65]', `max-h-code-${maxHeight}`)}>
         <table className="w-full border-collapse">
           <tbody>
             {lines.map((ln, i) => (
@@ -441,12 +439,12 @@ function CodeEditor({ value, onChange, shell = 'bash', minHeight = 200, placehol
         <span className="text-[11px] text-muted font-medium">{shell}</span>
         <span className="ml-auto text-[10.5px] text-faint">{lines.length} lines</span>
       </div>
-      <div className="relative mono text-[12.5px] leading-[1.65]" style={{ minHeight }}>
+      <div className={cx('relative mono text-[12.5px] leading-[1.65]', `min-h-code-${minHeight}`)}>
         <pre ref={preRef} aria-hidden="true" className="absolute inset-0 m-0 p-3 overflow-auto whitespace-pre pointer-events-none text-[#c8d0e0]">
           {lines.map((ln, i) => <div key={i}>{tokenizeLine(ln, shell).length ? tokenizeLine(ln, shell) : '\u00a0'}</div>)}
         </pre>
         <textarea ref={taRef} value={value} onChange={(e) => onChange(e.target.value)} onScroll={sync} spellCheck={false} placeholder={placeholder}
-          className="absolute inset-0 w-full h-full m-0 p-3 bg-transparent text-transparent caret-white resize-none outline-none whitespace-pre overflow-auto scroll-area placeholder:text-faint" style={{ minHeight }} />
+          className={cx('absolute inset-0 w-full h-full m-0 p-3 bg-transparent text-transparent caret-white resize-none outline-none whitespace-pre overflow-auto scroll-area placeholder:text-faint', `min-h-code-${minHeight}`)} />
       </div>
     </div>
   );
@@ -539,7 +537,7 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = '
 
 Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, useQuery, useMutation, useToast, ToastProvider,
-  Button, Spinner, StatusPill, STATUS_META, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle,
+  Button, Spinner, StatusPill, STATUS_META, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
   Avatar, RoleBadge, Kbd, Skeleton, EmptyState, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
   csvEscape, toCSV, downloadText,
 });

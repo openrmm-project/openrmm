@@ -32,6 +32,15 @@ if ($LASTEXITCODE -ne 0 -or $OpenSslVersion -notmatch '^OpenSSL 3\.') {
     throw "OpenSSL 3.x is required for Ed25519 verification; found: $OpenSslVersion"
 }
 
+# -UpdatePublicKey may carry several trusted keys separated by commas, semicolons
+# or whitespace. During a key rotation the operator pins the new key alongside the
+# old one; a signature is accepted if it verifies under any pinned key, so the
+# fleet converges without a reinstall.
+$publicKeys = @()
+if ($UpdatePublicKey) {
+    $publicKeys = @($UpdatePublicKey -split '[,;\s]+' | Where-Object { $_ })
+}
+
 $Dir = Join-Path $Env:ProgramData 'rmm-agent'
 $Exe = Join-Path $Dir 'rmm-agent.exe'
 $State = Join-Path $Dir 'state.json'
@@ -110,6 +119,25 @@ function ConvertTo-ServiceCommand {
     return $quoted -join ' '
 }
 
+function Test-Ed25519AnyKey {
+    param(
+        [Parameter(Mandatory)][string]$DigestPath,
+        [Parameter(Mandatory)][string]$SignaturePath,
+        [Parameter(Mandatory)][string[]]$Keys,
+        [Parameter(Mandatory)][string]$WorkDir
+    )
+    $spkiPrefix = [byte[]](0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00)
+    $derPath = Join-Path $WorkDir 'verify-public.der'
+    foreach ($k in $Keys) {
+        try { $rawKey = [Convert]::FromBase64String($k) } catch { throw 'Update public key is not valid base64' }
+        if ($rawKey.Length -ne 32) { throw 'Update public key must contain 32 bytes' }
+        [IO.File]::WriteAllBytes($derPath, $spkiPrefix + $rawKey)
+        & openssl pkeyutl -verify -pubin -inkey $derPath -keyform DER -rawin -in $DigestPath -sigfile $SignaturePath | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $true }
+    }
+    return $false
+}
+
 try {
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
     if (Test-Path $Backup) { throw "Unresolved installer backup exists at $Backup" }
@@ -142,34 +170,36 @@ try {
             throw 'Invalid SHA256SUMS signature format'
         }
         try {
-            $rawKey = [Convert]::FromBase64String($UpdatePublicKey)
             $rawSignature = [Convert]::FromBase64String($signatureFields[1])
         } catch {
-            throw 'Update key or signature is not valid base64'
+            throw 'Signature is not valid base64'
         }
-        if ($rawKey.Length -ne 32) { throw 'Update public key must contain 32 bytes' }
         if ($rawSignature.Length -ne 64) { throw 'Ed25519 signature must contain 64 bytes' }
-        $spkiPrefix = [byte[]](0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00)
-        [IO.File]::WriteAllBytes((Join-Path $TempDir 'public.der'), $spkiPrefix + $rawKey)
         [IO.File]::WriteAllBytes((Join-Path $TempDir 'signature.bin'), $rawSignature)
         & openssl dgst -sha256 -binary -out (Join-Path $TempDir 'manifest.digest') $Manifest
         if ($LASTEXITCODE -ne 0) { throw 'Could not hash checksum manifest' }
-        & openssl pkeyutl -verify -pubin -inkey (Join-Path $TempDir 'public.der') -keyform DER -rawin `
-            -in (Join-Path $TempDir 'manifest.digest') -sigfile (Join-Path $TempDir 'signature.bin') | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Ed25519 manifest signature verification failed' }
+        if (-not (Test-Ed25519AnyKey -DigestPath (Join-Path $TempDir 'manifest.digest') `
+                -SignaturePath (Join-Path $TempDir 'signature.bin') -Keys $publicKeys -WorkDir $TempDir)) {
+            throw 'Ed25519 manifest signature verification failed (no pinned key matched)'
+        }
         Invoke-WebRequest -UseBasicParsing -Uri "$Server/dl/${Bin}.sig" -OutFile $ArtifactSignatureText
         $artifactSignatureFields = ((Get-Content -Raw $ArtifactSignatureText).Trim() -split '\s+')
         if ($artifactSignatureFields.Count -ne 2 -or $artifactSignatureFields[0] -ne 'rmm-ed25519-sha256-v1') {
             throw 'Invalid artifact signature format'
         }
-        $rawArtifactSignature = [Convert]::FromBase64String($artifactSignatureFields[1])
+        try {
+            $rawArtifactSignature = [Convert]::FromBase64String($artifactSignatureFields[1])
+        } catch {
+            throw 'Artifact signature is not valid base64'
+        }
         if ($rawArtifactSignature.Length -ne 64) { throw 'Ed25519 artifact signature must contain 64 bytes' }
         [IO.File]::WriteAllBytes((Join-Path $TempDir 'artifact-signature.bin'), $rawArtifactSignature)
         & openssl dgst -sha256 -binary -out (Join-Path $TempDir 'artifact.digest') $Candidate
         if ($LASTEXITCODE -ne 0) { throw 'Could not hash agent artifact' }
-        & openssl pkeyutl -verify -pubin -inkey (Join-Path $TempDir 'public.der') -keyform DER -rawin `
-            -in (Join-Path $TempDir 'artifact.digest') -sigfile (Join-Path $TempDir 'artifact-signature.bin') | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Ed25519 artifact signature verification failed' }
+        if (-not (Test-Ed25519AnyKey -DigestPath (Join-Path $TempDir 'artifact.digest') `
+                -SignaturePath (Join-Path $TempDir 'artifact-signature.bin') -Keys $publicKeys -WorkDir $TempDir)) {
+            throw 'Ed25519 artifact signature verification failed (no pinned key matched)'
+        }
     } else {
         Write-Warning 'Lab mode without an update key verifies only the downloaded checksum manifest.'
     }

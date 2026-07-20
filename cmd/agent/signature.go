@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -23,9 +24,13 @@ const (
 //
 //	-ldflags "-X main.updatePublicKey=<base64-ed25519-public-key>"
 //
-// RMM_UPDATE_PUBLIC_KEY overrides it at runtime. Verification is controlled by
-// RMM_UPDATE_VERIFY: "strict" (default), "warn", or "off". Production service
-// configuration only accepts strict mode; weaker modes require explicit lab mode.
+// RMM_UPDATE_PUBLIC_KEY overrides it at runtime. Each source may carry several
+// keys separated by commas/whitespace: an update is accepted when its signature
+// verifies under any of them, so a signing key can be rotated by pinning the new
+// key next to the old one and dropping the old one after the fleet has converged.
+// Verification is controlled by RMM_UPDATE_VERIFY: "strict" (default), "warn", or
+// "off". Production service configuration only accepts strict mode; weaker modes
+// require explicit lab mode.
 var updatePublicKey string
 var runtimeUpdatePublicKey string
 var runtimeUpdateVerify string
@@ -40,22 +45,32 @@ func verifiedArtifactSignature(src, path string) ([]byte, error) {
 	if mode == "off" {
 		return nil, nil
 	}
-	pub, ok, err := configuredUpdatePublicKey()
+	keys, err := configuredUpdatePublicKeys()
 	if err != nil {
 		return nil, signatureFailure(mode, "invalid update public key: %v", err)
 	}
-	if !ok {
+	if len(keys) == 0 {
 		return nil, signatureFailure(mode, "no update public key configured")
 	}
 	sig, err := fetchArtifactSignature(src + ".sig")
 	if err != nil {
 		return nil, signatureFailure(mode, "could not fetch signature for %s: %v", src, err)
 	}
-	if err := verifyFileSignature(path, pub, sig); err != nil {
-		return nil, signatureFailure(mode, "signature verification failed for %s: %v", src, err)
+	sum, err := fileSHA256(path)
+	if err != nil {
+		return nil, signatureFailure(mode, "could not hash %s: %v", path, err)
 	}
-	log.Printf("security: verified update signature for %s", src)
-	return sig, nil
+	// Accept the signature if it verifies under any pinned key. Trusting a set
+	// (not one key) is what lets an operator rotate the signing key by adding the
+	// new key alongside the old and later dropping the old one, without
+	// reinstalling every endpoint.
+	for _, pub := range keys {
+		if ed25519.Verify(pub, sum[:], sig) {
+			log.Printf("security: verified update signature for %s (key %s)", src, publicKeyFingerprint(pub))
+			return sig, nil
+		}
+	}
+	return nil, signatureFailure(mode, "signature verification failed for %s: no trusted update key matched", src)
 }
 
 func updateVerifyMode() string {
@@ -77,23 +92,55 @@ func updateVerifyMode() string {
 	}
 }
 
-func configuredUpdatePublicKey() (ed25519.PublicKey, bool, error) {
-	v := effectiveUpdatePublicKey()
-	if v == "" {
-		return nil, false, nil
+// configuredUpdatePublicKeys returns the set of trusted update public keys. The
+// effective source (runtime flag/env, then build-time default) may list several
+// keys separated by commas, semicolons or whitespace. Every listed key must be a
+// well-formed 32-byte Ed25519 key; a malformed entry is an error so a typo fails
+// closed rather than silently shrinking the trust set. Duplicates are collapsed.
+func configuredUpdatePublicKeys() ([]ed25519.PublicKey, error) {
+	tokens := splitPublicKeyList(effectiveUpdatePublicKey())
+	if len(tokens) == 0 {
+		return nil, nil
 	}
-	var raw []byte
-	var err error
-	if raw, err = base64.StdEncoding.DecodeString(v); err != nil {
+	keys := make([]ed25519.PublicKey, 0, len(tokens))
+	seen := make(map[string]struct{}, len(tokens))
+	for _, tok := range tokens {
+		raw, err := decodePublicKey(tok)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := seen[string(raw)]; dup {
+			continue
+		}
+		seen[string(raw)] = struct{}{}
+		keys = append(keys, ed25519.PublicKey(raw))
+	}
+	return keys, nil
+}
+
+func decodePublicKey(v string) ([]byte, error) {
+	raw, err := base64.StdEncoding.DecodeString(v)
+	if err != nil {
 		raw, err = hex.DecodeString(v)
 	}
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	if len(raw) != ed25519.PublicKeySize {
-		return nil, true, fmt.Errorf("expected %d bytes, got %d", ed25519.PublicKeySize, len(raw))
+		return nil, fmt.Errorf("expected %d bytes, got %d", ed25519.PublicKeySize, len(raw))
 	}
-	return ed25519.PublicKey(raw), true, nil
+	return raw, nil
+}
+
+func splitPublicKeyList(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ';' || unicode.IsSpace(r)
+	})
+}
+
+func publicKeyFingerprint(pub ed25519.PublicKey) string {
+	sum := sha256.Sum256(pub)
+	return hex.EncodeToString(sum[:4])
 }
 
 func effectiveUpdatePublicKey() string {
@@ -155,6 +202,30 @@ func parseArtifactSignature(raw []byte) ([]byte, error) {
 		return nil, fmt.Errorf("expected %d signature bytes, got %d", ed25519.SignatureSize, len(sig))
 	}
 	return sig, nil
+}
+
+// verifyLocalArtifactSignature verifies a local file's detached signature proof
+// against any pinned update key. It backs the self-update rollback bookkeeping,
+// which must accept the same key set that authorized the update in the first
+// place.
+func verifyLocalArtifactSignature(path string, sig []byte) error {
+	keys, err := configuredUpdatePublicKeys()
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf("no update public key configured")
+	}
+	sum, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
+	for _, pub := range keys {
+		if ed25519.Verify(pub, sum[:], sig) {
+			return nil
+		}
+	}
+	return fmt.Errorf("no trusted update key matched")
 }
 
 func verifyFileSignature(path string, pub ed25519.PublicKey, sig []byte) error {

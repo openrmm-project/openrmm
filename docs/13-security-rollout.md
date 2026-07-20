@@ -89,6 +89,12 @@ controlled rollout only, `RMM_ALLOW_LEGACY_AGENT_RELAY=true` permits a cached
 pre-ticket **agent** sidecar; viewers never receive the fallback. Return it to
 `false` after rollout.
 
+`--update-public-key`/`-UpdatePublicKey` and `RMM_UPDATE_PUBLIC_KEY` accept a
+**set** of keys (comma/whitespace separated); an update is trusted if it verifies
+under any of them. This lets the signing key be rotated by pinning the new key
+next to the old and dropping the old one once the fleet has converged, with no
+reinstall. See [18-update-signing-runbook](18-update-signing-runbook.md#key-rotation).
+
 ## Production installation
 
 The current installers require:

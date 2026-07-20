@@ -8,7 +8,7 @@ while [ $# -gt 0 ]; do
     --server) [ $# -ge 2 ] || { echo "error: --server needs a value"; exit 2; }; SERVER="$2"; shift 2;;
     --token) [ $# -ge 2 ] || { echo "error: --token needs a value"; exit 2; }; TOKEN="$2"; shift 2;;
     --site) [ $# -ge 2 ] || { echo "error: --site needs a value"; exit 2; }; shift 2;;
-    --update-public-key) [ $# -ge 2 ] || { echo "error: --update-public-key needs a value"; exit 2; }; UPDATE_PUBLIC_KEY="$2"; shift 2;;
+    --update-public-key) [ $# -ge 2 ] || { echo "error: --update-public-key needs a value"; exit 2; }; UPDATE_PUBLIC_KEY="${UPDATE_PUBLIC_KEY:+$UPDATE_PUBLIC_KEY,}$2"; shift 2;;
     --require-tls) REQUIRE_TLS=1; shift;;
     --lab-mode) LAB_MODE=1; shift;;
     --reset-identity) RESET_IDENTITY=1; shift;;
@@ -30,6 +30,39 @@ fi
 command -v curl >/dev/null || { echo "error: curl is required"; exit 1; }
 command -v openssl >/dev/null || { echo "error: OpenSSL is required for checksum/signature verification"; exit 1; }
 openssl version | grep -q '^OpenSSL 3\.' || { echo "error: OpenSSL 3.x is required for Ed25519 verification"; exit 1; }
+
+# --update-public-key may be given several times (or comma/space separated). During
+# a key rotation an operator pins the new key alongside the old one; a signature is
+# accepted if it verifies under any pinned key, so the fleet converges without a
+# reinstall. Split the list into an array of trusted keys.
+PUBLIC_KEYS=()
+if [ -n "$UPDATE_PUBLIC_KEY" ]; then
+  _oldifs="$IFS"; IFS=', ;'
+  set -f
+  # shellcheck disable=SC2086
+  for _k in $UPDATE_PUBLIC_KEY; do [ -n "$_k" ] && PUBLIC_KEYS+=("$_k"); done
+  set +f
+  IFS="$_oldifs"
+fi
+
+# write_pubkey_der <base64-key> <out-file>: wrap a raw Ed25519 key in DER SPKI.
+write_pubkey_der() {
+  printf '\060\052\060\005\006\003\053\145\160\003\041\000' > "$2"
+  printf '%s' "$1" | openssl base64 -d -A >> "$2" 2>/dev/null || return 1
+  [ "$(wc -c < "$2" | tr -d ' ')" = "44" ]
+}
+
+# verify_under_any_key <digest-file> <signature-file>: succeed if any pinned key verifies.
+verify_under_any_key() {
+  local _der="${TMP_DIR}/verify.der" _key
+  for _key in "${PUBLIC_KEYS[@]}"; do
+    write_pubkey_der "$_key" "$_der" || { echo "error: update public key is not a valid 32-byte base64 key"; exit 1; }
+    if openssl pkeyutl -verify -pubin -inkey "$_der" -keyform DER -rawin -in "$1" -sigfile "$2" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$OS" in linux|darwin) ;; *) echo "error: unsupported OS: $OS"; exit 1;; esac
@@ -138,23 +171,21 @@ actual="$(openssl dgst -sha256 "$CANDIDATE" | awk '{print $NF}')"
 [ "$actual" = "$expected" ] || { echo "error: SHA-256 mismatch for $BIN"; exit 1; }
 
 if [ -n "$UPDATE_PUBLIC_KEY" ]; then
+  # Validate every pinned key up front so a typo fails clearly, not as a mismatch.
+  for _k in "${PUBLIC_KEYS[@]}"; do
+    write_pubkey_der "$_k" "${TMP_DIR}/keycheck.der" || { echo "error: update public key is not a valid 32-byte base64 key"; exit 1; }
+  done
   curl -fsSL "${SERVER}/dl/SHA256SUMS.sig" -o "$SIG_TEXT"
   read -r sig_version sig_base64 extra < "$SIG_TEXT" || true
   [ "$sig_version" = "rmm-ed25519-sha256-v1" ] && [ -n "$sig_base64" ] && [ -z "${extra:-}" ] || {
     echo "error: invalid SHA256SUMS signature format"; exit 1;
   }
-  printf '\060\052\060\005\006\003\053\145\160\003\041\000' > "${TMP_DIR}/public.der"
-  printf '%s' "$UPDATE_PUBLIC_KEY" | openssl base64 -d -A >> "${TMP_DIR}/public.der" 2>/dev/null || {
-    echo "error: update public key is not valid base64"; exit 1;
-  }
-  [ "$(wc -c < "${TMP_DIR}/public.der" | tr -d ' ')" = "44" ] || { echo "error: update public key must contain 32 bytes"; exit 1; }
   printf '%s' "$sig_base64" | openssl base64 -d -A > "${TMP_DIR}/signature.bin" 2>/dev/null || {
     echo "error: signature is not valid base64"; exit 1;
   }
   openssl dgst -sha256 -binary "$MANIFEST" > "${TMP_DIR}/manifest.digest"
-  openssl pkeyutl -verify -pubin -inkey "${TMP_DIR}/public.der" -keyform DER -rawin \
-    -in "${TMP_DIR}/manifest.digest" -sigfile "${TMP_DIR}/signature.bin" >/dev/null || {
-    echo "error: Ed25519 manifest signature verification failed"; exit 1;
+  verify_under_any_key "${TMP_DIR}/manifest.digest" "${TMP_DIR}/signature.bin" || {
+    echo "error: Ed25519 manifest signature verification failed (no pinned key matched)"; exit 1;
   }
   curl -fsSL "${SERVER}/dl/${BIN}.sig" -o "$ARTIFACT_SIG_TEXT"
   read -r artifact_sig_version artifact_sig_base64 artifact_extra < "$ARTIFACT_SIG_TEXT" || true
@@ -165,9 +196,8 @@ if [ -n "$UPDATE_PUBLIC_KEY" ]; then
     echo "error: artifact signature is not valid base64"; exit 1;
   }
   openssl dgst -sha256 -binary "$CANDIDATE" > "${TMP_DIR}/artifact.digest"
-  openssl pkeyutl -verify -pubin -inkey "${TMP_DIR}/public.der" -keyform DER -rawin \
-    -in "${TMP_DIR}/artifact.digest" -sigfile "${TMP_DIR}/artifact-signature.bin" >/dev/null || {
-    echo "error: Ed25519 artifact signature verification failed"; exit 1;
+  verify_under_any_key "${TMP_DIR}/artifact.digest" "${TMP_DIR}/artifact-signature.bin" || {
+    echo "error: Ed25519 artifact signature verification failed (no pinned key matched)"; exit 1;
   }
 else
   echo "WARNING: lab mode without an update key verifies only the downloaded checksum manifest."

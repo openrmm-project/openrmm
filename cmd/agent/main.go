@@ -82,7 +82,7 @@ func main() {
 	action := flag.String("action", "", "service action: install | uninstall | start | stop | restart (empty = run)")
 	requireTLS := flag.Bool("require-tls", envBool("RMM_REQUIRE_TLS"), "require a wss:// server URL")
 	labMode := flag.Bool("lab-mode", envBool("RMM_LAB_MODE"), "allow insecure lab-only transport/update settings")
-	updateKey := flag.String("update-public-key", os.Getenv("RMM_UPDATE_PUBLIC_KEY"), "base64 or hex Ed25519 update public key")
+	updateKey := flag.String("update-public-key", os.Getenv("RMM_UPDATE_PUBLIC_KEY"), "base64 or hex Ed25519 update public key(s); comma-separated to trust several during key rotation")
 	updateVerify := flag.String("update-verify", envOr("RMM_UPDATE_VERIFY", "strict"), "update verification mode: strict, warn, or off")
 	healthPath := flag.String("health-file", os.Getenv("RMM_HEALTH_FILE"), "write a health marker after authenticated connection")
 	printVer := flag.Bool("print-version", false, "print the agent version and exit (used to validate a self-update download)")
@@ -766,9 +766,9 @@ func validateRuntimeSecurity(wsURL string, labMode, requireTLS bool) error {
 		if mode != "strict" {
 			return fmt.Errorf("production mode requires -update-verify strict")
 		}
-		if _, ok, err := configuredUpdatePublicKey(); err != nil {
+		if keys, err := configuredUpdatePublicKeys(); err != nil {
 			return fmt.Errorf("invalid update public key: %w", err)
-		} else if !ok {
+		} else if len(keys) == 0 {
 			return fmt.Errorf("production mode requires -update-public-key or a build-time RMM_UPDATE_PUBLIC_KEY")
 		}
 	}

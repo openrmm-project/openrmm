@@ -381,14 +381,7 @@ func writePendingUpdate(exe, candidate, etag, previousVersion, candidateVersion 
 	if err != nil {
 		return fmt.Errorf("current binary has no local signature proof; reinstall with a signed installer before auto-update: %w", err)
 	}
-	pub, ok, err := configuredUpdatePublicKey()
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("no update public key configured")
-	}
-	if err := verifyFileSignature(exe, pub, previousSignature); err != nil {
+	if err := verifyLocalArtifactSignature(exe, previousSignature); err != nil {
 		return fmt.Errorf("current binary signature proof failed: %w", err)
 	}
 	previousHash, err := hashFile(exe)
@@ -478,17 +471,10 @@ func validatePendingRollback(exe string) (pendingUpdate, error) {
 	if err != nil || !bytes.Equal(previousSignature, pending.PreviousSignature) {
 		return pending, fmt.Errorf("previous signature sidecar does not match the recorded transaction")
 	}
-	pub, ok, err := configuredUpdatePublicKey()
-	if err != nil {
-		return pending, err
-	}
-	if !ok {
-		return pending, fmt.Errorf("no update public key configured")
-	}
-	if err := verifyFileSignature(exe, pub, pending.CandidateSignature); err != nil {
+	if err := verifyLocalArtifactSignature(exe, pending.CandidateSignature); err != nil {
 		return pending, fmt.Errorf("candidate signature proof failed: %w", err)
 	}
-	if err := verifyFileSignature(exe+".old", pub, pending.PreviousSignature); err != nil {
+	if err := verifyLocalArtifactSignature(exe+".old", pending.PreviousSignature); err != nil {
 		return pending, fmt.Errorf("previous binary signature proof failed: %w", err)
 	}
 	return pending, nil

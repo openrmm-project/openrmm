@@ -32,7 +32,7 @@ COPY --from=server-build --chown=10001:10001 /out/rmm-server /usr/local/bin/rmm-
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
-    CMD wget -q --spider http://127.0.0.1:8080/healthz || exit 1
+    CMD wget -q --spider http://127.0.0.1:8080/readyz || exit 1
 ENTRYPOINT ["/usr/local/bin/rmm-server"]
 
 FROM ${NGINX_IMAGE} AS frontend

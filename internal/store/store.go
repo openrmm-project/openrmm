@@ -42,6 +42,12 @@ func New(ctx context.Context, url string) (*Store, error) {
 // Close releases the pool.
 func (s *Store) Close() { s.pool.Close() }
 
+// Ping verifies database connectivity. Backs the readiness probe.
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
+// PoolStat exposes connection-pool counters for the metrics endpoint.
+func (s *Store) PoolStat() *pgxpool.Stat { return s.pool.Stat() }
+
 func newID() string { return uuid.NewString() }
 
 // ---------- Agents ----------

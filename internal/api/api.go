@@ -96,6 +96,8 @@ func (s *Server) Router() http.Handler {
 	r.Use(s.cors)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
+	r.Get("/readyz", s.readyz)
+	r.Get("/metrics", s.metrics)
 
 	// MCP OAuth 2.1 discovery metadata (unauthenticated, RFC 8414 / RFC 9728).
 	// Gated by RMM_MCP_OAUTH_ENABLED so the AS is opt-in. See docs/17-mcp-oauth.md.

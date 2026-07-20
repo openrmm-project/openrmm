@@ -84,6 +84,10 @@ type Config struct {
 	// per-user quota — the single-page UI is chatty (polling + many parallel
 	// queries on navigation), so this needs headroom. Default 600.
 	APIRateLimit int
+
+	// MetricsToken guards the Prometheus /metrics endpoint. When empty (default)
+	// the endpoint is disabled; when set, scrapers must send it as a bearer token.
+	MetricsToken string
 }
 
 func env(key, def string) string {
@@ -188,6 +192,7 @@ func Load() (*Config, error) {
 		CORSOrigins:                splitCSV(env("RMM_CORS_ORIGINS", "*")),
 		SettingsEncryptionKey:      settingsKey,
 		APIRateLimit:               envInt("RMM_API_RATE_LIMIT", 600),
+		MetricsToken:               os.Getenv("RMM_METRICS_TOKEN"),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")

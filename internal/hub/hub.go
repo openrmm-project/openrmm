@@ -55,6 +55,14 @@ func (h *Hub) Remove(agentID string, ch chan []byte) bool {
 	return removed
 }
 
+// OnlineCount returns the number of agents with a live connection. Used by the
+// metrics endpoint.
+func (h *Hub) OnlineCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
+}
+
 // Send delivers a raw frame to an agent. Returns false if the agent is offline
 // or its buffer is full.
 func (h *Hub) Send(agentID string, msg []byte) bool {

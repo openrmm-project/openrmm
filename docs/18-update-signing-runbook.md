@@ -33,14 +33,30 @@ key, and drop the old key once the fleet has converged (see
 
 3. Custody the private key strictly. Never commit it, never place it in the
    server `.env`, never leave it on a build host. `deploy/secrets/` and `*.key`
-   are `.gitignore`d if you must stage it locally, but the durable home is:
-   - **Good:** a protected GitHub Environment secret (with required reviewers).
-   - **Better:** a KMS/HSM or an offline signing machine so the raw key never
-     lands in CI.
+   are `.gitignore`d if you must stage it locally.
+
+   **Recommended (turnkey, OSS-friendly): sign in GitHub Actions.** Store the
+   private key as a secret in a **protected `release` Environment** (below). This
+   is automated, reproducible and auditable, and needs no separate machine — the
+   right default for a self-hosted project. A GitHub secret is not more *isolated*
+   than an offline key (anyone who can alter the workflow or compromise the runner
+   could read it), so the protection comes from the controls around it: the
+   protected Environment with required reviewers, SHA-pinned actions, and branch
+   protection so only reviewed `main` commits reach a release.
+
+   **Optional hardening (suggestions, not required):**
+   - An **offline/air-gapped signing machine**: the raw key never enters CI. See
+     [Optional: offline signing](#optional-offline-signing).
+   - A **hardware token** (YubiKey/YubiHSM, which support Ed25519): the key is
+     generated on-device and is non-extractable.
+   - **OIDC → cloud KMS** signing keeps it fully automated in GitHub with a
+     non-extractable key, but the cloud KMS providers sign with ECDSA/RSA rather
+     than Ed25519, so it would require migrating the signature scheme.
 
    `RMM_UPDATE_PUBLIC_KEY` is safe to share. Losing the private key means you can
    no longer publish updates; leaking it means an attacker can push agent code to
-   the whole fleet. Treat accordingly.
+   the whole fleet. If it is ever exposed, rotate it — the agent trusts a key set,
+   so rotation needs no fleet reinstall (see [Key rotation](#key-rotation)).
 
 ## Phase 1 — Release pipeline (CI signing, recommended)
 
@@ -195,6 +211,31 @@ so rotation is a staged, online operation — **no fleet reinstall required**:
 Because rotation no longer needs a maintenance window, rotate on a schedule and
 immediately on suspected compromise. Always overlap: never remove a key from the
 ring before the fleet is signing with, and verifying under, its replacement.
+
+## Optional: offline signing
+
+A stronger key custody for operators who want it — the raw key never enters CI.
+It trades the turnkey CI flow for a manual step, so it is a suggestion, not the
+default.
+
+1. Let GitHub Actions build the **unsigned** artifacts and provenance (remove or
+   skip the signing step in the `publish` job so no private key lives in GitHub).
+2. On the offline/air-gapped machine, download the release artifacts and verify
+   the checksums.
+3. Sign there with the tooling that already exists:
+
+   ```bash
+   VERSION=v0.4.5 RMM_SIGNING_KEY=... RMM_UPDATE_PUBLIC_KEY=... make dist-signed
+   # or, over already-built artifacts staged in deploy/public/: make sign-dist
+   ```
+
+4. Publish the binaries **plus their `.sig`**, `SHA256SUMS` and `SHA256SUMS.sig`
+   to `/dl/` (Phase 3).
+
+Keep that machine's disk encrypted, off the network, and access-restricted; a
+neglected offline box is often *less* safe than a well-controlled GitHub secret.
+A hardware token (YubiKey/YubiHSM, both support Ed25519) is the non-extractable
+version of the same idea.
 
 ## Guardrails
 

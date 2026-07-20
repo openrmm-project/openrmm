@@ -201,6 +201,10 @@ jobs:
     name: Sign, attest and publish
     needs: [portable, macos-sidecar]
     runs-on: ubuntu-latest
+    # Gates the only job that reads the private signing key behind a protected
+    # GitHub Environment. Configure "release" with required reviewers and a branch
+    # rule restricting it to tags, so publishing a signed release needs approval.
+    environment: release
     permissions:
       contents: write
       id-token: write

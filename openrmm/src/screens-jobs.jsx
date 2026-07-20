@@ -328,7 +328,7 @@ function AuditScreen() {
           <tbody className="divide-y divide-line">
             {filtered.map((e) => {
               const m = ACTION_META[e.action] || { icon: 'dot', c: 'text-faint' };
-              const ai = e.actor.startsWith('ai:');
+              const ai = (e.actor || '').startsWith('ai:');
               return (
                 <tr key={e.id} className="hover:bg-elevated/40 transition align-top">
                   <td className="px-4 py-2.5 text-[12px] text-muted whitespace-nowrap tabular">{fmtTime(e.created_at)}</td>

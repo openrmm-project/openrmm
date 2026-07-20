@@ -267,3 +267,6 @@ function ActivityRow({ entry }) {
 
 window.Page = Page; window.PageHeader = PageHeader; window.Dropdown = Dropdown; window.MenuItem = MenuItem;
 window.StatTile = StatTile; window.Gate = Gate; window.DashboardScreen = DashboardScreen; window.ActivityRow = ActivityRow;
+// ACTION_META is shared across files (Audit log); the build isolates each file in
+// its own block scope, so cross-file references must resolve through the global.
+window.ACTION_META = ACTION_META;

@@ -283,6 +283,15 @@ func (s *Store) SetAgentStatus(ctx context.Context, id, status string) error {
 	return err
 }
 
+// MarkAgentOffline reconciles a stale 'online' row to 'offline' without touching
+// last_seen, so the displayed "last seen" stays truthful. Used by the scheduler
+// sweep to catch agents whose socket died without a clean detach (or that were
+// left online by a previous server run).
+func (s *Store) MarkAgentOffline(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE agents SET status='offline' WHERE id=$1 AND status='online'`, id)
+	return err
+}
+
 // TouchAgent bumps last_seen (heartbeat).
 func (s *Store) TouchAgent(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agents SET last_seen=now(), status='online' WHERE id=$1 AND revoked_at IS NULL`, id)

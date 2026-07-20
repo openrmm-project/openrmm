@@ -187,6 +187,12 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 		_ = s.store.ResolveAlertsForSource(ctx, "agent", &id, &id)
 		return
 	}
+	// The agent has no live connection: reconcile a row still marked online (an
+	// unclean disconnect never ran detach, or a server restart left it stale) so
+	// the console does not report an offline device as online.
+	if a.Status == models.AgentOnline {
+		_ = s.store.MarkAgentOffline(ctx, id)
+	}
 	if a.LastSeen != nil && now.Sub(*a.LastSeen) > offlineAfter {
 		_ = s.store.RaiseAlert(ctx, &id, "agent", &id, models.SeverityError,
 			fmt.Sprintf("Agent %s is offline (last seen %s)", a.Hostname, a.LastSeen.Format(time.RFC3339)))

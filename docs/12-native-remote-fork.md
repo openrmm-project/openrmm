@@ -6,7 +6,8 @@
 > seat-following). See **[08-remote-access](08-remote-access.md)** for the engine
 > that actually shipped. This doc is kept only as historical context and for the
 > AGPL licensing analysis (relevant only if a fork is ever reconsidered for
-> hardware codecs / E2E).
+> hardware codecs / E2E). Its `token`/`relay_url` examples are obsolete: the
+> shipped relay uses role-specific handshake tickets, never URL secrets.
 
 This is a **plan**, not shipped code. It describes how to build the native
 desktop-remote ("media engine") by forking RustDesk and connecting it to the

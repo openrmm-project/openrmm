@@ -16,8 +16,13 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
-// ErrOffline is returned when a dispatch targets an agent that isn't connected.
-var ErrOffline = errors.New("agent is offline")
+var (
+	// ErrOffline is returned when a dispatch targets an agent that isn't connected.
+	ErrOffline = errors.New("agent is offline")
+	// ErrNoApproved is returned when none of the requested patches are currently
+	// approved for the endpoint. This is intentionally not treated as "install all".
+	ErrNoApproved = errors.New("no approved patches available for this device")
+)
 
 // Service brokers patch messages between the server and agents.
 type Service struct {
@@ -39,15 +44,21 @@ func (s *Service) DispatchScan(agentID string) bool {
 	return s.send(agentID, protocol.MsgPatchScan, protocol.PatchScanMsg{})
 }
 
-// DispatchInstall marks the targeted approved patches as installing and pushes an
-// install request. Empty identifiers = every approved patch the agent has.
+// DispatchInstall claims approved patches before delivery and always sends their
+// explicit identifiers. This prevents unapproved patches and duplicate requests
+// from reaching an endpoint package manager.
 func (s *Service) DispatchInstall(ctx context.Context, agentID string, identifiers []string) error {
-	if err := s.store.MarkInstalling(ctx, agentID, identifiers); err != nil {
+	claimed, err := s.store.ClaimApprovedPatches(ctx, agentID, identifiers)
+	if err != nil {
 		return err
 	}
+	if len(claimed) == 0 {
+		return ErrNoApproved
+	}
 	if !s.send(agentID, protocol.MsgPatchInstall, protocol.PatchInstallMsg{
-		RequestID: uuid.NewString(), Identifiers: identifiers,
+		RequestID: uuid.NewString(), Identifiers: claimed,
 	}) {
+		_ = s.store.RequeueClaimedPatches(ctx, agentID, claimed)
 		return ErrOffline
 	}
 	return nil

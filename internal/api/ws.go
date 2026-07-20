@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -13,6 +15,7 @@ import (
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 var upgrader = websocket.Upgrader{
@@ -58,16 +61,43 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	var reg protocol.RegisterReq
 	_ = json.Unmarshal(env.Data, &reg)
 
-	agentID, token, err := s.registerAgent(ctx, &reg)
+	var agentID, token, cancelCredentialRotationID string
+	var ch chan []byte
+	if reg.EnrollToken != "" {
+		agentID, token, cancelCredentialRotationID, err = s.registerAgent(ctx, &reg)
+		if err == nil {
+			unlock := s.lockAgentLifecycle(agentID)
+			agent, getErr := s.store.GetAgent(ctx, agentID)
+			if getErr != nil || agent.Status == models.AgentRevoked {
+				err = errors.New("agent was revoked during enrollment")
+			} else {
+				ch, err = s.attachAgentConnection(ctx, agentID, conn)
+			}
+			unlock()
+		}
+	} else {
+		unlock := s.lockAgentLifecycle(reg.AgentID)
+		agentID, token, cancelCredentialRotationID, err = s.registerAgent(ctx, &reg)
+		if err == nil {
+			ch, err = s.attachAgentConnection(ctx, agentID, conn)
+		}
+		unlock()
+	}
 	if err != nil {
 		writeFrame(conn, protocol.MsgError, map[string]string{"error": err.Error()})
 		_ = conn.Close()
 		return
 	}
-	writeFrame(conn, protocol.MsgRegistered, protocol.RegisterResp{AgentID: agentID, AgentToken: token})
-
-	ch := s.hub.Add(agentID)
-	_ = s.store.SetAgentStatus(ctx, agentID, models.AgentOnline)
+	if err := writeFrame(conn, protocol.MsgRegistered, protocol.RegisterResp{
+		AgentID:                    agentID,
+		AgentToken:                 token,
+		CancelCredentialRotationID: cancelCredentialRotationID,
+	}); err != nil {
+		s.detachAgentConnection(ctx, agentID, ch)
+		_ = conn.Close()
+		return
+	}
+	defer s.detachAgentConnection(ctx, agentID, ch)
 	go s.writePump(conn, ch)
 	go s.jobs.DispatchPending(ctx, agentID)
 
@@ -83,48 +113,75 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			break
 		}
-		s.handleAgentFrame(ctx, agentID, raw)
+		s.handleAgentFrame(ctx, agentID, ch, raw)
 	}
+}
 
-	s.hub.Remove(agentID, ch)
-	_ = s.store.SetAgentStatus(ctx, agentID, models.AgentOffline)
-	_ = conn.Close()
+func (s *Server) attachAgentConnection(ctx context.Context, agentID string, conn *websocket.Conn) (chan []byte, error) {
+	ch := s.hub.Add(agentID, func() { _ = conn.Close() })
+	if err := s.store.SetAgentStatus(ctx, agentID, models.AgentOnline); err != nil {
+		s.hub.Remove(agentID, ch)
+		return nil, err
+	}
+	return ch, nil
 }
 
 // registerAgent validates the handshake. On enrollment it returns a freshly
 // minted agent token; on re-auth the returned token is empty (the agent keeps
 // the one it already stored).
-func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (id, token string, err error) {
+func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (id, token, cancelCredentialRotationID string, err error) {
 	if reg.EnrollToken != "" {
 		siteID, err := s.store.ConsumeEnrollToken(ctx, reg.EnrollToken)
 		if err != nil {
-			return "", "", errors.New("invalid or exhausted enroll token")
+			return "", "", "", errors.New("invalid or exhausted enroll token")
 		}
 		token = auth.NewToken()
 		a, err := s.store.CreateAgent(ctx, reg.Hostname, reg.OS, reg.Arch, reg.Version, auth.Hash(token), siteID)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
-		return a.ID, token, nil
+		return a.ID, token, "", nil
 	}
 	if reg.AgentID == "" || reg.AgentToken == "" {
-		return "", "", errors.New("missing credentials")
+		return "", "", "", errors.New("missing credentials")
 	}
-	hash, err := s.store.GetAgentTokenHash(ctx, reg.AgentID)
-	if err != nil {
-		return "", "", errors.New("unknown agent")
-	}
-	if !auth.ConstantTimeEqual(hash, auth.Hash(reg.AgentToken)) {
-		return "", "", errors.New("invalid agent token")
+	valid, err := s.store.AuthenticateAgentToken(ctx, reg.AgentID, auth.Hash(reg.AgentToken))
+	if err != nil || !valid {
+		return "", "", "", errors.New("invalid agent token")
 	}
 	_ = s.store.RefreshAgentInfo(ctx, reg.AgentID, reg.Hostname, reg.OS, reg.Arch, reg.Version)
-	return reg.AgentID, "", nil
+	cancelCredentialRotationID, err = s.store.PendingAgentCredentialRotationCancellation(ctx, reg.AgentID)
+	if errors.Is(err, store.ErrNotFound) {
+		cancelCredentialRotationID = ""
+		err = nil
+	}
+	if err != nil {
+		return "", "", "", err
+	}
+	return reg.AgentID, "", cancelCredentialRotationID, nil
+}
+
+// detachAgentConnection only marks an endpoint offline when the closing socket
+// still owns its hub lease. A replaced connection must remain online.
+func (s *Server) detachAgentConnection(ctx context.Context, agentID string, ch chan []byte) {
+	unlock := s.lockAgentLifecycle(agentID)
+	defer unlock()
+	if s.hub.Remove(agentID, ch) {
+		_ = s.store.SetAgentStatus(ctx, agentID, models.AgentOffline)
+	}
 }
 
 // handleAgentFrame processes one inbound agent message.
-func (s *Server) handleAgentFrame(ctx context.Context, agentID string, raw []byte) {
+func (s *Server) handleAgentFrame(ctx context.Context, agentID string, ch chan []byte, raw []byte) {
 	var env protocol.Envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
+		return
+	}
+	// Linearize frame processing with registration, replacement, and revocation.
+	// Once a transport loses its lease, no already-read frame may mutate state.
+	unlock := s.lockAgentLifecycle(agentID)
+	defer unlock()
+	if !s.hub.IsCurrent(agentID, ch) {
 		return
 	}
 	switch env.Type {
@@ -138,7 +195,7 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, raw []byt
 	case protocol.MsgJobResult:
 		var res protocol.JobResultMsg
 		if json.Unmarshal(env.Data, &res) == nil {
-			if err := s.jobs.OnResult(ctx, res); err != nil {
+			if err := s.jobs.OnResult(ctx, agentID, res); err != nil {
 				log.Printf("job result error: %v", err)
 			} else {
 				// Durably recorded — ack so the agent drops it from its retry
@@ -177,11 +234,30 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, raw []byt
 		}
 	case protocol.MsgRemoteStatus:
 		// Reserved for native remote-session state updates from the agent.
+	case protocol.MsgCredentialRotated:
+		// The replacement reconnect is the commit point. This acknowledgement only
+		// confirms local durability and must not race a requested cancellation.
+	case protocol.MsgCredentialRotationCanceled:
+		var msg protocol.CredentialRotationCancelMsg
+		if json.Unmarshal(env.Data, &msg) == nil && msg.RotationID != "" {
+			changed, err := s.store.ConfirmAgentCredentialRotationCancellation(ctx, agentID, msg.RotationID)
+			if err != nil {
+				log.Printf("agent credential rotation cancellation error: %v", err)
+				return
+			}
+			if changed {
+				_ = s.store.AddAudit(ctx, "agent", "device.credential_rotation_canceled", agentID, nil)
+			}
+			data, _ := json.Marshal(protocol.CredentialRotationCancelMsg{RotationID: msg.RotationID})
+			frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgCredentialRotationCanceledAck, Data: data})
+			s.hub.Send(agentID, frame)
+		}
 	}
 }
 
 // writePump drains the hub channel to the socket and keeps the link alive.
 func (s *Server) writePump(conn *websocket.Conn, ch chan []byte) {
+	defer conn.Close()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -201,32 +277,158 @@ func (s *Server) writePump(conn *websocket.Conn, ch chan []byte) {
 	}
 }
 
-func writeFrame(conn *websocket.Conn, typ string, payload any) {
+func writeFrame(conn *websocket.Conn, typ string, payload any) error {
 	data, _ := json.Marshal(payload)
 	frame, _ := json.Marshal(protocol.Envelope{Type: typ, Data: data})
-	_ = conn.WriteMessage(websocket.TextMessage, frame)
+	return conn.WriteMessage(websocket.TextMessage, frame)
 }
 
-// handleRelayWS pairs an agent peer and a viewer peer that share a session
-// token, then pipes traffic between them (native remote provider).
+// handleRelayWS consumes a role-specific one-time ticket and pairs the peers by
+// non-secret session id. Browser tickets travel in Sec-WebSocket-Protocol; the
+// sidecar sends its ticket in Authorization, so credentials never enter URLs.
 func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
+	sessionID := r.URL.Query().Get("session")
 	role := r.URL.Query().Get("role")
 	if role != "agent" && role != "viewer" {
-		http.Error(w, "role must be agent or viewer", http.StatusBadRequest)
+		http.Error(w, "session and valid role are required", http.StatusBadRequest)
 		return
 	}
-	sess, err := s.store.GetRemoteSessionByToken(r.Context(), token)
-	if err != nil || time.Now().After(sess.ExpiresAt) {
-		http.Error(w, "invalid or expired session", http.StatusForbidden)
+	legacyToken := ""
+	if role == "agent" {
+		legacyToken = r.URL.Query().Get("token")
+		if legacyToken != "" && !s.cfg.AllowLegacyAgentRelay {
+			http.Error(w, "legacy agent relay is disabled; update the remote sidecar", http.StatusUpgradeRequired)
+			return
+		}
+	} else if r.URL.Query().Get("token") != "" {
+		http.Error(w, "viewer relay tickets must use the WebSocket handshake", http.StatusBadRequest)
+		return
+	}
+	if sessionID == "" && !(role == "agent" && legacyToken != "") {
+		http.Error(w, "session and valid role are required", http.StatusBadRequest)
+		return
+	}
+	if role == "viewer" && !s.sameOrigin(r) {
+		http.Error(w, "invalid viewer origin", http.StatusForbidden)
+		return
+	}
+	if role == "viewer" && s.cfg.EnforceConsoleRelayIngress && r.Header.Get("X-RMM-Relay-Ingress") != "console" {
+		http.Error(w, "viewer relay is only available through the console ingress", http.StatusForbidden)
+		return
+	}
+	ticket := relayTicket(r, role)
+	if role == "agent" && sessionID == "" {
+		ticket = legacyToken
+	}
+	if ticket == "" {
+		http.Error(w, "missing relay ticket", http.StatusUnauthorized)
+		return
+	}
+	viewerSubject := ""
+	if role == "viewer" {
+		identity, identityErr := s.relayViewerIdentity(r)
+		if identityErr != nil || identity.relayPrincipal == "" {
+			http.Error(w, "viewer authentication required", http.StatusUnauthorized)
+			return
+		}
+		metadata, metadataErr := s.store.GetRemoteSessionForAuthorization(r.Context(), sessionID)
+		if metadataErr != nil || metadata.CreatedBy != identity.relayPrincipal {
+			http.Error(w, "invalid or expired session", http.StatusForbidden)
+			return
+		}
+		permission := models.PermDevicesRemote
+		switch metadata.Provider {
+		case "files":
+			permission = models.PermDevicesFiles
+		case "terminal":
+			permission = models.PermDevicesTerminal
+		}
+		permissions, permissionErr := s.permissionsForRole(r.Context(), identity.role)
+		if permissionErr != nil || !permissionSet(permissions)[permission] {
+			http.Error(w, "remote permission was revoked", http.StatusForbidden)
+			return
+		}
+		if identity.scopeUser != "" {
+			allowed, scopeErr := s.store.AgentAllowedForUser(r.Context(), identity.scopeUser, metadata.AgentID)
+			if scopeErr != nil || !allowed {
+				http.Error(w, "device is outside your current access scope", http.StatusForbidden)
+				return
+			}
+		}
+		viewerSubject = identity.relayPrincipal
+	}
+	var sess *models.RemoteSession
+	var err error
+	if role == "agent" && sessionID == "" {
+		sess, err = s.store.ConsumeLegacyAgentTicket(r.Context(), ticket)
+	} else {
+		sess, err = s.store.ConsumeRemoteSessionTicket(r.Context(), sessionID, role, ticket, viewerSubject)
+	}
+	if err != nil {
+		http.Error(w, "invalid, expired, or already-used session ticket", http.StatusForbidden)
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
 		return
 	}
+	defer conn.Close()
 	conn.SetReadLimit(relayWSReadLimit)
-	_ = s.store.SetRemoteSessionStatus(r.Context(), sess.ID, "active")
-	_ = s.relay.Join(token, role, conn)
+	if err := s.relay.Join(sess.ID, sess.AgentID, role, conn); err != nil {
+		log.Printf("remote relay session=%s role=%s rejected: %v", sess.ID, role, err)
+	}
 	_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
+}
+
+func relayTicket(r *http.Request, role string) string {
+	if role == "agent" {
+		const prefix = "Remote-Agent "
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, prefix) {
+			return strings.TrimPrefix(h, prefix)
+		}
+		return ""
+	}
+	for _, p := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "rmm-ticket.") {
+			return strings.TrimPrefix(p, "rmm-ticket.")
+		}
+	}
+	return ""
+}
+
+// relayViewerIdentity authenticates the browser token and reloads its current
+// role and effective scope immediately before a viewer ticket is consumed.
+func (s *Server) relayViewerIdentity(r *http.Request) (authenticatedIdentity, error) {
+	var token string
+	for _, p := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+		p = strings.TrimSpace(p)
+		if strings.HasPrefix(p, "rmm-auth.") {
+			token = strings.TrimPrefix(p, "rmm-auth.")
+			break
+		}
+	}
+	if token == "" {
+		return authenticatedIdentity{}, store.ErrNotFound
+	}
+	return s.authenticateToken(r.Context(), "/ws/remote", token)
+}
+
+func (s *Server) sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	host := r.Host
+	// Nginx's $host intentionally strips the port. Only use the original host
+	// supplied by a configured trusted proxy, never a direct client header.
+	if s.cfg.TrustProxyHeaders && r.Header.Get("X-Forwarded-Host") != "" {
+		host = r.Header.Get("X-Forwarded-Host")
+	}
+	return u.Host == host
 }

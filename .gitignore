@@ -7,8 +7,12 @@ dist/
 .env
 .env.local
 .env.*.local
+/deploy/secrets/
+/deploy/backups/
 *.pem
 *.key
+*.p12
+*.pfx
 id_*
 agent-state.json
 

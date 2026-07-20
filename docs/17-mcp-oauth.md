@@ -4,7 +4,8 @@
 > Discovery metadata, Dynamic Client Registration, the login+consent
 > authorization endpoint (PKCE S256), the token endpoint (code exchange +
 > refresh with rotation), and `/mcp` acceptance of OAuth access tokens are all
-> built and verified end-to-end. Enable it only with an **HTTPS** `RMM_PUBLIC_URL`.
+> built and verified end-to-end. Enable it only with an **HTTPS**
+> `RMM_MCP_PUBLIC_URL`.
 
 ## Why
 
@@ -28,9 +29,13 @@ per-user access scope.
   scope** and require `mcp.use`, so the existing permission/scope enforcement on
   `/mcp` is unchanged — only the credential's origin differs.
 - **Opt-in**: everything is gated by `RMM_MCP_OAUTH_ENABLED` (off by default).
-  The issuer is `RMM_PUBLIC_URL`, which **must be HTTPS** when enabled.
+  The issuer is `RMM_MCP_PUBLIC_URL`, which **must be HTTPS** when enabled and
+  must identify the MCP door, not the public agents door.
 - Lives on the **MCP door** ([`deploy/README-production.md`](../deploy/README-production.md)):
   `/.well-known/*`, `/oauth/*` and `/mcp` share one public port.
+- Production Compose publishes that backend listener on loopback by default.
+  TLS and source ACLs are enforced by the trusted edge forwarding to it; do not
+  expose raw app `:8080` or treat UFW on loopback as the client ACL.
 
 ## The flow (Claude web as the client)
 
@@ -62,10 +67,10 @@ per-user access scope.
 |----------|------|---------|
 | `GET /.well-known/oauth-authorization-server` | none | RFC 8414 AS metadata **(done)** |
 | `GET /.well-known/oauth-protected-resource` | none | RFC 9728 resource metadata **(done)** |
-| `POST /oauth/register` | none | Dynamic Client Registration (Phase 2) |
-| `GET/POST /oauth/authorize` | user login + consent | authorization code (Phase 3) |
-| `POST /oauth/token` | PKCE | code→token, refresh (Phase 3) |
-| `POST /mcp` | Bearer (API token **or** OAuth access token) | tools (Phase 4) |
+| `POST /oauth/register` | none | Dynamic Client Registration |
+| `GET/POST /oauth/authorize` | user login + consent | authorization code |
+| `POST /oauth/token` | PKCE | code→token, refresh with rotation |
+| `POST /mcp` | Bearer (API token **or** OAuth access token) | permission/scope-filtered tools |
 
 ## Phased plan
 
@@ -88,6 +93,10 @@ Verified end-to-end (curl): register → authorize (login+consent) → code → 
 (PKCE checked; wrong verifier → `invalid_grant`) → `/mcp initialize` with the
 access token → `refresh_token` rotation.
 
+The supported deployment remains one server replica. OAuth state is durable in
+PostgreSQL, but the wider agent hub, relay and scheduler are process-local; OAuth
+storage does not make the control plane distributed or HA.
+
 ## Security notes
 
 - Codes are single-use, short-TTL, PKCE-bound; tokens are hashed at rest and
@@ -95,3 +104,6 @@ access token → `refresh_token` rotation.
 - The approval guardrail is unchanged: an OAuth-authenticated client still only
   **proposes** jobs — a human approves. It inherits the bound user's scope, so a
   scoped user's connector sees only that user's fleet.
+- `/healthz` is liveness only and does not validate OAuth database operations or
+  a real connector. Monitor token/authorize failures in application/edge logs and
+  periodically exercise discovery plus a controlled connector flow.

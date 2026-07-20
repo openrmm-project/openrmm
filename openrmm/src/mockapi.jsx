@@ -5,7 +5,7 @@
    POST /api/auth/login is sent as Authorization on every /api/* call.
    API base: window.__API_BASE__ (default http://localhost:8080). */
 
-const API_BASE = (window.__API_BASE__) || 'http://localhost:8080';
+const API_BASE = new URL(window.__API_BASE__ || location.origin, location.href).href.replace(/\/+$/, '');
 const ROLES = { admin: 3, tech: 2, readonly: 1 };
 const DEFAULT_ROLE_PERMS = {
   readonly: ['devices.view', 'devices.remote', 'clients.view'],
@@ -24,11 +24,11 @@ window.dataBus = bus;
 
 /* ------------------------------- session --------------------------------- */
 let session = (() => {
-  try { return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null'); } catch (e) { return null; }
+  try { return JSON.parse(sessionStorage.getItem(AUTH_KEY) || 'null'); } catch (e) { return null; }
 })();
 function setSession(s) {
   session = s;
-  try { s ? localStorage.setItem(AUTH_KEY, JSON.stringify(s)) : localStorage.removeItem(AUTH_KEY); } catch (e) {}
+  try { s ? sessionStorage.setItem(AUTH_KEY, JSON.stringify(s)) : sessionStorage.removeItem(AUTH_KEY); } catch (e) {}
 }
 
 function normalizeSession(token, r) {
@@ -52,6 +52,7 @@ function apiError(status, message) { const e = new Error(message); e.status = st
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function request(method, path, body, attempt = 0) {
+  const hadSession = !!session?.token;
   const headers = { 'Content-Type': 'application/json' };
   if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
   let res;
@@ -71,6 +72,7 @@ async function request(method, path, body, attempt = 0) {
   }
   if (res.status === 401) {
     setSession(null);
+    if (hadSession && !path.startsWith('/api/auth/')) window.dispatchEvent(new Event('rmm-auth-expired'));
     let j = {}; try { j = await res.json(); } catch (e) {}
     const err = apiError(401, j.error || 'unauthorized');
     if (j.totp_required) err.totpRequired = true;
@@ -97,6 +99,11 @@ const POST = (p, b) => request('POST', p, b);
 const PUT = (p, b) => request('PUT', p, b);
 const PATCH = (p, b) => request('PATCH', p, b);
 const DELETE = (p) => request('DELETE', p);
+const websocketURL = (path) => {
+  const url = new URL(API_BASE + path);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+};
 const qs = (o) => {
   const u = new URLSearchParams();
   Object.entries(o || {}).forEach(([k, v]) => { if (v != null && v !== '') u.set(k, String(v)); });
@@ -163,6 +170,7 @@ function adaptPermissions(r) {
 /* ---------------------------------- api ---------------------------------- */
 const api = {
   API_BASE,
+  websocketURL,
 
   /* ---- auth ---- */
   async login(username, password, code) {
@@ -170,9 +178,9 @@ const api = {
     setSession(normalizeSession(r.token, r));
     return r;
   },
-  setup2FA() { return POST('/api/me/2fa/setup'); },
+  setup2FA(currentPassword) { return POST('/api/me/2fa/setup', { current_password: currentPassword }); },
   enable2FA(code) { return POST('/api/me/2fa/enable', { code }); },
-  disable2FA(code) { return POST('/api/me/2fa/disable', { code }); },
+  disable2FA(currentPassword, code) { return POST('/api/me/2fa/disable', { current_password: currentPassword, code }); },
   regenRecoveryCodes(code) { return POST('/api/me/2fa/recovery-codes', { code }); },
   reset2FA(id) { return POST('/api/users/' + id + '/2fa/reset'); },
   changePassword(currentPassword, newPassword) { return POST('/api/me/password', { current_password: currentPassword, new_password: newPassword }); },
@@ -183,10 +191,15 @@ const api = {
   },
   async loginWithToken(token) {
     setSession({ token, user: { id: '', username: '', role: 'readonly', created_at: '', permissions: [] }, role: 'readonly', permissions: [] });
-    const user = await GET('/api/me');
-    const next = normalizeSession(token, user);
-    setSession(next);
-    return next;
+    try {
+      const user = await GET('/api/me');
+      const next = normalizeSession(token, user);
+      setSession(next);
+      return next;
+    } catch (e) {
+      setSession(null);
+      throw e;
+    }
   },
   async me() { return GET('/api/me'); },
   async logout() { try { await POST('/api/auth/logout'); } catch (e) {} finally { setSession(null); } },
@@ -200,6 +213,7 @@ const api = {
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
+  getRemoteCapabilities(id) { return GET('/api/devices/' + id + '/remote-capabilities'); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
   deleteDevice(id) { return DELETE('/api/devices/' + id); },
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },

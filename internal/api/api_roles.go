@@ -24,6 +24,10 @@ func (s *Server) listRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "scoped users cannot create global roles")
+		return
+	}
 	var in models.Role
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -50,6 +54,10 @@ func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Permissions = perms
+	if !permissionsSubset(in.Permissions, permissionsOf(r)) {
+		writeErr(w, http.StatusForbidden, "role exceeds the issuer's permissions")
+		return
+	}
 	out, err := s.store.CreateRole(r.Context(), &in)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -60,6 +68,10 @@ func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateRole(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "scoped users cannot update global roles")
+		return
+	}
 	var in models.Role
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -78,6 +90,10 @@ func (s *Server) updateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Permissions = perms
+	if !permissionsSubset(in.Permissions, permissionsOf(r)) {
+		writeErr(w, http.StatusForbidden, "role exceeds the issuer's permissions")
+		return
+	}
 	out, err := s.store.UpdateRole(r.Context(), &in)
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
@@ -88,6 +104,10 @@ func (s *Server) updateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteRole(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "scoped users cannot delete global roles")
+		return
+	}
 	key := chi.URLParam(r, "key")
 	if err := s.store.DeleteRole(r.Context(), key); err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())

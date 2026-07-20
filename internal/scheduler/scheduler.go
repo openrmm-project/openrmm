@@ -68,6 +68,9 @@ func (s *Scheduler) tick(ctx context.Context) {
 	now := time.Now()
 	for i := range agents {
 		a := &agents[i]
+		if a.Status == models.AgentRevoked {
+			continue
+		}
 		s.evaluateOffline(ctx, a, now)
 		if !s.hub.IsOnline(a.ID) {
 			continue // only dispatch to live agents
@@ -111,6 +114,9 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 	}
 	for i := range agents {
 		a := &agents[i]
+		if a.Status == models.AgentRevoked {
+			continue
+		}
 		pols, err := s.store.PatchPoliciesForAgent(ctx, a.ID)
 		if err != nil || len(pols) == 0 {
 			continue
@@ -133,6 +139,10 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 			}
 		} else if rebootAllowed && pendingReboot[a.ID] {
 			// Nothing left to install; clear a pending reboot inside the window.
+			live, err := s.store.HasLiveNativeRemoteSession(ctx, a.ID)
+			if err != nil || live {
+				continue // never interrupt an operator's active remote session automatically
+			}
 			if err := s.patches.DispatchReboot(ctx, a.ID, 60); err != nil {
 				log.Printf("patch reboot %s: %v", a.ID, err)
 			}
@@ -176,6 +186,12 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 	if online {
 		_ = s.store.ResolveAlertsForSource(ctx, "agent", &id, &id)
 		return
+	}
+	// The agent has no live connection: reconcile a row still marked online (an
+	// unclean disconnect never ran detach, or a server restart left it stale) so
+	// the console does not report an offline device as online.
+	if a.Status == models.AgentOnline {
+		_ = s.store.MarkAgentOffline(ctx, id)
 	}
 	if a.LastSeen != nil && now.Sub(*a.LastSeen) > offlineAfter {
 		_ = s.store.RaiseAlert(ctx, &id, "agent", &id, models.SeverityError,

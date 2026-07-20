@@ -6,17 +6,22 @@ import "encoding/json"
 
 // Message types (the "type" field of Envelope).
 const (
-	MsgRegister     = "register"      // agent -> server
-	MsgRegistered   = "registered"    // server -> agent
-	MsgError        = "error"         // server -> agent
-	MsgHeartbeat    = "heartbeat"     // agent -> server
-	MsgInventory    = "inventory"     // agent -> server
-	MsgJob          = "job"           // server -> agent
-	MsgJobCancel    = "job_cancel"    // server -> agent: kill a running job
-	MsgJobResult    = "job_result"    // agent -> server
-	MsgJobResultAck = "job_result_ack" // server -> agent: job_result persisted, drop it from the outbox
-	MsgRemoteStart  = "remote_start"  // server -> agent: open a remote session
-	MsgRemoteStatus = "remote_status" // agent -> server: remote session state
+	MsgRegister                      = "register"                         // agent -> server
+	MsgRegistered                    = "registered"                       // server -> agent
+	MsgError                         = "error"                            // server -> agent
+	MsgHeartbeat                     = "heartbeat"                        // agent -> server
+	MsgInventory                     = "inventory"                        // agent -> server
+	MsgJob                           = "job"                              // server -> agent
+	MsgJobCancel                     = "job_cancel"                       // server -> agent: kill a running job
+	MsgJobResult                     = "job_result"                       // agent -> server
+	MsgJobResultAck                  = "job_result_ack"                   // server -> agent: job_result persisted, drop it from the outbox
+	MsgRemoteStart                   = "remote_start"                     // server -> agent: open a remote session
+	MsgRemoteStatus                  = "remote_status"                    // agent -> server: remote session state
+	MsgCredentialRotate              = "credential_rotate"                // server -> agent: persist a replacement control credential
+	MsgCredentialRotated             = "credential_rotated"               // agent -> server: replacement persisted; reconnect commits it
+	MsgCredentialRotationCancel      = "credential_rotation_cancel"       // server -> agent: restore the previous credential
+	MsgCredentialRotationCanceled    = "credential_rotation_canceled"     // agent -> server: restoration persisted
+	MsgCredentialRotationCanceledAck = "credential_rotation_canceled_ack" // server -> agent: restoration confirmation recorded
 
 	MsgRemoteQuery       = "remote_query"        // server -> agent: read a remote-provider value on demand
 	MsgRemoteQueryResult = "remote_query_result" // agent -> server: reply to a remote_query
@@ -59,10 +64,11 @@ type PatchItem struct {
 type PatchReportMsg struct {
 	OS      string      `json:"os"`
 	Patches []PatchItem `json:"patches"`
+	Error   string      `json:"error,omitempty"`
 }
 
-// PatchInstallMsg tells the agent to install patches by identifier (empty list =
-// every patch the agent currently sees as available).
+// PatchInstallMsg tells the agent to install explicitly approved patch
+// identifiers. An empty list is invalid and must never mean "install all".
 type PatchInstallMsg struct {
 	RequestID   string   `json:"request_id"`
 	Identifiers []string `json:"identifiers"`
@@ -108,8 +114,25 @@ type RegisterReq struct {
 
 // RegisterResp returns the durable identity the agent should persist locally.
 type RegisterResp struct {
-	AgentID    string `json:"agent_id"`
+	AgentID                    string `json:"agent_id"`
+	AgentToken                 string `json:"agent_token"`
+	CancelCredentialRotationID string `json:"cancel_credential_rotation_id,omitempty"`
+}
+
+// CredentialRotateMsg carries a replacement identity over the already-
+// authenticated WSS channel. The agent persists it and reconnects with it; that
+// registration atomically commits the rotation.
+type CredentialRotateMsg struct {
+	RotationID string `json:"rotation_id"`
 	AgentToken string `json:"agent_token"`
+}
+
+type CredentialRotatedMsg struct {
+	RotationID string `json:"rotation_id"`
+}
+
+type CredentialRotationCancelMsg struct {
+	RotationID string `json:"rotation_id"`
 }
 
 // JobMsg is a job pushed to the agent for execution.
@@ -147,15 +170,21 @@ type InventoryMsg struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// RemoteStartMsg tells the agent to connect a remote module to the relay using
-// the given session token (native provider). Kind selects which module:
+// RemoteStartMsg tells the agent to connect a remote module to a brokered relay.
+// AgentTicket is a single-use proof and must never be placed in a URL or log.
+// Kind selects which module:
 //   - "desktop" (or empty): the media sidecar (screen capture + input)
 //   - "files": the media sidecar in file-transfer-only mode — NO screen capture
 //   - "terminal": an elevated interactive shell on a PTY, run in the agent itself
 type RemoteStartMsg struct {
-	SessionID  string `json:"session_id"`
-	Token      string `json:"token"`
-	RelayURL   string `json:"relay_url"`
+	SessionID   string `json:"session_id"`
+	AgentTicket string `json:"agent_ticket"`
+	// Token is a temporary compatibility field for agents released before the
+	// session-ticket handshake. New agents must use AgentTicket instead.
+	Token string `json:"token,omitempty"`
+	// RelayURL is accepted only from pre-ticket servers during a rolling upgrade.
+	// Current agents derive the relay from their configured control origin.
+	RelayURL   string `json:"relay_url,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	AllowFiles *bool  `json:"allow_files,omitempty"`
 }
@@ -169,8 +198,19 @@ const (
 
 // Remote query kinds (RemoteQueryMsg.Kind).
 const (
-	RemoteQueryRustDeskID = "rustdesk_id" // read the locally-installed RustDesk peer id
+	RemoteQueryRustDeskID   = "rustdesk_id" // read the locally-installed RustDesk peer id
+	RemoteQueryCapabilities = "remote_capabilities"
 )
+
+// RemoteCapabilities is a conservative preflight report for the native desktop
+// provider. Unknown deliberately means the agent cannot safely confirm support.
+type RemoteCapabilities struct {
+	Capture       string `json:"capture"`        // available | unavailable | unknown
+	Input         string `json:"input"`          // available | unavailable | unknown
+	Backend       string `json:"backend"`        // windows_gdi | xorg | wayland | coregraphics | none
+	DisplayServer string `json:"display_server"` // xorg | wayland | headless | unknown
+	ReasonCode    string `json:"reason_code,omitempty"`
+}
 
 // RemoteQueryMsg asks the agent to read a remote-provider value on demand (e.g.
 // the RustDesk peer id when a technician clicks "Open with RustDesk"). The agent

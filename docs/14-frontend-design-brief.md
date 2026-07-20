@@ -93,7 +93,7 @@ runs code on real machines, so destructive/AI actions must feel deliberate.
 
 ## 6. API contract
 
-Base URL from config (default `http://localhost:8080`). All `/api/*` calls need:
+Base URL from runtime `config.js` (default `location.origin`). All `/api/*` calls need:
 ```
 Authorization: Bearer <token>
 Content-Type: application/json
@@ -101,9 +101,11 @@ Content-Type: application/json
 
 ### Auth model (frontend)
 Username + password → `POST /api/auth/login` returns `{token, role, permissions}`;
-store it in `localStorage` and attach as the bearer on every `/api/*` call. See §9
+store it in `sessionStorage` and attach as the bearer on every `/api/*` call. See §9
 for roles and first-run bootstrap. TOTP 2FA and per-user access scope are
-backend-enforced — the UI just surfaces them.
+backend-enforced. Current limitation: the console card has not yet been adapted
+to send the password/current-TOTP reauthentication fields required for 2FA
+setup/rotation/disable; use the API contract in `04` for those flows.
 
 ### Endpoints & types — canonical sources
 
@@ -111,7 +113,9 @@ To avoid drift, this brief no longer inlines the endpoint list or the TypeScript
 shapes. Use the single sources of truth:
 
 - **Full REST contract** → [`04-api-reference.md`](04-api-reference.md).
-- **TypeScript types** (kept in sync with the running UI) →
+- **Running browser client** → `../openrmm/src/mockapi.jsx`.
+- **Legacy TypeScript reference** (not loaded by the build and not guaranteed to
+  match every current method) →
   [`../openrmm/handoff/apiClient.ts`](../openrmm/handoff/apiClient.ts).
 
 Remote providers are `native`, `terminal`, `meshcentral`, and an optional

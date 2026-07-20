@@ -171,7 +171,7 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
               const max = Math.max(...results.map((x) => x.value || 0), 1);
               const h = Math.max(6, ((r.value || 0) / max) * 100);
               const c = r.status === 'failing' ? 'bg-bad' : r.status === 'warning' ? 'bg-warn' : 'bg-ok';
-              return <div key={i} title={`${r.value ?? r.output} · ${timeAgo(r.ran_at)}`} className="flex-1 h-full flex items-end"><div className={cx('w-full rounded-t transition-all hover:opacity-80', c)} style={{ height: h + '%' }} /></div>;
+              return <svg key={i} viewBox="0 0 10 100" preserveAspectRatio="none" className="flex-1 h-full overflow-visible" aria-label={`${r.value ?? r.output} · ${timeAgo(r.ran_at)}`}><rect x="0" y={100 - h} width="10" height={h} rx="1" className={c.replace('bg-', 'fill-')} /></svg>;
             })}
           </div>
         </Card>

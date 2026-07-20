@@ -2,11 +2,11 @@
 
 /* ------------------------------ layout bits ------------------------------- */
 function Page({ children, className = '', wide }) {
-  return <div className={cx('mx-auto px-6 py-6', wide ? 'max-w-[1500px]' : 'max-w-[1240px]', className)}>{children}</div>;
+  return <div className={cx('mx-auto px-3 py-4 sm:px-6 sm:py-6', wide ? 'max-w-[1500px]' : 'max-w-[1240px]', className)}>{children}</div>;
 }
 function PageHeader({ title, subtitle, actions, children }) {
   return (
-    <div className="flex items-start gap-4 mb-5">
+    <div className="flex items-start gap-3 sm:gap-4 mb-5 flex-wrap">
       <div className="min-w-0">
         <h1 className="text-[20px] font-semibold text-ink tracking-tight">{title}</h1>
         {subtitle && <p className="text-[13px] text-muted mt-0.5">{subtitle}</p>}
@@ -267,3 +267,6 @@ function ActivityRow({ entry }) {
 
 window.Page = Page; window.PageHeader = PageHeader; window.Dropdown = Dropdown; window.MenuItem = MenuItem;
 window.StatTile = StatTile; window.Gate = Gate; window.DashboardScreen = DashboardScreen; window.ActivityRow = ActivityRow;
+// ACTION_META is shared across files (Audit log); the build isolates each file in
+// its own block scope, so cross-file references must resolve through the global.
+window.ACTION_META = ACTION_META;

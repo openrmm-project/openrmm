@@ -196,6 +196,10 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
   const rustdeskEnabled = !!cfgQ.data?.remote?.rustdesk_enabled;
   const meshEnabled = cfgQ.data?.remote?.meshcentral_enabled !== false;
+  const capsQ = useQuery([id, 'remote-capabilities'], () => id ? api.getRemoteCapabilities(id) : Promise.resolve(null), { invalidateOn: ['devices'] });
+  const nativeCaps = capsQ.data;
+  const nativeUnavailable = nativeCaps?.capture === 'unavailable';
+  const nativeHint = nativeUnavailable ? (nativeCaps.reason_code || 'unavailable') : (nativeCaps?.capture === 'unknown' ? 'capability unknown' : 'beta');
 
   const [remoteBusy, setRemoteBusy] = useState(false);
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
@@ -207,11 +211,17 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     setRemoteBusy(true);
     try {
       const s = await api.startRemote(id, provider);
-      window.open(s.connect_url, '_blank'); toast.success('Remote session ready', provider + ' opened in a new tab');
+      window.open(s.connect_url, '_blank', 'noopener,noreferrer'); toast.success('Remote session ready', provider + ' opened in a new tab');
     } catch (e) { toast.error('Remote failed', e.message); } finally { setRemoteBusy(false); }
   };
-  // Native remote in a standalone browser tab (auth is shared via localStorage).
-  const startRemoteNewTab = () => window.open(`${location.origin}/?dev=${encodeURIComponent(id)}&host=${encodeURIComponent(d.hostname)}&os=${encodeURIComponent(d.os || '')}`, '_blank');
+  // Native remote in a standalone browser tab (auth is shared via sessionStorage).
+  const startRemoteNewTab = () => {
+    const url = new URL(window.__BASE_PATH__ || '/', location.origin);
+    url.searchParams.set('dev', id);
+    url.searchParams.set('host', d.hostname);
+    url.searchParams.set('os', d.os || '');
+    window.open(url.toString(), '_blank');
+  };
   const linkRemote = async (field, label) => {
     const v = window.prompt('Enter the ' + label + ' for this device:');
     if (!v || !v.trim()) return;
@@ -266,8 +276,8 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 <Button variant="primary" icon="remote" iconRight="chevdown" loading={remoteBusy} disabled={d.status !== 'online'}>Remote</Button>
               }>
                 <div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold">Connect via</div>
-                {can('devices.remote') && <MenuItem icon="remote" onClick={() => startRemote('native')} hint="beta">Native</MenuItem>}
-                {can('devices.remote') && <MenuItem icon="external" onClick={startRemoteNewTab} hint="new tab">Native — new tab</MenuItem>}
+                {can('devices.remote') && <MenuItem icon="remote" onClick={() => startRemote('native')} disabled={nativeUnavailable} hint={nativeHint}>Native</MenuItem>}
+                {can('devices.remote') && <MenuItem icon="external" onClick={startRemoteNewTab} disabled={nativeUnavailable} hint={nativeUnavailable ? nativeHint : 'new tab'}>Native — new tab</MenuItem>}
                 {can('devices.terminal') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint="elevated">Terminal</MenuItem>}
                 {can('devices.files') && <MenuItem icon="folder" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>File transfer</MenuItem>}
                 {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : 'no node id'}>MeshCentral</MenuItem>}
@@ -396,6 +406,13 @@ function DeviceNotes({ device }) {
 //   binary [0x02][id][bytes]  file chunk     (both directions)
 //   text   {"t":...}          input / chat / file control ({t:'kf'} = request keyframe)
 const CH_VIDEO = 0x01, CH_FILE = 0x02;
+function relayProtocols(ticket) {
+  try {
+    const auth = JSON.parse(sessionStorage.getItem('rmm-ai-auth') || 'null');
+    if (auth?.token) return ['rmm-v1', 'rmm-ticket.' + ticket, 'rmm-auth.' + auth.token];
+  } catch (e) {}
+  return ['rmm-v1', 'rmm-ticket.' + ticket];
+}
 function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const toast = useToast();
   const auth = useAuth() || { can: () => false };
@@ -499,18 +516,18 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const connect = async () => {
       if (stopped) return;
       setStatus(retries ? 'reconnecting' : 'connecting');
-      let wsUrl;
+      let wsUrl, viewerTicket;
       try {
         const s = await api.startRemote(deviceId, filesOnly ? 'files' : 'native');
-        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
-        wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+        wsUrl = api.websocketURL('/ws/remote?session=' + encodeURIComponent(s.id) + '&role=viewer');
+        viewerTicket = s.viewer_ticket;
       } catch (e) {
         if (!stopped && retries++ < 40) setTimeout(connect, 3000);
         else setStatus('closed');
         return;
       }
       if (stopped) return;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl, relayProtocols(viewerTicket));
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
@@ -542,7 +559,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     // remote screen would leave focus stuck in the chat input (typing() then
     // stays true and keystrokes keep going to the chat box, not the host).
     // Focus the canvas explicitly so a click on the screen takes over input.
-    const onDown = (e) => { e.preventDefault(); cv.focus(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: true }); };
+    const onDown = (e) => { e.preventDefault(); cv.focus(); if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button < 0 ? 0 : e.button, down: true }); };
     const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
     const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
     const onCtx = (e) => e.preventDefault();
@@ -550,9 +567,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const ku = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
     // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
     if (!filesOnly && cv) {
-      cv.addEventListener('mousemove', onMove);
-      cv.addEventListener('mousedown', onDown);
-      cv.addEventListener('mouseup', onUp);
+      cv.addEventListener('pointermove', onMove);
+      cv.addEventListener('pointerdown', onDown);
+      cv.addEventListener('pointerup', onUp);
+      cv.addEventListener('pointercancel', onUp);
       cv.addEventListener('wheel', onWheel, { passive: false });
       cv.addEventListener('contextmenu', onCtx);
       window.addEventListener('keydown', kd);
@@ -562,6 +580,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     return () => {
       stopped = true;
       if (wsRef.current) wsRef.current.close();
+      if (cv) {
+        cv.removeEventListener('pointermove', onMove);
+        cv.removeEventListener('pointerdown', onDown);
+        cv.removeEventListener('pointerup', onUp);
+        cv.removeEventListener('pointercancel', onUp);
+        cv.removeEventListener('wheel', onWheel);
+        cv.removeEventListener('contextmenu', onCtx);
+      }
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
     };
@@ -618,12 +644,12 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const statusCls = status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
   return (
     <div className="fixed inset-0 z-[80] bg-black flex flex-col">
-      <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
+      <div className="flex items-center gap-2 px-2 sm:px-4 min-h-11 bg-elevated border-b border-line shrink-0 overflow-x-auto scroll-area">
         <Icon name={filesOnly ? 'devices' : 'remote'} size={15} className="text-muted" />
-        <span className="text-[13px] font-semibold text-ink">{filesOnly ? `File transfer · ${hostname}` : hostname}</span>
+        <span className="text-[13px] font-semibold text-ink whitespace-nowrap">{filesOnly ? `File transfer · ${hostname}` : hostname}</span>
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
         {ver && <span className="text-[10px] text-faint">sidecar v{ver}</span>}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2 whitespace-nowrap">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           {!filesOnly && <>
             <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
@@ -636,14 +662,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       </div>
       {allowFiles && fb && (
         <div className="absolute inset-0 z-[5] bg-black/55 flex items-center justify-center" onClick={() => filesOnly ? onClose() : setFb(null)}>
-          <div className="w-[760px] h-[80vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-[calc(100%-1rem)] max-w-[760px] h-[calc(100%-1rem)] sm:h-[80vh] bg-card border border-line rounded-xl flex flex-col overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-3 h-11 border-b border-line">
               <Icon name="folder" size={15} className="text-muted" />
               <span className="text-[12.5px] font-semibold text-ink">File transfer · {hostname}</span>
               <button onClick={() => filesOnly ? onClose() : setFb(null)} className="ml-auto text-faint hover:text-ink p-1"><Icon name="close" size={16} /></button>
             </div>
             {/* toolbar */}
-            <div className="flex items-center gap-0.5 px-2 h-10 border-b border-line bg-elevated/40 flex-wrap">
+            <div className="flex items-center gap-0.5 px-2 min-h-10 border-b border-line bg-elevated/40 overflow-x-auto scroll-area shrink-0">
               <Button variant="ghost" size="sm" icon="chevleft" title="Up" disabled={parentPath(fb.path) === null} onClick={() => browse(parentPath(fb.path))} />
               <Button variant="ghost" size="sm" icon="refresh" title="Refresh" onClick={() => browse(fb.path)} />
               <Button variant="ghost" size="sm" icon="plus" title="New folder" disabled={!fb.path} onClick={doMkdir} />
@@ -682,14 +708,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           </div>
         </div>
       )}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="relative flex-1 flex overflow-hidden">
         {filesOnly ? (
           <div className="flex-1 flex items-center justify-center text-faint text-[12.5px]">
             {fb ? 'File transfer session' : 'Opening file browser…'}
           </div>
         ) : (<>
         <div className="relative flex-1 flex items-center justify-center overflow-hidden p-2">
-          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none" style={{ objectFit: 'contain', cursor: 'default' }} />
+          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none remote-canvas" />
           {notice && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
               <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
@@ -698,7 +724,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
             </div>
           )}
         </div>
-        {chatOpen && <div className="w-72 shrink-0 border-l border-line bg-app flex flex-col">
+        {chatOpen && <div className="absolute inset-0 z-[4] w-full border-l border-line bg-app flex flex-col sm:static sm:w-72 sm:shrink-0">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">Chat<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title="Collapse chat"><Icon name="chevright" size={16} /></button></div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}
@@ -756,14 +782,14 @@ function TerminalViewer({ deviceId, hostname, onClose }) {
     let stopped = false;
     const connect = async () => {
       setStatus('connecting');
-      let wsUrl;
+      let wsUrl, viewerTicket;
       try {
         const s = await api.startRemote(deviceId, 'terminal');
-        const tok = new URL(s.connect_url, location.origin).searchParams.get('token');
-        wsUrl = location.origin.replace(/^http/, 'ws') + '/ws/remote?token=' + encodeURIComponent(tok) + '&role=viewer';
+        wsUrl = api.websocketURL('/ws/remote?session=' + encodeURIComponent(s.id) + '&role=viewer');
+        viewerTicket = s.viewer_ticket;
       } catch (e) { setStatus('closed'); toast.error('Terminal failed', e.message); return; }
       if (stopped) return;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl, relayProtocols(viewerTicket));
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => { setStatus('connected'); doFit(); sendResize(); term.focus(); };
@@ -797,7 +823,7 @@ function TerminalViewer({ deviceId, hostname, onClose }) {
   const statusCls = status === 'connected' ? 'bg-oksoft text-ok' : status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
   return (
     <div className="fixed inset-0 z-[80] bg-[#0b0e14] flex flex-col">
-      <div className="flex items-center gap-3 px-4 h-11 bg-elevated border-b border-line shrink-0">
+      <div className="flex items-center gap-2 px-2 sm:px-4 min-h-11 bg-elevated border-b border-line shrink-0 overflow-x-auto scroll-area">
         <Icon name="terminal" size={15} className="text-muted" />
         <span className="text-[13px] font-semibold text-ink">{hostname}</span>
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{status}</span>
@@ -917,7 +943,7 @@ function InventoryView({ id }) {
                 return (
                   <div key={i}>
                     <div className="flex items-center justify-between text-[12px] mb-1"><span className="mono text-ink">{dk.mount} <span className="text-faint">{dk.fs}</span></span><span className="text-muted">{dk.free_gb} / {dk.total_gb} GB free</span></div>
-                    <div className="h-1.5 rounded-full bg-elevated overflow-hidden"><div className={cx('h-full rounded-full', usedPct > 88 ? 'bg-bad' : usedPct > 75 ? 'bg-warn' : 'bg-brand')} style={{ width: usedPct + '%' }} /></div>
+                    <progress value={usedPct} max="100" className={cx('disk-usage', usedPct > 88 ? 'bad' : usedPct > 75 ? 'warn' : '')} />
                   </div>
                 );
               })}

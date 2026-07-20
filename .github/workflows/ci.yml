@@ -5,31 +5,201 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.25'
+
 jobs:
   go:
-    name: Go vet, test & build
+    name: Go vet, race, test and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:
-          go-version: '1.25'
-      - name: Verify module checksums
-        run: go mod verify
-      - name: Vulnerability scan (advisory)
-        continue-on-error: true
+          go-version: ${{ env.GO_VERSION }}
+      - run: go mod verify
+      - name: Vulnerability scan
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
           "$(go env GOPATH)/bin/govulncheck" ./...
-      - name: Vet
-        run: go vet ./...
-      - name: Test
-        run: go test ./... -count=1
-      - name: Build server & agent
+      - run: go vet ./...
+      - run: go test -race ./... -count=1
+      - name: Build and cross-compile release targets
         run: |
           CGO_ENABLED=0 go build ./cmd/server
-          CGO_ENABLED=0 go build ./cmd/agent
-      - name: Cross-compile agent & sidecar (Windows)
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go build ./cmd/agent
+          done
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go build ./cmd/rmm-remote
+          done
+
+  platform:
+    name: Agent test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: go test ./cmd/agent ./internal/protocol -count=1
+
+  installers-linux:
+    name: Linux installer validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Shell syntax and lint
         run: |
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/agent
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/rmm-remote
+          bash -n deploy/public/install.sh
+          shellcheck -x deploy/public/install.sh deploy/ops/*.sh
+          for script in deploy/ops/*.sh; do bash -n "$script"; done
+      - name: PowerShell static validation
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
+          $findings = Invoke-ScriptAnalyzer deploy/public/install.ps1 -Severity Error
+          if ($findings) { $findings | Format-Table; exit 1 }
+
+  installer-windows:
+    name: Windows OpenSSL and installer verification
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install explicit OpenSSL prerequisite
+        shell: pwsh
+        run: |
+          choco install openssl --no-progress -y
+          $openssl = Get-ChildItem 'C:\Program Files\OpenSSL*\bin\openssl.exe' | Select-Object -First 1
+          if (-not $openssl) { throw 'OpenSSL installation not found' }
+          $openssl.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Parse and analyze installer
+        shell: pwsh
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { $errors | Format-List; exit 1 }
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
+          $findings = Invoke-ScriptAnalyzer deploy/public/install.ps1 -Severity Error
+          if ($findings) { $findings | Format-Table; exit 1 }
+      - name: Exercise installer Ed25519 operations with OpenSSL 3
+        shell: pwsh
+        run: |
+          $version = & openssl version
+          if ($version -notmatch '^OpenSSL 3\.') { throw "OpenSSL 3.x required, got: $version" }
+          go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
+          $keys = & .\rmm-sign.exe -gen-key
+          $public = ($keys | Where-Object { $_ -like 'RMM_UPDATE_PUBLIC_KEY=*' }) -replace '^RMM_UPDATE_PUBLIC_KEY=', ''
+          $env:RMM_SIGNING_KEY = (($keys | Where-Object { $_ -like 'RMM_SIGNING_KEY=*' }) -replace '^RMM_SIGNING_KEY=', '')
+          [IO.File]::WriteAllBytes('artifact.bin', [byte[]](1..128))
+          $hash = (Get-FileHash -Algorithm SHA256 artifact.bin).Hash.ToLowerInvariant()
+          "$hash  artifact.bin" | Set-Content -Encoding ascii -NoNewline SHA256SUMS
+          & .\rmm-sign.exe SHA256SUMS
+          $fields = ((Get-Content -Raw SHA256SUMS.sig).Trim() -split '\s+')
+          $prefix = [byte[]](0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00)
+          [IO.File]::WriteAllBytes('public.der', $prefix + [Convert]::FromBase64String($public))
+          [IO.File]::WriteAllBytes('signature.bin', [Convert]::FromBase64String($fields[1]))
+          & openssl dgst -sha256 -binary -out manifest.digest SHA256SUMS
+          & openssl pkeyutl -verify -pubin -inkey public.der -keyform DER -rawin -in manifest.digest -sigfile signature.bin
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Ed25519 verification failed' }
+
+  installer-macos:
+    name: macOS installer validation
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Install validation prerequisites
+        run: brew install openssl@3 shellcheck
+      - name: Validate installer with macOS tools
+        run: |
+          export PATH="$(brew --prefix openssl@3)/bin:$PATH"
+          openssl version | grep '^OpenSSL 3\.'
+          bash -n deploy/public/install.sh
+          shellcheck deploy/public/install.sh
+          tmp="$(mktemp -d)"
+          go build -buildvcs=false -o "$tmp/rmm-sign" ./cmd/rmm-sign
+          keys="$("$tmp/rmm-sign" -gen-key)"
+          public_line="${keys%%$'\n'*}"
+          private_line="${keys#*$'\n'}"
+          public_key="${public_line#*=}"
+          export RMM_SIGNING_KEY="${private_line#*=}"
+          printf 'macOS installer signature test' > "$tmp/artifact"
+          "$tmp/rmm-sign" "$tmp/artifact" >/dev/null
+          read -r format signature < "$tmp/artifact.sig"
+          test "$format" = rmm-ed25519-sha256-v1
+          printf '\060\052\060\005\006\003\053\145\160\003\041\000' > "$tmp/public.der"
+          printf '%s' "$public_key" | openssl base64 -d -A >> "$tmp/public.der"
+          printf '%s' "$signature" | openssl base64 -d -A > "$tmp/signature.bin"
+          openssl dgst -sha256 -binary "$tmp/artifact" > "$tmp/artifact.digest"
+          openssl pkeyutl -verify -pubin -inkey "$tmp/public.der" -keyform DER -rawin -in "$tmp/artifact.digest" -sigfile "$tmp/signature.bin"
+
+  frontend:
+    name: Frontend npm validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: openrmm
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  deployment-config:
+    name: Production deployment validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Validate Compose with both environment examples
+        run: |
+          docker compose --env-file .env.example -f docker-compose.yml config --quiet
+          docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config --quiet
+      - name: Validate nginx configurations
+        run: |
+          image='nginx:1.27.5-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10'
+          docker run --rm --add-host server:127.0.0.1 -v "$PWD/deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro" "$image" nginx -t
+          docker run --rm --add-host server:127.0.0.1 -e OPENRMM_BASE_PATH=/ -e NGINX_ENVSUBST_FILTER='^OPENRMM_BASE_PATH$' -v "$PWD/deploy/nginx.prod.conf:/etc/nginx/templates/default.conf.template:ro" "$image" nginx -t
+
+  container-scan:
+    name: Container image vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build server and frontend images
+        run: |
+          docker build --target server   -t rmm-server:ci .
+          docker build --target frontend -t rmm-frontend:ci .
+      - name: Scan images with Trivy (blocks on fixable HIGH/CRITICAL)
+        run: |
+          # NOTE: pin aquasec/trivy by @sha256 digest to match the repo's
+          # action/image pinning policy (Dependabot's docker ecosystem tracks it).
+          trivy='aquasec/trivy:0.58.1'
+          for img in rmm-server:ci rmm-frontend:ci; do
+            echo "::group::Trivy $img"
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              "$trivy" image \
+                --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --no-progress \
+                "$img"
+            echo "::endgroup::"
+          done

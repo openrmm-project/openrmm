@@ -20,7 +20,8 @@ this project fills.
 ## Highlights
 
 - **Own Go agent** — single cross-platform binary (Windows/Linux/macOS), no runtime;
-  **self-updates** from the server (publish with `make agent-dist`).
+  **self-updates** from the server (`make agent-dist` for development; signed,
+  versioned release artifacts are required for production).
 - **AI chat with tool-calling** — the model reads fleet state and proposes actions.
 - **Guardrails by design** — AI never executes directly; every action is a job that
   a human approves, with dry-run preview and an immutable audit log.
@@ -39,6 +40,9 @@ this project fills.
   tools are filtered by the caller's permissions and scope. AI reports stay in chat
   with a client-side **CSV download** —
   never written to an endpoint.
+- The built-in `readonly` role is not purely observational: it includes
+  `devices.remote` (remote desktop), but not file transfer or terminal. Create a
+  custom role without `devices.remote` when screen access is not acceptable.
 - **MCP server** — connect external AI (Claude, ChatGPT, …) to manage the fleet,
   reusing the same permission-filtered tools and the same human-approval guardrail.
   Secured with scoped revocable tokens + `mcp.use` + an IP allowlist; deploy
@@ -47,7 +51,7 @@ this project fills.
 ## Architecture at a glance
 
 ```
-        UI (you build) ── REST/WS API ── AI chat (tool-calling loop)
+      bundled React UI ── REST/WS API ── AI chat (tool-calling loop)
                                │
                  ┌─────────────┼──────────────┐
                  │             │              │
@@ -64,22 +68,34 @@ Full detail: [`docs/01-architecture.md`](docs/01-architecture.md).
 ## Quick start
 
 ```bash
-cp .env.example .env          # set RMM_ADMIN_TOKEN (openssl rand -hex 32) and AI keys
+cp .env.example .env          # replace RMM_ADMIN_TOKEN with a generated value
 docker compose up -d          # postgres + server
 # or run locally:
-make build && RMM_ADMIN_TOKEN=... ./bin/rmm-server
+export RMM_ADMIN_TOKEN="$(openssl rand -hex 32)"
+make build && ./bin/rmm-server
 ```
 
 Then enroll an agent:
 
 ```bash
 # 1. create an enrollment token
-curl -X POST localhost:8080/api/enroll-tokens \
-  -H "Authorization: Bearer $RMM_ADMIN_TOKEN" -d '{"uses":5}'
+curl -X POST localhost:3005/api/enroll-tokens \
+  -H "Authorization: Bearer $RMM_ADMIN_TOKEN" -d '{"uses":1}'
 
-# 2. run the agent with that token (first run only)
-./bin/rmm-agent -server ws://localhost:8080/ws/agent -enroll-token <TOKEN>
+# 2. enroll once, then start the long-lived agent without the bootstrap token
+./bin/rmm-agent -server ws://localhost:3005/ws/agent -enroll-token <TOKEN> -enroll-only
+./bin/rmm-agent -server ws://localhost:3005/ws/agent
 ```
+
+The development Compose example uses its frontend/proxy on port `3005`; a directly-run server
+uses port `8080` instead.
+
+Production is intentionally different: provision file-backed secrets with
+`deploy/ops/provision-secrets.sh`, terminate TLS at a trusted edge, and keep the
+three published listeners bound to loopback. Agent installation requires HTTPS,
+OpenSSL 3, and `--update-public-key`/`-UpdatePublicKey`; insecure installation is
+available only through explicit lab mode. See
+[`deploy/README-production.md`](deploy/README-production.md).
 
 See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walkthrough.
 
@@ -100,22 +116,24 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [10-monitoring-policies](docs/10-monitoring-policies.md) | Org hierarchy, RBAC, scripts, checks, tasks, policies, alerts |
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |
 | [12-native-remote-fork](docs/12-native-remote-fork.md) | Historical: the abandoned RustDesk-fork plan (superseded by the homegrown engine in 08) |
-| [13-security-rollout](docs/13-security-rollout.md) | Staged hardening: signed updates, TLS enforcement, CI checks, CSP staging |
+| [13-security-rollout](docs/13-security-rollout.md) | Release/signing gates, strict installers, TLS/secrets, enforcing CSP, remaining limits |
 | [14-frontend-design-brief](docs/14-frontend-design-brief.md) | Frontend brief: product context, screens, design language, full API contract |
 | [15-reports](docs/15-reports.md) | Fleet inventory reports (software/hardware/machines) by client/site/department, scoped, CSV export, AI tool |
 | [16-patch-management](docs/16-patch-management.md) | Patch inventory, approval/classification, policies (windows/auto-approve), reboot orchestration, compliance |
 | [17-mcp-oauth](docs/17-mcp-oauth.md) | MCP OAuth 2.1 — OpenRMM as its own Authorization Server so cloud clients (Claude web, ChatGPT) connect natively |
+| [18-update-signing-runbook](docs/18-update-signing-runbook.md) | Operator playbook for signed auto-update: key custody, cutting a signed release, publishing to `/dl/`, and staged key rotation via the trusted key set (no reinstall) |
+| [19-production-readiness-plan](docs/19-production-readiness-plan.md) | Prioritized remediation plan to reach production: go-live blockers, observability, HA, container scanning, defense-in-depth |
 
 For production deployment, see [`deploy/README-production.md`](deploy/README-production.md):
-a **split-ingress topology** (three doors on three ports) so the firewall keeps the
-**agents** door public while the **console** door is restricted to your IPs/VPN and
-the **MCP** door is exposed per your choice.
+a **split-ingress topology** with loopback backend binds and source ACLs at the
+trusted TLS edge. The supported deployment is one server replica; the in-memory
+agent hub, relay and scheduler are not distributed or HA.
 
 To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 
 ## License
 
-This project is intended to be released as open source. The native remote engine
-is a homegrown, CGO-free implementation (no third-party fork), so it adds no extra
-licensing constraints. See [`docs/08-remote-access.md`](docs/08-remote-access.md)
-for the engine notes.
+The native remote engine is a homegrown implementation (CGO-free on Windows and
+Linux; macOS capture uses CGO) rather than a third-party fork. See
+[`docs/08-remote-access.md`](docs/08-remote-access.md) for platform and maturity
+limitations.

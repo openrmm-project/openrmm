@@ -12,19 +12,20 @@ Policies, Scripts, Clients/Sites, Users/Settings. Dark-first, com light mode.
 simulados foram removidos. Como rodar (backend + bootstrap + servir o front):
 ver **`RUNNING.md`**.
 
-Base da API: `window.__API_BASE__` (default `http://localhost:8080`); para
-sobrescrever, adicione um `<script>window.__API_BASE__='...'</script>` antes dos
-script tags em `index.html`.
+Base da API: `window.__API_BASE__`, definida por `config.js` (default
+`location.origin`). No deploy, nginx gera esse arquivo no `OPENRMM_BASE_PATH`;
+a CSP atual restringe conexões a `self`, então o deployment suportado mantém
+API/WebSocket na mesma origem.
 
-Referência: `handoff/apiClient.ts` (versão TS do mesmo cliente, para um futuro
-projeto Vite/TS). Pontos de atenção da integração: seção final de `RUNNING.md`.
+Referência histórica: `handoff/apiClient.ts`. O cliente carregado e autoritativo
+é `src/mockapi.jsx`; o arquivo TS não participa do build e pode estar defasado.
 
 ## Arquitetura (uma camada de dados)
-- `src/mockapi.jsx` → **única** fonte de dados (trocar por backend real).
+- `src/mockapi.jsx` → cliente real e fonte de dados da UI.
 - `src/ui.jsx` → primitivos + `useQuery/useMutation` (semântica de TanStack Query).
-- `src/app.jsx` → auth (localStorage `rmm-ai-auth`), sidebar, router, gating.
+- `src/app.jsx` → auth (`sessionStorage` `rmm-ai-auth`), sidebar, router, gating.
 - `src/screens-*.jsx` → telas.
-- `handoff/apiClient.ts` → cliente `fetch` real (destino da migração).
+- `handoff/apiClient.ts` → referência TS histórica, fora do build.
 
 ## Regras de UX que NÃO podem regredir
 1. Ação proposta pela IA nunca aparece como já executada (status
@@ -36,7 +37,8 @@ projeto Vite/TS). Pontos de atenção da integração: seção final de `RUNNING
 5. Gating por permission key (`jobs.create`, `jobs.manage`, `devices.terminal`, etc.; o backend aplica 403).
 
 ## Convenções
-- HTML/React via Babel (sem build) no protótipo. Manter HTML canônico (tags
-  fechadas, atributos com aspas) para edição direta.
-- Cores/tipografia: usar apenas os tokens `--*` definidos em `index.html`.
+- O frontend de produção é gerado por `npm run build` em `dist/` (esbuild +
+  PostCSS/Tailwind); não usa Babel/CDN no navegador.
+- Cores/tipografia: usar os tokens `--*` definidos em `src/styles.css` e no
+  `tailwind.config.cjs`.
 - Não introduzir libs novas sem necessidade; preferir os primitivos de `ui.jsx`.

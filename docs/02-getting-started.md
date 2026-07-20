@@ -2,16 +2,17 @@
 
 ## Prerequisites
 
-- Go 1.23+ (to build) or Docker (to run via compose).
+- Go 1.25+ (to build) or Docker (to run via compose).
 - PostgreSQL 14+.
+- Node/npm only when building the console outside Docker.
 
 ## Run with Docker Compose
 
 ```bash
 cp .env.example .env
-# edit .env: set a strong RMM_ADMIN_TOKEN and your AI keys
+# replace RMM_ADMIN_TOKEN with a generated value; AI keys are optional
 docker compose up -d
-curl localhost:8080/healthz      # -> ok
+curl localhost:3005/healthz      # -> ok
 ```
 
 ## Run locally
@@ -22,13 +23,19 @@ docker run -d --name rmm-pg -e POSTGRES_USER=rmm -e POSTGRES_PASSWORD=rmm \
   -e POSTGRES_DB=rmm -p 5432:5432 postgres:16-alpine
 
 export RMM_ADMIN_TOKEN=$(openssl rand -hex 32)
+export RMM_SETTINGS_ENCRYPTION_KEY=$(openssl rand -hex 32)
 export RMM_DATABASE_URL="postgres://rmm:rmm@localhost:5432/rmm?sslmode=disable"
 export RMM_AI_API_KEY=sk-...        # or point RMM_AI_BASE_URL at Ollama/vLLM
 make build
 ./bin/rmm-server
 ```
 
-The schema is embedded and applied automatically on start (idempotent).
+Immutable migrations are embedded and applied automatically before the listener
+starts. Current versions are v1 `baseline` and v2 `pending_totp_secret`; recorded
+names/checksums are validated on every startup. `db/schema.sql` is a current
+snapshot, not the migration runner.
+The remaining direct-server examples use port `8080`; replace it with `3005` when
+using the bundled Docker Compose frontend/proxy.
 
 ## Enroll an agent
 
@@ -37,21 +44,48 @@ The schema is embedded and applied automatically on start (idempotent).
 TOKEN=$(curl -s -X POST localhost:8080/api/enroll-tokens \
   -H "Authorization: Bearer $RMM_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"description":"lab","uses":10}' | jq -r .token)
+  -d '{"description":"lab","uses":1}' | jq -r .token)
 
-# 2. Run the agent (first run consumes the enroll token and stores its identity).
-./bin/rmm-agent -server ws://localhost:8080/ws/agent -enroll-token "$TOKEN"
+# 2. Enroll once (stores the identity), then run the long-lived agent without
+# retaining the bootstrap token in its process/service arguments.
+./bin/rmm-agent -server ws://localhost:8080/ws/agent -enroll-token "$TOKEN" -enroll-only
+./bin/rmm-agent -server ws://localhost:8080/ws/agent
 
 # 3. Confirm it registered.
 curl -s localhost:8080/api/devices -H "Authorization: Bearer $RMM_ADMIN_TOKEN" | jq
 ```
 
 Cross-compile the agent for endpoints with `make agent-all` (publish with
-`make agent-dist`). Both **amd64 and arm64** are built for Windows and Linux,
-plus macOS arm64 — the agent is CGO-free, so every target cross-compiles from any
+`make agent-dist`). Both **amd64 and arm64** are built for Windows, Linux, and
+macOS — the agent is CGO-free, so every target cross-compiles from any
 host. The native remote sidecar (`make remote-dist`) likewise ships
 Windows/Linux **amd64 + arm64** (macOS needs CGO — `remote-dist-darwin`, run on a
 Mac). The `install.sh` / `install.ps1` scripts auto-detect the host architecture.
+After a device identity is revoked, create a new enrollment token and use the
+installer's explicit identity-reset option (`--reset-identity` on Linux/macOS or
+`-ResetIdentity` on Windows); normal reinstalls preserve the existing identity.
+
+### Production installer requirements
+
+The served installers default to production mode and require HTTPS, OpenSSL 3,
+an enrollment token, and the release's Ed25519 public update key. For example:
+
+```bash
+curl -fsSL https://agents.rmm.example.com/install.sh | sudo bash -s -- \
+  --server https://agents.rmm.example.com --token "$TOKEN" \
+  --update-public-key '<BASE64_ED25519_PUBLIC_KEY>' --require-tls
+```
+
+```powershell
+& ([scriptblock]::Create((iwr -UseBasicParsing https://agents.rmm.example.com/install.ps1))) `
+  -Server https://agents.rmm.example.com -Token '<ENROLL_TOKEN>' `
+  -UpdatePublicKey '<BASE64_ED25519_PUBLIC_KEY>' -RequireTls
+```
+
+Plain HTTP or no key requires explicit `--lab-mode`/`-LabMode` and is only for an
+isolated lab. The installer validates the signed checksum manifest and selected
+artifact, rejects downgrades, and rolls back if the installed service does not
+become healthy. See [13-security-rollout](13-security-rollout.md).
 
 ## Updating agents (self-update)
 

@@ -48,8 +48,15 @@ func New(s Store, h Sender) *Service {
 // Propose creates a job. If requireApproval is true the job lands in
 // awaiting_approval and is NOT dispatched until a human approves it.
 func (s *Service) Propose(ctx context.Context, agentID, shell, script, description, createdBy string, requireApproval bool) (*models.Job, error) {
-	if _, err := s.store.GetAgent(ctx, agentID); err != nil {
+	if !models.SupportedShell(shell) {
+		return nil, fmt.Errorf("unsupported shell %q", shell)
+	}
+	a, err := s.store.GetAgent(ctx, agentID)
+	if err != nil {
 		return nil, fmt.Errorf("agent: %w", err)
+	}
+	if a.Status == models.AgentRevoked {
+		return nil, fmt.Errorf("agent is revoked")
 	}
 	status := models.JobAwaitingApproval
 	if !requireApproval {
@@ -65,7 +72,7 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 		RequiresApproval: requireApproval,
 		CreatedBy:        createdBy,
 	}
-	j, err := s.store.CreateJob(ctx, j)
+	j, err = s.store.CreateJob(ctx, j)
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +87,16 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 // automation) and dispatches it immediately. No human approval — use only for
 // admin-defined automation, never for AI-authored scripts.
 func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, description string, taskID *string) (*models.Job, error) {
+	if !models.SupportedShell(shell) {
+		return nil, fmt.Errorf("unsupported shell %q", shell)
+	}
+	a, err := s.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
+	}
+	if a.Status == models.AgentRevoked {
+		return nil, fmt.Errorf("agent is revoked")
+	}
 	j := &models.Job{
 		AgentID:          agentID,
 		Type:             models.JobRunScript,
@@ -91,7 +108,7 @@ func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, desc
 		CreatedBy:        "scheduler",
 		TaskID:           taskID,
 	}
-	j, err := s.store.CreateJob(ctx, j)
+	j, err = s.store.CreateJob(ctx, j)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +155,9 @@ func (s *Service) Reject(ctx context.Context, jobID, actor string) (*models.Job,
 // batch_id, for a bulk/mass deployment. Nothing is dispatched until the batch is
 // approved (ApproveBatch) — the same human-in-the-loop guardrail, once for many.
 func (s *Service) ProposeBatch(ctx context.Context, agentIDs []string, shell, script, description, createdBy string) ([]models.Job, string, error) {
+	if !models.SupportedShell(shell) {
+		return nil, "", fmt.Errorf("unsupported shell %q", shell)
+	}
 	batchID := uuid.NewString()
 	out := make([]models.Job, 0, len(agentIDs))
 	for _, agentID := range agentIDs {
@@ -323,10 +343,13 @@ func (s *Service) DispatchPending(ctx context.Context, agentID string) {
 // that is already terminal — finished earlier, or closed via manual complete —
 // is accepted without re-writing state or the audit trail. A nil return means
 // "durably handled", which is the caller's signal to ack so the agent drops it.
-func (s *Service) OnResult(ctx context.Context, res protocol.JobResultMsg) error {
+func (s *Service) OnResult(ctx context.Context, agentID string, res protocol.JobResultMsg) error {
 	j, err := s.store.GetJob(ctx, res.JobID)
 	if err != nil {
 		return err
+	}
+	if j.AgentID != agentID {
+		return fmt.Errorf("job result agent does not match job target")
 	}
 	switch j.Status {
 	case models.JobCompleted, models.JobFailed, models.JobRejected:

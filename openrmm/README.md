@@ -1,129 +1,109 @@
-# OpenRMM — Frontend (handoff para conectar ao backend)
+# OpenRMM Console
 
-Este projeto é o **frontend completo** do OpenRMM: um app React (Login, Devices,
-Device detail, Jobs/Aprovações, AI Chat, Audit, Alerts, Checks, Tasks, Policies,
-Scripts, Clients/Sites, Users/Settings) construído exatamente conforme o
-[`../docs/14-frontend-design-brief.md`](../docs/14-frontend-design-brief.md).
+Frontend React conectado ao backend Go. `src/mockapi.jsx` manteve o nome
+histórico, mas é o cliente `fetch` real (`window.api`); não contém dados mockados.
+As telas cobrem login, dashboard, devices, jobs/aprovações, AI Chat, auditoria,
+alertas, checks, tasks, policies, scripts, clientes/sites/departamentos, patches,
+relatórios, usuários, papéis e configurações.
 
-Ele **já está conectado ao backend Go**: `src/mockapi.jsx` deixou de ser mock e
-hoje é o cliente `fetch` real (`window.api`) que fala com a API (bearer token +
-CORS); os dados simulados foram removidos. O cliente em `handoff/apiClient.ts` é a
-versão TypeScript do mesmo contrato, para um futuro projeto Vite/TS. Como rodar
-(backend + bootstrap + servir o front): ver `RUNNING.md`.
+## Build atual
 
----
-
-## TL;DR — como rodar
-
-1. Suba o backend Go (default `http://localhost:8080`).
-2. Aponte a base da API se não for o default: `<script>window.__API_BASE__ =
-   "http://..."</script>` antes dos scripts em `index.html`.
-3. Sirva o front (HTML estático) — veja `RUNNING.md` para o fluxo completo
-   (backend + bootstrap do primeiro admin + servir).
-4. Autenticação por bearer já implementada: o token de `POST /api/auth/login` é
-   guardado em `localStorage` e anexado em todo `/api/*`; o gating por papel
-   (`admin`/`tech`/`readonly`) também já existe.
-
-> Toda a UI consome `api.*` (em `src/mockapi.jsx`, hoje o cliente `fetch` real) e
-> não sabe se a origem é mock ou real — por isso a camada de dados fica isolada num
-> único arquivo. `handoff/apiClient.ts` é a versão TypeScript do mesmo contrato,
-> para um futuro projeto Vite/TS.
-
----
-
-## Arquitetura
-
-```
-index.html              # shell: Tailwind config, tokens de tema, ordem dos scripts
-src/
-  icons.jsx             # ícones (SVG inline)
-  mockapi.jsx           # camada de dados isolada: cliente fetch REAL, expõe window.api
-  ui.jsx                # primitivos (Button, Pill, Drawer, Modal, Toast, CodeBlock, hooks)
-  app.jsx               # auth, sidebar, router, gating por papel, monta o React
-  screens-core.jsx      # Dashboard + helpers de layout
-  screens-devices.jsx   # Devices + Device detail (Inventory/Jobs/Run script/Remote)
-  screens-jobs.jsx      # Jobs & Aprovações (tela crítica) + Audit
-  screens-chat.jsx      # AI Chat (tool steps + cards de "job proposto")
-  screens-rmm.jsx       # Alerts, Checks, Scheduled tasks
-  screens-rmm2.jsx      # Scripts, Policies, Clients/Sites, Users/Settings
-handoff/
-  apiClient.ts          # versão TypeScript do mesmo cliente (para um futuro projeto Vite/TS)
-  INTEGRATION.md        # passo a passo + tabela de endpoints + papéis
-assets/
-  logo_open_rmm_edit3.png # logo atual sem fundo (BrandMark em app.jsx) + favicon (index.html)
-  icone_openrmm.png      # logo anterior (não usada)
-  icone_page_openrmm.png # favicon anterior (não usada)
-  icone_rmm_fundo.png    # ícone de marca adicional
-```
-
-**Importante:** os arquivos são um **protótipo de referência em HTML/React via
-Babel** (sem build). Mostram look & feel e comportamento finais. Para produção,
-o recomendado é recriar num projeto **Vite + React + TS + Tailwind + shadcn/ui +
-TanStack Query** (stack do brief) — os componentes e a lógica aqui servem de base
-fiel. Se preferir, dá para portar quase direto: a UI já é React e os hooks
-`useQuery/useMutation` em `ui.jsx` têm a mesma semântica do TanStack Query.
-
----
-
-## Camada de dados
-
-`src/mockapi.jsx` (o cliente `fetch` real) define `window.api` com **exatamente**
-estes métodos (todos retornam Promises). `handoff/apiClient.ts` tem a mesma
-assinatura, em TypeScript:
-
-| Método (`api.*`) | Vira a chamada HTTP |
-|---|---|
-| `login(user, pass)` | `POST /api/auth/login` |
-| `me()` | `GET /api/me` |
-| `logout()` | `POST /api/auth/logout` |
-| `listDevices()` | `GET /api/devices` |
-| `getDevice(id)` / `getInventory(id)` | `GET /api/devices/{id}` / `.../inventory` |
-| `startRemote(id, provider)` | `POST /api/devices/{id}/remote` |
-| `setDeviceSite(id, siteId)` | `PATCH /api/devices/{id}/site` |
-| `listJobs({agent_id,limit})` | `GET /api/jobs` |
-| `createJob(body)` | `POST /api/jobs` |
-| `approveJob(id)` / `rejectJob(id)` | `POST /api/jobs/{id}/approve` · `/reject` |
-| `listAudit(limit)` | `GET /api/audit` |
-| `createEnrollToken(body)` | `POST /api/enroll-tokens` |
-| `listSessions()` / `createSession()` | `GET/POST /api/chat/sessions` |
-| `getMessages(id)` / `sendMessage(id, content)` | `GET/POST /api/chat/sessions/{id}/messages` |
-| `listUsers/createUser/deleteUser` | `GET/POST/DELETE /api/users` |
-| `listClients/createClient/...` | `GET/POST/DELETE /api/clients` · `/sites` |
-| `listScripts/.../runScript` | `GET/POST/PUT/DELETE /api/scripts` · `/devices/{id}/run-script` |
-| `listChecks/.../getCheckResults` | `GET/POST/PUT/DELETE /api/checks` · `/checks/{id}/results` |
-| `listTasks/...` | `GET/POST/PUT/DELETE /api/tasks` |
-| `listPolicies/.../assignments` | `GET/POST/DELETE /api/policies` · `/assignments` |
-| `listAlerts(status)` / `ackAlert` / `resolveAlert` | `GET /api/alerts` · `/ack` · `/resolve` |
-| `getConfig()` | exibição read-only (AI/remote/server) |
-
-A tabela completa com bodies e shapes está em `handoff/INTEGRATION.md`.
-
----
-
-## Regras de UX de segurança (já implementadas — não regredir)
-
-1. **Ação da IA nunca aparece como já executada.** Jobs propostos pela IA são
-   *propostas* com status `awaiting_approval` e o **script completo visível**.
-2. **Aprovação é deliberada** — botão primário, com **confirmação digitada
-   ("RUN")** quando o script parece destrutivo.
-3. **Dry-run sempre** — o script aparece antes de rodar, toda vez.
-4. **Trilha de auditoria visível** — quem aprovou o quê, sempre registrado.
-5. **Gating por papel** — `readonly` vê tudo, mas ações de `tech`/`admin` ficam
-   ocultas/bloqueadas (o backend também deve aplicar 403).
-
----
-
-## Rodando o protótipo
-
-É HTML estático — abra `index.html` num servidor estático qualquer (e suba o
-backend Go antes; fluxo completo em `RUNNING.md`):
+O frontend de produção **tem build**. React, xterm, QRCode, Tailwind e fontes são
+dependências npm fixadas no lockfile e empacotadas localmente; não há Babel nem
+CDN no navegador.
 
 ```bash
-npx serve .        # ou: python3 -m http.server
+npm ci
+npm test
+npm run build
 ```
 
-Para apontar a base da API sem mudar código, antes dos scripts em `index.html`:
+O build usa esbuild + PostCSS/Tailwind e recria `dist/`. A imagem Docker executa o
+mesmo fluxo e copia apenas `dist/` para nginx. `npm run smoke` recompila e executa
+o smoke test headless quando Chrome/Chromium está disponível.
 
-```html
-<script>window.__API_BASE__ = "http://localhost:8080";</script>
+Arquivos emitidos no base path configurado:
+
+```text
+dist/
+  index.html
+  config.js
+  assets/app.js
+  assets/app.css
+  assets/styles.css
+  assets/fonts/*
+  assets/*.png
 ```
+
+## Base path e API
+
+`OPENRMM_BASE_PATH` é aplicado **no build** e deve ser um caminho com barras
+inicial/final, por exemplo `/console/`. O script normaliza as barras e rejeita
+origem, query, fragmento e segmentos `.`/`..`:
+
+```bash
+OPENRMM_BASE_PATH=/console/ npm run build
+```
+
+`index.html` carrega todos os assets e `config.js` desse caminho. `config.js`
+define `window.__API_BASE__`, por padrão `location.origin`. No deploy de produção,
+nginx gera `${OPENRMM_BASE_PATH}config.js` com a origem acessada. A CSP atual usa
+`connect-src 'self'`, portanto o modo suportado é API/WebSocket na mesma origem.
+Um backend cross-origin exige alterar deliberadamente a CSP além de CORS; apenas
+trocar `config.js` não basta.
+
+O backend e o build devem concordar sobre o base path. O proxy continua expondo
+`/api/*` e `/ws/remote` na origem, enquanto o shell/assets ficam no base path.
+
+## Segurança no navegador
+
+- A sessão `{token,user,role,permissions}` fica em
+  `sessionStorage["rmm-ai-auth"]`, não em `localStorage`. Ela sobrevive ao reload
+  da aba, não a uma nova sessão do navegador. Preferências não secretas, como
+  tema e colunas ocultas, usam `localStorage`.
+- O bearer é anexado às chamadas de API; `401` limpa a sessão e `429` é repetido
+  com backoff limitado.
+- A UI usa permission keys (`jobs.manage`, `devices.remote`, etc.); papéis são
+  apenas presets. O backend continua sendo o controle autoritativo e retorna
+  `403`.
+- O papel built-in `readonly` possui `devices.remote`. Portanto ele pode iniciar
+  desktop remoto, embora não tenha file transfer nem terminal; não deve ser
+  tratado como puramente observacional.
+- O HTML e nginx aplicam CSP **enforcing** sem `unsafe-eval`; scripts, fontes e
+  estilos de elemento são locais. `style-src-attr 'unsafe-inline'` permanece para
+  estilos inline emitidos pela UI atual.
+- A aba de remote nativo usa a mesma sessão da aba via `sessionStorage`; esse
+  armazenamento não é compartilhado com abas abertas sem relação de sessão.
+
+## Organização
+
+```text
+index.html                 shell e CSP
+config.js                  configuração runtime da origem da API
+scripts/build.mjs          bundle e base path
+scripts/smoke.mjs          smoke headless
+src/mockapi.jsx            cliente fetch real e adaptadores
+src/ui.jsx                 primitivos e hooks de query/mutation
+src/app.jsx                auth, navegação, permission gating e router
+src/screens-*.jsx          telas
+tests/build.test.mjs       invariantes do artefato de produção
+handoff/apiClient.ts       referência TS histórica; fora do build e pode defasar
+dist/                      saída gerada
+```
+
+## Estado conhecido
+
+- Checks buscam o último resultado individualmente, causando uma requisição
+  adicional por check.
+- O inventário adapta o payload plano do agente; live CPU load não é coletado e
+  software é limitado no agente.
+- Jobs ad hoc continuam approval-gated pelo backend, independentemente da UI.
+- O backend agora exige senha atual em setup/disable de 2FA e, durante rotação,
+  também o TOTP ativo. O `TwoFactorCard`/cliente atual ainda não envia esses
+  campos; setup, rotação e disable pela UI falham até essa integração ser
+  atualizada. `enable` do segredo pendente e regeneração de recovery codes já
+  usam o código esperado.
+
+Veja [`RUNNING.md`](RUNNING.md) para execução e
+[`handoff/INTEGRATION.md`](handoff/INTEGRATION.md) para o contrato da camada de
+dados.

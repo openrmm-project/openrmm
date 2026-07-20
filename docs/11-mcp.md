@@ -44,28 +44,29 @@ scoped tokens and IP allowlisting.
 Since this project is self-hosted/open-source, **how you expose `/mcp` is the
 deployer's choice.** Two well-trodden, secure paths:
 
-### Most secure: private network (Tailscale) — recommended for own-infra clients
-Keep the server **off the public internet** entirely. Put the server and the
-machine running the AI client (e.g. Claude Desktop) on the same Tailscale
-tailnet, then point the client at `http://<tailnet-ip-or-magicdns>:8080/mcp`.
-No open ports, no public TLS to manage. (Cloud clients like Claude web / ChatGPT
-can't reach a tailnet — use them only if you choose public exposure below.)
+### Private network (Tailscale) — recommended for own-infra clients
+Keep the service off the public internet and expose the **TLS MCP edge** only in
+the tailnet. Do not point production clients at the raw app `:8080`; that bypasses
+the split ingress and trusted proxy assumptions. Plain HTTP is acceptable only
+for an explicit isolated lab. Cloud clients cannot reach a tailnet, so use the
+public TLS option below when required.
 
 ### Public exposure (for cloud clients) — reverse proxy + TLS
-Front the server with Caddy/Traefik/nginx terminating TLS on a real domain:
+Front the loopback MCP listener with Caddy/Traefik/nginx terminating TLS on a
+real domain. For example, when the configured host MCP port is `7443`:
 ```
-rmm.yourdomain.com {
-    reverse_proxy 127.0.0.1:8080
+mcp.yourdomain.com {
+    reverse_proxy 127.0.0.1:7443
 }
 ```
-Then add `https://rmm.yourdomain.com/mcp` as a custom connector in the client.
-Set `RMM_PUBLIC_URL=https://rmm.yourdomain.com` and, if behind the proxy,
-`RMM_TRUST_PROXY_HEADERS=true`.
+Then add `https://mcp.yourdomain.com/mcp` as a custom connector in the client.
+Set `RMM_MCP_PUBLIC_URL=https://mcp.yourdomain.com` when using OAuth and, if
+behind the proxy, `RMM_TRUST_PROXY_HEADERS=true`.
 
 **Cloud connectors (Claude web / ChatGPT) — use OAuth.** These clients expect the
 OAuth connector flow rather than a pasted token. Turn on the built-in OAuth 2.1
-Authorization Server with `RMM_MCP_OAUTH_ENABLED=true` (HTTPS `RMM_PUBLIC_URL`
-required): the user logs into OpenRMM (password + 2FA) and consents, and the
+Authorization Server with `RMM_MCP_OAUTH_ENABLED=true` (HTTPS
+`RMM_MCP_PUBLIC_URL` required): the user logs into OpenRMM (password + 2FA) and consents, and the
 client receives a short-lived, scoped, refreshable token bound to that user — no
 static secret to paste. See [17-mcp-oauth](17-mcp-oauth.md).
 
@@ -74,9 +75,12 @@ For a real deployment, use the **split-ingress topology**
 ([`deploy/README-production.md`](../deploy/README-production.md)): `/mcp` gets its
 **own port/door**, separate from the console (UI + REST API) and the agents' WS.
 That lets you expose the MCP door **publicly** for cloud clients (Claude web,
-ChatGPT) *or* restrict it to **specific IPs** for on-prem clients — a firewall
-choice independent of the console, which stays locked to your own IPs/VPN. Keep
-`RMM_MCP_ALLOWED_IPS` set as an app-level second layer.
+ChatGPT) *or* restrict it to **specific IPs** for on-prem clients — a trusted-edge
+ACL independent of the console, which stays locked to your own IPs/VPN. Backend
+listeners bind loopback by default; UFW on those loopback ports is not the source
+ACL mechanism. Keep
+`RMM_MCP_ALLOWED_IPS` as an app-level second layer only for clients with stable,
+known egress IPs; leave it empty for cloud connectors with dynamic egress.
 
 ## Security controls (layered)
 
@@ -96,11 +100,16 @@ choice independent of the console, which stays locked to your own IPs/VPN. Keep
    [07-guardrails-security](07-guardrails-security.md).
 5. **Least privilege.** The `/mcp` group requires `mcp.use`, not broad admin
    access.
+6. **Single replica.** MCP requests can use durable PostgreSQL state, but the
+   wider control plane's hub/relay/scheduler are not distributed. The supported
+   deployment is one server replica.
 
 ## Recommended hardening checklist
 
 - [ ] Private network (Tailscale) **or** reverse proxy + valid TLS cert.
-- [ ] `RMM_MCP_ALLOWED_IPS` set to your client / proxy egress IPs.
+- [ ] For known/on-prem clients: `RMM_MCP_ALLOWED_IPS` set to their stable egress
+  IPs. For cloud connectors with dynamic egress: leave it empty and rely on OAuth,
+  scoped permissions, TLS, and the approval guardrail.
 - [ ] Dedicated API token per connector with only the needed role; rotate/revoke
   as needed.
 - [ ] **Set an expiry** on the connector token (Settings ▸ API tokens ▸ *Expires*,

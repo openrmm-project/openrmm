@@ -1,93 +1,114 @@
 # 16 — Patch Management
 
-> **Status: implemented (all phases).** Missing-patch inventory, a catalog with
-> approval/classification, patch policies (maintenance windows, auto-approve,
-> exclusions), reboot orchestration and a compliance report are built — backend,
-> agent, scheduler, AI tool and UI. The per-OS scanners/installers shell out to
-> the native tools (WUA / apt / dnf / `softwareupdate`); their exact parsing
-> should be **validated on real endpoints** (same caveat as the macOS remote
-> engine). Requires an agent build ≥ **0.4.2** on the endpoint.
+> **Status: implemented, with platform-validation limitations.** Backend, agent,
+> scheduler, REST API, scope/RBAC, audit, compliance report and console screens
+> exist. The per-OS commands/parsers still need validation across representative
+> endpoint versions. Agent 0.4.2+ is required.
 
-## Goal
+## Implemented flow
 
-A first-class patch-management subsystem covering:
+1. The scheduler requests scans roughly every six hours for online agents, or an
+   operator requests one with `POST /api/devices/{id}/patches/scan`.
+2. The agent shells out to the native OS update mechanism and sends a
+   `patch_report` of currently missing updates.
+3. The server upserts the global `(os, identifier)` catalog and per-device state.
+4. An operator creates an approval/decline decision at global, client, site or
+   device scope, or a policy auto-approves matching classifications after the
+   configured age.
+5. Manual or in-window policy installation claims only identifiers currently
+   approved for that device, marks them installing, and sends an explicit
+   `patch_install` list. An empty list never means "install everything".
+6. `patch_result` records each outcome and sets `reboot_pending` when needed.
+7. A manual reboot is delayed 60 seconds. It refuses an active native/files/
+   terminal session unless `force:true`; automatic policy reboot always waits
+   until no such session is active.
 
-- **Inventory of available/missing patches** (Windows KBs, Linux advisories/CVEs)
-  — not just installed software.
-- **Catalog + per-patch approval + classification** (security / critical /
-  important / moderate / optional).
-- **Patch policy**: maintenance windows, auto-approve security patches after N
-  days, exclusions.
-- **Post-patch reboot orchestration**.
-- **Compliance reporting** (who is up to date, who failed).
+Patch installation is a dedicated protocol operation, not a `jobs.kind=patch`
+job and not the normal 10-minute script-job lifecycle. There is no streaming
+install progress; status changes when the result frame arrives.
 
-## Principles (inherited from the existing architecture)
+## Agent implementations
 
-- **Scanning/reading is free; installing is gated** — nothing reaches an endpoint
-  without approval (manual or policy-driven), the same guardrail as jobs.
-- **Per-user scope + granular roles + audit** on everything (`user_scopes`,
-  `roles`/`role_permissions`, `audit_log`).
-- **CGO-free agent** — per-OS scanners shell out (`exec`) to PowerShell/WUA, apt,
-  dnf, `softwareupdate`; cross-compiles (incl. arm64).
-- **Maximum reuse** — `jobs` for install history, `policy_assignments` for
-  inheritance, the Reports infra for compliance, the scheduler for windows.
+The agent remains CGO-free and invokes native tools:
 
-## Data model (sketch)
+- Windows: PowerShell/WUA;
+- Debian/Ubuntu: apt tooling;
+- Fedora/RHEL family: dnf update metadata;
+- macOS: `softwareupdate`.
 
-- `patches` — catalog deduped by `(os, identifier)`: `identifier` (KB / package /
-  advisory), `title`, `classification`, `kb`, `cves[]`, `reboot_required`,
-  `first_seen`, `last_seen`.
-- `agent_patches` — missing patch per device: `agent_id`, `patch_id`, `status`
-  (missing/approved/installing/installed/failed/excluded), `available_version`,
-  `detected_at`, `installed_at`, `error`.
-- `patch_approvals` — `patch_id`, `scope_type/scope_id`, `decision`, `actor`,
-  `at`, `source` (manual/policy).
-- `patch_policies` + `patch_policy_assignments` — maintenance window, auto-approve
-  rules, exclusions, reboot policy; assigned to client/site/agent.
-- Reuse: `jobs` gains `kind=patch`; `agents` gains `reboot_pending`,
-  `last_patch_scan`.
+Metadata quality is best-effort and differs by OS. CVEs/classification can be
+sparse, and package-manager output/localization/version changes can break
+parsing. Validate scan and install on every supported OS image before enabling
+policy automation.
 
-## Protocol additions (`internal/protocol`)
+## Data model
 
-- **Server → agent**: `patch_scan`, `patch_install` (approved `patch_id`s),
-  `reboot` (coordinated).
-- **Agent → server**: `patch_report` (missing patches + metadata), `patch_result`
-  (per-patch outcome + `reboot_required`).
+- `patches`: catalog deduplicated by `(os, identifier)`, with title,
+  classification, KB, CVEs, reboot flag and first/last seen.
+- `agent_patches`: device state (`missing`, `approved`, `installing`, `installed`,
+  `failed`, `excluded`), available version, timestamps and error.
+- `patch_approvals`: latest manual/policy `approve` or `decline` decision at
+  global, client, site or agent scope.
+- `patch_policies`: enabled flag, auto-approve classifications/age, exclusions,
+  server-time maintenance window and reboot mode.
+- `patch_policy_assignments`: policy to client/site/agent.
+- `agents.last_patch_scan` and `agents.reboot_pending`.
 
-## Phased plan
+## API and permissions
 
-| Phase | Scope | Verifies |
-|-------|-------|----------|
-| **1 — Missing-patch inventory** | Per-OS scanners (Windows WUA / apt+`apt-check` / `dnf updateinfo cves` / `softwareupdate -l`); `patches`+`agent_patches`; scheduled + on-demand `patch_scan`; read APIs. | Scan a Windows + a Linux host and see missing patches with KB/severity/CVE. |
-| **2 — Catalog, classification & manual approval** | Normalized `classification`; `patch_approvals` (approve/decline, scoped, audited); catalog API with counts. | Approve a patch → eligible; decline → removed from the queue. |
-| **3 — Install orchestration** | `patch_install` → agent installs → `patch_result`; install = audited `job` (`kind=patch`, batched per company); OS-aware `apply_updates` AI/MCP tool (gated). **Open design risk:** WUA installs can exceed the 10-min job timeout → needs async/progress execution. | Approve→install a real patch; status `installed`, result recorded. |
-| **4 — Patch policies** | `patch_policies` (maintenance window; auto-approve `classification` after N days since `first_seen`; exclusions); scheduler auto-approval engine + in-window dispatch. | Policy auto-approves a security patch older than N days and installs it in the window; exclusion blocks. |
-| **5 — Reboot orchestration** | `reboot_required` → `agents.reboot_pending`; policy decides auto-reboot in window / defer / force after N hours; reboot via the existing path; user notice (optional, via the native chat window). | A reboot-requiring patch schedules and reboots in the window; state clears after. |
-| **6 — Compliance reporting** | Aggregate per device/site/client (missing by class, last scan, last patched, pending reboot, failures) → status (compliant/at-risk/critical), reusing the Reports infra (CSV, scope); stale-scan / N+ missing-security alerts; AI `patch_report`. | Per-tenant compliance report + alert raise/resolve + CSV. |
-| **7 — UI** | Patches tab (catalog + approve/decline, per-device missing, policy editor, compliance dashboard); a Patches sub-tab in the device drawer. Sliceable alongside each phase. | Click-through of catalog, approval, policy and compliance. |
+Read state with `patches.view`; scan, approve, install and reboot require
+`patches.manage`; policy CRUD requires `patches.policies.manage`. Compliance can
+be read with `reports.view` or `patches.view`.
 
-## Cross-cutting
+Relevant routes:
 
-- **RBAC**: scan/approve/install/reboot require `patches.manage`; patch policy
-  CRUD requires `patches.policies.manage`. Scope is enforced on read and write.
-- **Audit**: `patch.scan`, `patch.approve/decline`, `patch.install`,
-  `patch.policy.*`, `reboot`.
-- **Security**: the agent runs as SYSTEM/root (can install); server-side
-  validation of identifiers (anti-injection), like the high-level tools.
+```text
+GET  /api/devices/{id}/patches
+POST /api/devices/{id}/patches/scan
+POST /api/devices/{id}/patches/install   { identifiers: [...] }
+POST /api/devices/{id}/reboot            { force?: false }
+GET  /api/patches
+POST /api/patches/{id}/approve           { scope_type, scope_id, decision }
+GET  /api/reports/compliance
+GET/POST/PUT/DELETE /api/patch-policies...
+```
 
-## Open design decisions (to settle before coding)
+All device operations are access-scope checked. A restricted principal cannot
+approve globally. Patch policy definitions are global: restricted principals can
+see intersecting assignments but cannot create/update/delete global definitions.
+Audit events include scans, approvals/declines, installs, policy changes and
+reboots.
 
-1. **Long installs** (WUA) beyond the job timeout → async / progress streaming
-   (Phase 3; affects the protocol).
-2. **Metadata varies by OS**: CVE is rich on `dnf`, weak on `apt` / Windows-app /
-   macOS → normalized, best-effort classification + a `source` field.
-3. **Window vs. timezone**: maintenance window in the agent's TZ vs. the server.
-4. **Safe reboot**: avoid rebooting during an active remote session / business
-   hours.
+The AI/MCP catalog currently provides read-only `list_patches`. It does **not**
+provide a direct `apply_updates` tool. Operators install through the scoped human
+API/UI or preconfigured policy automation.
 
-## Suggested MVP cut
+## Policy behavior
 
-- **Functional MVP** = Phases **1 → 2 → 3** (scan + approve + install manually,
-  with `apply_updates` in chat).
-- **Automation** = Phases **4 → 5** (policies + reboot).
-- **Visibility** = Phase **6** (+ **7** UI, sliced along the way).
+- `window_days` uses `0=Sunday` through `6=Saturday`.
+- Start/end minutes use the **server process's local time**, not each endpoint's
+  timezone.
+- An empty day list permits any day.
+- Exclusions match identifiers/classifications as implemented by the store.
+- Within an open assigned policy window, the scheduler installs approved patches
+  for online endpoints. It reboots only after no approved identifiers remain and
+  at least one open policy allows reboot.
+- Scheduler/hub state is process-local. Patch automation supports the documented
+  single server replica only; multiple schedulers would not be a supported HA
+  deployment.
+
+## Remaining limitations
+
+- No streamed percentage/progress or cancellation for a running package-manager
+  operation.
+- No durable dispatch queue equivalent to job-result outbox for patch requests;
+  offline manual scan/install returns `503`, and policy work waits for a later
+  scheduler tick.
+- Native parser/install behavior needs real-endpoint coverage, especially
+  localized Windows output and macOS.
+- Maintenance windows are server-local-time and do not model endpoint timezone,
+  holidays, blackout calendars or deadline/force-after-N-hours behavior.
+- Reboot suppression detects active OpenRMM native relay sessions, not arbitrary
+  local user activity or third-party remote sessions.
+- Compliance is based on the latest reported data and can be stale; platform
+  health/alert delivery remains an operator responsibility.

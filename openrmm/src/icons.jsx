@@ -69,12 +69,12 @@ const ICON_PATHS = {
   moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
 };
 
-function Icon({ name, size = 16, className = '', strokeWidth = 1.7, fill = false, style }) {
+function Icon({ name, size = 16, className = '', strokeWidth = 1.7, fill = false }) {
   const d = ICON_PATHS[name] || ICON_PATHS.dot;
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={fill ? 'currentColor' : 'none'}
       stroke={fill ? 'none' : 'currentColor'} strokeWidth={strokeWidth} strokeLinecap="round"
-      strokeLinejoin="round" className={className} style={style} aria-hidden="true">
+      strokeLinejoin="round" className={className} aria-hidden="true">
       {d.split('M').filter(Boolean).map((seg, i) => <path key={i} d={'M' + seg} />)}
     </svg>
   );

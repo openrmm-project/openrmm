@@ -24,6 +24,10 @@ func (s *Server) listPolicies(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "scoped users cannot create global policy definitions")
+		return
+	}
 	var in struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -41,7 +45,11 @@ func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deletePolicy(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeletePolicy(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if !s.requirePolicy(w, r, id, true) {
+		return
+	}
+	if err := s.store.DeletePolicy(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -49,12 +57,16 @@ func (s *Server) deletePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPolicyAssignments(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	if !s.requirePolicy(w, r, policyID, false) {
+		return
+	}
 	var as []models.PolicyAssignment
 	var err error
 	if uid := s.scopeUserID(r); uid != "" {
-		as, err = s.store.ListPolicyAssignmentsForUser(r.Context(), uid, chi.URLParam(r, "id"))
+		as, err = s.store.ListPolicyAssignmentsForUser(r.Context(), uid, policyID)
 	} else {
-		as, err = s.store.ListPolicyAssignments(r.Context(), chi.URLParam(r, "id"))
+		as, err = s.store.ListPolicyAssignments(r.Context(), policyID)
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -64,6 +76,10 @@ func (s *Server) listPolicyAssignments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createPolicyAssignment(w http.ResponseWriter, r *http.Request) {
+	policyID := chi.URLParam(r, "id")
+	if !s.requirePolicy(w, r, policyID, true) {
+		return
+	}
 	var in struct {
 		ScopeType string `json:"scope_type"`
 		ScopeID   string `json:"scope_id"`
@@ -72,7 +88,14 @@ func (s *Server) createPolicyAssignment(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "scope_type and scope_id required")
 		return
 	}
-	a, err := s.store.AssignPolicy(r.Context(), chi.URLParam(r, "id"), in.ScopeType, in.ScopeID)
+	if !oneOf(in.ScopeType, models.ScopeClient, models.ScopeSite, models.ScopeAgent) {
+		writeErr(w, http.StatusBadRequest, "invalid policy scope_type")
+		return
+	}
+	if !s.requireScope(w, r, in.ScopeType, in.ScopeID) {
+		return
+	}
+	a, err := s.store.AssignPolicy(r.Context(), policyID, in.ScopeType, in.ScopeID)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -81,7 +104,16 @@ func (s *Server) createPolicyAssignment(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) deletePolicyAssignment(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteAssignment(r.Context(), chi.URLParam(r, "aid")); err != nil {
+	id := chi.URLParam(r, "aid")
+	a, err := s.store.GetPolicyAssignment(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if !s.requirePolicy(w, r, a.PolicyID, true) || !s.requireScope(w, r, a.ScopeType, a.ScopeID) {
+		return
+	}
+	if err := s.store.DeleteAssignment(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

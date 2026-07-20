@@ -1,8 +1,17 @@
 # 03 — Database Schema
 
-PostgreSQL. The canonical schema is embedded in the server
-(`internal/store/schema.sql`) and applied idempotently on every start. A copy
-lives at `db/schema.sql` for manual `psql` use.
+PostgreSQL. Immutable migrations under `internal/store/migrations/` are embedded
+in the server and applied on startup. `db/schema.sql` is the canonical snapshot
+of the **current** schema for review/manual use; it is not replayed as the
+migration mechanism.
+
+`schema_migrations` records a contiguous version/name/SHA-256 checksum history.
+Current versions are v1 `baseline` and v2 `pending_totp_secret`. Startup accepts
+only an exact prefix of the binary's history and rejects gaps, unknown versions,
+renames, or changed SQL. The migration transaction uses a PostgreSQL advisory
+lock. Migrations are forward-only: once a newer version is applied, an older
+binary can reject it, so rollback requires restoring the pre-upgrade database as
+well as the application.
 
 ## Tables
 
@@ -14,8 +23,11 @@ Managed endpoints.
 | hostname, os, arch, version | text | reported at enrollment |
 | description | text | operator-editable label, shown in the device list (e.g. the user's name) |
 | note | text | operator-editable private observation, shown only in device detail |
-| status | text | `online` / `offline` |
+| status | text | `online` / `offline` / `revoked` |
 | token_hash | text | SHA-256 of the agent's auth token |
+| pending_token_hash, token_rotation_id | text | one in-flight replacement credential; promotion occurs on reconnect |
+| token_rotation_canceling | boolean | durable cancellation fence; prevents replacement-token promotion until restoration is confirmed |
+| revoked_at | timestamptz | nullable; blocks control, jobs, and relay tickets when set |
 | site_id | uuid FK → sites | nullable; the agent's place in the org hierarchy |
 | group_id | uuid FK → device_groups | nullable |
 | tags | text[] | free-form labels |
@@ -34,8 +46,10 @@ One-time / limited-use enrollment tokens (token, uses_left, expires_at).
 
 ### `users`
 Console accounts. `password_hash` (bcrypt), `role` (role key such as
-`admin`/`tech`/`readonly` or a custom role), `totp_secret` (encrypted, nullable)
-and `totp_enabled` for optional TOTP 2FA.
+`admin`/`tech`/`readonly` or a custom role), `totp_secret` (encrypted, nullable),
+`totp_pending_secret` (encrypted candidate, nullable), and `totp_enabled` for
+optional TOTP 2FA. Setup/rotation writes the pending candidate; confirmation
+atomically promotes it, so an active factor is not weakened mid-rotation.
 
 ### `roles` / `role_permissions`
 Role definitions and their permission keys. `roles.role_key` is the stable key
@@ -43,6 +57,8 @@ stored in `users.role` and `api_tokens.role`; `system=true` marks the built-in
 `readonly`, `tech`, and `admin` roles. `role_permissions` is keyed by
 (`role_key`, `permission`) and stores granular module permissions such as
 `devices.view`, `devices.remote`, `jobs.create`, `jobs.manage`, `roles.manage`.
+The built-in `readonly` preset includes `devices.remote`; its name does not mean
+pure observation.
 
 ### `user_recovery_codes`
 One-time 2FA recovery codes (id, user_id, `code_hash` SHA-256, `used_at`
@@ -92,7 +108,10 @@ Latest snapshot per agent (`agent_id` PK, `data` jsonb, `collected_at`).
 
 ### `remote_sessions`
 Brokered remote-access sessions (id, agent_id, provider, status, token,
-connect_url, created_by, expires_at).
+connect_url, created_by, expires_at). Native/files/terminal sessions additionally
+store independent `viewer_ticket_hash` and `agent_ticket_hash` values plus
+single-use timestamps; raw tickets are returned only at session creation and are
+never persisted.
 
 ### `audit_log`
 Immutable record of sensitive actions (actor, action, target, detail jsonb,
@@ -183,8 +202,34 @@ to a row here; logout / password-change revoke them.
 
 ### `app_settings`
 Editable runtime configuration as key/value (`key` PK, `value`, `is_secret`,
-`updated_at`). Secret values (AI API key, MeshCentral token key, TOTP secrets) are
-encrypted (`enc:v1:`) before storage and never returned by the API.
+`updated_at`). Secret values such as the AI API key and MeshCentral token key are
+encrypted (`enc:v1:`) before storage and never returned by the config API. TOTP
+secrets use the same encryption helper but live on `users`, not in `app_settings`.
+Production requires a stable, dedicated `RMM_SETTINGS_ENCRYPTION_KEY` (normally
+through `RMM_SETTINGS_ENCRYPTION_KEY_FILE`). It is not stored in PostgreSQL and
+must be recovered separately with the database backup.
+
+### Patch tables
+
+`patches` is the fleet catalog keyed by `(os, identifier)`.
+`agent_patches` tracks each device's missing/approved/installing/installed/failed/
+excluded state. `patch_approvals` stores the latest global/client/site/agent
+approve-or-decline decision. `patch_policies` stores auto-approval, exclusions,
+server-local maintenance windows and reboot behavior;
+`patch_policy_assignments` attaches definitions to client/site/agent scopes.
+
+### OAuth tables
+
+`oauth_clients` stores Dynamic Client Registration metadata. `oauth_codes` stores
+single-use, expiring, PKCE-bound code hashes. `oauth_tokens` stores access and
+refresh hashes, user/client/scope binding, and independent access/refresh expiry;
+plaintext OAuth credentials are returned only when issued.
+
+### `schema_migrations`
+
+Forward migration ledger (`version` bigint PK, immutable `name`, SHA-256
+`checksum`, `applied_at`). Do not edit rows or applied migration files to force a
+rollback.
 
 ## Relationships
 

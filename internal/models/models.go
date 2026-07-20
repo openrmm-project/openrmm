@@ -10,6 +10,7 @@ import (
 const (
 	AgentOnline  = "online"
 	AgentOffline = "offline"
+	AgentRevoked = "revoked"
 )
 
 // Job lifecycle status values.
@@ -36,6 +37,17 @@ const (
 	ShellCmd        = "cmd"
 )
 
+// SupportedShell reports whether the agent has an explicit execution path for a
+// shell. Unknown values must never silently fall back to Bash.
+func SupportedShell(shell string) bool {
+	switch shell {
+	case ShellBash, ShellSh, ShellPowerShell, ShellCmd:
+		return true
+	default:
+		return false
+	}
+}
+
 // Agent is a managed endpoint.
 type Agent struct {
 	ID          string     `json:"id"`
@@ -51,6 +63,7 @@ type Agent struct {
 	Tags        []string   `json:"tags"`
 	MeshID      *string    `json:"mesh_id,omitempty"`
 	LastSeen    *time.Time `json:"last_seen,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
@@ -94,15 +107,19 @@ type Inventory struct {
 
 // RemoteSession brokers a remote-access connection to an agent.
 type RemoteSession struct {
-	ID         string    `json:"id"`
-	AgentID    string    `json:"agent_id"`
-	Provider   string    `json:"provider"`
-	Status     string    `json:"status"`
-	Token      string    `json:"token"`
-	ConnectURL string    `json:"connect_url"`
-	CreatedBy  string    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
+	ID       string `json:"id"`
+	AgentID  string `json:"agent_id"`
+	Provider string `json:"provider"`
+	Status   string `json:"status"`
+	// Tickets are returned only once when a native session is brokered. Their
+	// hashes, not raw values, are persisted by the server.
+	ViewerTicket string    `json:"viewer_ticket,omitempty"`
+	AgentTicket  string    `json:"-"`
+	Token        string    `json:"-"` // retained for external-provider internals
+	ConnectURL   string    `json:"connect_url"`
+	CreatedBy    string    `json:"created_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
 }
 
 // AuditEntry is an immutable record of a sensitive action.

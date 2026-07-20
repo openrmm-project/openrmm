@@ -36,9 +36,15 @@ func main() {
 	}
 	defer st.Close()
 
-	if err := st.Migrate(ctx, store.Schema); err != nil {
-		log.Fatalf("migrate: %v", err)
+	const migrationStartupTimeout = 5 * time.Minute
+	log.Printf("database migrations starting (startup timeout %s)", migrationStartupTimeout)
+	migrationCtx, migrationCancel := context.WithTimeout(ctx, migrationStartupTimeout)
+	if err := st.Migrate(migrationCtx); err != nil {
+		migrationCancel()
+		log.Fatalf("database migrations failed: %v", err)
 	}
+	migrationCancel()
+	log.Println("database migrations complete")
 	if eff, err := settings.Effective(ctx, st, cfg); err != nil {
 		log.Fatalf("settings: %v", err)
 	} else {
@@ -48,7 +54,7 @@ func main() {
 
 	h := hub.New()
 	jobSvc := jobs.New(st, h)
-	remoteMgr := remote.NewManager(st, h, cfg.PublicURL, cfg.MeshCentralURL, cfg.MeshCentralTokenKey, cfg.MeshCentralUser, cfg.MeshCentralEnabled, cfg.RustDeskEnabled)
+	remoteMgr := remote.NewManager(st, h, cfg.MeshCentralURL, cfg.MeshCentralTokenKey, cfg.MeshCentralUser, cfg.MeshCentralEnabled, cfg.RustDeskEnabled)
 	relay := remote.NewRelay()
 	aiClient := ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	chat := ai.NewEngine(aiClient, st, jobSvc)

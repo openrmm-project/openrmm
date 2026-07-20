@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -33,22 +34,30 @@ import (
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-const agentVersion = "0.4.2"
+var agentVersion = "0.4.5"
 
 type state struct {
-	AgentID    string `json:"agent_id"`
-	AgentToken string `json:"agent_token"`
+	AgentID               string `json:"agent_id"`
+	AgentToken            string `json:"agent_token"`
+	PendingRotationID     string `json:"pending_rotation_id,omitempty"`
+	PreviousAgentToken    string `json:"previous_agent_token,omitempty"`
+	PendingCancellationID string `json:"pending_cancellation_id,omitempty"`
 }
 
 type agent struct {
-	wsURL       string
-	enrollToken string
-	statePath   string
-	st          state
-	send        chan []byte
-	quit        chan struct{}
-	mu          sync.Mutex
-	running     map[string]context.CancelFunc // job_id -> cancel, for in-flight jobs
+	wsURL           string
+	enrollToken     string
+	allowEnrollment bool
+	statePath       string
+	healthPath      string
+	st              state
+	send            chan []byte
+	quit            chan struct{}
+	mu              sync.Mutex
+	connMu          sync.Mutex
+	conn            *websocket.Conn
+	running         map[string]context.CancelFunc // job_id -> cancel, for in-flight jobs
+	patchMu         sync.Mutex                    // scan/install/reboot must not overlap
 
 	// outbox holds job results the server hasn't acked yet, keyed by job_id, and
 	// is persisted to disk. Results are re-sent on every (re)connect and on a
@@ -67,35 +76,87 @@ func (p *program) Stop(_ service.Service) error  { close(p.a.quit); return nil }
 
 func main() {
 	wsURL := flag.String("server", envOr("RMM_SERVER_WS", "ws://localhost:8080/ws/agent"), "server agent WebSocket URL")
-	enroll := flag.String("enroll-token", os.Getenv("RMM_ENROLL_TOKEN"), "one-time enrollment token (first run only)")
+	enroll := flag.String("enroll-token", os.Getenv("RMM_ENROLL_TOKEN"), "one-time enrollment token (used only with -enroll-only)")
 	statePath := flag.String("state", envOr("RMM_AGENT_STATE", "agent-state.json"), "path to the agent identity file")
+	enrollOnly := flag.Bool("enroll-only", false, "enroll once, persist identity, and exit")
 	action := flag.String("action", "", "service action: install | uninstall | start | stop | restart (empty = run)")
 	requireTLS := flag.Bool("require-tls", envBool("RMM_REQUIRE_TLS"), "require a wss:// server URL")
+	labMode := flag.Bool("lab-mode", envBool("RMM_LAB_MODE"), "allow insecure lab-only transport/update settings")
+	updateKey := flag.String("update-public-key", os.Getenv("RMM_UPDATE_PUBLIC_KEY"), "base64 or hex Ed25519 update public key(s); comma-separated to trust several during key rotation")
+	updateVerify := flag.String("update-verify", envOr("RMM_UPDATE_VERIFY", "strict"), "update verification mode: strict, warn, or off")
+	healthPath := flag.String("health-file", os.Getenv("RMM_HEALTH_FILE"), "write a health marker after authenticated connection")
 	printVer := flag.Bool("print-version", false, "print the agent version and exit (used to validate a self-update download)")
+	checkUpgradeFrom := flag.String("check-upgrade-from", "", "exit unsuccessfully if this build is older than the supplied version")
+	emergencyUpdateRollback := flag.Bool("emergency-update-rollback", false, "restore only the previous binary recorded by a signed pending update")
 	flag.Parse()
 
 	if *printVer {
 		fmt.Println(agentVersion)
 		return
 	}
-	if *requireTLS && !secureAgentURL(*wsURL) {
-		log.Fatalf("insecure server URL %q rejected: use wss:// or unset -require-tls/RMM_REQUIRE_TLS for lab use", *wsURL)
+	if *checkUpgradeFrom != "" {
+		if err := validateUpgradeVersion(*checkUpgradeFrom, agentVersion); err != nil {
+			log.Print(err)
+			os.Exit(2)
+		}
+		return
+	}
+	runtimeUpdatePublicKey = strings.TrimSpace(*updateKey)
+	runtimeUpdateVerify = strings.TrimSpace(*updateVerify)
+	if *emergencyUpdateRollback {
+		if err := emergencyRollback(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if recoverInterruptedUpdateAtStartup() {
+		return
+	}
+	if *action == "" || *action == "install" {
+		if err := validateRuntimeSecurity(*wsURL, *labMode, *requireTLS); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	cleanupOldBinary() // remove leftovers from a previous self-update
+	cleanupUpdateTemps()
 
-	a := &agent{wsURL: *wsURL, enrollToken: *enroll, statePath: *statePath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}, outbox: map[string]protocol.JobResultMsg{}, outboxPath: *statePath + ".outbox"}
+	a := &agent{wsURL: *wsURL, enrollToken: *enroll, allowEnrollment: *enrollOnly, statePath: *statePath, healthPath: *healthPath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}, outbox: map[string]protocol.JobResultMsg{}, outboxPath: *statePath + ".outbox"}
 	a.loadState()
 	a.loadOutbox()
+	if a.st.AgentID != "" && a.st.AgentToken != "" {
+		// A legacy service may still pass -enroll-token, but an enrolled agent must
+		// never retain or reuse that bootstrap capability at runtime.
+		a.enrollToken = ""
+	}
+	if *enrollOnly {
+		if a.st.AgentID != "" || a.st.AgentToken != "" {
+			log.Fatal("enroll-only: remove the existing state file only when intentionally re-enrolling")
+		}
+		if *enroll == "" {
+			log.Fatal("enroll-only: -enroll-token is required")
+		}
+		if err := a.enrollOnce(); err != nil {
+			log.Fatalf("enroll-only: %v", err)
+		}
+		log.Printf("enrolled as %s", a.st.AgentID)
+		return
+	}
+	if *action == "install" && (a.st.AgentID == "" || a.st.AgentToken == "") {
+		log.Fatal("service install requires an enrolled identity; run with -enroll-only first")
+	}
 
 	svcArgs := []string{"-server", *wsURL, "-state", *statePath}
-	if *enroll != "" {
-		// Baked into the service definition so the first boot can enroll; once
-		// state.json exists the agent re-auths with its token and ignores this.
-		svcArgs = append(svcArgs, "-enroll-token", *enroll)
-	}
-	if *requireTLS {
+	if *labMode {
+		svcArgs = append(svcArgs, "-lab-mode")
+	} else {
 		svcArgs = append(svcArgs, "-require-tls")
+	}
+	svcArgs = append(svcArgs, "-update-verify", updateVerifyMode())
+	if key := effectiveUpdatePublicKey(); key != "" {
+		svcArgs = append(svcArgs, "-update-public-key", key)
+	}
+	if *healthPath != "" {
+		svcArgs = append(svcArgs, "-health-file", *healthPath)
 	}
 	svcConfig := &service.Config{
 		Name:        "rmm-agent",
@@ -133,6 +194,9 @@ func (a *agent) loop() {
 		}
 		if err := a.runOnce(); err != nil {
 			log.Printf("connection ended: %v; retrying in 5s", err)
+			if rollbackUnhealthyUpdate() {
+				return
+			}
 		}
 		select {
 		case <-a.quit:
@@ -140,6 +204,18 @@ func (a *agent) loop() {
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+// enrollOnce is used by the installers before creating the long-lived service.
+// The enrollment token never needs to be retained in service arguments, so a
+// revoked endpoint cannot turn an old bootstrap token into a new identity.
+func (a *agent) enrollOnce() error {
+	conn, _, err := websocket.DefaultDialer.Dial(a.wsURL, nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return a.handshake(conn)
 }
 
 func (a *agent) runOnce() error {
@@ -152,13 +228,28 @@ func (a *agent) runOnce() error {
 	if err := a.handshake(conn); err != nil {
 		return err
 	}
+	a.connMu.Lock()
+	a.conn = conn
+	a.connMu.Unlock()
+	defer func() {
+		a.connMu.Lock()
+		if a.conn == conn {
+			a.conn = nil
+		}
+		a.connMu.Unlock()
+	}()
 	log.Printf("registered as %s", a.st.AgentID)
+	if err := a.writeHealthMarker(); err != nil {
+		log.Printf("health: could not write marker: %v", err)
+	}
 
 	a.send = make(chan []byte, 64)
 	done := make(chan struct{})
 	go a.writePump(conn, done)
 	go a.telemetryLoop(done)
 	go a.updateLoop(done)
+	go confirmHealthyUpdate(done)
+	a.flushCredentialRotationCancellation()
 
 	// Re-send any results the server never acked (e.g. lost on a previous
 	// disconnect or an agent restart) as soon as the link is back.
@@ -178,17 +269,22 @@ func (a *agent) runOnce() error {
 // returned identity.
 func (a *agent) handshake(conn *websocket.Conn) error {
 	hostname, _ := os.Hostname()
+	a.mu.Lock()
+	st := a.st
+	a.mu.Unlock()
 	reg := protocol.RegisterReq{
 		Hostname: hostname,
 		OS:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
 		Version:  agentVersion,
 	}
-	if a.st.AgentID != "" && a.st.AgentToken != "" {
-		reg.AgentID = a.st.AgentID
-		reg.AgentToken = a.st.AgentToken
-	} else {
+	if st.AgentID != "" && st.AgentToken != "" {
+		reg.AgentID = st.AgentID
+		reg.AgentToken = st.AgentToken
+	} else if a.allowEnrollment && a.enrollToken != "" {
 		reg.EnrollToken = a.enrollToken
+	} else {
+		return fmt.Errorf("agent has no identity; enroll with -enroll-only before starting the long-lived service")
 	}
 	if err := writeEnvelope(conn, protocol.MsgRegister, reg); err != nil {
 		return err
@@ -209,12 +305,21 @@ func (a *agent) handshake(conn *websocket.Conn) error {
 	if err := json.Unmarshal(env.Data, &resp); err != nil {
 		return err
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.st.AgentID = resp.AgentID
 	if resp.AgentToken != "" {
 		a.st.AgentToken = resp.AgentToken
 	}
-	a.saveState()
-	return nil
+	if resp.CancelCredentialRotationID != "" {
+		return a.prepareCredentialRotationCancellationLocked(resp.CancelCredentialRotationID)
+	}
+	// Reconnecting with a persisted replacement is the recovery commit when the
+	// earlier persistence acknowledgement could not reach the server.
+	a.st.PendingRotationID = ""
+	a.st.PreviousAgentToken = ""
+	a.st.PendingCancellationID = ""
+	return a.saveState()
 }
 
 func (a *agent) handleFrame(raw []byte) {
@@ -252,13 +357,28 @@ func (a *agent) handleFrame(raw []byte) {
 				go a.startRemoteSession(rs)
 			}
 		}
+	case protocol.MsgCredentialRotate:
+		var rotate protocol.CredentialRotateMsg
+		if json.Unmarshal(env.Data, &rotate) == nil && rotate.RotationID != "" && rotate.AgentToken != "" {
+			a.rotateCredential(rotate)
+		}
+	case protocol.MsgCredentialRotationCancel:
+		var cancel protocol.CredentialRotationCancelMsg
+		if json.Unmarshal(env.Data, &cancel) == nil && cancel.RotationID != "" {
+			a.cancelCredentialRotation(cancel)
+		}
+	case protocol.MsgCredentialRotationCanceledAck:
+		var ack protocol.CredentialRotationCancelMsg
+		if json.Unmarshal(env.Data, &ack) == nil && ack.RotationID != "" {
+			a.ackCredentialRotationCancellation(ack.RotationID)
+		}
 	case protocol.MsgRemoteQuery:
 		var q protocol.RemoteQueryMsg
 		if json.Unmarshal(env.Data, &q) == nil {
 			go a.handleRemoteQuery(q)
 		}
 	case protocol.MsgPatchScan:
-		go func() { a.queue(protocol.MsgPatchReport, scanPatches()) }()
+		go a.runPatchScan()
 	case protocol.MsgPatchInstall:
 		var m protocol.PatchInstallMsg
 		if json.Unmarshal(env.Data, &m) == nil {
@@ -267,7 +387,7 @@ func (a *agent) handleFrame(raw []byte) {
 	case protocol.MsgReboot:
 		var m protocol.RebootMsg
 		if json.Unmarshal(env.Data, &m) == nil {
-			go rebootHost(m.DelaySeconds)
+			go a.handlePatchReboot(m)
 		}
 	}
 }
@@ -381,6 +501,7 @@ func (a *agent) telemetryLoop(done <-chan struct{}) {
 		case <-hb.C:
 			a.queue(protocol.MsgHeartbeat, struct{}{})
 			a.flushOutbox() // retry any results still waiting for an ack
+			a.flushCredentialRotationCancellation()
 		case <-inv.C:
 			sendInventory()
 		}
@@ -400,13 +521,15 @@ func (a *agent) writePump(conn *websocket.Conn, done <-chan struct{}) {
 	}
 }
 
-func (a *agent) queue(typ string, payload any) {
+func (a *agent) queue(typ string, payload any) bool {
 	data, _ := json.Marshal(payload)
 	frame, _ := json.Marshal(protocol.Envelope{Type: typ, Data: data})
 	select {
 	case a.send <- frame:
+		return true
 	default:
 		log.Printf("send buffer full, dropping %s", typ)
+		return false
 	}
 }
 
@@ -420,11 +543,180 @@ func (a *agent) loadState() {
 	_ = json.Unmarshal(b, &a.st)
 }
 
-func (a *agent) saveState() {
+func (a *agent) saveState() error {
 	b, _ := json.MarshalIndent(a.st, "", "  ")
-	if err := os.WriteFile(a.statePath, b, 0o600); err != nil {
+	tmp := a.statePath + ".new"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
 		log.Printf("warning: could not persist agent state: %v", err)
+		return err
 	}
+	if _, err := f.Write(b); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		log.Printf("warning: could not persist agent state: %v", err)
+		return err
+	}
+	if err := os.Rename(tmp, a.statePath); err != nil {
+		_ = os.Remove(tmp)
+		log.Printf("warning: could not replace agent state: %v", err)
+		return err
+	}
+	// Syncing the directory makes the rename durable on filesystems that support
+	// it. Windows may reject directory Sync; the already-synced file is still safe.
+	if dir, err := os.Open(filepath.Dir(a.statePath)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+	return nil
+}
+
+func (a *agent) rotateCredential(msg protocol.CredentialRotateMsg) {
+	a.mu.Lock()
+	if cancellation := a.st.PendingCancellationID; cancellation != "" {
+		if cancellation == msg.RotationID {
+			a.mu.Unlock()
+			log.Printf("credential rotation %s ignored while cancellation is pending", msg.RotationID)
+			a.flushCredentialRotationCancellation()
+			return
+		}
+		// The server cannot stage a different rotation until it has recorded this
+		// cancellation, so the new command also confirms the earlier completion.
+		a.st.PendingCancellationID = ""
+	}
+	if a.st.PendingRotationID != "" {
+		if a.st.PendingRotationID == msg.RotationID {
+			a.mu.Unlock()
+			a.confirmCredentialRotation(msg.RotationID)
+			return
+		}
+		pending := a.st.PendingRotationID
+		a.mu.Unlock()
+		log.Printf("credential rotation %s ignored while %s is pending", msg.RotationID, pending)
+		return
+	}
+	previous := a.st
+	a.st.AgentToken = msg.AgentToken
+	a.st.PendingRotationID = msg.RotationID
+	a.st.PreviousAgentToken = previous.AgentToken
+	err := a.saveState()
+	if err != nil {
+		a.st = previous
+	}
+	a.mu.Unlock()
+	if err != nil {
+		return
+	}
+	a.confirmCredentialRotation(msg.RotationID)
+}
+
+func (a *agent) cancelCredentialRotation(msg protocol.CredentialRotationCancelMsg) {
+	a.mu.Lock()
+	err := a.prepareCredentialRotationCancellationLocked(msg.RotationID)
+	a.mu.Unlock()
+	if err != nil {
+		log.Printf("credential rotation cancellation %s not applied: %v", msg.RotationID, err)
+		return
+	}
+	a.flushCredentialRotationCancellation()
+}
+
+// prepareCredentialRotationCancellationLocked restores the previous token, if
+// needed, and keeps a durable confirmation record until the server acknowledges it.
+// Callers hold a.mu.
+func (a *agent) prepareCredentialRotationCancellationLocked(rotationID string) error {
+	if a.st.PendingCancellationID != "" && a.st.PendingCancellationID != rotationID {
+		return fmt.Errorf("cancellation %s is pending", a.st.PendingCancellationID)
+	}
+	if a.st.PendingRotationID != "" && a.st.PendingRotationID != rotationID {
+		return fmt.Errorf("rotation %s is pending", a.st.PendingRotationID)
+	}
+	previous := a.st
+	if a.st.PendingRotationID == rotationID {
+		if a.st.PreviousAgentToken == "" {
+			return fmt.Errorf("cannot restore a previous token")
+		}
+		a.st.AgentToken = a.st.PreviousAgentToken
+		a.st.PendingRotationID = ""
+		a.st.PreviousAgentToken = ""
+	}
+	a.st.PendingCancellationID = rotationID
+	if err := a.saveState(); err != nil {
+		a.st = previous
+		return err
+	}
+	return nil
+}
+
+// flushCredentialRotationCancellation retries the durable confirmation after a
+// reconnect and on heartbeats until the server replies with its acknowledgement.
+func (a *agent) flushCredentialRotationCancellation() {
+	a.mu.Lock()
+	rotationID := a.st.PendingCancellationID
+	a.mu.Unlock()
+	if rotationID != "" {
+		a.queue(protocol.MsgCredentialRotationCanceled, protocol.CredentialRotationCancelMsg{RotationID: rotationID})
+	}
+}
+
+func (a *agent) ackCredentialRotationCancellation(rotationID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.st.PendingCancellationID != rotationID {
+		return
+	}
+	a.st.PendingCancellationID = ""
+	if err := a.saveState(); err != nil {
+		a.st.PendingCancellationID = rotationID
+	}
+}
+
+func (a *agent) confirmCredentialRotation(rotationID string) {
+	// This acknowledgement records local durability; reconnecting with the
+	// replacement is the server-side commit point. The bounded reconnect also
+	// recovers if the acknowledgement cannot leave a broken control socket.
+	if !a.queue(protocol.MsgCredentialRotated, protocol.CredentialRotatedMsg{RotationID: rotationID}) {
+		a.reconnectControl()
+		return
+	}
+	a.reconnectControlAfter(rotationID, 5*time.Second)
+}
+
+func (a *agent) reconnectControl() {
+	a.connMu.Lock()
+	conn := a.conn
+	a.connMu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (a *agent) reconnectControlAfter(rotationID string, delay time.Duration) {
+	a.connMu.Lock()
+	conn := a.conn
+	a.connMu.Unlock()
+	if conn == nil {
+		return
+	}
+	time.AfterFunc(delay, func() {
+		a.mu.Lock()
+		pending := a.st.PendingRotationID == rotationID && a.st.PendingCancellationID == ""
+		a.mu.Unlock()
+		if !pending {
+			return
+		}
+		a.connMu.Lock()
+		current := a.conn == conn
+		a.connMu.Unlock()
+		if current {
+			_ = conn.Close()
+		}
+	})
 }
 
 // ---------- helpers ----------
@@ -462,6 +754,52 @@ func secureAgentURL(raw string) bool {
 	return err == nil && u.Scheme == "wss"
 }
 
+func validateRuntimeSecurity(wsURL string, labMode, requireTLS bool) error {
+	mode := updateVerifyMode()
+	if mode != "strict" && mode != "warn" && mode != "off" {
+		return fmt.Errorf("invalid update verification mode %q", mode)
+	}
+	if !labMode {
+		if !secureAgentURL(wsURL) {
+			return fmt.Errorf("production mode requires a wss:// server URL; use -lab-mode explicitly only for isolated labs")
+		}
+		if mode != "strict" {
+			return fmt.Errorf("production mode requires -update-verify strict")
+		}
+		if keys, err := configuredUpdatePublicKeys(); err != nil {
+			return fmt.Errorf("invalid update public key: %w", err)
+		} else if len(keys) == 0 {
+			return fmt.Errorf("production mode requires -update-public-key or a build-time RMM_UPDATE_PUBLIC_KEY")
+		}
+	}
+	if requireTLS && !secureAgentURL(wsURL) {
+		return fmt.Errorf("-require-tls requires a wss:// server URL")
+	}
+	return nil
+}
+
+func (a *agent) writeHealthMarker() error {
+	if a.healthPath == "" {
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{
+		"agent_id":   a.st.AgentID,
+		"version":    agentVersion,
+		"healthy_at": time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(a.healthPath), 0o755); err != nil {
+		return err
+	}
+	tmp := a.healthPath + ".new"
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, a.healthPath)
+}
+
 // ---------- script execution ----------
 
 // runScriptCtx runs a script under the given context; canceling the context
@@ -476,8 +814,10 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 		cmd = exec.CommandContext(ctx, "cmd", "/C", script)
 	case "sh":
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
-	default: // bash
+	case "bash":
 		cmd = exec.CommandContext(ctx, "bash", "-c", script)
+	default:
+		return 2, "", "unsupported shell: " + shell
 	}
 	if runtime.GOOS == "windows" {
 		// Default ctx-cancel only kills the direct child; kill the tree instead.

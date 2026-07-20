@@ -26,8 +26,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
-	"net/url"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -36,9 +37,15 @@ import (
 
 func main() {
 	relay := flag.String("relay", os.Getenv("RMM_RELAY_URL"), "relay WebSocket URL (role=agent)")
+	ticket := flag.String("ticket", os.Getenv("RMM_RELAY_TICKET"), "single-use relay ticket")
+	printVer := flag.Bool("print-version", false, "print the sidecar version and exit")
 	filesOnly := flag.Bool("files", false, "file-transfer-only mode: no screen capture/streaming")
 	noFiles := flag.Bool("no-files", false, "disable in-band file transfer in desktop mode")
 	flag.Parse()
+	if *printVer {
+		fmt.Println(remoteVersion)
+		return
+	}
 	// The sidecar is launched with CREATE_NO_WINDOW, so log to a file next to the
 	// binary for diagnostics (why a session ends, capture errors, ...).
 	// Microsecond timestamps make the startup breakdown (dial → X11 attach →
@@ -52,9 +59,18 @@ func main() {
 	if *relay == "" {
 		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
 	}
-	log.Printf("rmm-remote %s starting; relay=%s", remoteVersion, *relay)
+	log.Printf("rmm-remote %s starting", remoteVersion)
 
-	conn, _, err := websocket.DefaultDialer.Dial(*relay, nil)
+	var headers http.Header
+	if *ticket != "" {
+		headers = http.Header{"Authorization": []string{"Remote-Agent " + *ticket}}
+	} else {
+		// Agents released before the ticket handshake pass their one-time agent
+		// ticket in the legacy relay URL. Keep this path only for rolling upgrades;
+		// current agents always send the ticket in Authorization.
+		log.Printf("rmm-remote: using legacy relay handshake during agent upgrade")
+	}
+	conn, _, err := websocket.DefaultDialer.Dial(*relay, headers)
 	if err != nil {
 		log.Fatalf("rmm-remote: dial relay: %v", err)
 	}
@@ -67,11 +83,6 @@ func main() {
 	allowFiles := !*noFiles
 	if *filesOnly {
 		allowFiles = true
-	} else if u, err := url.Parse(*relay); err == nil {
-		switch u.Query().Get("allow_files") {
-		case "0", "false":
-			allowFiles = false
-		}
 	}
 	if err := run(conn, allowFiles); err != nil {
 		log.Printf("rmm-remote: session ended: %v", err)

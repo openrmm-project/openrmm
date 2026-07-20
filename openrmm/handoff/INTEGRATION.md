@@ -1,100 +1,102 @@
-# INTEGRATION.md — conectar o frontend ao backend Go
+# Integração do frontend com o backend Go
 
-O frontend inteiro consome `api.*` (objeto `window.api`). Hoje esse objeto é
-**simulado** em `src/mockapi.jsx`. Para usar o backend real, troque-o pelo
-cliente `handoff/apiClient.ts` (já pronto, com a mesma assinatura).
+O frontend já está integrado. `src/mockapi.jsx` é a implementação autoritativa
+carregada no bundle e expõe `window.api`; o nome é legado.
+`handoff/apiClient.ts` é somente uma referência TypeScript histórica, não
+participa do build e não é garantido que acompanhe todos os métodos atuais.
 
-## Opção A — manter o protótipo HTML (mais rápido)
+## Transporte e sessão
 
-1. Adicione no topo do `<body>` em `index.html` (antes dos `<script src="src/...">`):
-   ```html
-   <script>window.__API_BASE__ = "http://localhost:8080";</script>
-   ```
-2. Compile `handoff/apiClient.ts` para JS (ou reescreva como `.js` sem tipos) e
-   carregue-o **no lugar de** `src/mockapi.jsx`, terminando o arquivo com:
-   ```js
-   window.api = api; window.ROLES = ROLES;
-   ```
-3. Pronto. `useQuery/useMutation` (em `ui.jsx`) continuam funcionando: eles fazem
-   polling e revalidam via um event bus interno. Como agora os dados vêm do
-   backend, troque o bus por refetch normal (ou mantenha — não atrapalha).
+- `config.js` define `window.__API_BASE__`; o default é `location.origin`.
+- `OPENRMM_BASE_PATH` define onde shell e assets são construídos/servidos, não
+  muda os paths `/api/*` e `/ws/remote`.
+- Login guarda bearer, usuário, papel e permissões em
+  `sessionStorage["rmm-ai-auth"]`.
+- Toda chamada usa `Authorization: Bearer`; `401` encerra a sessão e `429` recebe
+  retries limitados com backoff.
+- A autenticação suporta usuário/senha/TOTP ou recovery code e bearer API token.
+- Permission keys retornadas pelo backend controlam navegação e ações. O backend
+  é autoritativo; não use gating visual como autorização.
 
-## Opção B — portar para Vite + React + TS (recomendado p/ produção)
+## Contrato principal usado pela UI
 
-Stack do brief: **Vite + React + TS + Tailwind + shadcn/ui + TanStack Query +
-Monaco/CodeMirror**.
+`window.api` cobre:
 
-1. `npm create vite@latest rmm-ai -- --template react-ts`
-2. Adicione Tailwind e cole os tokens de tema do `<style>` de `index.html`
-   (variáveis `--app/--panel/--card/--line/--brand/--ok/--warn/--run/--bad`...).
-   O `tailwind.config` (cores → `var(--*)`, fontes Inter/JetBrains Mono) está no
-   `<script>tailwind.config=...</script>` do `index.html`.
-3. Copie `handoff/apiClient.ts` para `src/lib/api.ts`. Defina `VITE_API_BASE` em
-   `.env`.
-4. Porte cada `screens-*.jsx` para componentes `.tsx`. A lógica é a mesma; troque
-   `useQuery(deps, fn, {invalidateOn, poll})` pelo `useQuery` do TanStack:
-   ```ts
-   useQuery({ queryKey: ["jobs"], queryFn: () => api.listJobs(), refetchInterval: 2500 })
-   ```
-   e `useMutation` idem (invalide as queries no `onSuccess`).
-5. Editor de código: o protótipo usa um highlighter leve (`CodeBlock`/
-   `CodeEditor` em `ui.jsx`). Em produção, troque por **Monaco** ou **CodeMirror**
-   mantendo o bloco "dry-run preview" e os números de linha.
+- auth/me/password/2FA;
+- devices, inventário, capabilities, metadata, site/group e remote;
+- jobs individuais/bulk, aprovação, rejeição, cancelamento e complete manual;
+- chat, auditoria e enrollment;
+- usuários, escopos, papéis, permissões e API tokens;
+- clientes, sites, departamentos, scripts, checks, tasks, policies e alerts;
+- relatórios de software/hardware/máquinas/compliance;
+- catálogo, scan/install/reboot, approvals e policies de patches;
+- configuração runtime.
 
-## Autenticação (bearer) — já implementado em apiClient.ts
+A lista de rotas, bodies e permissões autoritativa está em
+[`../../docs/04-api-reference.md`](../../docs/04-api-reference.md). Ao alterar um
+handler, atualize `src/mockapi.jsx`, a tela consumidora e essa referência TS se
+ela continuar sendo mantida.
 
-- `login()` faz `POST /api/auth/login`, guarda `{token, user, role, permissions}` em
-  `localStorage["rmm-ai-auth"]`.
-- Todo request anexa `Authorization: Bearer <token>`.
-- `401` limpa a sessão (volta para o Login).
-- Se a instância estiver vazia, mostre a tela de setup e chame `bootstrap()`
-  (`POST /api/auth/bootstrap`). O frontend já tem a tela de login; adicione o
-  ramo de bootstrap se quiser detectar "sem usuários".
+## Escopo e delegação
 
-## Gating por permissão
+Papéis e escopo são ortogonais. Um usuário sem linhas em `user_scopes` é
+irrestrito; com linhas, recebe a união de Company/Site/Department/device indicada.
+Tokens vinculados a um usuário herdam esse escopo.
 
-`api.can("jobs.create")`, `api.can("jobs.manage")`, `api.can("alerts.manage")`, `api.can("devices.terminal")`
-e outras permission keys controlam a UI (botões de aprovar, ack, CRUD). O backend
-**também** deve retornar `403` — o frontend trata o erro e mostra o motivo. Roles
-como `readonly`, `tech` e `admin` são apenas presets; roles customizados usam a
-mesma lista de permissions.
+Um principal restrito com `users.manage` não pode ampliar privilégio ao delegar:
 
-## Polling vs WebSocket
+- só gerencia usuários cujas permissões são subconjunto das suas e cujos escopos
+  estão inteiramente dentro do seu;
+- não cria usuário irrestrito;
+- não delega o papel global `admin`;
+- não atribui papel com permissões que ele próprio não possui.
 
-O MVP faz polling (jobs a cada ~2.5s, alerts ~5s, chat ~1.2s). Quando expor um
-WebSocket de jobs/resultados, troque o `refetchInterval` por invalidação via
-socket nas mesmas query keys.
+O preset `readonly` contém `devices.remote`. Ele não possui file transfer nem
+terminal, mas ainda inicia desktop remoto; use papel customizado para observação
+sem controle remoto.
 
-## Bodies e shapes principais
+## 2FA pendente
 
-```
-POST /api/jobs
-  { agent_id, shell: "bash"|"sh"|"powershell"|"cmd", script, description, require_approval }
-POST /api/devices/{id}/remote      { provider: "native"|"terminal"|"meshcentral" } -> { connect_url, ... }
-PATCH /api/devices/{id}/site       { site_id }
-POST /api/enroll-tokens            { description, uses, ttl_hours, site_id? } -> { token }  (mostrar 1x)
-POST /api/chat/sessions/{id}/messages  { content } -> { content, created_job_ids: string[] }
-POST /api/checks                   { type, name, config, warn_threshold?, err_threshold?, interval_sec, agent_id?|policy_id? }
-GET  /api/checks/{id}/results?agent_id=  -> { results: CheckResult[] }
-POST /api/policies/{id}/assignments    { scope_type: "client"|"site"|"agent", scope_id }
-GET  /api/alerts?status=new|acked|resolved
+O backend não sobrescreve diretamente um TOTP ativo. `setup` grava um segredo
+pendente criptografado; `enable` promove o candidato de forma atômica e troca os
+recovery codes apenas após validar o novo código.
+
+Bodies atuais:
+
+```text
+POST /api/me/2fa/setup
+  { current_password, code? }
+  code é obrigatório quando 2FA já está ativo (rotação)
+
+POST /api/me/2fa/enable
+  { code }
+
+POST /api/me/2fa/disable
+  { current_password, code }
+
+POST /api/me/2fa/recovery-codes
+  { code }
 ```
 
-Todos os tipos TypeScript estão em `handoff/apiClient.ts` (copiados do brief, com
-os acréscimos `Agent.site_id` e `Agent.description`).
+Limitação atual: `TwoFactorCard` e os wrappers `setup2FA`/`disable2FA` ainda não
+coletam/enviam `current_password`; portanto setup/rotação/disable falham na UI até
+essa integração ser ajustada. Não documente essas ações como funcionais no
+frontend.
 
-## `getConfig()` — ajustar
+## Polling e WebSocket
 
-O protótipo exibe provider de IA / remote / versão do server em modo read-only.
-Aponte `api.getConfig()` para o seu endpoint real (ex.: `GET /api/config`) ou
-remova o card se não houver.
+A UI faz polling para listas/status; não existe WebSocket geral de jobs/alerts.
+O WebSocket implementado no browser é o relay de remote. Checks ainda fazem N
+requisições extras para buscar o último resultado. Considere essas características
+ao dimensionar o rate limit.
 
-## Checklist de "ligado ao backend"
+## Checklist
 
-- [ ] `VITE_API_BASE` / `__API_BASE__` apontando para o backend
-- [ ] `src/mockapi.jsx` substituído por `apiClient.ts` (sem dados simulados)
-- [ ] Login real funciona e o token persiste entre reloads
-- [ ] `403` em ação acima do papel mostra mensagem (não quebra a tela)
-- [ ] Job: criar → `awaiting_approval` → approve → `running` → `completed`
-- [ ] Chat: `created_job_ids` renderiza o card "job proposto" com o script
-- [ ] Alerts: ack/resolve refletem o status do backend
+- `npm ci`, `npm test` e `npm run build` concluem.
+- `dist/config.js`, base path e origem da API estão corretos.
+- CSP bloqueia scripts externos/inline não autorizados.
+- Login e expiração limpam `sessionStorage`.
+- Um usuário scoped não vê nem atua fora do escopo.
+- `readonly` tem remote desktop, mas não files/terminal.
+- Job percorre `awaiting_approval` até resultado sem bypass implícito.
+- Console e remote funcionam pelo edge TLS real.

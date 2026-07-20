@@ -42,7 +42,6 @@ type Manager struct {
 	mu              sync.RWMutex
 	store           *store.Store
 	hub             *hub.Hub
-	publicURL       string
 	meshURL         string
 	meshTokenKey    string
 	meshUser        string
@@ -73,8 +72,8 @@ func (m *Manager) SetRustDeskEnabled(enabled bool) {
 }
 
 // NewManager wires up all providers.
-func NewManager(s *store.Store, h *hub.Hub, publicURL, meshURL, meshTokenKey, meshUser string, meshEnabled, rustdeskEnabled bool) *Manager {
-	m := &Manager{store: s, hub: h, publicURL: publicURL, meshURL: meshURL,
+func NewManager(s *store.Store, h *hub.Hub, meshURL, meshTokenKey, meshUser string, meshEnabled, rustdeskEnabled bool) *Manager {
+	m := &Manager{store: s, hub: h, meshURL: meshURL,
 		meshTokenKey: meshTokenKey, meshUser: meshUser, meshEnabled: meshEnabled, rustdeskEnabled: rustdeskEnabled,
 		providers: map[string]Provider{}, pending: map[string]chan protocol.RemoteQueryResultMsg{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
@@ -141,6 +140,21 @@ func (m *Manager) ResolveQuery(res protocol.RemoteQueryResultMsg) {
 	}
 }
 
+// Capabilities asks a connected agent for a conservative native-remote
+// preflight. It is intentionally on-demand so stale desktop/session state is
+// never silently represented as current.
+func (m *Manager) Capabilities(ctx context.Context, agentID string) (*protocol.RemoteCapabilities, error) {
+	value, err := m.queryAgent(ctx, agentID, protocol.RemoteQueryCapabilities)
+	if err != nil {
+		return nil, err
+	}
+	var caps protocol.RemoteCapabilities
+	if err := json.Unmarshal([]byte(value), &caps); err != nil {
+		return nil, fmt.Errorf("invalid remote capability response: %w", err)
+	}
+	return &caps, nil
+}
+
 // Start opens a session using the named provider (or the agent's best default).
 func (m *Manager) Start(ctx context.Context, providerName string, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error) {
 	p, ok := m.providers[providerName]
@@ -148,15 +162,6 @@ func (m *Manager) Start(ctx context.Context, providerName string, agent *models.
 		return nil, fmt.Errorf("unknown remote provider %q", providerName)
 	}
 	return p.StartSession(ctx, agent, createdBy, opts)
-}
-
-// wsBase converts the configured public HTTP URL to a ws:// or wss:// base.
-func (m *Manager) wsBase() string {
-	u := m.publicURL
-	if strings.HasPrefix(u, "https://") {
-		return "wss://" + strings.TrimPrefix(u, "https://")
-	}
-	return "ws://" + strings.TrimPrefix(u, "http://")
 }
 
 // persist saves a session and emits an audit record.
@@ -175,38 +180,38 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 
 // ---------- native (built-in relay) ----------
 
-// brokerRelay sets up a relayed session: both the agent's remote module and the
-// technician's viewer connect to /ws/remote with the same token, and the server
-// pipes bytes between them (NAT-friendly relay, hbbr-equivalent). kind tells
+// brokerRelay sets up a relayed session with distinct one-shot tickets for the
+// agent and viewer. The relay pairs peers by non-secret session id. kind tells
 // the agent which module to attach (desktop sidecar vs. elevated terminal); it is
 // also recorded as the session provider so the audit/list reflect what was opened.
 func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string, allowFiles *bool) (*models.RemoteSession, error) {
 	if !m.hub.IsOnline(agent.ID) {
 		return nil, fmt.Errorf("agent %s is offline", agent.ID)
 	}
-	token := auth.NewToken()
-	base := m.wsBase()
-	viewerURL := fmt.Sprintf("%s/ws/remote?token=%s&role=viewer", base, token)
-	agentURL := fmt.Sprintf("%s/ws/remote?token=%s&role=agent", base, token)
+	viewerTicket := auth.NewToken()
+	agentTicket := auth.NewToken()
 
 	rs := &models.RemoteSession{
-		AgentID:    agent.ID,
-		Provider:   provider,
-		Status:     "pending",
-		Token:      token,
-		ConnectURL: viewerURL,
-		CreatedBy:  createdBy,
-		ExpiresAt:  time.Now().Add(sessionTTL),
+		AgentID:      agent.ID,
+		Provider:     provider,
+		Status:       "pending",
+		ViewerTicket: viewerTicket,
+		AgentTicket:  agentTicket,
+		CreatedBy:    createdBy,
+		ExpiresAt:    time.Now().Add(sessionTTL),
 	}
 	if err := m.persist(ctx, rs); err != nil {
 		return nil, err
 	}
 
 	// Tell the agent to connect the requested remote module to the relay.
-	start := protocol.RemoteStartMsg{SessionID: rs.ID, Token: token, RelayURL: agentURL, Kind: kind, AllowFiles: allowFiles}
+	start := protocol.RemoteStartMsg{SessionID: rs.ID, AgentTicket: agentTicket, Token: agentTicket, Kind: kind, AllowFiles: allowFiles}
 	data, _ := json.Marshal(start)
 	frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgRemoteStart, Data: data})
-	m.hub.Send(agent.ID, frame)
+	if !m.hub.Send(agent.ID, frame) {
+		_ = m.store.SetRemoteSessionStatus(ctx, rs.ID, "ended")
+		return nil, fmt.Errorf("agent %s went offline before the remote session could start", agent.ID)
+	}
 	return rs, nil
 }
 

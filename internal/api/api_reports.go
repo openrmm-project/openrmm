@@ -25,8 +25,20 @@ func (s *Server) reportFilter(r *http.Request) store.ReportFilter {
 	return f
 }
 
+func (s *Server) checkedReportFilter(w http.ResponseWriter, r *http.Request) (store.ReportFilter, bool) {
+	f := s.reportFilter(r)
+	if f.ScopeType != "" && !s.requireVisibleScope(w, r, f.ScopeType, f.ScopeID) {
+		return store.ReportFilter{}, false
+	}
+	return f, true
+}
+
 func (s *Server) reportSoftware(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.SoftwareReport(r.Context(), s.reportFilter(r))
+	f, ok := s.checkedReportFilter(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.store.SoftwareReport(r.Context(), f)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -35,7 +47,11 @@ func (s *Server) reportSoftware(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reportHardware(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.HardwareReport(r.Context(), s.reportFilter(r))
+	f, ok := s.checkedReportFilter(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.store.HardwareReport(r.Context(), f)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -44,7 +60,11 @@ func (s *Server) reportHardware(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reportMachines(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.MachinesReport(r.Context(), s.reportFilter(r))
+	f, ok := s.checkedReportFilter(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.store.MachinesReport(r.Context(), f)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

@@ -1,27 +1,34 @@
 # 08 — Remote Access
 
 Remote access is **pluggable**: a single `Provider` interface
-(`internal/remote`) with four implementations: `native` (remote desktop),
+(`internal/remote`) with five implementations: `native` (remote desktop),
 `files` (file transfer only — the media sidecar with **no** screen capture),
-`terminal` (elevated shell), and `meshcentral`. Callers never depend on a specific
+`terminal` (elevated shell), `meshcentral`, and optional `rustdesk`. Callers never depend on a specific
 tool — if the native tool doesn't pan out, drop it and MeshCentral keeps working.
 
 ```go
 type Provider interface {
     Name() string
-    StartSession(ctx, agent, createdBy) (*RemoteSession, error)
+    StartSession(ctx, agent, createdBy, opts) (*RemoteSession, error)
 }
 ```
 
-`POST /api/devices/{id}/remote { "provider": "..." }` returns a `RemoteSession`
-with a `connect_url` the UI acts on.
+`POST /api/devices/{id}/remote { "provider": "..." }` returns a `RemoteSession`.
+Native, files, and terminal sessions carry a one-time viewer ticket; external
+providers carry a `connect_url` the UI acts on.
+
+`GET /api/devices/{id}/remote-capabilities` performs an on-demand conservative
+native-desktop preflight. The UI disables native desktop when it confirms Wayland
+or no Xorg display; `unknown` never claims support and leaves the technician to
+choose a configured fallback provider.
 
 ## Providers
 
 ### `terminal` (elevated shell)
 - A built-in **interactive shell** brokered over the **same relay** as `native`:
-  `POST /api/devices/{id}/remote {"provider":"terminal"}` mints a token, pushes
-  `remote_start{kind:"terminal"}` to the agent, and returns a viewer `connect_url`.
+  `POST /api/devices/{id}/remote {"provider":"terminal"}` mints role-specific
+  one-time tickets, pushes `remote_start{kind:"terminal"}` to the agent, and
+  returns the viewer ticket only to the authenticated caller.
 - Unlike the desktop media engine (a sidecar in the interactive session), the
   shell runs **inside the agent process**, so it inherits the agent's privileges —
   and the agent runs as a **system service (root on Linux/macOS, SYSTEM on
@@ -103,11 +110,27 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
 
 ### `native` (built-in)
 - A session **broker + relay** built into the server (`internal/remote/relay.go`).
-  On `StartSession` it mints a token, pushes `remote_start{token, relay_url}` to
-  the agent, and returns a viewer `connect_url`.
-- Both peers connect to `/ws/remote?token=...&role=agent|viewer`; the relay pairs
-  them by token and pipes frames. This is the **transport plane** — a
+  On `StartSession` it mints separate one-time viewer/agent tickets, pushes
+  `remote_start{session_id, agent_ticket}` to the agent, and returns the viewer
+  ticket only to the authenticated caller. The server stores ticket hashes only.
+- Both peers connect to `/ws/remote?session=...&role=agent|viewer`; tickets travel
+  in the WebSocket handshake and the viewer must authenticate as the principal
+  that started the session. The agent sends `Authorization: Remote-Agent <ticket>`;
+  the viewer sends `rmm-ticket.<ticket>` and `rmm-auth.<bearer>` through
+  `Sec-WebSocket-Protocol`. A viewer ticket in the URL is rejected.
+- `RMM_ALLOW_LEGACY_AGENT_RELAY=true` temporarily admits a pre-ticket **agent
+  sidecar** during a controlled rollout. It does not apply to viewers; return it
+  to `false` once the fleet has the ticket-aware sidecar.
+- In split ingress, the agent peer uses the public **agents** origin and the
+  browser peer uses the restricted **console** origin. Both nginx routes reach the
+  same server relay; this keeps the browser same-origin check meaningful without
+  exposing the console surface on the agents door. The production compose enables
+  `RMM_ENFORCE_CONSOLE_RELAY_INGRESS=true`, so a viewer sent through the agents
+  door is rejected even with a forged browser Origin. The relay pairs the peers by
+  session id and pipes frames. This is the **transport plane** — a
   NAT-friendly relay (hbbr-equivalent).
+- Relay pairs and agent WebSocket ownership are process-local. Only one server
+  replica is supported; there is no distributed relay/hub or HA session failover.
 - **Media engine (built):** a CGO-free **sidecar** (`cmd/rmm-remote`) that the
   agent spawns on demand. **Windows** captures via **GDI BitBlt** + **SendInput**;
   **Linux** captures via pure-Go **X11** `GetImage` — using **MIT-SHM** (shared
@@ -230,6 +253,9 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   in-session **chat window** (needs a Cocoa window — Win32/X11 only for now).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.
+- Release CI builds both macOS architectures, but does not Apple-code-sign,
+  notarize or staple the sidecar. Gatekeeper/TCC approval remains an operator
+  concern; OpenRMM's Ed25519 update signature is a separate trust mechanism.
 
 ### Linux requires Xorg (not Wayland)
 

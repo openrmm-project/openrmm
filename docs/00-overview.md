@@ -55,6 +55,10 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
   approval/scope/audit-gated. See [16-patch-management](16-patch-management.md).
 - React frontend (`openrmm/`) wired to the backend; cross-platform Go agent that
   **self-updates** from the server (`/dl` ETag).
+- Production Compose with file-backed secrets, an npm-built frontend and
+  enforcing CSP, split loopback ingress behind a trusted TLS edge, versioned
+  checksum-validated migrations, and age/rclone-aware backup/verify/restore
+  scripts.
 
 ## What is intentionally NOT built yet
 
@@ -65,6 +69,15 @@ The **backend MVP**, verified end-to-end against PostgreSQL:
   screen capture — see [08-remote-access](08-remote-access.md)).
 - **Rich osquery inventory, script sandboxing/signing** — see
   [09-roadmap](09-roadmap.md).
+- **A distributed/HA control plane** — the supported topology is one server
+  replica. The agent hub, native relay, and scheduler are process-local and have
+  no shared coordination layer.
+- **Complete platform observability** — `/healthz` is liveness only; no readiness
+  dependency graph, metrics endpoint, tracing, or built-in log/backup alerting is
+  implemented.
+- **OS trust signing** — release artifacts have OpenRMM Ed25519 signatures,
+  checksums, SBOM and CI provenance, but no Windows Authenticode or Apple
+  notarization.
 
 ## Non-negotiable principle
 

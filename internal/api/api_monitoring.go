@@ -57,25 +57,73 @@ func enabledDefaultTrue(body []byte) bool {
 
 // ---------- checks ----------
 
+func (s *Server) requireCheck(w http.ResponseWriter, r *http.Request, id string, manage bool) (*models.Check, bool) {
+	c, err := s.store.GetCheck(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return nil, false
+	}
+	if c.AgentID != nil {
+		if !s.requireAgent(w, r, *c.AgentID) {
+			return nil, false
+		}
+	} else if c.PolicyID == nil || !s.requirePolicy(w, r, *c.PolicyID, manage) {
+		return nil, false
+	}
+	return c, true
+}
+
+func (s *Server) requireTask(w http.ResponseWriter, r *http.Request, id string, manage bool) (*models.Task, bool) {
+	t, err := s.store.GetTask(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return nil, false
+	}
+	if t.AgentID != nil {
+		if !s.requireAgent(w, r, *t.AgentID) {
+			return nil, false
+		}
+	} else if t.PolicyID == nil || !s.requirePolicy(w, r, *t.PolicyID, manage) {
+		return nil, false
+	}
+	return t, true
+}
+
 func (s *Server) listChecks(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
 	policyID := r.URL.Query().Get("policy_id")
-	checks, err := s.store.ListChecks(r.Context(), r.URL.Query().Get("agent_id"), policyID)
+	if agentID != "" && !s.requireAgent(w, r, agentID) {
+		return
+	}
+	if policyID != "" && !s.requirePolicy(w, r, policyID, false) {
+		return
+	}
+	checks, err := s.store.ListChecks(r.Context(), agentID, policyID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
-		policyVisible := false
-		if policyID != "" {
-			policyVisible, err = s.store.PolicyAllowedForUser(r.Context(), s.scopeUserID(r), policyID)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		}
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
+		visiblePolicies := map[string]bool{}
 		f := checks[:0]
 		for _, c := range checks {
-			if inScope(set, c.AgentID) || (policyVisible && c.AgentID == nil && c.PolicyID != nil && *c.PolicyID == policyID) {
+			policyVisible := false
+			if c.PolicyID != nil {
+				var found bool
+				policyVisible, found = visiblePolicies[*c.PolicyID]
+				if !found {
+					policyVisible, err = s.store.PolicyAllowedForUser(r.Context(), s.scopeUserID(r), *c.PolicyID)
+					if err != nil {
+						writeErr(w, http.StatusInternalServerError, err.Error())
+						return
+					}
+					visiblePolicies[*c.PolicyID] = policyVisible
+				}
+			}
+			if inScope(set, c.AgentID) || policyVisible {
 				f = append(f, c)
 			}
 		}
@@ -91,8 +139,14 @@ func (s *Server) createCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "type required")
 		return
 	}
-	if c.AgentID == nil && c.PolicyID == nil {
-		writeErr(w, http.StatusBadRequest, "agent_id or policy_id required")
+	if (c.AgentID == nil) == (c.PolicyID == nil) {
+		writeErr(w, http.StatusBadRequest, "exactly one of agent_id or policy_id is required")
+		return
+	}
+	if c.AgentID != nil && !s.requireAgent(w, r, *c.AgentID) {
+		return
+	}
+	if c.PolicyID != nil && !s.requirePolicy(w, r, *c.PolicyID, true) {
 		return
 	}
 	c.Enabled = enabledDefaultTrue(body)
@@ -105,22 +159,40 @@ func (s *Server) createCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	existing, ok := s.requireCheck(w, r, id, true)
+	if !ok {
+		return
+	}
 	var c models.Check
 	if err := decode(r, &c); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	c.ID = chi.URLParam(r, "id")
+	if (c.AgentID != nil && (existing.AgentID == nil || *c.AgentID != *existing.AgentID)) ||
+		(c.PolicyID != nil && (existing.PolicyID == nil || *c.PolicyID != *existing.PolicyID)) {
+		writeErr(w, http.StatusBadRequest, "check ownership cannot be changed")
+		return
+	}
+	c.ID = id
 	if err := s.store.UpdateCheck(r.Context(), &c); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out, _ := s.store.GetCheck(r.Context(), c.ID)
+	out, err := s.store.GetCheck(r.Context(), c.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) deleteCheck(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteCheck(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireCheck(w, r, id, true); !ok {
+		return
+	}
+	if err := s.store.DeleteCheck(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -128,13 +200,23 @@ func (s *Server) deleteCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listCheckResults(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireCheck(w, r, chi.URLParam(r, "id"), false); !ok {
+		return
+	}
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID != "" && !s.requireAgent(w, r, agentID) {
+		return
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	results, err := s.store.ListCheckResults(r.Context(), chi.URLParam(r, "id"), r.URL.Query().Get("agent_id"), limit)
+	results, err := s.store.ListCheckResults(r.Context(), chi.URLParam(r, "id"), agentID, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
 		f := results[:0]
 		for _, rr := range results {
 			if set[rr.AgentID] {
@@ -149,24 +231,40 @@ func (s *Server) listCheckResults(w http.ResponseWriter, r *http.Request) {
 // ---------- tasks ----------
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
 	policyID := r.URL.Query().Get("policy_id")
-	tasks, err := s.store.ListTasks(r.Context(), r.URL.Query().Get("agent_id"), policyID)
+	if agentID != "" && !s.requireAgent(w, r, agentID) {
+		return
+	}
+	if policyID != "" && !s.requirePolicy(w, r, policyID, false) {
+		return
+	}
+	tasks, err := s.store.ListTasks(r.Context(), agentID, policyID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
-		policyVisible := false
-		if policyID != "" {
-			policyVisible, err = s.store.PolicyAllowedForUser(r.Context(), s.scopeUserID(r), policyID)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-		}
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
+		visiblePolicies := map[string]bool{}
 		f := tasks[:0]
 		for _, t := range tasks {
-			if inScope(set, t.AgentID) || (policyVisible && t.AgentID == nil && t.PolicyID != nil && *t.PolicyID == policyID) {
+			policyVisible := false
+			if t.PolicyID != nil {
+				var found bool
+				policyVisible, found = visiblePolicies[*t.PolicyID]
+				if !found {
+					policyVisible, err = s.store.PolicyAllowedForUser(r.Context(), s.scopeUserID(r), *t.PolicyID)
+					if err != nil {
+						writeErr(w, http.StatusInternalServerError, err.Error())
+						return
+					}
+					visiblePolicies[*t.PolicyID] = policyVisible
+				}
+			}
+			if inScope(set, t.AgentID) || policyVisible {
 				f = append(f, t)
 			}
 		}
@@ -182,8 +280,14 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if t.AgentID == nil && t.PolicyID == nil {
-		writeErr(w, http.StatusBadRequest, "agent_id or policy_id required")
+	if (t.AgentID == nil) == (t.PolicyID == nil) {
+		writeErr(w, http.StatusBadRequest, "exactly one of agent_id or policy_id is required")
+		return
+	}
+	if t.AgentID != nil && !s.requireAgent(w, r, *t.AgentID) {
+		return
+	}
+	if t.PolicyID != nil && !s.requirePolicy(w, r, *t.PolicyID, true) {
 		return
 	}
 	if t.ScheduleKind == "" {
@@ -206,12 +310,22 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	existing, ok := s.requireTask(w, r, id, true)
+	if !ok {
+		return
+	}
 	var t models.Task
 	if err := decode(r, &t); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	t.ID = chi.URLParam(r, "id")
+	if (t.AgentID != nil && (existing.AgentID == nil || *t.AgentID != *existing.AgentID)) ||
+		(t.PolicyID != nil && (existing.PolicyID == nil || *t.PolicyID != *existing.PolicyID)) {
+		writeErr(w, http.StatusBadRequest, "task ownership cannot be changed")
+		return
+	}
+	t.ID = id
 	if t.ScheduleKind == "" {
 		t.ScheduleKind = models.ScheduleInterval
 	}
@@ -223,12 +337,20 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	out, _ := s.store.GetTask(r.Context(), t.ID)
+	out, err := s.store.GetTask(r.Context(), t.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteTask(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if _, ok := s.requireTask(w, r, id, true); !ok {
+		return
+	}
+	if err := s.store.DeleteTask(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -248,7 +370,9 @@ func (s *Server) taskTargetAgents(r *http.Request, t *models.Task) ([]string, er
 			return nil, err
 		}
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		return nil, err
+	} else if scoped {
 		f := ids[:0]
 		for _, id := range ids {
 			id := id
@@ -264,9 +388,8 @@ func (s *Server) taskTargetAgents(r *http.Request, t *models.Task) ([]string, er
 // taskTargets reports how many agents a "run now" would hit, so the UI can
 // confirm ("Run on N agents?") before firing.
 func (s *Server) taskTargets(w http.ResponseWriter, r *http.Request) {
-	t, err := s.store.GetTask(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "task not found")
+	t, ok := s.requireTask(w, r, chi.URLParam(r, "id"), false)
+	if !ok {
 		return
 	}
 	ids, err := s.taskTargetAgents(r, t)
@@ -282,9 +405,8 @@ func (s *Server) taskTargets(w http.ResponseWriter, r *http.Request) {
 // would. Offline agents receive it on reconnect. Read-only tasks aside, this is
 // gated by tasks.manage.
 func (s *Server) runTask(w http.ResponseWriter, r *http.Request) {
-	t, err := s.store.GetTask(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "task not found")
+	t, ok := s.requireTask(w, r, chi.URLParam(r, "id"), false)
+	if !ok {
 		return
 	}
 	ids, err := s.taskTargetAgents(r, t)
@@ -319,7 +441,10 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if set, scoped := s.scopedAgentSet(r); scoped {
+	if set, scoped, err := s.scopedAgentSet(r); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if scoped {
 		f := alerts[:0]
 		for _, a := range alerts {
 			if inScope(set, a.AgentID) {
@@ -334,13 +459,13 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 // requireAlertAgent enforces scope on an alert by its target agent. Returns
 // false when it has written the response.
 func (s *Server) requireAlertAgent(w http.ResponseWriter, r *http.Request, alertID string) bool {
-	if s.scopeUserID(r) == "" {
-		return true
-	}
 	agentID, err := s.store.AlertAgent(r.Context(), alertID)
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return false
+	}
+	if s.scopeUserID(r) == "" {
+		return true
 	}
 	if agentID == nil || !s.agentAllowed(r, *agentID) {
 		writeErr(w, http.StatusForbidden, "alert is outside your access scope")

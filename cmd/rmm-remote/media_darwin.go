@@ -31,6 +31,13 @@ package main
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation
 #include <CoreGraphics/CoreGraphics.h>
 #include <stdlib.h>
+
+// CGEventCreateScrollWheelEvent is variadic (trailing wheel2/wheel3 deltas),
+// which cgo cannot call directly (Go 1.25 cgo rejects it: "unexpected type: ...").
+// Wrap the single-wheel form in a non-variadic shim.
+static CGEventRef rmmCreateScrollWheelEvent(CGEventSourceRef source, CGScrollEventUnit units, uint32_t wheelCount, int32_t wheel1) {
+	return CGEventCreateScrollWheelEvent(source, units, wheelCount, wheel1);
+}
 */
 import "C"
 
@@ -164,7 +171,7 @@ func postScroll(dy float64) {
 	if dy < 0 {
 		amt = 3
 	}
-	e := C.CGEventCreateScrollWheelEvent(nil, C.kCGScrollEventUnitLine, 1, amt)
+	e := C.rmmCreateScrollWheelEvent(nil, C.kCGScrollEventUnitLine, 1, amt)
 	C.CGEventPost(C.kCGHIDEventTap, e)
 	C.CFRelease(C.CFTypeRef(e))
 }

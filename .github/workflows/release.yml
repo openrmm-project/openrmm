@@ -88,7 +88,7 @@ jobs:
           $openssl = Get-ChildItem 'C:\Program Files\OpenSSL*\bin\openssl.exe' | Select-Object -First 1
           if (-not $openssl) { throw 'OpenSSL installation not found' }
           $version = & $openssl.FullName version
-          if ($version -notmatch '^OpenSSL 3\.') { throw "OpenSSL 3.x required, got: $version" }
+          if ($version -notmatch '^OpenSSL ([3-9]|[1-9][0-9])\.') { throw "OpenSSL 3.x or newer required, got: $version" }
           $tokens = $null; $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
@@ -127,7 +127,7 @@ jobs:
       - name: Validate installer
         run: |
           export PATH="$(brew --prefix openssl@3)/bin:$PATH"
-          openssl version | grep '^OpenSSL 3\.'
+          openssl version | grep -E '^OpenSSL ([3-9]|[1-9][0-9])\.'
           bash -n deploy/public/install.sh
           shellcheck deploy/public/install.sh
           tmp="$(mktemp -d)"

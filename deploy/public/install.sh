@@ -29,7 +29,7 @@ if [ "$LAB_MODE" = "0" ]; then
 fi
 command -v curl >/dev/null || { echo "error: curl is required"; exit 1; }
 command -v openssl >/dev/null || { echo "error: OpenSSL is required for checksum/signature verification"; exit 1; }
-openssl version | grep -q '^OpenSSL 3\.' || { echo "error: OpenSSL 3.x is required for Ed25519 verification"; exit 1; }
+openssl version | grep -qE '^OpenSSL ([3-9]|[1-9][0-9])\.' || { echo "error: OpenSSL 3.x or newer is required for Ed25519 verification"; exit 1; }
 
 # --update-public-key may be given several times (or comma/space separated). During
 # a key rotation an operator pins the new key alongside the old one; a signature is
@@ -177,9 +177,9 @@ if [ -n "$UPDATE_PUBLIC_KEY" ]; then
   done
   curl -fsSL "${SERVER}/dl/SHA256SUMS.sig" -o "$SIG_TEXT"
   read -r sig_version sig_base64 extra < "$SIG_TEXT" || true
-  [ "$sig_version" = "rmm-ed25519-sha256-v1" ] && [ -n "$sig_base64" ] && [ -z "${extra:-}" ] || {
-    echo "error: invalid SHA256SUMS signature format"; exit 1;
-  }
+  if [ "$sig_version" != "rmm-ed25519-sha256-v1" ] || [ -z "$sig_base64" ] || [ -n "${extra:-}" ]; then
+    echo "error: invalid SHA256SUMS signature format"; exit 1
+  fi
   printf '%s' "$sig_base64" | openssl base64 -d -A > "${TMP_DIR}/signature.bin" 2>/dev/null || {
     echo "error: signature is not valid base64"; exit 1;
   }
@@ -189,9 +189,9 @@ if [ -n "$UPDATE_PUBLIC_KEY" ]; then
   }
   curl -fsSL "${SERVER}/dl/${BIN}.sig" -o "$ARTIFACT_SIG_TEXT"
   read -r artifact_sig_version artifact_sig_base64 artifact_extra < "$ARTIFACT_SIG_TEXT" || true
-  [ "$artifact_sig_version" = "rmm-ed25519-sha256-v1" ] && [ -n "$artifact_sig_base64" ] && [ -z "${artifact_extra:-}" ] || {
-    echo "error: invalid artifact signature format"; exit 1;
-  }
+  if [ "$artifact_sig_version" != "rmm-ed25519-sha256-v1" ] || [ -z "$artifact_sig_base64" ] || [ -n "${artifact_extra:-}" ]; then
+    echo "error: invalid artifact signature format"; exit 1
+  fi
   printf '%s' "$artifact_sig_base64" | openssl base64 -d -A > "${TMP_DIR}/artifact-signature.bin" 2>/dev/null || {
     echo "error: artifact signature is not valid base64"; exit 1;
   }

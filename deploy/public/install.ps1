@@ -25,11 +25,11 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
     [Security.Principal.WindowsBuiltinRole]::Administrator)
 if (-not $isAdmin) { throw 'Run this in an elevated PowerShell (Run as Administrator).' }
 if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
-    throw 'OpenSSL 3.x is required for Ed25519 signature verification. Install it and ensure openssl.exe is on PATH.'
+    throw 'OpenSSL 3.x or newer is required for Ed25519 signature verification. Install it and ensure openssl.exe is on PATH.'
 }
 $OpenSslVersion = (& openssl version)
-if ($LASTEXITCODE -ne 0 -or $OpenSslVersion -notmatch '^OpenSSL 3\.') {
-    throw "OpenSSL 3.x is required for Ed25519 verification; found: $OpenSslVersion"
+if ($LASTEXITCODE -ne 0 -or $OpenSslVersion -notmatch '^OpenSSL ([3-9]|[1-9][0-9])\.') {
+    throw "OpenSSL 3.x or newer is required for Ed25519 verification; found: $OpenSslVersion"
 }
 
 # -UpdatePublicKey may carry several trusted keys separated by commas, semicolons

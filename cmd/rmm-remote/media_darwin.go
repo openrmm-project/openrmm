@@ -31,13 +31,25 @@ package main
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation
 #include <CoreGraphics/CoreGraphics.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
 
-// CGEventCreateScrollWheelEvent is variadic (trailing wheel2/wheel3 deltas),
-// which cgo cannot call directly (Go 1.25 cgo rejects it: "unexpected type: ...").
-// Wrap the single-wheel form in a non-variadic shim.
-static CGEventRef rmmCreateScrollWheelEvent(CGEventSourceRef source, CGScrollEventUnit units, uint32_t wheelCount, int32_t wheel1) {
-	return CGEventCreateScrollWheelEvent(source, units, wheelCount, wheel1);
+// Go 1.25 cgo is strict about CoreFoundation/CoreGraphics opaque types: a NULL
+// event source can't be passed as an untyped Go nil, and CGEventCreateScrollWheel
+// Event is variadic (which cgo cannot call at all). Handle NULL and the variadic
+// call inside C, where the semantics are unambiguous, and expose non-variadic
+// shims plus null predicates to Go.
+static CGEventRef rmmCreateScrollWheelEvent(CGScrollEventUnit units, uint32_t wheelCount, int32_t wheel1) {
+	return CGEventCreateScrollWheelEvent(NULL, units, wheelCount, wheel1);
 }
+static CGEventRef rmmCreateMouseEvent(CGEventType type, CGPoint pos, CGMouseButton button) {
+	return CGEventCreateMouseEvent(NULL, type, pos, button);
+}
+static CGEventRef rmmCreateKeyboardEvent(CGKeyCode key, bool down) {
+	return CGEventCreateKeyboardEvent(NULL, key, down);
+}
+static int rmmImageIsNull(CGImageRef img) { return img == NULL; }
+static int rmmDataIsNull(CFDataRef data) { return data == NULL; }
 */
 import "C"
 
@@ -71,7 +83,7 @@ func newCGCapturer() (*cgCapturer, error) {
 // honor the per-row stride (bytesPerRow may exceed width*4 for alignment).
 func (c *cgCapturer) frame() (*image.RGBA, error) {
 	cgImg := C.CGDisplayCreateImage(c.display)
-	if cgImg == nil {
+	if C.rmmImageIsNull(cgImg) != 0 {
 		return nil, fmt.Errorf("CGDisplayCreateImage failed (Screen Recording permission?)")
 	}
 	defer C.CGImageRelease(cgImg)
@@ -89,7 +101,7 @@ func (c *cgCapturer) frame() (*image.RGBA, error) {
 
 	provider := C.CGImageGetDataProvider(cgImg)
 	data := C.CGDataProviderCopyData(provider)
-	if data == nil {
+	if C.rmmDataIsNull(data) != 0 {
 		return nil, fmt.Errorf("CGDataProviderCopyData failed")
 	}
 	defer C.CFRelease(C.CFTypeRef(data))
@@ -129,7 +141,7 @@ func postMouseMoveDrag(x, y float64, w, h int, buttonsDown int) {
 		typ = C.kCGEventRightMouseDragged
 		btn = C.kCGMouseButtonRight
 	}
-	e := C.CGEventCreateMouseEvent(nil, C.CGEventType(typ), pt, C.CGMouseButton(btn))
+	e := C.rmmCreateMouseEvent(C.CGEventType(typ), pt, C.CGMouseButton(btn))
 	C.CGEventPost(C.kCGHIDEventTap, e)
 	C.CFRelease(C.CFTypeRef(e))
 }
@@ -161,7 +173,7 @@ func postMouseButton(x, y float64, w, h, button int, down bool) {
 			typ = C.kCGEventLeftMouseUp
 		}
 	}
-	e := C.CGEventCreateMouseEvent(nil, typ, pt, btn)
+	e := C.rmmCreateMouseEvent(typ, pt, btn)
 	C.CGEventPost(C.kCGHIDEventTap, e)
 	C.CFRelease(C.CFTypeRef(e))
 }
@@ -171,7 +183,7 @@ func postScroll(dy float64) {
 	if dy < 0 {
 		amt = 3
 	}
-	e := C.rmmCreateScrollWheelEvent(nil, C.kCGScrollEventUnitLine, 1, amt)
+	e := C.rmmCreateScrollWheelEvent(C.kCGScrollEventUnitLine, 1, amt)
 	C.CGEventPost(C.kCGHIDEventTap, e)
 	C.CFRelease(C.CFTypeRef(e))
 }
@@ -181,7 +193,7 @@ func postKey(browserCode int, down bool) {
 	if !ok {
 		return
 	}
-	e := C.CGEventCreateKeyboardEvent(nil, C.CGKeyCode(kc), C.bool(down))
+	e := C.rmmCreateKeyboardEvent(C.CGKeyCode(kc), C.bool(down))
 	C.CGEventPost(C.kCGHIDEventTap, e)
 	C.CFRelease(C.CFTypeRef(e))
 }

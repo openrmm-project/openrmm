@@ -7,6 +7,34 @@ access) and an **acceptance** check.
 
 Status legend: ✅ done · 🟡 in progress · ⬜ not started.
 
+## Current state (2026-07-21) — resume here
+
+This is a **development / localhost** deployment (single node, no real device
+fleet yet); production is a future goal. What landed this session:
+
+- ✅ Signed-update pipeline built and its release-gate failures fixed; **GitHub
+  secrets set** (`RMM_UPDATE_PUBLIC_KEY` at repo level, `RMM_SIGNING_KEY` in the
+  `release` Environment). No approval reviewer yet (private repo, Free plan).
+- ✅ Keyring rotation, `/readyz` + `/metrics`, container-scan CI gate, runtime bug
+  fixes (offline reconcile, blank Audit log), AGPL-3.0 license. See `CHANGELOG.md`.
+- 🟡 **Release `v0.4.5` was building** (run `29858165595`, tag → commit `64c90db`).
+  If it hasn't finished: `gh run watch <id> --repo P1N-GU/openrmm`. The Intel
+  (`macos-13`) sidecar was queued.
+
+**Immediate next action after the release publishes** (the one thing that unblocks
+remote access + auto-update locally):
+
+```bash
+gh release download v0.4.5 --repo P1N-GU/openrmm --dir deploy/public --clobber
+# verify, then it is served at /dl/ (deploy/public is the prod bind-mount)
+cd deploy/public && sha256sum -c SHA256SUMS
+```
+
+Then reinstall the test agent once with `--update-public-key <pub>` (the public key
+is in `deploy/secrets/update-signing.key.env`, gitignored), or run it `--lab-mode`
+for dev. **Do not lose `deploy/secrets/update-signing.key.env`** — it is the only
+readable copy of the signing private key (GitHub secrets can't be read back).
+
 ## Phase 0 — Go-live blockers
 
 ### 0.1 Activate the signed-update chain — ops ⬜

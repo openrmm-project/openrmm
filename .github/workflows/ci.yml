@@ -102,7 +102,7 @@ jobs:
         shell: pwsh
         run: |
           $version = & openssl version
-          if ($version -notmatch '^OpenSSL 3\.') { throw "OpenSSL 3.x required, got: $version" }
+          if ($version -notmatch '^OpenSSL ([3-9]|[1-9][0-9])\.') { throw "OpenSSL 3.x or newer required, got: $version" }
           go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
           $keys = & .\rmm-sign.exe -gen-key
           $public = ($keys | Where-Object { $_ -like 'RMM_UPDATE_PUBLIC_KEY=*' }) -replace '^RMM_UPDATE_PUBLIC_KEY=', ''
@@ -132,7 +132,7 @@ jobs:
       - name: Validate installer with macOS tools
         run: |
           export PATH="$(brew --prefix openssl@3)/bin:$PATH"
-          openssl version | grep '^OpenSSL 3\.'
+          openssl version | grep -E '^OpenSSL ([3-9]|[1-9][0-9])\.'
           bash -n deploy/public/install.sh
           shellcheck deploy/public/install.sh
           tmp="$(mktemp -d)"

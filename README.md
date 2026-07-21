@@ -131,9 +131,16 @@ agent hub, relay and scheduler are not distributed or HA.
 
 To build the frontend: [`docs/14-frontend-design-brief.md`](docs/14-frontend-design-brief.md).
 
-## License
+## Native remote engine
 
 The native remote engine is a homegrown implementation (CGO-free on Windows and
 Linux; macOS capture uses CGO) rather than a third-party fork. See
 [`docs/08-remote-access.md`](docs/08-remote-access.md) for platform and maturity
 limitations.
+
+## License
+
+OpenRMM is licensed under the **GNU Affero General Public License v3.0**
+(AGPL-3.0-only); see [`LICENSE`](LICENSE). The AGPL's network clause (section 13)
+means anyone who runs a modified version as a network service must offer that
+version's source to its users. Copyright (C) 2026 OpenRMM contributors.

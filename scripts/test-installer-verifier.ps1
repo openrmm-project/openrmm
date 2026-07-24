@@ -69,9 +69,11 @@ for ($n = 0; $n -lt $Count; $n++) {
     $digest = Sha256 $f
 
     if (-not [RmmEd25519]::Verify($pubBytes, $digest, $sig)) { throw "genuine signature #$n rejected" }
-    $badSig = [byte[]]$sig.Clone(); $badSig[$rng.Next(64)] = $badSig[$rng.Next(64)] -bxor 1
+    # Flip all bits of one byte (index computed once) so the tamper always changes
+    # the value — XORing a re-rolled index could otherwise be a no-op.
+    $si = $rng.Next(64); $badSig = [byte[]]$sig.Clone(); $badSig[$si] = $badSig[$si] -bxor 0xFF
     if ([RmmEd25519]::Verify($pubBytes, $digest, $badSig)) { throw "tampered signature #$n accepted" }
-    $badDigest = [byte[]]$digest.Clone(); $badDigest[$rng.Next(32)] = $badDigest[$rng.Next(32)] -bxor 1
+    $di = $rng.Next(32); $badDigest = [byte[]]$digest.Clone(); $badDigest[$di] = $badDigest[$di] -bxor 0xFF
     if ([RmmEd25519]::Verify($pubBytes, $badDigest, $sig)) { throw "signature over tampered digest #$n accepted" }
     Remove-Item $f, "$f.sig" -Force -ErrorAction SilentlyContinue
     $pass++

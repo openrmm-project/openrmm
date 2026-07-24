@@ -1,7 +1,7 @@
-ARG GO_IMAGE=golang:1.26.0-alpine@sha256:d4c4845f5d60c6a974c6000ce58ae079328d03ab7f721a0734277e69905473e5
+ARG GO_IMAGE=golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
 ARG NODE_IMAGE=node:24.4.1-alpine@sha256:820e86612c21d0636580206d802a726f2595366e1b867e564cbc652024151e8a
 ARG ALPINE_IMAGE=alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
-ARG NGINX_IMAGE=nginx:1.27.5-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+ARG NGINX_IMAGE=nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
 
 # Build the server binary. go.mod requires Go >= 1.25.
 FROM ${GO_IMAGE} AS server-build
@@ -25,7 +25,11 @@ COPY openrmm/assets ./assets
 RUN OPENRMM_BASE_PATH="$OPENRMM_BASE_PATH" npm run build
 
 FROM ${ALPINE_IMAGE} AS server
-RUN apk add --no-cache ca-certificates \
+# apk upgrade pulls the latest patched OS packages so the image is not stuck on
+# the (older) package set baked into the pinned base — keeps Trivy clean between
+# upstream base-image rebuilds.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ca-certificates \
     && addgroup -S -g 10001 rmm \
     && adduser -S -D -H -u 10001 -G rmm rmm
 COPY --from=server-build --chown=10001:10001 /out/rmm-server /usr/local/bin/rmm-server
@@ -36,6 +40,10 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
 ENTRYPOINT ["/usr/local/bin/rmm-server"]
 
 FROM ${NGINX_IMAGE} AS frontend
+# Patch OS packages (openssl, expat, libpng, c-ares, curl, ...) beyond what the
+# pinned nginx base ships; without this the image carries fixable HIGH/CRITICAL
+# CVEs that fail the Trivy gate.
+RUN apk upgrade --no-cache
 COPY --from=frontend-build --chown=101:101 /src/openrmm/dist/ /usr/share/nginx/html/
 ENV OPENRMM_BASE_PATH=/ \
     NGINX_ENVSUBST_FILTER=^OPENRMM_BASE_PATH$

@@ -181,16 +181,17 @@ jobs:
     strategy:
       matrix:
         include:
-          # The macOS 15 SDK dropped CGDisplayCreateImage (the CoreGraphics screen
-          # grab this engine uses), so the Intel build must run on an older SDK
-          # runner. The symbol still ships in the OS at runtime, so the resulting
-          # binary runs on macOS 15 Intel Macs. Long-term fix: migrate the darwin
-          # capture path to ScreenCaptureKit.
-          - arch: amd64
-            runner: macos-13
+          # Intel (amd64) is temporarily dropped from the release. It needs an
+          # older SDK because the macOS 15 SDK removed CGDisplayCreateImage (the
+          # CoreGraphics screen grab this engine uses), but the macos-13 (Intel)
+          # runners are being retired: the job now queues for ~24h and is
+          # cancelled, which blocked `publish` and stopped v0.4.5 from shipping.
+          # Re-add `- arch: amd64 / runner: <intel>` once the darwin capture path
+          # is migrated to ScreenCaptureKit and builds on macos-14 (docs/19 Ph.2).
           - arch: arm64
             runner: macos-14
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0

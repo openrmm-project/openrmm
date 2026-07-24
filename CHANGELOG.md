@@ -4,6 +4,31 @@ All notable changes to OpenRMM are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions track the agent/release
 tag.
 
+## [0.4.6] - 2026-07-23
+
+First published signed release. v0.4.5 was tagged but never published: the
+release workflow's Intel macOS sidecar job queued on a retiring `macos-13`
+runner for ~24h and was cancelled, so the `publish` job never ran and `/dl/`
+kept serving unsigned binaries. This release ships the signed artifacts.
+
+### Security / Fixed
+- **Zero fixable HIGH/CRITICAL CVEs in the images.** Bumped the Go build image
+  to `golang:1.26.5-alpine` (clears 14 stdlib CVEs in the server image) and the
+  frontend base to `nginx:1.29-alpine`, and run `apk upgrade --no-cache` in both
+  the server and frontend stages to pull Alpine's latest patched packages
+  (OpenSSL, libexpat, libpng, c-ares, curl, nghttp2, libxml2 — 37 fixable CVEs,
+  2 CRITICAL). Trivy now reports 0 HIGH/CRITICAL on both images.
+- **govulncheck clean.** Bumped `golang.org/x/text` 0.38.0 → 0.39.0 to fix
+  GO-2026-5970 (infinite loop on invalid input).
+
+### Changed
+- **Release pipeline unblocked.** Dropped the Intel (amd64) macOS sidecar from
+  the release matrix so `publish` no longer blocks on a retiring `macos-13`
+  runner, and added a 30m job timeout. The release ships Linux, Windows and
+  mac-arm64 artifacts. **Intel Macs receive no updated native sidecar** until the
+  darwin capture path is migrated to ScreenCaptureKit (so amd64 can build on
+  `macos-14`) — tracked in docs/19 Phase 2.
+
 ## [0.4.5] - 2026-07-21
 
 ### Security / Added

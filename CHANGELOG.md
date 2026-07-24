@@ -4,6 +4,21 @@ All notable changes to OpenRMM are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions track the agent/release
 tag.
 
+## [0.4.7] - 2026-07-24
+
+### Changed
+- **Windows installer auto-provisions OpenSSL.** `install.ps1` needs OpenSSL 3.x
+  for Ed25519 signature verification (a verifier independent of the untrusted
+  download — the agent binary must not self-verify). Instead of failing when it
+  is absent, the installer now provisions it automatically: it probes `PATH` and
+  common locations (including Git for Windows' bundled `openssl`), then tries
+  Chocolatey, then winget, then an MSI via `msiexec` (the only path that also
+  works under `SYSTEM`). The MSI source prefers, in order, `-OpenSslMsiUrl`, then
+  the server's own `<server>/dl/openssl3-win64.msi` (drop an OpenSSL 3 MSI there
+  for a durable, same-origin source that works offline/under SYSTEM), then a
+  best-effort public URL. `-OpenSslMsiSha256` integrity-checks the download
+  (via `Get-FileHash`) before `msiexec` runs.
+
 ## [0.4.6] - 2026-07-23
 
 First published signed release. v0.4.5 was tagged but never published: the

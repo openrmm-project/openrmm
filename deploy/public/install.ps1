@@ -4,6 +4,8 @@ param(
     [string]$Token,
     [string]$Site,
     [string]$UpdatePublicKey,
+    [string]$OpenSslMsiUrl,
+    [string]$OpenSslMsiSha256,
     [switch]$RequireTls,
     [switch]$LabMode,
     [switch]$ResetIdentity
@@ -24,13 +26,95 @@ if (-not $LabMode) {
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltinRole]::Administrator)
 if (-not $isAdmin) { throw 'Run this in an elevated PowerShell (Run as Administrator).' }
-if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
-    throw 'OpenSSL 3.x or newer is required for Ed25519 signature verification. Install it and ensure openssl.exe is on PATH.'
+# OpenSSL 3.x provides the Ed25519 signature verification this installer relies
+# on. Verification must be done by a tool independent of the (untrusted) download,
+# so we keep OpenSSL rather than self-verifying with the agent binary. If it is
+# missing we provision it automatically so a fresh endpoint needs no manual step:
+# probe PATH and common install dirs (incl. Git for Windows' bundled openssl),
+# then Chocolatey, then winget, then an MSI via msiexec (the only path that also
+# works under SYSTEM). Pass -OpenSslMsiUrl to point at an internal mirror.
+function Test-OpenSsl3 {
+    if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) { return $false }
+    $v = & openssl version 2>$null
+    return ($LASTEXITCODE -eq 0 -and $v -match '^OpenSSL ([3-9]|[1-9][0-9])\.')
 }
-$OpenSslVersion = (& openssl version)
-if ($LASTEXITCODE -ne 0 -or $OpenSslVersion -notmatch '^OpenSSL ([3-9]|[1-9][0-9])\.') {
-    throw "OpenSSL 3.x or newer is required for Ed25519 verification; found: $OpenSslVersion"
+function Add-SessionPath([string]$dir) {
+    if ($dir -and (Test-Path $dir) -and (";$Env:PATH;" -notlike "*;$dir;*")) {
+        $Env:PATH = "$dir;$Env:PATH"
+    }
 }
+function Sync-MachinePath {
+    $parts = @(
+        [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+        [Environment]::GetEnvironmentVariable('Path', 'User'),
+        $Env:PATH
+    ) | Where-Object { $_ }
+    $Env:PATH = $parts -join ';'
+}
+function Install-OpenSsl3 {
+    if (Test-OpenSsl3) { return }
+    Write-Host 'OpenSSL 3.x not found; attempting automatic installation...'
+    $pf = $Env:ProgramFiles
+    $binDirs = @(
+        (Join-Path $pf 'OpenSSL-Win64\bin'),
+        (Join-Path $pf 'FireDaemon OpenSSL 3\bin'),
+        (Join-Path $pf 'Git\usr\bin'),
+        (Join-Path $pf 'Git\mingw64\bin')
+    )
+    foreach ($d in $binDirs) { Add-SessionPath $d; if (Test-OpenSsl3) { return } }
+
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
+        try { & choco install openssl --no-progress -y | Out-Null } catch { }
+        Sync-MachinePath; foreach ($d in $binDirs) { Add-SessionPath $d }
+        if (Test-OpenSsl3) { return }
+    }
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        foreach ($id in @('FireDaemon.OpenSSL', 'ShiningLight.OpenSSL.Light')) {
+            try {
+                & winget install --id $id -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
+            } catch { continue }
+            Sync-MachinePath; foreach ($d in $binDirs) { Add-SessionPath $d }
+            if (Test-OpenSsl3) { return }
+        }
+    }
+    # MSI fallback (works under SYSTEM). Sources, in order of preference:
+    #   1. -OpenSslMsiUrl        explicit override / internal mirror
+    #   2. $Server/dl/openssl3-win64.msi   durable, same trusted origin as this
+    #      script — drop an OpenSSL 3 MSI at deploy/public/openssl3-win64.msi to
+    #      enable it; never rots and works offline/under SYSTEM
+    #   3. a public URL          convenience only; the pinned version eventually
+    #      disappears upstream, so treat it as a last resort
+    # When -OpenSslMsiSha256 is set the download is integrity-checked (Get-FileHash,
+    # no openssl needed) before msiexec runs, closing the MSI supply-chain gap.
+    $urls = @()
+    if ($OpenSslMsiUrl) { $urls += $OpenSslMsiUrl }
+    $urls += "$Server/dl/openssl3-win64.msi"
+    $urls += 'https://slproweb.com/download/Win64OpenSSL_Light-3_5_4.msi'
+    foreach ($u in $urls) {
+        try {
+            $msi = Join-Path $Env:TEMP ('openssl-' + [Guid]::NewGuid().ToString('N') + '.msi')
+            $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $msi
+            $ProgressPreference = $prev
+            if ($OpenSslMsiSha256) {
+                $got = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
+                if ($got -ne $OpenSslMsiSha256.ToLowerInvariant()) {
+                    Remove-Item $msi -Force -ErrorAction SilentlyContinue
+                    throw "OpenSSL MSI SHA-256 mismatch for $u (expected $OpenSslMsiSha256, got $got)"
+                }
+            }
+            Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait
+            Remove-Item $msi -Force -ErrorAction SilentlyContinue
+            Sync-MachinePath; foreach ($d in $binDirs) { Add-SessionPath $d }
+            if (Test-OpenSsl3) { return }
+        } catch { continue }
+    }
+
+    throw ('OpenSSL 3.x is required for Ed25519 signature verification and automatic ' +
+        'installation failed. Install it (e.g. "winget install FireDaemon.OpenSSL"), host an ' +
+        'OpenSSL 3 MSI at <server>/dl/openssl3-win64.msi, or pass -OpenSslMsiUrl, then re-run.')
+}
+Install-OpenSsl3
 
 # -UpdatePublicKey may carry several trusted keys separated by commas, semicolons
 # or whitespace. During a key rotation the operator pins the new key alongside the

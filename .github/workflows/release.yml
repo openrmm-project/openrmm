@@ -251,7 +251,13 @@ jobs:
           test -n "$RMM_SIGNING_KEY"
           test "$(./rmm-sign -print-public-key)" = "$RMM_UPDATE_PUBLIC_KEY"
           ./rmm-sign release/rmm-agent-* release/rmm-remote-* release/SHA256SUMS
+      # Build-provenance attestation is unavailable for user-owned private repos
+      # on the Free plan ("Feature not available for user-owned private
+      # repositories"). Keep it non-blocking so the signed release still
+      # publishes; it starts producing provenance automatically once the repo is
+      # public. The Ed25519 .sig files remain the enforced update-integrity check.
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        continue-on-error: true
         with:
           subject-path: 'release/*'
       - uses: softprops/action-gh-release@5be0e66d93ac7ed76da52eca8bb058f665c3a5fe # v2.4.2

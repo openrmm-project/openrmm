@@ -4,8 +4,6 @@ param(
     [string]$Token,
     [string]$Site,
     [string]$UpdatePublicKey,
-    [string]$OpenSslMsiUrl,
-    [string]$OpenSslMsiSha256,
     [switch]$RequireTls,
     [switch]$LabMode,
     [switch]$ResetIdentity
@@ -26,95 +24,142 @@ if (-not $LabMode) {
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltinRole]::Administrator)
 if (-not $isAdmin) { throw 'Run this in an elevated PowerShell (Run as Administrator).' }
-# OpenSSL 3.x provides the Ed25519 signature verification this installer relies
-# on. Verification must be done by a tool independent of the (untrusted) download,
-# so we keep OpenSSL rather than self-verifying with the agent binary. If it is
-# missing we provision it automatically so a fresh endpoint needs no manual step:
-# probe PATH and common install dirs (incl. Git for Windows' bundled openssl),
-# then Chocolatey, then winget, then an MSI via msiexec (the only path that also
-# works under SYSTEM). Pass -OpenSslMsiUrl to point at an internal mirror.
-function Test-OpenSsl3 {
-    if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) { return $false }
-    $v = & openssl version 2>$null
-    return ($LASTEXITCODE -eq 0 -and $v -match '^OpenSSL ([3-9]|[1-9][0-9])\.')
-}
-function Add-SessionPath([string]$dir) {
-    if ($dir -and (Test-Path $dir) -and (";$Env:PATH;" -notlike "*;$dir;*")) {
-        $Env:PATH = "$dir;$Env:PATH"
-    }
-}
-function Sync-MachinePath {
-    $parts = @(
-        [Environment]::GetEnvironmentVariable('Path', 'Machine'),
-        [Environment]::GetEnvironmentVariable('Path', 'User'),
-        $Env:PATH
-    ) | Where-Object { $_ }
-    $Env:PATH = $parts -join ';'
-}
-function Install-OpenSsl3 {
-    if (Test-OpenSsl3) { return }
-    Write-Host 'OpenSSL 3.x not found; attempting automatic installation...'
-    $pf = $Env:ProgramFiles
-    $binDirs = @(
-        (Join-Path $pf 'OpenSSL-Win64\bin'),
-        (Join-Path $pf 'FireDaemon OpenSSL 3\bin'),
-        (Join-Path $pf 'Git\usr\bin'),
-        (Join-Path $pf 'Git\mingw64\bin')
-    )
-    foreach ($d in $binDirs) { Add-SessionPath $d; if (Test-OpenSsl3) { return } }
+# Ed25519 signature verification runs in-process via this small managed verifier
+# (no OpenSSL, so there is nothing extra to install or patch on every endpoint).
+# It is embedded in this trusted script — independent of the untrusted download,
+# so the agent binary never self-verifies. The implementation is cross-checked
+# against Go's crypto/ed25519 in CI; the startup self-test below fails the install
+# closed if the verifier ever accepts a bad or rejects a good signature.
+$edCs = @'
+using System;
+using System.Numerics;
+using System.Security.Cryptography;
 
-    if (Get-Command choco -ErrorAction SilentlyContinue) {
-        try { & choco install openssl --no-progress -y | Out-Null } catch { }
-        Sync-MachinePath; foreach ($d in $binDirs) { Add-SessionPath $d }
-        if (Test-OpenSsl3) { return }
+public static class RmmEd25519 {
+    static readonly BigInteger P = BigInteger.Pow(2, 255) - 19;
+    static readonly BigInteger L = BigInteger.Pow(2, 252) + BigInteger.Parse("27742317777372353535851937790883648493");
+    static BigInteger Mod(BigInteger a) { BigInteger r = a % P; if (r.Sign < 0) r += P; return r; }
+    static BigInteger ModL(BigInteger a) { BigInteger r = a % L; if (r.Sign < 0) r += L; return r; }
+    static BigInteger Inv(BigInteger x) { return BigInteger.ModPow(Mod(x), P - 2, P); }
+    static readonly BigInteger D = Mod(-121665 * Inv(121666));
+    static readonly BigInteger I = BigInteger.ModPow(BigInteger.Parse("2"), (P - 1) / 4, P);
+    static readonly BigInteger By = Mod(4 * Inv(5));
+    static readonly BigInteger Bx = RecoverX(By, 0).Value;
+    static readonly BigInteger[] B = new BigInteger[] { Bx, By, BigInteger.One, Mod(Bx * By) };
+
+    static BigInteger? RecoverX(BigInteger y, int sign) {
+        if (y >= P) return null;
+        BigInteger y2 = Mod(y * y);
+        BigInteger x2 = Mod((y2 - 1) * Inv(Mod(D * y2 + 1)));
+        if (x2 == 0) { if (sign != 0) return null; return BigInteger.Zero; }
+        BigInteger x = BigInteger.ModPow(x2, (P + 3) / 8, P);
+        if (Mod(x * x - x2) != 0) x = Mod(x * I);
+        if (Mod(x * x - x2) != 0) return null;
+        if (((int)(x & 1)) != sign) x = P - x;
+        return x;
     }
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        foreach ($id in @('FireDaemon.OpenSSL', 'ShiningLight.OpenSSL.Light')) {
-            try {
-                & winget install --id $id -e --silent --accept-source-agreements --accept-package-agreements | Out-Null
-            } catch { continue }
-            Sync-MachinePath; foreach ($d in $binDirs) { Add-SessionPath $d }
-            if (Test-OpenSsl3) { return }
+    static BigInteger[] Add(BigInteger[] p1, BigInteger[] p2) {
+        BigInteger a = Mod((p1[1] - p1[0]) * (p2[1] - p2[0]));
+        BigInteger b = Mod((p1[1] + p1[0]) * (p2[1] + p2[0]));
+        BigInteger c = Mod(p1[3] * 2 * D * p2[3]);
+        BigInteger dd = Mod(p1[2] * 2 * p2[2]);
+        BigInteger e = b - a, f = dd - c, g = dd + c, h = b + a;
+        return new BigInteger[] { Mod(e * f), Mod(g * h), Mod(f * g), Mod(e * h) };
+    }
+    static BigInteger[] Mul(BigInteger s, BigInteger[] pt) {
+        BigInteger[] q = new BigInteger[] { BigInteger.Zero, BigInteger.One, BigInteger.One, BigInteger.Zero };
+        BigInteger[] p = pt;
+        while (s > 0) {
+            if ((s & 1) == 1) q = Add(q, p);
+            p = Add(p, p);
+            s >>= 1;
         }
+        return q;
     }
-    # MSI fallback (works under SYSTEM). Sources, in order of preference:
-    #   1. -OpenSslMsiUrl        explicit override / internal mirror
-    #   2. $Server/dl/openssl3-win64.msi   durable, same trusted origin as this
-    #      script — drop an OpenSSL 3 MSI at deploy/public/openssl3-win64.msi to
-    #      enable it; never rots and works offline/under SYSTEM
-    #   3. a public URL          convenience only; the pinned version eventually
-    #      disappears upstream, so treat it as a last resort
-    # When -OpenSslMsiSha256 is set the download is integrity-checked (Get-FileHash,
-    # no openssl needed) before msiexec runs, closing the MSI supply-chain gap.
-    $urls = @()
-    if ($OpenSslMsiUrl) { $urls += $OpenSslMsiUrl }
-    $urls += "$Server/dl/openssl3-win64.msi"
-    $urls += 'https://slproweb.com/download/Win64OpenSSL_Light-3_5_4.msi'
-    foreach ($u in $urls) {
-        try {
-            $msi = Join-Path $Env:TEMP ('openssl-' + [Guid]::NewGuid().ToString('N') + '.msi')
-            $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $msi
-            $ProgressPreference = $prev
-            if ($OpenSslMsiSha256) {
-                $got = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
-                if ($got -ne $OpenSslMsiSha256.ToLowerInvariant()) {
-                    Remove-Item $msi -Force -ErrorAction SilentlyContinue
-                    throw "OpenSSL MSI SHA-256 mismatch for $u (expected $OpenSslMsiSha256, got $got)"
-                }
-            }
-            Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait
-            Remove-Item $msi -Force -ErrorAction SilentlyContinue
-            Sync-MachinePath; foreach ($d in $binDirs) { Add-SessionPath $d }
-            if (Test-OpenSsl3) { return }
-        } catch { continue }
+    static byte[] To32LE(BigInteger n) {
+        byte[] a = n.ToByteArray();
+        byte[] r = new byte[32];
+        int len = Math.Min(a.Length, 32);
+        Array.Copy(a, r, len);
+        return r;
     }
+    static BigInteger IntLE(byte[] b) {
+        byte[] a = new byte[b.Length + 1];
+        Array.Copy(b, a, b.Length);
+        return new BigInteger(a);
+    }
+    static byte[] Encode(BigInteger[] pt) {
+        BigInteger zi = Inv(pt[2]);
+        BigInteger x = Mod(pt[0] * zi);
+        BigInteger y = Mod(pt[1] * zi);
+        byte[] enc = To32LE(y);
+        enc[31] |= (byte)(((int)(x & 1)) << 7);
+        return enc;
+    }
+    static bool CtEquals(byte[] a, byte[] b) {
+        if (a.Length != b.Length) return false;
+        int diff = 0;
+        for (int i = 0; i < a.Length; i++) diff |= a[i] ^ b[i];
+        return diff == 0;
+    }
+    public static bool Verify(byte[] pub, byte[] msg, byte[] sig) {
+        if (pub == null || pub.Length != 32) return false;
+        if (sig == null || sig.Length != 64) return false;
+        byte[] pk = (byte[])pub.Clone();
+        int aSign = (pk[31] >> 7) & 1;
+        pk[31] &= 0x7f;
+        BigInteger ay = IntLE(pk);
+        BigInteger? ax = RecoverX(ay, aSign);
+        if (ax == null) return false;
+        BigInteger[] A = new BigInteger[] { ax.Value, ay, BigInteger.One, Mod(ax.Value * ay) };
 
-    throw ('OpenSSL 3.x is required for Ed25519 signature verification and automatic ' +
-        'installation failed. Install it (e.g. "winget install FireDaemon.OpenSSL"), host an ' +
-        'OpenSSL 3 MSI at <server>/dl/openssl3-win64.msi, or pass -OpenSslMsiUrl, then re-run.')
+        byte[] Rraw = new byte[32]; Array.Copy(sig, 0, Rraw, 0, 32);
+        byte[] Sraw = new byte[32]; Array.Copy(sig, 32, Sraw, 0, 32);
+        BigInteger S = IntLE(Sraw);
+        if (S >= L) return false;
+
+        byte[] hin = new byte[64 + msg.Length];
+        Array.Copy(Rraw, 0, hin, 0, 32);
+        Array.Copy(pub, 0, hin, 32, 32);
+        Array.Copy(msg, 0, hin, 64, msg.Length);
+        byte[] hh;
+        using (var sha = SHA512.Create()) hh = sha.ComputeHash(hin);
+        BigInteger k = ModL(IntLE(hh));
+
+        BigInteger[] sB = Mul(S, B);
+        BigInteger[] kA = Mul(k, A);
+        BigInteger[] negkA = new BigInteger[] { Mod(-kA[0]), kA[1], kA[2], Mod(-kA[3]) };
+        BigInteger[] Rcheck = Add(sB, negkA);
+        return CtEquals(Encode(Rcheck), Rraw);
+    }
 }
-Install-OpenSsl3
+'@
+$edArgs = @{ TypeDefinition = $edCs; Language = 'CSharp' }
+if ($PSVersionTable.PSEdition -ne 'Core') {
+    # Windows PowerShell 5.1 (.NET Framework) must be told to reference System.Numerics;
+    # PowerShell 7 (.NET) references BigInteger by default.
+    Add-Type -AssemblyName System.Numerics
+    $edArgs['ReferencedAssemblies'] = @('System.Numerics')
+}
+Add-Type @edArgs
+
+function ConvertFrom-HexString([string]$h) {
+    $b = New-Object byte[] ($h.Length / 2)
+    for ($i = 0; $i -lt $b.Length; $i++) { $b[$i] = [Convert]::ToByte($h.Substring($i * 2, 2), 16) }
+    return , $b
+}
+# Fail-closed self-test: RFC 8032 test vector 1 (empty message) must verify, and a
+# single-bit-flipped copy must be rejected. Guards against a broken verifier.
+$stPub = ConvertFrom-HexString 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'
+$stSig = ConvertFrom-HexString 'e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b'
+$stMsg = New-Object byte[] 0
+if (-not [RmmEd25519]::Verify($stPub, $stMsg, $stSig)) {
+    throw 'Ed25519 self-test failed: a valid RFC 8032 signature was rejected. Aborting for safety.'
+}
+$stBad = [byte[]]$stSig.Clone(); $stBad[0] = $stBad[0] -bxor 1
+if ([RmmEd25519]::Verify($stPub, $stMsg, $stBad)) {
+    throw 'Ed25519 self-test failed: a tampered signature was accepted. Aborting for safety.'
+}
 
 # -UpdatePublicKey may carry several trusted keys separated by commas, semicolons
 # or whitespace. During a key rotation the operator pins the new key alongside the
@@ -203,21 +248,23 @@ function ConvertTo-ServiceCommand {
     return $quoted -join ' '
 }
 
+function Get-Sha256Bytes([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fs = [IO.File]::OpenRead($Path)
+        try { return $sha.ComputeHash($fs) } finally { $fs.Dispose() }
+    } finally { $sha.Dispose() }
+}
 function Test-Ed25519AnyKey {
     param(
-        [Parameter(Mandatory)][string]$DigestPath,
-        [Parameter(Mandatory)][string]$SignaturePath,
-        [Parameter(Mandatory)][string[]]$Keys,
-        [Parameter(Mandatory)][string]$WorkDir
+        [Parameter(Mandatory)][byte[]]$Digest,
+        [Parameter(Mandatory)][byte[]]$Signature,
+        [Parameter(Mandatory)][string[]]$Keys
     )
-    $spkiPrefix = [byte[]](0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00)
-    $derPath = Join-Path $WorkDir 'verify-public.der'
     foreach ($k in $Keys) {
         try { $rawKey = [Convert]::FromBase64String($k) } catch { throw 'Update public key is not valid base64' }
         if ($rawKey.Length -ne 32) { throw 'Update public key must contain 32 bytes' }
-        [IO.File]::WriteAllBytes($derPath, $spkiPrefix + $rawKey)
-        & openssl pkeyutl -verify -pubin -inkey $derPath -keyform DER -rawin -in $DigestPath -sigfile $SignaturePath | Out-Null
-        if ($LASTEXITCODE -eq 0) { return $true }
+        if ([RmmEd25519]::Verify($rawKey, $Digest, $Signature)) { return $true }
     }
     return $false
 }
@@ -259,11 +306,8 @@ try {
             throw 'Signature is not valid base64'
         }
         if ($rawSignature.Length -ne 64) { throw 'Ed25519 signature must contain 64 bytes' }
-        [IO.File]::WriteAllBytes((Join-Path $TempDir 'signature.bin'), $rawSignature)
-        & openssl dgst -sha256 -binary -out (Join-Path $TempDir 'manifest.digest') $Manifest
-        if ($LASTEXITCODE -ne 0) { throw 'Could not hash checksum manifest' }
-        if (-not (Test-Ed25519AnyKey -DigestPath (Join-Path $TempDir 'manifest.digest') `
-                -SignaturePath (Join-Path $TempDir 'signature.bin') -Keys $publicKeys -WorkDir $TempDir)) {
+        $manifestDigest = Get-Sha256Bytes $Manifest
+        if (-not (Test-Ed25519AnyKey -Digest $manifestDigest -Signature $rawSignature -Keys $publicKeys)) {
             throw 'Ed25519 manifest signature verification failed (no pinned key matched)'
         }
         Invoke-WebRequest -UseBasicParsing -Uri "$Server/dl/${Bin}.sig" -OutFile $ArtifactSignatureText
@@ -277,11 +321,8 @@ try {
             throw 'Artifact signature is not valid base64'
         }
         if ($rawArtifactSignature.Length -ne 64) { throw 'Ed25519 artifact signature must contain 64 bytes' }
-        [IO.File]::WriteAllBytes((Join-Path $TempDir 'artifact-signature.bin'), $rawArtifactSignature)
-        & openssl dgst -sha256 -binary -out (Join-Path $TempDir 'artifact.digest') $Candidate
-        if ($LASTEXITCODE -ne 0) { throw 'Could not hash agent artifact' }
-        if (-not (Test-Ed25519AnyKey -DigestPath (Join-Path $TempDir 'artifact.digest') `
-                -SignaturePath (Join-Path $TempDir 'artifact-signature.bin') -Keys $publicKeys -WorkDir $TempDir)) {
+        $artifactDigest = Get-Sha256Bytes $Candidate
+        if (-not (Test-Ed25519AnyKey -Digest $artifactDigest -Signature $rawArtifactSignature -Keys $publicKeys)) {
             throw 'Ed25519 artifact signature verification failed (no pinned key matched)'
         }
     } else {

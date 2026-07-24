@@ -81,37 +81,24 @@ jobs:
       - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Install and verify OpenSSL 3 prerequisite
+      - name: Parse installer
         shell: pwsh
         run: |
-          choco install openssl --no-progress -y
-          $openssl = Get-ChildItem 'C:\Program Files\OpenSSL*\bin\openssl.exe' | Select-Object -First 1
-          if (-not $openssl) { throw 'OpenSSL installation not found' }
-          $version = & $openssl.FullName version
-          if ($version -notmatch '^OpenSSL ([3-9]|[1-9][0-9])\.') { throw "OpenSSL 3.x or newer required, got: $version" }
           $tokens = $null; $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count) { $errors | Format-List; exit 1 }
-      - name: Exercise Ed25519 verification
+      - name: Build rmm-sign
         shell: pwsh
-        run: |
-          $openssl = Get-ChildItem 'C:\Program Files\OpenSSL*\bin\openssl.exe' | Select-Object -First 1
-          go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
-          $keys = & .\rmm-sign.exe -gen-key
-          $public = ($keys | Where-Object { $_ -like 'RMM_UPDATE_PUBLIC_KEY=*' }) -replace '^RMM_UPDATE_PUBLIC_KEY=', ''
-          $env:RMM_SIGNING_KEY = (($keys | Where-Object { $_ -like 'RMM_SIGNING_KEY=*' }) -replace '^RMM_SIGNING_KEY=', '')
-          [IO.File]::WriteAllBytes('artifact.bin', [byte[]](1..128))
-          $hash = (Get-FileHash -Algorithm SHA256 artifact.bin).Hash.ToLowerInvariant()
-          "$hash  artifact.bin" | Set-Content -Encoding ascii -NoNewline SHA256SUMS
-          & .\rmm-sign.exe SHA256SUMS
-          $fields = ((Get-Content -Raw SHA256SUMS.sig).Trim() -split '\s+')
-          $prefix = [byte[]](0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00)
-          [IO.File]::WriteAllBytes('public.der', $prefix + [Convert]::FromBase64String($public))
-          [IO.File]::WriteAllBytes('signature.bin', [Convert]::FromBase64String($fields[1]))
-          & $openssl.FullName dgst -sha256 -binary -out manifest.digest SHA256SUMS
-          & $openssl.FullName pkeyutl -verify -pubin -inkey public.der -keyform DER -rawin -in manifest.digest -sigfile signature.bin
-          if ($LASTEXITCODE -ne 0) { throw 'Windows Ed25519 verification failed' }
+        run: go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
+      # The installer verifies Ed25519 in-process (no OpenSSL); cross-check that
+      # embedded verifier against the real signer on both PowerShell editions.
+      - name: Exercise embedded Ed25519 verifier (PowerShell 7)
+        shell: pwsh
+        run: ./scripts/test-installer-verifier.ps1 -SignExe ./rmm-sign.exe
+      - name: Exercise embedded Ed25519 verifier (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./scripts/test-installer-verifier.ps1 -SignExe ./rmm-sign.exe
 
   installer-macos:
     name: macOS installer gate

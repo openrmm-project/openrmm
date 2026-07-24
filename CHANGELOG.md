@@ -4,6 +4,27 @@ All notable changes to OpenRMM are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions track the agent/release
 tag.
 
+## [0.4.8] - 2026-07-24
+
+### Changed
+- **Windows installer no longer depends on OpenSSL.** `install.ps1` now verifies
+  Ed25519 signatures with a small managed verifier embedded in the script and
+  compiled in-process via `Add-Type` (SHA-256 uses .NET directly). This removes
+  the per-endpoint OpenSSL dependency introduced in 0.4.7 — nothing extra to
+  install or keep patched on the fleet — while preserving the security property
+  that verification is done by code independent of the untrusted download (the
+  agent binary never self-verifies). The `-OpenSslMsiUrl`/`-OpenSslMsiSha256`
+  parameters and the OpenSSL auto-provisioning are removed. Linux/macOS keep
+  using the system `openssl`, which is always present there.
+
+### Security / Tests
+- The embedded verifier is cross-checked against Go's `crypto/ed25519` in CI on
+  both PowerShell editions (7 and Windows PowerShell 5.1) — genuine signatures
+  must verify, tampered ones (bad signature, message, key, or non-canonical `S`)
+  must be rejected (`scripts/test-installer-verifier.ps1`). A fail-closed startup
+  self-test using an RFC 8032 vector aborts the install if the verifier ever
+  misbehaves.
+
 ## [0.4.7] - 2026-07-24
 
 ### Changed

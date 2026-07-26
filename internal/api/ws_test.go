@@ -3,10 +3,40 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/gorilla/websocket"
 	"github.com/p1ngu/rmm/internal/config"
 )
+
+// A viewer offers the ticket and auth token as extra subprotocols. If the 101
+// response echoes none of them the browser fails the connection (RFC 6455 4.1)
+// and the console loops on "reconnecting", so the echo is part of the contract.
+func TestRelayUpgraderEchoesViewerSubprotocol(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := relayUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	dialer := websocket.Dialer{Subprotocols: []string{relaySubprotocol, "rmm-ticket.secret", "rmm-auth.token"}}
+	conn, resp, err := dialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if got := resp.Header.Get("Sec-WebSocket-Protocol"); got != relaySubprotocol {
+		t.Fatalf("Sec-WebSocket-Protocol = %q, want %q", got, relaySubprotocol)
+	}
+	if got := conn.Subprotocol(); got != relaySubprotocol {
+		t.Fatalf("negotiated subprotocol = %q, want %q", got, relaySubprotocol)
+	}
+}
 
 func TestRelayRejectsViewerTicketInURL(t *testing.T) {
 	s := &Server{cfg: &config.Config{}}

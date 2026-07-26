@@ -26,6 +26,22 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
+// relaySubprotocol is the constant the browser offers first; the ticket and auth
+// token ride alongside it as extra subprotocol entries (relayTicket and
+// relayViewerIdentity read those). RFC 6455 makes the client fail the connection
+// when it offered subprotocols and the 101 response echoes none, so the relay
+// upgrader has to select this one explicitly — a nil Subprotocols list would
+// leave the header off and every viewer would close with 1006 right after
+// upgrading.
+const relaySubprotocol = "rmm-v1"
+
+var relayUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	CheckOrigin:     func(_ *http.Request) bool { return true },
+	Subprotocols:    []string{relaySubprotocol},
+}
+
 // Per-message read limits cap memory a single peer can force the server to
 // allocate (a malicious/compromised agent or relay peer could otherwise stream
 // an unbounded frame). Agent frames are JSON envelopes (job results cap stdout/
@@ -368,7 +384,7 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid, expired, or already-used session ticket", http.StatusForbidden)
 		return
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := relayUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
 		return

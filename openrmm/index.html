@@ -2,7 +2,14 @@
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+  <!-- style-src-elem needs 'unsafe-inline' for the remote Terminal: xterm.js
+       injects <style> elements at runtime (cell dimensions, theme colors,
+       selection) and rewrites their textContent as the terminal resizes, so the
+       content is dynamic — hashes cannot cover it and xterm exposes no nonce
+       API. Without it the terminal rows render with no dimensions and the
+       viewer is a blank black screen. script-src stays 'self' with no inline
+       escape hatch, which is the directive that actually gates code execution. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/png" href="__OPENRMM_BASE_PATH__assets/logo_open_rmm_edit3.png" />
   <title>OpenRMM · Console</title>

@@ -6,7 +6,7 @@ require (
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24
 	github.com/go-chi/chi/v5 v5.3.1
-	github.com/go-chi/httprate v0.15.0
+	github.com/go-chi/httprate v0.16.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0

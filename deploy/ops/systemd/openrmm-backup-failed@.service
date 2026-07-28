@@ -1,0 +1,8 @@
+[Unit]
+Description=Report a failed OpenRMM backup (%i)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/openrmm
+EnvironmentFile=-/opt/openrmm/deploy/.env
+ExecStart=/opt/openrmm/deploy/ops/notify-failure.sh %i

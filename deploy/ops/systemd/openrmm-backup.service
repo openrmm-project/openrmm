@@ -1,0 +1,26 @@
+[Unit]
+Description=OpenRMM database backup
+Documentation=file:///opt/openrmm/deploy/README-production.md
+# A backup that fails silently is worse than no backup: the operator believes
+# they are covered. OnFailure fires the notifier for every failure mode the
+# timer can produce (non-zero exit, timeout, killed).
+OnFailure=openrmm-backup-failed@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/openrmm
+ExecStart=/opt/openrmm/deploy/ops/backup.sh
+# Prove the archive is restorable now, not on the day it is needed. This runs a
+# full restore into a scratch database (VERIFY_FULL_RESTORE=true) and drops it.
+ExecStartPost=/bin/sh -c '/opt/openrmm/deploy/ops/verify-backup.sh "$(ls -1t /var/backups/openrmm/rmm-*.dump* 2>/dev/null | grep -v ".sha256$" | head -n1)"'
+TimeoutStartSec=3600
+
+# The dump and the age identity are the crown jewels; keep the unit boring.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/backups/openrmm
+
+[Install]
+WantedBy=multi-user.target

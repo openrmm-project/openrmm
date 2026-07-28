@@ -1,0 +1,18 @@
+[Unit]
+Description=Ship OpenRMM WAL archive offsite and prune it
+Documentation=file:///opt/openrmm/deploy/README-production.md
+OnFailure=openrmm-backup-failed@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/openrmm
+ExecStart=/opt/openrmm/deploy/ops/ship-wal.sh
+TimeoutStartSec=1800
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/backups/openrmm
+
+[Install]
+WantedBy=multi-user.target

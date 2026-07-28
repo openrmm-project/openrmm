@@ -26,8 +26,38 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-rmm}
     secrets:
       - postgres_password
+    # Continuous WAL archiving is what turns "we lose up to a day" into "we lose
+    # up to POSTGRES_ARCHIVE_TIMEOUT". archive_timeout forces a segment switch on
+    # an idle database — without it a low-traffic install can sit on an unarchived
+    # segment for hours and the real RPO is nothing like the configured one.
+    # A base backup (deploy/ops/basebackup.sh) is required to replay these; the
+    # logical dump from backup.sh cannot consume WAL.
+    # List form, not a folded block: "%p %f" must reach postgres as part of one
+    # argv entry. A folded scalar splits on whitespace and postgres then sees two
+    # stray arguments and refuses to start.
+    command:
+      - postgres
+      # The image's generated pg_hba only allows replication from localhost, so
+      # a warm standby is rejected until this explicit file is in play.
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - archive_mode=on
+      - -c
+      - "archive_command=/usr/local/bin/archive-wal.sh %p %f"
+      - -c
+      - archive_timeout=${POSTGRES_ARCHIVE_TIMEOUT:-300}
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=${POSTGRES_MAX_WAL_SENDERS:-5}
+      - -c
+      - wal_keep_size=${POSTGRES_WAL_KEEP_SIZE:-512MB}
     volumes:
       - rmm_pgdata:/var/lib/postgresql/data
+      - rmm_pgwal:/var/lib/postgresql/wal-archive
+      - ./postgres/archive-wal.sh:/usr/local/bin/archive-wal.sh:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,mode=1777
       - /var/run/postgresql:rw,nosuid,nodev,uid=70,gid=70,mode=0770
@@ -151,6 +181,10 @@ services:
 
 volumes:
   rmm_pgdata:
+  # Landing zone for archived WAL. deploy/ops/ship-wal.sh copies it offsite and
+  # prunes what the newest base backup no longer needs — the archive grows
+  # without bound otherwise.
+  rmm_pgwal:
 
 networks:
   db:

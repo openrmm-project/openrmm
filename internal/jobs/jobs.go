@@ -34,15 +34,31 @@ type Sender interface {
 	Send(agentID string, msg []byte) bool
 }
 
+// Notifier queues an operator email for a failed job. Declared here as a narrow
+// consumer-side interface for the same reason as Store: the job service should
+// not grow a dependency on the mail stack to report one event.
+type Notifier interface {
+	QueueJobFailed(ctx context.Context, agentID, hostname, jobID, description string)
+}
+
 // Service coordinates jobs across the store and the live-agent hub.
 type Service struct {
-	store Store
-	hub   Sender
+	store    Store
+	hub      Sender
+	notifier Notifier
 }
 
 // New builds a job service.
 func New(s Store, h Sender) *Service {
 	return &Service{store: s, hub: h}
+}
+
+// WithNotifier enables email on job failure. Optional: with no notifier the
+// service behaves exactly as before, so mail is additive to job handling rather
+// than something the lifecycle depends on.
+func (s *Service) WithNotifier(n Notifier) *Service {
+	s.notifier = n
+	return s
 }
 
 // Propose creates a job. If requireApproval is true the job lands in
@@ -362,7 +378,13 @@ func (s *Service) OnResult(ctx context.Context, agentID string, res protocol.Job
 	if err := s.store.SetJobResult(ctx, res.JobID, status, res.ExitCode, res.Stdout, res.Stderr); err != nil {
 		return err
 	}
-	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": s.hostname(ctx, j.AgentID), "exit_code": res.ExitCode, "success": res.Success})
+	host := s.hostname(ctx, j.AgentID)
+	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success})
+	// The idempotency guard above means a retried result cannot mail twice: a job
+	// that is already terminal returned before reaching this point.
+	if status == models.JobFailed && s.notifier != nil {
+		s.notifier.QueueJobFailed(ctx, j.AgentID, host, j.ID, j.Description)
+	}
 	return nil
 }
 

@@ -57,9 +57,12 @@ const (
 
 // User is a console operator.
 type User struct {
-	ID          string    `json:"id"`
-	Username    string    `json:"username"`
-	Role        string    `json:"role"`
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	// Email is optional: console-only accounts stay valid without one. It doubles
+	// as the notification address, so a user without it simply receives no mail.
+	Email       string    `json:"email"`
 	Permissions []string  `json:"permissions,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	TOTPEnabled bool      `json:"totp_enabled"`
@@ -173,10 +176,25 @@ type Task struct {
 	ScheduleKind string    `json:"schedule_kind"`
 	IntervalSec  int       `json:"interval_sec"`
 	RunAtMinute  int       `json:"run_at_minute"`
-	DaysOfWeek   int       `json:"days_of_week"`    // weekly: bitmask, bit N = time.Weekday N (0=Sun)
-	RunAtMinutes []int     `json:"run_at_minutes"`  // weekly: times of day, minutes since midnight (UTC)
+	DaysOfWeek   int       `json:"days_of_week"`   // weekly: bitmask, bit N = time.Weekday N (0=Sun)
+	RunAtMinutes []int     `json:"run_at_minutes"` // weekly: times of day, minutes since midnight (UTC)
 	Enabled      bool      `json:"enabled"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Notification is one queued outbound message. It is a row rather than an
+// in-process job so a server restart — which tends to happen exactly when
+// things are going wrong — does not drop the alert nobody has read yet.
+type Notification struct {
+	ID        string  `json:"id"`
+	EventType string  `json:"event_type"`
+	AlertID   *string `json:"alert_id,omitempty"`
+	AgentID   *string `json:"agent_id,omitempty"`
+	UserID    *string `json:"user_id,omitempty"`
+	Recipient string  `json:"recipient"`
+	Subject   string  `json:"subject"`
+	Body      string  `json:"body"`
+	Attempts  int     `json:"attempts"`
 }
 
 // Alert is a notification raised by a failing check/task or an offline agent.

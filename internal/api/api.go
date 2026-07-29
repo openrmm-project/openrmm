@@ -178,6 +178,10 @@ func (s *Server) Router() http.Handler {
 		r.Post("/me/2fa/enable", s.enable2FA)
 		r.Post("/me/2fa/disable", s.disable2FA)
 		r.Post("/me/2fa/recovery-codes", s.regenRecoveryCodes)
+		// Notification preferences are self-service: the address is where the
+		// caller's own alerts go, and it grants no visibility their scope lacks.
+		r.Get("/me/notifications", s.getMyNotifications)
+		r.Put("/me/notifications", s.updateMyNotifications)
 		r.Get("/config", s.getConfig)
 
 		r.With(s.requirePermission(models.PermClientsView)).Get("/clients", s.listClients)
@@ -276,6 +280,9 @@ func (s *Server) Router() http.Handler {
 
 		r.With(s.requirePermission(models.PermAuditView)).Get("/audit", s.listAudit)
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config", s.updateConfig)
+		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp", s.getSMTPConfig)
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp", s.updateSMTPConfig)
+		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/test", s.testSMTPConfig)
 		r.With(s.requirePermission(models.PermEnrollmentManage)).Post("/enroll-tokens", s.createEnrollToken)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/api-tokens", s.listAPITokens)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/api-tokens", s.createAPIToken)
@@ -283,6 +290,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users", s.listUsers)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users", s.createUser)
 		r.With(s.requirePermission(models.PermUsersManage)).Patch("/users/{id}", s.updateUser)
+		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/email", s.setUserEmail)
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users/{id}/scopes", s.getUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)

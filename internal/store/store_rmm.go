@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/p1ngu/rmm/internal/models"
 )
@@ -222,8 +224,9 @@ func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
 // GetUserByID returns a user by id (no password hash).
 func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var u models.User
-	err := s.pool.QueryRow(ctx, `SELECT id, username, role, created_at, totp_enabled FROM users WHERE id=$1`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled)
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -235,7 +238,8 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error
 
 // ListUsers returns all users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, username, role, created_at, totp_enabled FROM users ORDER BY username`)
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +247,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -255,10 +259,38 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 func (s *Store) UpdateUserRole(ctx context.Context, id, role string) (*models.User, error) {
 	var u models.User
 	err := s.pool.QueryRow(ctx,
-		`UPDATE users SET role=$2 WHERE id=$1 RETURNING id, username, role, created_at, totp_enabled`,
-		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.CreatedAt, &u.TOTPEnabled)
+		`UPDATE users SET role=$2 WHERE id=$1
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled`,
+		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// UpdateUserEmail sets or clears a user's notification address.
+//
+// An empty address is stored as NULL rather than an empty string: the uniqueness
+// index is partial, so several address-less accounts must not collide.
+func (s *Store) UpdateUserEmail(ctx context.Context, id, email string) (*models.User, error) {
+	var arg *string
+	if e := strings.ToLower(strings.TrimSpace(email)); e != "" {
+		arg = &e
+	}
+	var u models.User
+	err := s.pool.QueryRow(ctx,
+		`UPDATE users SET email=$2 WHERE id=$1
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled`,
+		id, arg).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return nil, ErrConflict
 	}
 	if err != nil {
 		return nil, err
@@ -1328,24 +1360,45 @@ func (s *Store) LastTaskRunTime(ctx context.Context, taskID, agentID string) (ti
 
 // ===================== Alerts =====================
 
-// RaiseAlert opens an alert if one is not already open for this source.
-func (s *Store) RaiseAlert(ctx context.Context, agentID *string, sourceType string, sourceID *string, severity, message string) error {
-	_, err := s.pool.Exec(ctx,
+// RaiseAlert opens an alert if one is not already open for this source, and
+// reports whether this call is the one that opened it.
+//
+// The boolean is what makes notifications sane: the ON CONFLICT means a check
+// failing every 30s inserts exactly once, so "inserted" marks the healthy ->
+// failing transition. Notifying on the row count instead of on every evaluation
+// is the difference between one email per incident and one every half minute.
+func (s *Store) RaiseAlert(ctx context.Context, agentID *string, sourceType string, sourceID *string, severity, message string) (opened bool, alertID string, err error) {
+	id := newID()
+	err = s.pool.QueryRow(ctx,
 		`INSERT INTO alerts (id, agent_id, source_type, source_id, severity, message)
 		 VALUES ($1,$2,$3,$4,$5,$6)
-		 ON CONFLICT (source_type, source_id, agent_id) WHERE status <> 'resolved' DO NOTHING`,
-		newID(), agentID, sourceType, sourceID, severity, message)
-	return err
+		 ON CONFLICT (source_type, source_id, agent_id) WHERE status <> 'resolved' DO NOTHING
+		 RETURNING id`,
+		id, agentID, sourceType, sourceID, severity, message).Scan(&alertID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Already open: not an error, just not a transition.
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	return true, alertID, nil
 }
 
-// ResolveAlertsForSource closes any open alert for a source.
-func (s *Store) ResolveAlertsForSource(ctx context.Context, sourceType string, sourceID *string, agentID *string) error {
-	_, err := s.pool.Exec(ctx,
+// ResolveAlertsForSource closes any open alert for a source and reports how many
+// it closed. A non-zero count is the failing -> healthy transition, which is what
+// a recovery email should be tied to — on-call cares more about "it is back" than
+// about the original failure.
+func (s *Store) ResolveAlertsForSource(ctx context.Context, sourceType string, sourceID *string, agentID *string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE alerts SET status='resolved', resolved_at=now()
 		 WHERE status<>'resolved' AND source_type=$1
 		   AND source_id IS NOT DISTINCT FROM $2 AND agent_id IS NOT DISTINCT FROM $3`,
 		sourceType, sourceID, agentID)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ListAlerts returns alerts, optionally filtered by status.

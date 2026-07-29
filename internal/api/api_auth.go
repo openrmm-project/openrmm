@@ -308,10 +308,17 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		Username string             `json:"username"`
 		Password string             `json:"password"`
 		Role     string             `json:"role"`
+		Email    string             `json:"email"`  // optional: notification address
 		Scopes   []models.UserScope `json:"scopes"` // empty = full access
 	}
 	if err := decode(r, &in); err != nil || in.Username == "" || in.Password == "" {
 		writeErr(w, http.StatusBadRequest, "username and password required")
+		return
+	}
+	// Checked before the account exists so a typo fails the whole request rather
+	// than leaving a new user created but unreachable by alerts.
+	if in.Email != "" && !validEmail(in.Email) {
+		writeErr(w, http.StatusBadRequest, "invalid email address")
 		return
 	}
 	if !validPassword(in.Password, in.Username) {
@@ -339,6 +346,16 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if in.Email != "" {
+		updated, err := s.setEmail(r, u.ID, in.Email)
+		if err != nil {
+			// The account is already created; report the address failure rather
+			// than a misleading success, and let the operator set it separately.
+			writeErr(w, emailStatus(err), emailMessage(err))
+			return
+		}
+		u = updated
 	}
 	writeJSON(w, http.StatusCreated, u)
 }

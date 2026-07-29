@@ -41,4 +41,9 @@ jobs:
       - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:
           go-version: '1.25'
-      - run: go test ./internal/store -run 'Test(CanonicalSchemaCopy|MigrationsPostgres)$' -count=1
+      # The whole package, not an allowlist of test names: every DB-backed test
+      # in internal/store skips silently without RMM_TEST_DATABASE_URL, so a
+      # named pattern means a new integration test is added, passes locally, and
+      # never runs here again. Postgres is already provisioned above; running the
+      # unit tests alongside it costs nothing.
+      - run: go test ./internal/store -count=1

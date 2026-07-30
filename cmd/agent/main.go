@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"os/exec"
@@ -184,24 +185,65 @@ func main() {
 	}
 }
 
+// Reconnect pacing. A fixed delay makes the whole fleet retry in lockstep after
+// a server outage — every endpoint failed at the same instant, so every endpoint
+// comes back at the same instant, hammering the server exactly when it is least
+// able to cope. Backing off bounds the sustained load and the jitter spreads the
+// arrivals; without jitter, backoff alone just synchronises the herd on a longer
+// period.
+const (
+	reconnectBase    = 5 * time.Second
+	reconnectMax     = 60 * time.Second
+	healthySessionAt = 60 * time.Second // a connection this long counts as real
+)
+
+// reconnectDelay grows the wait with consecutive failures, then spreads it over
+// the upper half of the window. Equal jitter rather than full jitter keeps a
+// floor under the delay, so a struggling server is not immediately retried by
+// the unlucky end of the distribution.
+func reconnectDelay(failures int) time.Duration {
+	delay := reconnectBase
+	for i := 0; i < failures && delay < reconnectMax; i++ {
+		delay *= 2
+	}
+	if delay > reconnectMax {
+		delay = reconnectMax
+	}
+	half := delay / 2
+	return half + time.Duration(rand.Int64N(int64(half)+1))
+}
+
 // loop reconnects forever until quit is closed.
 func (a *agent) loop() {
+	failures := 0
 	for {
 		select {
 		case <-a.quit:
 			return
 		default:
 		}
-		if err := a.runOnce(); err != nil {
-			log.Printf("connection ended: %v; retrying in 5s", err)
+		started := time.Now()
+		err := a.runOnce()
+		// A session that lasted resets the backoff: it proves the server is
+		// reachable, so a later drop is a fresh incident rather than a
+		// continuation of the one we were backing off from.
+		if time.Since(started) >= healthySessionAt {
+			failures = 0
+		}
+		if err != nil {
 			if rollbackUnhealthyUpdate() {
 				return
 			}
 		}
+		delay := reconnectDelay(failures)
+		failures++
+		if err != nil {
+			log.Printf("connection ended: %v; retrying in %s", err, delay.Round(time.Millisecond))
+		}
 		select {
 		case <-a.quit:
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(delay):
 		}
 	}
 }

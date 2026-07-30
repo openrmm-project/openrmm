@@ -74,15 +74,21 @@ type Client struct {
 	apiKey  string
 	model   string
 	http    *http.Client
+	breaker breaker
 }
 
 // Update swaps provider settings without rebuilding the server.
+//
+// It also closes the circuit: an operator changing these fields is usually
+// fixing exactly what tripped it, and making them wait out a cooldown to find
+// out whether the fix worked would be its own small outage.
 func (c *Client) Update(baseURL, apiKey, model string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.baseURL = strings.TrimRight(baseURL, "/")
 	c.apiKey = apiKey
 	c.model = model
+	c.breaker.success()
 }
 
 // NewClient builds an AI client. baseURL should include the API version path,
@@ -97,7 +103,16 @@ func NewClient(baseURL, apiKey, model string) *Client {
 }
 
 // Chat performs one completion request.
+//
+// It is guarded by a circuit breaker. Only faults that indicate an unhealthy
+// provider count against it — transport errors (which include the 120s timeout),
+// 5xx, and 429. A 401 or 400 is deterministic and already fails instantly with a
+// message the operator can act on, so tripping on those would replace a useful
+// error with a vague one and gain nothing: there is no pile-up to prevent.
 func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (*Message, error) {
+	if err := c.breaker.allow(time.Now()); err != nil {
+		return nil, err
+	}
 	c.mu.RLock()
 	baseURL, apiKey, model := c.baseURL, c.apiKey, c.model
 	c.mu.RUnlock()
@@ -108,10 +123,12 @@ func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (*M
 		Temperature: 0.2,
 	})
 	if err != nil {
+		c.breaker.abort() // our own encoding bug, not the provider's fault
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
+		c.breaker.abort()
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -120,13 +137,24 @@ func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (*M
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// Covers the timeout, connection refused and DNS failures — the slow and
+		// unreachable cases the breaker exists for.
+		c.breaker.failure(time.Now())
 		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		if unhealthyStatus(resp.StatusCode) {
+			c.breaker.failure(time.Now())
+		} else {
+			c.breaker.abort()
+		}
 		return nil, fmt.Errorf("ai provider returned %d: %s", resp.StatusCode, string(body))
 	}
+	// The provider answered in time, so it is healthy as far as this breaker is
+	// concerned, even if the payload turns out to be unusable below.
+	c.breaker.success()
 	var out chatResponse
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("decode ai response: %w", err)
@@ -138,4 +166,11 @@ func (c *Client) Chat(ctx context.Context, messages []Message, tools []Tool) (*M
 		return nil, fmt.Errorf("ai provider returned no choices")
 	}
 	return &out.Choices[0].Message, nil
+}
+
+// unhealthyStatus reports whether a status means the provider is in trouble
+// rather than the request being wrong. 429 counts: being rate limited is a
+// capacity problem, and hammering through it makes it worse.
+func unhealthyStatus(code int) bool {
+	return code >= 500 || code == http.StatusTooManyRequests
 }

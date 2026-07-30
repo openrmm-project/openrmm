@@ -122,11 +122,56 @@ case-insensitively among users that have one), `notification_subscriptions`
 (one row per user per event type), the `notifications` outbox, and
 `password_resets`.
 
+## Password reset
+
+Reset shares the SMTP **transport** and deliberately not the **outbox**.
+
+Queuing a reset would be wrong three times over. `notifications.body` is stored
+and never pruned, so the link — and therefore a working token — would sit in the
+database forever, defeating the point of storing only the token's hash. The
+worker drains on a 30s cadence with minutes of backoff, long enough that a user
+requests a second link before the first arrives. And `Queue` fans out by device
+scope and subscription: a message with no agent is dropped outright, and a
+`readonly` account, lacking `alerts.view`, could never reset its password.
+
+So `notify.SendPasswordReset` calls the transport directly and persists nothing.
+
+```
+POST /api/auth/password-reset          unauthenticated, rate limited
+POST /api/auth/password-reset/confirm  unauthenticated, rate limited
+```
+
+**Enumeration resistance is the design constraint.** The request endpoint is
+unauthenticated, so any difference between "account exists" and "it doesn't"
+turns it into an oracle for testing an address list. It therefore answers
+`202 Accepted` with one fixed message in every case — unknown address, malformed
+address, SMTP down — and responds *before* doing any work. The lookup, the token
+and the SMTP wait all happen in a detached goroutine, because each takes time
+that varies with whether the account exists and an attacker can measure that.
+Failures go to the log, never to the caller.
+
+Tokens last **one hour**, are single-use, and are stored only as a SHA-256 hash.
+Requesting a new link marks the outstanding one used, so at most one is live per
+account. Redemption is a single `UPDATE … WHERE used_at IS NULL AND expires_at >
+now() RETURNING user_id`, so two concurrent redemptions of the same token
+resolve to exactly one winner rather than a read-then-write race. Expired,
+already-used and never-issued are one indistinguishable answer.
+
+Consuming a link **signs out every session**. Unlike a self-service password
+change there is no caller session to preserve, and whoever prompted the reset may
+be the person already holding a stolen one. The token is consumed before the new
+password is validated: it is single-use either way, so a rejected password cannot
+be used to probe which tokens are live — the user just asks for a new link.
+
+The link is `<RMM_PUBLIC_URL>/?reset=<token>`; the console strips the token from
+the address bar on load so it does not linger in history or leak as a `Referer`.
+A reset link takes precedence over a live session, so an already-signed-in tab
+cannot swallow it.
+
 ## Not implemented yet
 
-`password_resets` exists in the schema but **has no Go code behind it** — there
-is no reset request or confirmation flow. The table stores only a token hash, so
-that a database leak cannot hand out working reset links, exactly like the agent
-enrollment tokens. Bodies are plain text only; there is no HTML alternative and
-no digest/grouping, so a fleet-wide incident sends one message per affected
-device to each in-scope recipient.
+Bodies are plain text only; there is no HTML alternative and no digest/grouping,
+so a fleet-wide incident sends one message per affected device to each in-scope
+recipient. The `notifications` outbox has no retention policy — sent rows
+accumulate, which is survivable because the partial index keeps the worker's
+claim query small, but it will want pruning eventually.

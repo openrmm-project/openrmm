@@ -173,6 +173,30 @@ func (s *Service) QueueJobFailed(ctx context.Context, agentID, hostname, jobID, 
 	})
 }
 
+// SendPasswordReset delivers a reset link directly, deliberately bypassing the
+// outbox that every alert goes through.
+//
+// Three reasons it must not be queued. The outbox persists `body` and is never
+// pruned, so a reset link would sit in the database forever — defeating the
+// point of storing only the token's hash. The worker drains on a 30s cadence
+// with minutes of backoff, long enough that a user requests a second link before
+// the first arrives. And Queue fans out by device scope and subscription, so a
+// message with no agent is dropped outright and a readonly account — which lacks
+// alerts.view — could never reset its password.
+//
+// Callers run this off the request path: it blocks for the SMTP timeout, and the
+// requesting endpoint must not reveal, by how long it takes, whether the address
+// belongs to an account.
+func SendPasswordReset(cfg Config, to, username, resetURL string, ttl time.Duration) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "A password reset was requested for %s.\n\n", username)
+	fmt.Fprintf(&b, "Open this link to choose a new password:\n%s\n\n", resetURL)
+	fmt.Fprintf(&b, "The link expires in %s and can be used once.\n\n", ttl.Round(time.Minute))
+	b.WriteString("If you did not request this, you can ignore this message — ")
+	b.WriteString("your password stays unchanged and the link remains unused.\n")
+	return Send(cfg, Message{To: to, Subject: "[OpenRMM] Reset your password", Body: b.String()})
+}
+
 // AlertResolvedEvent renders the recovery mail, which on-call values more than
 // the original failure notice.
 func AlertResolvedEvent(agentID, hostname, detail, consoleURL string) Event {

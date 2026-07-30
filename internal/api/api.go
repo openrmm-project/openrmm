@@ -114,6 +114,11 @@ func (s *Server) Router() http.Handler {
 	authLimiter := s.rateLimit(authRateLimit)
 	r.With(authLimiter, maxBody).Post("/api/auth/login", s.login)
 	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
+	// Unauthenticated by nature — someone who cannot sign in is the only caller.
+	// Rate limited like login: this endpoint sends mail on demand, so it is both
+	// an enumeration target and a way to use the instance as a mail relay.
+	r.With(authLimiter, maxBody).Post("/api/auth/password-reset", s.requestPasswordReset)
+	r.With(authLimiter, maxBody).Post("/api/auth/password-reset/confirm", s.confirmPasswordReset)
 
 	// MCP OAuth 2.1 flow (register / authorize+consent / token). Public clients +
 	// PKCE; the authorize POST verifies user credentials, so it's rate-limited like

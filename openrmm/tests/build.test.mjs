@@ -17,6 +17,23 @@ test('index is self-contained and CSP does not allow eval or inline script/style
   assert.doesNotMatch(html, /<style\b|\sstyle=/i);
 });
 
+// The terminal renders under the strict CSP only because xterm's runtime <style>
+// elements are mirrored into an adopted CSSStyleSheet, which style-src-elem does
+// not govern. Deleting the shim brings back a blank black terminal, and the
+// tempting "fix" is to add 'unsafe-inline' to style-src-elem — which the CSP test
+// above would then reject. This pins the shim so that loop is never entered.
+test('xterm runtime styles are adopted rather than injected as style elements', async () => {
+  const devices = await readFile(path.join(root, 'src/screens-devices.jsx'), 'utf8');
+  assert.match(devices, /adoptedStyleSheets/);
+  assert.match(devices, /new CSSStyleSheet\(\)/);
+  // The shim has to be installed before the Terminal is constructed; xterm styles
+  // during open(), so installing afterwards would be too late.
+  const shimAt = devices.indexOf('adoptDynamicStyles();');
+  const termAt = devices.indexOf('new window.Terminal(');
+  assert.ok(shimAt > 0 && termAt > 0, 'expected the shim call and the Terminal construction');
+  assert.ok(shimAt < termAt, 'adoptDynamicStyles() must run before new Terminal()');
+});
+
 test('build and remote URLs support an explicit base path and API-derived WebSocket origin', async () => {
   const build = await readFile(path.join(root, 'scripts/build.mjs'), 'utf8');
   const api = await readFile(path.join(root, 'src/mockapi.jsx'), 'utf8');

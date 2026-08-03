@@ -4,6 +4,41 @@ All notable changes to OpenRMM are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions track the agent/release
 tag.
 
+## [Unreleased]
+
+### Added
+
+- **Alerts can leave through their own SMTP transport.** There used to be one
+  mail configuration, so monitoring mail and password resets left the same
+  server under the same sender. **Users & Settings → Email** now has a tab per
+  transport: the account one carries resets, the alerts one carries
+  notifications. Fill in only a From address and alerts go out as `alerts@`
+  through the same relay; fill in a host and they move to a separate relay
+  entirely. Leave it empty and nothing changes, which is what an upgrade does.
+
+  When the alerts profile names its own host, **nothing is inherited** — the
+  account profile's username and password are not carried to a server the
+  operator named separately, and an alerts profile with no host stores no
+  password at all. If the alerts relay fails, alerts retry there and are never
+  rerouted through the account transport: a silent fallback would send mail by a
+  path the operator chose not to use, and hide that the relay is broken. Each
+  tab's **Send test** exercises its own transport.
+
+### Security
+
+- **A user's email address is now administrator-only to change.** It is where a
+  password reset link is delivered, so it is an authentication factor, not a
+  contact detail — and it used to be self-service, which meant a user could
+  redirect their own reset, and anyone with `users.manage` could redirect
+  someone else's and take over an account that had no second factor.
+
+  Setting it now requires the new **`users.email.manage`** permission, granted
+  to `admin` and deliberately not implied by `users.manage`, so a delegated user
+  manager can still create and scope technicians. `PUT /api/me/notifications` no
+  longer accepts an address and rejects an attempt to change one; choosing
+  *which* events you receive stays self-service. `POST /api/users` requires the
+  permission when an address is supplied.
+
 ## [0.4.8] - 2026-07-24
 
 ### Changed

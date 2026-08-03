@@ -49,6 +49,12 @@ const (
 	PermAPITokensManage  = "api_tokens.manage"
 	PermUsersManage      = "users.manage"
 	PermRolesManage      = "roles.manage"
+	// PermUsersEmailManage guards a user's email address, and is deliberately not
+	// implied by PermUsersManage. The address is what a password reset resolves,
+	// so whoever can rewrite it can take over any account that has no second
+	// factor; a delegated user manager should be able to create and scope
+	// technicians without holding that.
+	PermUsersEmailManage = "users.email.manage"
 )
 
 type Permission struct {
@@ -102,6 +108,7 @@ func PermissionCatalog() []Permission {
 		{PermEnrollmentManage, "Manage enrollment", "Create enrollment tokens.", "Administration"},
 		{PermAPITokensManage, "Manage API tokens", "Create and revoke API tokens.", "Administration"},
 		{PermUsersManage, "Manage users", "Create, update, scope, and delete users.", "Administration"},
+		{PermUsersEmailManage, "Manage user email addresses", "Set a user's address — where their alerts go, and where a password reset link is sent.", "Administration"},
 		{PermRolesManage, "Manage roles", "Create, update, and delete custom roles.", "Administration"},
 	}
 }
@@ -152,7 +159,8 @@ func DefaultRolePermissions(role string) []string {
 			PermClientsView, PermClientsManage,
 			PermReportsView,
 			PermAuditView,
-			PermSettingsManage, PermEnrollmentManage, PermAPITokensManage, PermUsersManage, PermRolesManage,
+			PermSettingsManage, PermEnrollmentManage, PermAPITokensManage,
+			PermUsersManage, PermUsersEmailManage, PermRolesManage,
 		}
 	default:
 		return nil

@@ -860,20 +860,20 @@ const NOTIFY_LABELS = {
   job_failed: { title: 'Job failed', msg: 'A job returns a non-zero exit. Off by default — a bad script fans out across the fleet.' },
 };
 
-// NotificationsCard manages the CURRENT user's email address and what they are
-// notified about (self-service, any role). The address only decides where their
-// own alerts go — it grants no visibility their access scope doesn't already.
+// NotificationsCard manages what the CURRENT user is notified about. The address
+// is shown but not editable: it is also the address a password reset resolves,
+// so changing it takes users.email.manage. Which events you receive carries no
+// such risk and stays self-service for any role.
 function NotificationsCard() {
   const toast = useToast();
   const prefsQ = useQuery(['my-notifications'], () => api.getMyNotifications(), { invalidateOn: ['my-notifications'] });
-  const [email, setEmail] = useState(null);   // null until loaded, then a controlled string
-  const [subs, setSubs] = useState({});       // event_type -> enabled (local edits)
+  const [subs, setSubs] = useState(null);   // null until loaded: event_type -> enabled
   const [busy, setBusy] = useState(false);
   const data = prefsQ.data;
+  const email = data?.email || '';
 
   useEffect(() => {
     if (!data) return;
-    setEmail(data.email || '');
     const next = {};
     (data.subscriptions || []).forEach((s) => { next[s.event_type] = s.enabled; });
     setSubs(next);
@@ -882,14 +882,14 @@ function NotificationsCard() {
   const save = async () => {
     setBusy(true);
     try {
-      await api.updateMyNotifications({ email, subscriptions: subs });
+      await api.updateMyNotifications({ subscriptions: subs });
       prefsQ.refetch();
       toast.success('Notification settings saved', email ? 'Alerts go to ' + email : 'No address set — email alerts are off.');
     } catch (e) { toast.error('Could not save', e.message); }
     finally { setBusy(false); }
   };
 
-  if (!data || email === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
+  if (!data || subs === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
   return (
     <Card className="p-5 mb-5 max-w-2xl">
       <div className="flex items-center gap-2.5 mb-1">
@@ -897,7 +897,7 @@ function NotificationsCard() {
         <div className="text-[14px] font-semibold text-ink">Email notifications</div>
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md ml-auto', email ? 'bg-oksoft text-ok' : 'bg-elevated text-faint')}>{email ? 'On' : 'No address'}</span>
       </div>
-      <div className="text-[12.5px] text-muted mb-3">You only receive alerts for devices inside your access scope. Leave the address blank to stop all email.</div>
+      <div className="text-[12.5px] text-muted mb-3">You only receive alerts for devices inside your access scope.</div>
 
       {/* Preferences are pointless while nothing can be delivered, so say so up front. */}
       {!data.delivery_configured && (
@@ -908,8 +908,11 @@ function NotificationsCard() {
       )}
 
       <div className="space-y-3 max-w-md">
-        <Field label="Notification address" hint="Optional. Console access works without one.">
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" placeholder="you@example.com" />
+        <Field label="Your address" hint="Set by an administrator. It is also where a password reset link would be sent, which is why you cannot change it here.">
+          <div className="flex items-center gap-2 rounded-lg border border-line bg-app px-3 py-2">
+            <Icon name="send" size={14} className="text-faint shrink-0" />
+            <span className={cx('text-[12.5px] truncate', email ? 'text-ink mono' : 'text-faint')}>{email || 'No address set — email alerts are off.'}</span>
+          </div>
         </Field>
       </div>
 
@@ -935,6 +938,10 @@ function NotificationsCard() {
 
 function UsersPanel({ canAdmin }) {
   const toast = useToast();
+  const { can } = useAuth();
+  // Setting an address is its own permission on top of users.manage: it is where
+  // a password reset lands, so it can hand over an account that has no 2FA.
+  const canEmail = can('users.email.manage');
   const usersQ = useQuery(['users'], () => api.listUsers(), { invalidateOn: ['users'] });
   const rolesQ = useQuery(['roles'], () => api.listRoles(), { invalidateOn: ['roles'] });
   const [creating, setCreating] = useState(false);
@@ -1038,7 +1045,7 @@ function UsersPanel({ canAdmin }) {
               <td className="px-4 py-3 text-right">
                 {canAdmin && (
                   <div className="flex items-center justify-end gap-1">
-                    <Button size="sm" variant="ghost" icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} title="Set the address this user's alerts go to">Email</Button>
+                    {canEmail && <Button size="sm" variant="ghost" icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} title="Set this user's address — alerts, and password reset">Email</Button>}
                     {u.role !== 'admin' && <Button size="sm" variant="ghost" icon="shield" onClick={() => openEdit(u)}>Scope</Button>}
                     {u.totp_enabled && <Button size="sm" variant="ghost" icon="key" onClick={() => setConfirmReset(u)} title="Disable this user's 2FA so they can sign in and re-enroll">Reset 2FA</Button>}
                     {u.username !== 'admin' && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(u)}>Remove</Button>}
@@ -1055,7 +1062,9 @@ function UsersPanel({ canAdmin }) {
           <div className="space-y-3">
             <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field>
             <Field label="Password" hint={password.length > 0 && password.length < 12 ? 'At least 12 characters' : undefined}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 12 characters" className={password.length > 0 && password.length < 12 ? 'border-bad' : ''} /></Field>
-            <Field label="Notification address" hint="Optional. Where their alerts go; they can change it themselves later."><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="tech@company.com" autoComplete="off" /></Field>
+            {/* Offered only to operators who may set it — the backend rejects an
+                address from anyone without users.email.manage. */}
+            {canEmail && <Field label="Email address" hint="Optional. Where their alerts go, and where a password reset link would be sent."><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="tech@company.com" autoComplete="off" /></Field>}
             <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}>{roles.map((r) => <option key={r.key} value={r.key}>{roleLabel(r)}</option>)}</Select></Field>
             {newRole === 'admin'
               ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
@@ -1067,13 +1076,21 @@ function UsersPanel({ canAdmin }) {
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
       <Modal open={!!editEmail} onClose={() => { if (!emailBusy) setEditEmail(null); }} width="max-w-md">
         <div className="p-5">
-          <div className="text-[15px] font-semibold text-ink mb-1">Notification address</div>
+          <div className="text-[15px] font-semibold text-ink mb-1">Email address</div>
           <div className="text-[12px] text-muted mb-4">Where alerts for <b className="text-ink">{editEmail?.user?.username}</b> are sent. They still only receive devices inside their access scope. Leave blank to turn their email off.</div>
-          <Field label="Email address">
+          <Field label="Email address" hint="This is also where a password reset link for this account is delivered.">
             <Input type="email" value={editEmail?.value || ''} autoFocus autoComplete="off" placeholder="tech@company.com"
               onChange={(e) => setEditEmail((s) => ({ ...s, value: e.target.value }))}
               onKeyDown={(e) => { if (e.key === 'Enter') saveEmail(); }} />
           </Field>
+          {/* The reset destination is an authentication factor, so a change to an
+              address that already exists is worth a beat of hesitation. */}
+          {editEmail && (editEmail.value || '').trim() !== (editEmail.user?.email || '') && (editEmail.user?.email || '') !== '' && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-warn/25 bg-warnsoft px-3 py-2">
+              <Icon name="info" size={14} className="text-warn mt-0.5 shrink-0" />
+              <div className="text-[11.5px] text-muted">This also moves where this account's password reset link is delivered.</div>
+            </div>
+          )}
           <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditEmail(null)} disabled={emailBusy}>Cancel</Button><Button variant="primary" loading={emailBusy} onClick={saveEmail}>Save address</Button></div>
         </div>
       </Modal>
@@ -1464,9 +1481,27 @@ function ConfigPanel() {
 // SMTPPanel configures the instance-wide mail transport. Separate from the
 // Configuration tab because it carries its own save and a test send: proving
 // delivery works is the whole point, and it should not wait on an unrelated form.
+// Two transports, one screen. Account mail (password resets) is the one an
+// instance must have; alerts may ride it or leave through a sender — or a relay
+// — of their own, which is why the alerts profile is a second form rather than
+// two extra fields on the first.
 function SMTPPanel() {
+  const [profile, setProfile] = useState('account');
+  return (
+    <>
+      <Tabs className="mb-4" value={profile} onChange={setProfile} tabs={[
+        { value: 'account', label: 'Account & password reset' },
+        { value: 'alerts', label: 'Alert notifications' },
+      ]} />
+      {profile === 'account' ? <SMTPProfilePanel profile="account" /> : <SMTPProfilePanel profile="alerts" />}
+    </>
+  );
+}
+
+function SMTPProfilePanel({ profile }) {
   const toast = useToast();
-  const cfgQ = useQuery(['smtp'], () => api.getSMTPConfig(), { invalidateOn: ['smtp'] });
+  const alerts = profile === 'alerts';
+  const cfgQ = useQuery(['smtp', profile], () => alerts ? api.getAlertSMTPConfig() : api.getSMTPConfig(), { invalidateOn: ['smtp'] });
   const c = cfgQ.data;
   const [form, setForm] = useState(null);
   const [testTo, setTestTo] = useState('');
@@ -1477,18 +1512,26 @@ function SMTPPanel() {
     if (!c) return;
     setForm({
       host: c.host || '', port: c.port || 587, username: c.username || '', password: '',
-      from: c.from || '', from_name: c.from_name || 'OpenRMM', tls_mode: c.tls_mode || 'starttls',
+      from: c.from || '', from_name: c.from_name || (alerts ? '' : 'OpenRMM'), tls_mode: c.tls_mode || 'starttls',
       skip_verify: !!c.skip_verify,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  // The alerts profile with no host of its own rides the account transport, so
+  // the connection fields below are inert and say so rather than lying.
+  const inherits = alerts && !(form?.host || '').trim();
+  const effective = (alerts ? c?.effective : c) || {};
 
   const save = async () => {
     setSaving(true);
     try {
-      await api.updateSMTPConfig({ ...form, port: Number(form.port) || 587 });
+      const body = { ...form, port: Number(form.port) || 587 };
+      alerts ? await api.updateAlertSMTPConfig(body) : await api.updateSMTPConfig(body);
       set('password', ''); cfgQ.refetch();
-      toast.success('Mail settings saved', form.host ? 'Send a test message to confirm delivery.' : 'Email delivery is now off.');
+      toast.success('Mail settings saved',
+        alerts
+          ? (body.host ? 'Alerts now leave through their own relay.' : 'Alerts ride the account transport.')
+          : (body.host ? 'Send a test message to confirm delivery.' : 'Email delivery is now off.'));
     } catch (e) { toast.error('Could not save mail settings', e.message); }
     finally { setSaving(false); }
   };
@@ -1496,7 +1539,7 @@ function SMTPPanel() {
   const test = async () => {
     setTesting(true);
     try {
-      const r = await api.testSMTP(testTo.trim());
+      const r = alerts ? await api.testAlertSMTP(testTo.trim()) : await api.testSMTP(testTo.trim());
       toast.success('Test message sent', 'Delivered to ' + r.to + '.');
     } catch (e) { toast.error('Test failed', e.message); }
     finally { setTesting(false); }
@@ -1509,26 +1552,39 @@ function SMTPPanel() {
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
+      {alerts && (
+        <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2.5">
+          <Icon name="info" size={14} className="text-muted mt-0.5 shrink-0" />
+          <div className="text-[11.5px] text-muted">
+            {inherits
+              ? <>Alerts leave through the <b className="text-ink">account transport</b>. Fill in a From address to send them under a different sender on the same relay, or a host to move them to a separate relay entirely.</>
+              : <>Alerts leave through this relay, independently of account mail. If it fails, alerts retry here and are never rerouted through the account transport.</>}
+            {effective.from && <> Currently sending as <b className="text-ink mono">{effective.from}</b>.</>}
+          </div>
+        </div>
+      )}
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="send" size={15} /></div>
           <div className="text-[13px] font-semibold text-ink">Mail server</div>
-          <span className="ml-auto"><StatusPill status={c.enabled ? 'online' : 'warning'} label={c.enabled ? 'Configured' : 'Not configured'} size="sm" /></span>
+          <span className="ml-auto"><StatusPill status={effective.enabled ? 'online' : 'warning'} label={effective.enabled ? (inherits ? 'Inherited' : 'Configured') : 'Not configured'} size="sm" /></span>
         </div>
         <div className="space-y-3">
-          <Field label="Host" hint="Clearing the host turns email delivery off and discards the stored password.">
-            <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder="smtp.example.com" />
+          <Field label="Host" hint={alerts
+            ? 'Leave blank to send alerts through the account transport. Setting a host makes this a separate relay with its own credentials.'
+            : 'Clearing the host turns email delivery off and discards the stored password.'}>
+            <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder={alerts ? 'blank = use the account server' : 'smtp.example.com'} />
           </Field>
-          <Field label="Port"><Input className="mono" type="number" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="587" /></Field>
+          <Field label="Port"><Input className="mono" type="number" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="587" disabled={inherits} /></Field>
           <Field label="Encryption" hint="STARTTLS on 587 is the usual choice; TLS means implicit TLS, normally on 465.">
-            <Select value={form.tls_mode} onChange={(e) => set('tls_mode', e.target.value)}>
+            <Select value={form.tls_mode} onChange={(e) => set('tls_mode', e.target.value)} disabled={inherits}>
               <option value="starttls">STARTTLS</option>
               <option value="tls">TLS (implicit)</option>
               <option value="none">None (no encryption)</option>
             </Select>
           </Field>
           <Field label="Certificate check" hint="Only disable for a private CA on a trusted network.">
-            <Select value={form.skip_verify ? 'skip' : 'verify'} onChange={(e) => set('skip_verify', e.target.value === 'skip')}>
+            <Select value={form.skip_verify ? 'skip' : 'verify'} onChange={(e) => set('skip_verify', e.target.value === 'skip')} disabled={inherits}>
               <option value="verify">Verify certificate</option>
               <option value="skip">Skip verification</option>
             </Select>
@@ -1539,15 +1595,22 @@ function SMTPPanel() {
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="user" size={15} /></div>
-          <div className="text-[13px] font-semibold text-ink">Sender & credentials</div>
+          <div className="text-[13px] font-semibold text-ink">Sender &amp; credentials</div>
         </div>
         <div className="space-y-3">
-          <Field label="From address"><Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder="rmm@example.com" /></Field>
-          <Field label="From name"><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder="OpenRMM" /></Field>
-          <Field label="Username" hint="Leave blank for a relay that does not authenticate."><Input className="mono" value={form.username} onChange={(e) => set('username', e.target.value)} placeholder="rmm@example.com" autoComplete="off" /></Field>
-          <Field label="Password" hint={c.password_set ? 'Already set. Leave blank to keep the current password.' : 'Write-only. It will never be displayed again.'}>
-            <Input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} placeholder={c.password_set ? '••••••••••••••••' : ''} autoComplete="new-password" />
+          <Field label="From address" hint={alerts ? 'Optional. Blank sends alerts under the account sender.' : undefined}>
+            <Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder={alerts ? 'alerts@example.com' : 'rmm@example.com'} />
           </Field>
+          <Field label="From name"><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder={alerts ? 'OpenRMM Alerts' : 'OpenRMM'} /></Field>
+          {/* Credentials belong to a host. An alerts profile that names none must not
+              keep a password, so the fields go away instead of quietly doing nothing. */}
+          {!inherits && <>
+            <Field label="Username" hint="Leave blank for a relay that does not authenticate."><Input className="mono" value={form.username} onChange={(e) => set('username', e.target.value)} placeholder="rmm@example.com" autoComplete="off" /></Field>
+            <Field label="Password" hint={c.password_set ? 'Already set. Leave blank to keep the current password.' : 'Write-only. It will never be displayed again.'}>
+              <Input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} placeholder={c.password_set ? '••••••••••••••••' : ''} autoComplete="new-password" />
+            </Field>
+          </>}
+          {inherits && <div className="text-[11.5px] text-faint flex items-start gap-1.5"><Icon name="info" size={13} className="mt-0.5 shrink-0" />Credentials come from the account transport. Set a host above to give alerts their own.</div>}
         </div>
       </Card>
 
@@ -1557,10 +1620,10 @@ function SMTPPanel() {
           <div className="text-[13px] font-semibold text-ink">Test delivery</div>
         </div>
         <div className="flex items-end gap-2 flex-wrap">
-          <Field label="Send a test message to" className="flex-1 min-w-[240px]" hint="Blank sends to your own notification address.">
+          <Field label="Send a test message to" className="flex-1 min-w-[240px]" hint="Blank sends to your own address. This tests the transport on this tab only.">
             <Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" />
           </Field>
-          <Button variant="secondary" icon="send" loading={testing} disabled={!c.enabled || dirty} onClick={test}
+          <Button variant="secondary" icon="send" loading={testing} disabled={!effective.enabled || dirty} onClick={test}
             title={dirty ? 'Save your changes first — the test uses the stored settings' : undefined}>Send test</Button>
         </div>
         <div className="flex items-center justify-between gap-3 mt-4">

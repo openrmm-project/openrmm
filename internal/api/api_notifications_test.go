@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/p1ngu/rmm/internal/notify"
@@ -86,7 +87,7 @@ func TestSMTPViewHidesPassword(t *testing.T) {
 // Auditing which fields were touched is the point; auditing their values would
 // copy the mail credentials into a table meant for a trail.
 func TestChangedSMTPRecordsFieldsNotValues(t *testing.T) {
-	changed := changedSMTP(settings.SMTPSaveRequest{Host: "smtp.example.test", Password: "s3cret"})
+	changed := changedSMTP(settings.ProfileAccount, settings.SMTPSaveRequest{Host: "smtp.example.test", Password: "s3cret"})
 	var sawPassword bool
 	for _, field := range changed {
 		if field == "smtp.password" {
@@ -100,8 +101,30 @@ func TestChangedSMTPRecordsFieldsNotValues(t *testing.T) {
 		t.Error("a submitted password should be recorded as a changed field")
 	}
 
-	cleared := changedSMTP(settings.SMTPSaveRequest{})
+	cleared := changedSMTP(settings.ProfileAccount, settings.SMTPSaveRequest{})
 	if len(cleared) != 1 || cleared[0] != "smtp.cleared" {
 		t.Errorf("clearing the host should audit as smtp.cleared, got %v", cleared)
+	}
+
+	// The alerts profile keys its own fields, and a blank host there is not a
+	// clear: the sender may still be set and the profile now rides the account
+	// transport.
+	alerts := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{Host: "relay.example.test", Password: "s3cret"})
+	var sawAlertPassword bool
+	for _, field := range alerts {
+		if field == "smtp.alerts.password" {
+			sawAlertPassword = true
+		}
+		if !strings.HasPrefix(field, settings.ProfileAlerts) {
+			t.Errorf("alerts audit field %q should carry the alerts prefix", field)
+		}
+	}
+	if !sawAlertPassword {
+		t.Error("a submitted alerts password should be recorded as a changed field")
+	}
+	for _, field := range changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{}) {
+		if field == "smtp.cleared" {
+			t.Error("a blank alerts host means inheritance, not a cleared transport")
+		}
 	}
 }

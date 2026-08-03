@@ -750,6 +750,68 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   );
 }
 
+// adoptDynamicStyles lets xterm.js render under our strict CSP without loosening it.
+//
+// xterm builds four <style> elements at runtime and fills them with values it can
+// only know then — theme colours, cell dimensions, font metrics. `style-src-elem
+// 'self'` blocks exactly that, which is why the terminal came up as a blank black
+// screen. Neither a static stylesheet nor a CSP hash can cover content computed at
+// runtime, and xterm has no nonce option (the library never reads one).
+//
+// A CSSStyleSheet built with `new CSSStyleSheet()` and adopted is not a <style>
+// *element*, so style-src-elem does not govern it and it applies under the policy
+// unchanged. Verified in Chrome against this exact CSP: the element form does not
+// apply, the constructed form does.
+//
+// So we intercept the style elements xterm creates and mirror their text into one
+// adopted sheet. The element is still inserted and stays inert, which is harmless:
+// xterm's selectors are document-wide (`#xterm-<id> …`, `.xterm …`), so where the
+// rules live does not change what they match.
+//
+// The alternative was a per-request nonce injected by nginx. It would work, but it
+// needs the same interception to stamp the nonce onto xterm's elements, plus
+// server-side templating of a static file and a dev/prod split. This keeps the fix
+// entirely in the client and identical in both.
+function adoptDynamicStyles() {
+  if (window.__rmmStyleShim || typeof CSSStyleSheet !== 'function' || !('adoptedStyleSheets' in Document.prototype)) return;
+  window.__rmmStyleShim = true;
+  const sheets = new WeakMap();
+  const nativeCreate = document.createElement.bind(document);
+
+  const sheetFor = (el) => {
+    let sheet = sheets.get(el);
+    if (!sheet) {
+      sheet = new CSSStyleSheet();
+      sheets.set(el, sheet);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    }
+    return sheet;
+  };
+  const mirror = (el, css) => {
+    // A malformed rule must never take the terminal down with it.
+    try { sheetFor(el).replaceSync(String(css == null ? '' : css)); } catch (e) {}
+  };
+
+  document.createElement = function (tagName, options) {
+    const el = nativeCreate(tagName, options);
+    if (String(tagName).toLowerCase() !== 'style') return el;
+    // xterm writes through textContent in three places and innerText in one, so
+    // both are mirrored. The value is still written to the element itself, which
+    // keeps anything that reads it back working.
+    for (const prop of ['textContent', 'innerText']) {
+      const base = Object.getOwnPropertyDescriptor(Node.prototype, prop)
+        || Object.getOwnPropertyDescriptor(HTMLElement.prototype, prop);
+      if (!base || !base.set) continue;
+      Object.defineProperty(el, prop, {
+        configurable: true,
+        get() { return base.get.call(this); },
+        set(v) { base.set.call(this, v); mirror(this, v); },
+      });
+    }
+    return el;
+  };
+}
+
 // TerminalViewer is the native "Terminal" remote provider's viewer: an xterm.js
 // terminal bridged to an elevated shell on the endpoint. It brokers a session
 // (provider 'terminal'), connects to the relay as the viewer peer, and exchanges
@@ -766,6 +828,7 @@ function TerminalViewer({ deviceId, hostname, onClose }) {
 
   useEffect(() => {
     if (!window.Terminal) { toast.error('Terminal unavailable', 'xterm.js failed to load'); setStatus('closed'); return; }
+    adoptDynamicStyles(); // must precede construction: xterm styles on open()
     const term = new window.Terminal({
       cursorBlink: true, fontSize: 13, scrollback: 5000,
       fontFamily: 'JetBrains Mono, ui-monospace, Menlo, Consolas, monospace',

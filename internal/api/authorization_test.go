@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -258,6 +259,108 @@ func TestRestrictedPrincipalCannotPromoteUserToAdminIntegration(t *testing.T) {
 	activeSecret, enabled, err := st.GetUserTOTP(ctx, mfaUser.ID)
 	if err != nil || activeSecret != "" || enabled {
 		t.Fatalf("pending MFA setup changed active factor: secret=%q enabled=%t err=%v", activeSecret, enabled, err)
+	}
+}
+
+func TestRouterAuthAndTenantScopeIsolation(t *testing.T) {
+	databaseURL := os.Getenv("RMM_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st := newAuthorizationTestStore(t, databaseURL)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	suffix := uuid.NewString()
+	allowedClient, err := st.CreateClient(ctx, "allowed-"+suffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherClient, err := st.CreateClient(ctx, "other-"+suffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedSite, err := st.CreateSite(ctx, allowedClient.ID, "site-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSite, err := st.CreateSite(ctx, otherClient.ID, "site-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedAgent, err := st.CreateAgent(ctx, "allowed-agent", "linux", "amd64", "1.0.0", "agent-token", &allowedSite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAgent, err := st.CreateAgent(ctx, "other-agent", "linux", "amd64", "1.0.0", "other-agent-token", &otherSite.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.CreateUserWithScopes(ctx, "scoped-tech-"+suffix, "hash", models.RoleTech,
+		[]models.UserScope{{ScopeType: models.ScopeClient, ScopeID: allowedClient.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := auth.NewToken()
+	if err := st.CreateSession(ctx, user.ID, auth.Hash(token), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := (&Server{cfg: &config.Config{APIRateLimit: 1000}, store: st}).Router()
+	request := func(target string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req
+	}
+
+	unauthenticated := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/clients", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated clients status = %d, want 401", unauthenticated.Code)
+	}
+
+	clientsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(clientsResponse, request("/api/clients"))
+	if clientsResponse.Code != http.StatusOK {
+		t.Fatalf("clients status = %d, body=%s", clientsResponse.Code, clientsResponse.Body.String())
+	}
+	var clients struct {
+		Clients []models.Client `json:"clients"`
+	}
+	if err := json.NewDecoder(clientsResponse.Body).Decode(&clients); err != nil {
+		t.Fatal(err)
+	}
+	if len(clients.Clients) != 1 || clients.Clients[0].ID != allowedClient.ID {
+		t.Fatalf("visible clients = %#v, want only %s", clients.Clients, allowedClient.ID)
+	}
+
+	devicesResponse := httptest.NewRecorder()
+	handler.ServeHTTP(devicesResponse, request("/api/devices"))
+	if devicesResponse.Code != http.StatusOK {
+		t.Fatalf("devices status = %d, body=%s", devicesResponse.Code, devicesResponse.Body.String())
+	}
+	var devices struct {
+		Devices []models.Agent `json:"devices"`
+	}
+	if err := json.NewDecoder(devicesResponse.Body).Decode(&devices); err != nil {
+		t.Fatal(err)
+	}
+	if len(devices.Devices) != 1 || devices.Devices[0].ID != allowedAgent.ID {
+		t.Fatalf("visible devices = %#v, want only %s", devices.Devices, allowedAgent.ID)
+	}
+
+	outsideDevice := httptest.NewRecorder()
+	handler.ServeHTTP(outsideDevice, request("/api/devices/"+otherAgent.ID))
+	if outsideDevice.Code != http.StatusForbidden {
+		t.Fatalf("outside device status = %d, want 403; body=%s", outsideDevice.Code, outsideDevice.Body.String())
+	}
+	outsideSite := httptest.NewRecorder()
+	handler.ServeHTTP(outsideSite, request("/api/sites?client_id="+otherClient.ID))
+	if outsideSite.Code != http.StatusForbidden {
+		t.Fatalf("outside site status = %d, want 403; body=%s", outsideSite.Code, outsideSite.Body.String())
 	}
 }
 

@@ -17,6 +17,9 @@ function DevicesScreen({ navigate }) {
   const clients = clientsQ.data?.clients || [];
   const siteName = (id) => sites.find((s) => s.id === id)?.name || '—';
   const clientOfSite = (id) => sites.find((s) => s.id === id)?.client_id || '';
+  // A device belongs to a client (company) through its site; unassigned devices
+  // and sites whose client is gone both fall back to the em dash.
+  const clientName = (siteId) => clients.find((c) => c.id === clientOfSite(siteId))?.name || '—';
   const osFamily = (os) => { const o = os.toLowerCase(); return o.includes('win') ? 'Windows' : o.includes('mac') ? 'macOS' : 'Linux'; };
 
   const filtered = devices.filter((d) => {
@@ -58,6 +61,7 @@ function DevicesScreen({ navigate }) {
               <th className="font-semibold px-4 py-2.5">Hostname</th>
               <th className="font-semibold px-3 py-2.5">Description</th>
               <th className="font-semibold px-3 py-2.5">OS</th>
+              <th className="font-semibold px-3 py-2.5 hidden md:table-cell">Client</th>
               <th className="font-semibold px-3 py-2.5 hidden md:table-cell">Site</th>
               <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">Tags</th>
               <th className="font-semibold px-3 py-2.5">Status</th>
@@ -66,7 +70,7 @@ function DevicesScreen({ navigate }) {
           </thead>
           <tbody className="divide-y divide-line">
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i}><td className="px-4 py-3" colSpan={7}><Skeleton className="h-5 w-full" /></td></tr>
+              <tr key={i}><td className="px-4 py-3" colSpan={8}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
             {!devicesQ.loading && filtered.map((d) => (
               <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
@@ -78,6 +82,7 @@ function DevicesScreen({ navigate }) {
                 </td>
                 <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
                 <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]">{d.os}</span><span className="text-faint text-[11px] mono">{d.arch}</span></div></td>
+                <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
                   <div className="flex gap-1 flex-wrap max-w-[200px]">{d.tags.slice(0, 3).map((t) => <span key={t} className="rounded-md bg-elevated border border-line text-[10.5px] text-muted px-1.5 py-0.5">{t}</span>)}</div>

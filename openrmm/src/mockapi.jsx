@@ -263,6 +263,22 @@ const api = {
   deleteUser(id) { return DELETE('/api/users/' + id); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },
+  setUserEmail(id, email) { return PUT('/api/users/' + id + '/email', { email }); },
+
+  /* ---- password reset (unauthenticated) ---- */
+  // The request endpoint always resolves, whatever the address: the server
+  // deliberately refuses to reveal whether an account exists.
+  requestPasswordReset(email) { return POST('/api/auth/password-reset', { email }); },
+  confirmPasswordReset(token, password) { return POST('/api/auth/password-reset/confirm', { token, password }); },
+
+  /* ---- email notifications ---- */
+  // Preferences are self-service (any signed-in user); the SMTP transport below
+  // is instance-wide and needs settings.manage.
+  getMyNotifications() { return GET('/api/me/notifications'); },
+  updateMyNotifications(body) { return PUT('/api/me/notifications', body); },
+  getSMTPConfig() { return GET('/api/config/smtp'); },
+  updateSMTPConfig(body) { return PUT('/api/config/smtp', body); },
+  testSMTP(to) { return POST('/api/config/smtp/test', { to }); },
 
   /* ---- roles & permissions ---- */
   listRoles() { return GET('/api/roles'); },

@@ -300,6 +300,65 @@ verified offsite backup. Back up `deploy/secrets/settings_encryption_key`
 separately through a protected secret-management path; the database dump alone
 cannot decrypt runtime secrets.
 
+### 7.1 Point-in-time recovery (PITR)
+
+The nightly dump alone means losing up to a day. Continuous WAL archiving cuts
+that to `POSTGRES_ARCHIVE_TIMEOUT` (default 300s) — `archive_timeout` matters
+because an idle database can otherwise sit on an unarchived segment for hours,
+making the real recovery point far worse than the configured one.
+
+PITR needs a **physical** base backup; the logical dump cannot replay WAL:
+
+```bash
+deploy/ops/basebackup.sh     # weekly is usually enough
+deploy/ops/ship-wal.sh       # hourly: copies WAL offsite and prunes
+```
+
+`ship-wal.sh` prunes against the **oldest** retained base backup, never the
+newest — pruning to the newest would silently destroy the ability to recover to
+any point before it. Recover with:
+
+```bash
+RESTORE_CONFIRM=rmm PITR_TARGET_TIME='2026-07-27 03:20:00+00' \
+  deploy/ops/restore-pitr.sh /var/backups/openrmm/base/base-TIMESTAMP.tar.gz.age
+```
+
+Omit `PITR_TARGET_TIME` to replay as far forward as the archive allows. The
+script replaces the data volume but never the WAL volume, and holds the
+application down until the cluster leaves recovery.
+
+### 7.2 Recovery drill (the RTO number)
+
+`verify-backup.sh` proves an archive is readable; the drill proves you can
+rebuild from it and times the work:
+
+```bash
+deploy/ops/drill-restore.sh          # isolated, never touches production
+```
+
+It appends `elapsed_seconds` to `drill.log`. That covers database recovery only
+— full RTO also includes host provisioning, secret restore and stack startup, so
+time those by hand once and record the total in `docs/19`.
+
+### 7.3 Warm standby (optional)
+
+A second PostgreSQL streaming from the primary turns recovery from "restore a
+base backup" into "promote", at the cost of one more container:
+
+```bash
+openssl rand -base64 33 > deploy/secrets/replication_password
+chmod 600 deploy/secrets/replication_password
+deploy/ops/standby-bootstrap.sh
+docker compose -f docker-compose.prod.yml -f docker-compose.standby.yml up -d
+```
+
+Failover is deliberately manual (`SELECT pg_promote()`, then repoint
+`RMM_DATABASE_URL`). Automatic promotion needs fencing, and a split brain where
+two servers accept agent traffic is worse than minutes of downtime.
+
+**Replication is not a backup.** It copies a mistaken `DELETE` to the standby
+faithfully and instantly. Keep the dump and PITR regardless.
+
 ## 8. Upgrade and rollback runbook
 
 1. Read release notes and verify the tag, `SHA256SUMS` signature, checksums, SBOM,

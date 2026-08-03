@@ -156,8 +156,8 @@ type SaveRequest struct {
 		APIKey   string `json:"api_key"`
 	} `json:"ai"`
 	Remote struct {
-		DefaultProvider string `json:"default"`
-		MeshCentralURL  string `json:"meshcentral_url"`
+		DefaultProvider    string `json:"default"`
+		MeshCentralURL     string `json:"meshcentral_url"`
 		MeshCentralUser    string `json:"meshcentral_user"`
 		MeshTokenKey       string `json:"meshcentral_token_key"`
 		MeshCentralEnabled *bool  `json:"meshcentral_enabled"` // nil = preserve current
@@ -237,7 +237,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 
 // Encrypt/Decrypt expose the instance secret encryption for other packages
 // (e.g. per-user TOTP secrets), using the same key derivation as settings.
-func Encrypt(cfg *config.Config, plaintext string) (string, error) { return encrypt(cfg, plaintext) }
+func Encrypt(cfg *config.Config, plaintext string) (string, error)  { return encrypt(cfg, plaintext) }
 func Decrypt(cfg *config.Config, ciphertext string) (string, error) { return decrypt(cfg, ciphertext) }
 
 func encryptionKey(cfg *config.Config) [32]byte {

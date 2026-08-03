@@ -1,0 +1,63 @@
+# Warm standby overlay: a second PostgreSQL streaming from the primary.
+#
+#   deploy/ops/standby-bootstrap.sh          # once, seeds the standby volume
+#   docker compose -f docker-compose.prod.yml -f docker-compose.standby.yml up -d
+#
+# What this buys: recovery measured in seconds (promote) instead of the minutes
+# a base-backup restore takes. What it does NOT buy: protection from a bad write.
+# Replication faithfully copies a mistaken DELETE to the standby — that is what
+# PITR (archive + basebackup.sh) is for. Run both.
+#
+# This is a MANUAL failover. There is no automatic promotion by design: an
+# automatic one needs fencing, and a split brain where two servers both accept
+# agent traffic is worse than a few minutes of downtime.
+services:
+  postgres-standby:
+    image: ${POSTGRES_IMAGE:-postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297}
+    user: "70:70"
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      # hot_standby_feedback keeps the primary from vacuuming rows a long read
+      # on the standby still needs.
+      - -c
+      - hot_standby=on
+      - -c
+      - hot_standby_feedback=on
+    volumes:
+      - rmm_pgdata_standby:/var/lib/postgresql/data
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777
+      - /var/run/postgresql:rw,nosuid,nodev,uid=70,gid=70,mode=0770
+    networks:
+      - db
+    # pg_isready reports ready while still replaying, which is what we want: the
+    # standby is healthy precisely when it is following the primary.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rmm}
+      POSTGRES_DB: ${POSTGRES_DB:-rmm}
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-2g}
+    cpus: ${POSTGRES_CPU_LIMIT:-2.0}
+    pids_limit: ${POSTGRES_PIDS_LIMIT:-256}
+    stop_grace_period: 60s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    init: true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  rmm_pgdata_standby:

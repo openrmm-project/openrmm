@@ -13,14 +13,19 @@ import (
 // ---- in-memory fakes ----
 
 type fakeStore struct {
-	jobs   map[string]*models.Job
-	agents map[string]bool
-	audits []string
-	seq    int
+	jobs     map[string]*models.Job
+	agents   map[string]bool
+	clientOf map[string]string
+	audits   []string
+	seq      int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{jobs: map[string]*models.Job{}, agents: map[string]bool{"a1": true}}
+	return &fakeStore{
+		jobs:     map[string]*models.Job{},
+		agents:   map[string]bool{"a1": true},
+		clientOf: map[string]string{},
+	}
 }
 
 func (f *fakeStore) GetAgent(_ context.Context, id string) (*models.Agent, error) {
@@ -90,7 +95,11 @@ func (f *fakeStore) ListJobsByBatch(_ context.Context, batchID string) ([]models
 }
 
 func (f *fakeStore) ClientForAgents(_ context.Context, agentIDs []string) (map[string]string, error) {
-	return map[string]string{}, nil
+	out := make(map[string]string, len(agentIDs))
+	for _, id := range agentIDs {
+		out[id] = f.clientOf[id]
+	}
+	return out, nil
 }
 
 func (f *fakeStore) AddAudit(_ context.Context, actor, action, target string, detail []byte) error {
@@ -251,6 +260,69 @@ func TestRunAutomatedIsPreApproved(t *testing.T) {
 	}
 	if !fs.hasAudit("job.automated") {
 		t.Error("missing job.automated audit")
+	}
+}
+
+func TestProposeBulkGroupsByClientAndApprovesIndependently(t *testing.T) {
+	svc, fs, sender := newSvc()
+	fs.agents["a2"] = true
+	fs.agents["a3"] = true
+	fs.clientOf["a1"] = "client-a"
+	fs.clientOf["a2"] = "client-a"
+	fs.clientOf["a3"] = "client-b"
+
+	batches, err := svc.ProposeBulk(context.Background(), []string{"a1", "a2", "a3"},
+		"bash", "echo bulk", "bulk deploy", "admin")
+	if err != nil {
+		t.Fatalf("ProposeBulk error: %v", err)
+	}
+	if len(batches) != 2 {
+		t.Fatalf("batches = %d, want one batch per client", len(batches))
+	}
+	if sender.calls != 0 {
+		t.Fatalf("bulk proposal dispatched before approval: %d sends", sender.calls)
+	}
+
+	byClient := make(map[string]BatchInfo, len(batches))
+	for _, batch := range batches {
+		byClient[batch.ClientID] = batch
+	}
+	clientA, ok := byClient["client-a"]
+	if !ok || len(clientA.JobIDs) != 2 {
+		t.Fatalf("client-a batch = %#v, want two jobs", clientA)
+	}
+	clientB, ok := byClient["client-b"]
+	if !ok || len(clientB.JobIDs) != 1 {
+		t.Fatalf("client-b batch = %#v, want one job", clientB)
+	}
+	for _, batch := range batches {
+		for _, jobID := range batch.JobIDs {
+			job, err := fs.GetJob(context.Background(), jobID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if job.BatchID == nil || *job.BatchID != batch.BatchID || job.Status != models.JobAwaitingApproval {
+				t.Fatalf("job %#v is not an awaiting job in batch %q", job, batch.BatchID)
+			}
+		}
+	}
+
+	approved, err := svc.ApproveBatch(context.Background(), clientA.BatchID, "admin")
+	if err != nil {
+		t.Fatalf("ApproveBatch error: %v", err)
+	}
+	if approved != 2 || sender.calls != 2 {
+		t.Fatalf("approved=%d sends=%d, want 2 approved and dispatched", approved, sender.calls)
+	}
+	for _, jobID := range clientA.JobIDs {
+		job, _ := fs.GetJob(context.Background(), jobID)
+		if job.Status != models.JobSent {
+			t.Errorf("client-a job %s status = %q, want sent", jobID, job.Status)
+		}
+	}
+	job, _ := fs.GetJob(context.Background(), clientB.JobIDs[0])
+	if job.Status != models.JobAwaitingApproval {
+		t.Errorf("client-b job status = %q, want awaiting approval", job.Status)
 	}
 }
 

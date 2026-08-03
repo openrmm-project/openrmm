@@ -123,6 +123,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [17-mcp-oauth](docs/17-mcp-oauth.md) | MCP OAuth 2.1 — OpenRMM as its own Authorization Server so cloud clients (Claude web, ChatGPT) connect natively |
 | [18-update-signing-runbook](docs/18-update-signing-runbook.md) | Operator playbook for signed auto-update: key custody, cutting a signed release, publishing to `/dl/`, and staged key rotation via the trusted key set (no reinstall) |
 | [19-production-readiness-plan](docs/19-production-readiness-plan.md) | Prioritized remediation plan to reach production: go-live blockers, observability, HA, container scanning, defense-in-depth |
+| [20-email-notifications](docs/20-email-notifications.md) | Alert email: scope-enforced recipients, transition-only sending, the durable outbox and retry policy, SMTP setup |
 
 For production deployment, see [`deploy/README-production.md`](deploy/README-production.md):
 a **split-ingress topology** with loopback backend binds and source ACLs at the

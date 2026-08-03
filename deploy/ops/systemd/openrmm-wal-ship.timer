@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly offsite copy of the OpenRMM WAL archive
+
+[Timer]
+# Hourly. WAL that only exists on the host that just died is not a recovery
+# point, so this interval is the real ceiling on how much the offsite copy can
+# lag the primary — tighten it if the RPO target is stricter than an hour.
+OnCalendar=hourly
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

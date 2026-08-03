@@ -16,6 +16,7 @@ import (
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/hub"
 	"github.com/p1ngu/rmm/internal/jobs"
+	"github.com/p1ngu/rmm/internal/notify"
 	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
@@ -59,11 +60,21 @@ func main() {
 	aiClient := ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	chat := ai.NewEngine(aiClient, st, jobSvc)
 	patchSvc := patches.New(st, h)
-	sched := scheduler.New(st, h, jobSvc, patchSvc)
+	// SMTP is resolved per use, not captured here: settings are DB-backed and an
+	// operator fixing a rejected password must not need a restart.
+	notifier := notify.New(st, func(ctx context.Context) (notify.Config, string, error) {
+		smtpCfg, err := settings.SMTPConfig(ctx, st, cfg)
+		return smtpCfg, cfg.PublicURL, err
+	})
+	jobSvc.WithNotifier(notifier)
+	sched := scheduler.New(st, h, jobSvc, patchSvc).WithNotifier(notifier, cfg.PublicURL)
 
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()
 	go sched.Run(schedCtx)
+	// The outbox drains in its own loop so a slow SMTP server cannot delay check
+	// evaluation for the fleet.
+	go notifier.RunWorker(schedCtx)
 	log.Println("scheduler started")
 
 	srv := api.New(cfg, st, h, jobSvc, remoteMgr, relay, chat, sched, patchSvc)

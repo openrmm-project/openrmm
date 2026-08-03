@@ -1,0 +1,13 @@
+[Unit]
+Description=Weekly OpenRMM base backup
+
+[Timer]
+# Sunday 02:00, ahead of the nightly logical dump. Weekly is a deliberate
+# trade: a newer base means less WAL to replay (faster recovery), but each one
+# is a full copy of the cluster. Shorten it if replay time grows.
+OnCalendar=Sun *-*-* 02:00:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

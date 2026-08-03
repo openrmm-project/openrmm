@@ -13,6 +13,7 @@ import (
 	"github.com/p1ngu/rmm/internal/hub"
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/notify"
 	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/protocol"
 	"github.com/p1ngu/rmm/internal/store"
@@ -36,6 +37,8 @@ type Scheduler struct {
 	hub            *hub.Hub
 	jobs           *jobs.Service
 	patches        *patches.Service
+	notifier       *notify.Service
+	consoleURL     string
 	lastPatchTick  time.Time
 	lastOAuthPurge time.Time
 }
@@ -43,6 +46,15 @@ type Scheduler struct {
 // New builds the scheduler.
 func New(s *store.Store, h *hub.Hub, j *jobs.Service, p *patches.Service) *Scheduler {
 	return &Scheduler{store: s, hub: h, jobs: j, patches: p}
+}
+
+// WithNotifier enables email on alert transitions. Optional by design: with no
+// notifier configured the scheduler behaves exactly as before, so email is
+// additive rather than something the monitoring loop depends on.
+func (s *Scheduler) WithNotifier(n *notify.Service, consoleURL string) *Scheduler {
+	s.notifier = n
+	s.consoleURL = consoleURL
+	return s
 }
 
 // Run ticks until the context is cancelled.
@@ -184,7 +196,10 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 	online := s.hub.IsOnline(a.ID)
 	id := a.ID
 	if online {
-		_ = s.store.ResolveAlertsForSource(ctx, "agent", &id, &id)
+		closed, _ := s.store.ResolveAlertsForSource(ctx, "agent", &id, &id)
+		if closed > 0 {
+			s.notifyRecovered(ctx, id, fmt.Sprintf("Agent %s is back online.", a.Hostname))
+		}
 		return
 	}
 	// The agent has no live connection: reconcile a row still marked online (an
@@ -194,8 +209,13 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 		_ = s.store.MarkAgentOffline(ctx, id)
 	}
 	if a.LastSeen != nil && now.Sub(*a.LastSeen) > offlineAfter {
-		_ = s.store.RaiseAlert(ctx, &id, "agent", &id, models.SeverityError,
+		opened, alertID, _ := s.store.RaiseAlert(ctx, &id, "agent", &id, models.SeverityError,
 			fmt.Sprintf("Agent %s is offline (last seen %s)", a.Hostname, a.LastSeen.Format(time.RFC3339)))
+		if opened {
+			s.notifyCheck(ctx, id, alertID, store.NotifyAgentOffline,
+				fmt.Sprintf("Agent %s stopped reporting (last seen %s).",
+					a.Hostname, a.LastSeen.Format(time.RFC3339)))
+		}
 	}
 }
 
@@ -302,14 +322,57 @@ func (s *Scheduler) OnCheckResult(ctx context.Context, agentID string, res proto
 	aid := agentID
 	switch status {
 	case models.CheckFailing:
-		return s.store.RaiseAlert(ctx, &aid, "check", &cid, models.SeverityError,
+		opened, alertID, err := s.store.RaiseAlert(ctx, &aid, "check", &cid, models.SeverityError,
 			fmt.Sprintf("Check %q is failing on the agent", check.Name))
+		if opened {
+			s.notifyCheck(ctx, aid, alertID, store.NotifyCheckFailed,
+				fmt.Sprintf("Check %q is failing.", check.Name))
+		}
+		return err
 	case models.CheckWarning:
-		return s.store.RaiseAlert(ctx, &aid, "check", &cid, models.SeverityWarning,
+		opened, alertID, err := s.store.RaiseAlert(ctx, &aid, "check", &cid, models.SeverityWarning,
 			fmt.Sprintf("Check %q is in warning on the agent", check.Name))
+		if opened {
+			s.notifyCheck(ctx, aid, alertID, store.NotifyCheckFailed,
+				fmt.Sprintf("Check %q is in warning.", check.Name))
+		}
+		return err
 	default: // passing
-		return s.store.ResolveAlertsForSource(ctx, "check", &cid, &aid)
+		closed, err := s.store.ResolveAlertsForSource(ctx, "check", &cid, &aid)
+		if closed > 0 {
+			s.notifyRecovered(ctx, aid, fmt.Sprintf("Check %q is passing again.", check.Name))
+		}
+		return err
 	}
+}
+
+// notifyCheck and notifyRecovered are the only places the scheduler talks to the
+// notifier, and both are reached exclusively on a state transition — never on a
+// routine evaluation, which would mail on every 30s tick.
+func (s *Scheduler) notifyCheck(ctx context.Context, agentID, alertID, eventType, detail string) {
+	if s.notifier == nil {
+		return
+	}
+	hostname, consoleURL := s.agentLabel(ctx, agentID)
+	s.notifier.Queue(ctx, notify.AlertOpenedEvent(eventType, agentID, hostname, alertID, detail, consoleURL))
+}
+
+func (s *Scheduler) notifyRecovered(ctx context.Context, agentID, detail string) {
+	if s.notifier == nil {
+		return
+	}
+	hostname, consoleURL := s.agentLabel(ctx, agentID)
+	s.notifier.Queue(ctx, notify.AlertResolvedEvent(agentID, hostname, detail, consoleURL))
+}
+
+// agentLabel resolves the human-readable device name for the message body. A
+// lookup failure degrades to the id rather than dropping the notification.
+func (s *Scheduler) agentLabel(ctx context.Context, agentID string) (hostname, consoleURL string) {
+	hostname = agentID
+	if a, err := s.store.GetAgent(ctx, agentID); err == nil && a.Hostname != "" {
+		hostname = a.Hostname
+	}
+	return hostname, s.consoleURL
 }
 
 // computeStatus applies the check's threshold semantics to a raw value.

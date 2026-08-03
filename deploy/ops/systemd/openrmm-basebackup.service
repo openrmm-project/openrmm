@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenRMM PostgreSQL base backup (PITR anchor)
+Documentation=file:///opt/openrmm/deploy/README-production.md
+OnFailure=openrmm-backup-failed@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/openrmm
+ExecStart=/opt/openrmm/deploy/ops/basebackup.sh
+TimeoutStartSec=7200
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/backups/openrmm
+
+[Install]
+WantedBy=multi-user.target

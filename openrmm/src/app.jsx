@@ -15,7 +15,7 @@ const AuthCtx = cCtx(null);
 function useAuth() { return uC(AuthCtx); }
 
 /* -------------------------------- Login ----------------------------------- */
-function LoginScreen({ onAuthed }) {
+function LoginScreen({ onAuthed, onForgot }) {
   const [mode, setMode] = useState('password'); // password | token
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -74,6 +74,119 @@ function LoginScreen({ onAuthed }) {
             {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)}>Sign in</Button>
           </form>
+          {mode === 'password' && (
+            <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">Forgot your password?</button>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ForgotPasswordScreen requests a reset link.
+//
+// It always shows the same confirmation, because the API always answers the
+// same: telling the user "no such account" here would turn the login page into
+// an account-existence oracle for anyone with an address list.
+function ForgotPasswordScreen({ onBack }) {
+  const [email, setEmail] = useState('');
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (busy || !email.trim()) return;
+    setBusy(true);
+    try { await api.requestPasswordReset(email.trim()); } catch (e) {}
+    finally { setBusy(false); setSent(true); }
+  };
+
+  return (
+    <AuthShell title="Reset your password" subtitle="We'll email you a link to choose a new one.">
+      {sent ? (
+        <div className="mt-4 space-y-4">
+          <div className="flex items-start gap-2 rounded-lg border border-ok/25 bg-oksoft px-3 py-2.5">
+            <Icon name="check" size={14} className="text-ok mt-0.5 shrink-0" />
+            <div className="text-[12.5px] text-muted">If an account exists for <b className="text-ink">{email.trim()}</b>, a reset link is on its way. It expires in one hour and works once.</div>
+          </div>
+          <div className="text-[11.5px] text-faint">Nothing arrived? Check spam, or ask an administrator whether email delivery is configured on this instance.</div>
+          <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>Back to sign in</Button>
+        </div>
+      ) : (
+        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <Field label="Your notification address" hint="The address set on your account.">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus placeholder="you@example.com" />
+          </Field>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || !email.trim()}>Send reset link</Button>
+          <button type="button" onClick={onBack} className="w-full text-center text-[12px] text-faint hover:text-muted transition">Back to sign in</button>
+        </form>
+      )}
+    </AuthShell>
+  );
+}
+
+// ResetPasswordScreen consumes the token from ?reset=<token>.
+function ResetPasswordScreen({ token, onDone }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const tooShort = password.length > 0 && password.length < 12;
+  const mismatch = confirm.length > 0 && password !== confirm;
+  const canSubmit = password.length >= 12 && password === confirm && !busy;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setBusy(true); setErr(null);
+    try { await api.confirmPasswordReset(token, password); setDone(true); }
+    catch (e) { setErr(e.message || 'Could not reset your password'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <AuthShell title="Choose a new password" subtitle={done ? 'All set.' : 'This link works once and expires in one hour.'}>
+      {done ? (
+        <div className="mt-4 space-y-4">
+          <div className="flex items-start gap-2 rounded-lg border border-ok/25 bg-oksoft px-3 py-2.5">
+            <Icon name="check" size={14} className="text-ok mt-0.5 shrink-0" />
+            <div className="text-[12.5px] text-muted">Your password was changed and every other session was signed out.</div>
+          </div>
+          <Button variant="primary" size="lg" className="w-full" onClick={onDone}>Sign in</Button>
+        </div>
+      ) : (
+        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <Field label="New password" hint={tooShort ? 'At least 12 characters' : undefined}>
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" autoFocus className={tooShort ? 'border-bad' : ''} />
+          </Field>
+          <Field label="Confirm new password" hint={mismatch ? "Passwords don't match" : undefined}>
+            <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" className={mismatch ? 'border-bad' : ''} />
+          </Field>
+          {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!canSubmit}>Set new password</Button>
+          <button type="button" onClick={onDone} className="w-full text-center text-[12px] text-faint hover:text-muted transition">Back to sign in</button>
+        </form>
+      )}
+    </AuthShell>
+  );
+}
+
+// AuthShell is the signed-out page frame shared by the reset screens, so they
+// match the login card instead of drifting from it.
+function AuthShell({ title, subtitle, children }) {
+  return (
+    <div className="h-full w-full overflow-y-auto scroll-area grain flex items-center justify-center p-6">
+      <div className="w-full max-w-[400px] my-auto animate-fade-in">
+        <div className="flex items-center gap-2.5 mb-7">
+          <BrandMark size={34} />
+          <div>
+            <div className="text-[17px] font-semibold text-ink tracking-tight">OpenRMM</div>
+            <div className="text-[12px] text-faint -mt-0.5">Remote Monitoring & Management</div>
+          </div>
+        </div>
+        <Card className="p-6 shadow-2xl shadow-black/30">
+          <div className="text-[15px] font-semibold text-ink">{title}</div>
+          <div className="text-[12.5px] text-muted mt-1">{subtitle}</div>
+          {children}
         </Card>
       </div>
     </div>
@@ -264,6 +377,19 @@ function App() {
   }
 
   const [auth, setAuth] = useState(undefined); // undefined=loading, null=logged out
+  // A reset link is opened cold, in whatever browser the mail client picked, so
+  // the token arrives in the URL with no session behind it.
+  const [resetToken, setResetToken] = useState(() => params.get('reset') || '');
+  const [forgot, setForgot] = useState(false);
+
+  // Drop the token from the address bar once it is in state: it should not stay
+  // in history, or be re-sent as a Referer when the page loads anything.
+  uE(() => {
+    if (!resetToken) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('reset');
+    window.history.replaceState({}, '', url);
+  }, []);
 
   uE(() => {
     const expired = () => setAuth(null);
@@ -282,8 +408,18 @@ function App() {
 
   const logout = async () => { setAuth(undefined); await api.logout(); setAuth(null); };
 
+  // A reset link wins over a live session: the person following it is proving
+  // control of the mailbox precisely because they cannot get in the normal way,
+  // and an already-signed-in tab must not swallow the link.
+  if (resetToken) {
+    return <ToastProvider><ResetPasswordScreen token={resetToken} onDone={() => { setResetToken(''); setAuth(null); }} /></ToastProvider>;
+  }
   if (auth === undefined) return <div className="h-full flex items-center justify-center text-faint"><Spinner size={22} /></div>;
-  if (auth === null) return <ToastProvider><LoginScreen onAuthed={setAuth} /></ToastProvider>;
+  if (auth === null) {
+    return <ToastProvider>{forgot
+      ? <ForgotPasswordScreen onBack={() => setForgot(false)} />
+      : <LoginScreen onAuthed={setAuth} onForgot={() => setForgot(true)} />}</ToastProvider>;
+  }
 
   const permissions = auth.permissions || auth.user?.permissions || DEFAULT_ROLE_PERMS[auth.role] || [];
   const permissionSet = new Set(permissions);

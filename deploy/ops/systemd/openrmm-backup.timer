@@ -1,0 +1,15 @@
+[Unit]
+Description=Nightly OpenRMM database backup
+Documentation=file:///opt/openrmm/deploy/README-production.md
+
+[Timer]
+# 03:15 local time, jittered so a fleet of hosts does not stampede the offsite
+# destination. Persistent=true runs a missed backup after the host comes back —
+# without it, a machine that was down at 03:15 silently skips a day.
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=900
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

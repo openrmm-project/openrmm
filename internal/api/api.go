@@ -287,13 +287,15 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config", s.updateConfig)
 		// Two mail transports: the account one carries password resets, the alerts
 		// one carries notifications and falls back to the account transport when it
-		// names no host. The handlers read the profile off the path.
-		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp", s.getSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp", s.updateSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/test", s.testSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp/alerts", s.getSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp/alerts", s.updateSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/alerts/test", s.testSMTPConfig)
+		// names no host. Each handler is bound to its profile here rather than
+		// sniffing the request path, so no routing quirk can send a save to the
+		// wrong transport and overwrite password-reset delivery.
+		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp", s.getSMTPConfig(settings.ProfileAccount))
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp", s.updateSMTPConfig(settings.ProfileAccount))
+		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/test", s.testSMTPConfig(settings.ProfileAccount))
+		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp/alerts", s.getSMTPConfig(settings.ProfileAlerts))
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp/alerts", s.updateSMTPConfig(settings.ProfileAlerts))
+		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/alerts/test", s.testSMTPConfig(settings.ProfileAlerts))
 		r.With(s.requirePermission(models.PermEnrollmentManage)).Post("/enroll-tokens", s.createEnrollToken)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/api-tokens", s.listAPITokens)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/api-tokens", s.createAPIToken)

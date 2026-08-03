@@ -64,6 +64,36 @@ what was not delivered.
 If SMTP is not configured, the worker leaves rows pending rather than failing
 them: they go out once an operator finishes the setup.
 
+### Knowing when delivery has stopped
+
+The outbox is the thing to watch, because alert delivery failing is the failure
+that hides every other failure — it is noticed by *not* being told about
+anything, which is to say it is not noticed.
+
+`/metrics` (token-gated) exposes three gauges:
+
+| Gauge | Meaning |
+|---|---|
+| `rmm_notifications_pending` | queued, not yet delivered |
+| `rmm_notifications_failed` | abandoned after 5 attempts; never retried again |
+| `rmm_notifications_oldest_pending_seconds` | age of the oldest undelivered message |
+
+Alert on the last one. A healthy outbox drains within a worker tick (30s), so
+minutes of backlog means mail has stopped leaving, whatever the cause.
+
+The worker's logs are the second signal, and they speak on **transitions**, not
+on every 30s tick:
+
+- The **first** failed send is logged, naming the transport host, the attempt
+  number and the retry delay — not only the fifth and final one, which used to
+  mean roughly 30 minutes of backoff with nothing in the log. Repeats of the same
+  error stay quiet; a *different* error speaks again.
+- Giving up after 5 attempts names the message and the host it failed on.
+- A transport that cannot deliver at all logs once, with a reason that separates
+  "nothing configured" from "a sender is set but no host" from "a host is set but
+  no sender" — the last being the half-filled alerts profile that would otherwise
+  stop every alert in complete silence. Recovery is logged once too.
+
 ## Configuration
 
 SMTP lives **only in the database**, unlike the AI/MeshCentral settings which

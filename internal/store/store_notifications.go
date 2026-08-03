@@ -169,6 +169,32 @@ func (s *Store) MarkNotificationFailed(ctx context.Context, id string, attempts,
 	return err
 }
 
+// OutboxStats summarizes the notification queue for the metrics endpoint.
+type OutboxStats struct {
+	Pending             int
+	Failed              int
+	OldestPendingAgeSec float64
+}
+
+// OutboxStats reports whether alert mail is actually leaving.
+//
+// This is the signal that makes a broken relay detectable from outside: alert
+// delivery failing is the failure that hides every other failure, and until
+// these counters existed it could only be noticed by not receiving mail — which
+// is exactly what nobody notices. Age of the oldest pending row is the useful
+// one to alert on: a healthy outbox drains within a worker tick, so a row that
+// has waited many minutes means delivery has stopped, whatever the cause.
+func (s *Store) OutboxStats(ctx context.Context) (OutboxStats, error) {
+	var out OutboxStats
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE status = 'pending'),
+			count(*) FILTER (WHERE status = 'failed'),
+			COALESCE(EXTRACT(EPOCH FROM (now() - min(created_at) FILTER (WHERE status = 'pending'))), 0)
+		FROM notifications`).Scan(&out.Pending, &out.Failed, &out.OldestPendingAgeSec)
+	return out, err
+}
+
 // ListNotificationSubscriptions returns a user's explicit preferences.
 func (s *Store) ListNotificationSubscriptions(ctx context.Context, userID string) (map[string]bool, error) {
 	rows, err := s.pool.Query(ctx,

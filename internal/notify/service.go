@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/p1ngu/rmm/internal/models"
@@ -27,6 +28,13 @@ type ConfigFunc func(ctx context.Context) (Config, string, error) // config, con
 type Service struct {
 	store  *store.Store
 	config ConfigFunc
+
+	// Transition state for the worker's log lines. The worker runs every 30s, so
+	// anything logged unconditionally would be noise; these let it speak once
+	// when the situation changes and then stay quiet.
+	mu        sync.Mutex
+	quiet     bool // last drain found no usable transport
+	lastError string
 }
 
 func New(st *store.Store, cfg ConfigFunc) *Service { return &Service{store: st, config: cfg} }
@@ -94,8 +102,14 @@ func (s *Service) RunWorker(ctx context.Context) {
 func (s *Service) drain(ctx context.Context) {
 	cfg, _, err := s.config(ctx)
 	if err != nil || !cfg.Enabled() {
-		return // leave rows pending; they go out once SMTP is configured
+		// Rows are left pending — they go out once SMTP is configured — but this
+		// used to be entirely silent, which meant a half-configured alerts
+		// profile (a host with no sender, say) stopped all alert mail without
+		// ever producing a log line. Said once, on the way in and on the way out.
+		s.setQuiet(true, quietReason(cfg, err))
+		return
 	}
+	s.setQuiet(false, "")
 	pending, err := s.store.ClaimPendingNotifications(ctx, claimBatch)
 	if err != nil {
 		log.Printf("notify: claim: %v", err)
@@ -116,9 +130,65 @@ func (s *Service) drain(ctx context.Context) {
 		if err := s.store.MarkNotificationFailed(ctx, n.ID, n.Attempts, maxAttempts, reason, backoff); err != nil {
 			log.Printf("notify: mark failed %s: %v", n.ID, err)
 		}
-		if n.Attempts >= maxAttempts {
-			log.Printf("notify: giving up on %s after %d attempts: %s", n.ID, n.Attempts, reason)
+		// The first failure is logged, not only the fifth. Waiting for the final
+		// attempt meant ~30 minutes of backoff during which a dead relay produced
+		// no log line at all. Repeats of the same error stay quiet so a long
+		// outage does not flood the log; a different error speaks again.
+		if n.Attempts <= 1 || s.newError(reason) {
+			log.Printf("notify: send via %s failed (attempt %d/%d, retrying in %s): %s",
+				cfg.Host, n.Attempts, maxAttempts, backoff, reason)
 		}
+		if n.Attempts >= maxAttempts {
+			log.Printf("notify: giving up on %s via %s after %d attempts: %s", n.ID, cfg.Host, n.Attempts, reason)
+		}
+	}
+}
+
+// setQuiet logs the transition into and out of "nothing can be delivered".
+//
+// Only the transition, because the worker ticks every 30s: a line per tick would
+// bury the one that matters, and no line at all is what let a misconfiguration
+// stop every alert in silence.
+func (s *Service) setQuiet(quiet bool, reason string) {
+	s.mu.Lock()
+	was := s.quiet
+	s.quiet = quiet
+	if quiet {
+		s.lastError = ""
+	}
+	s.mu.Unlock()
+	switch {
+	case quiet && !was:
+		log.Printf("notify: %s — alert mail is queued but not being delivered", reason)
+	case !quiet && was:
+		log.Print("notify: mail transport is usable again; draining the outbox")
+	}
+}
+
+// newError reports whether this failure differs from the last one logged, so a
+// relay that is down for hours produces one line rather than one per attempt.
+func (s *Service) newError(reason string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastError == reason {
+		return false
+	}
+	s.lastError = reason
+	return true
+}
+
+// quietReason turns an unusable transport into something an operator can act on.
+// "not configured" and "configured wrong" call for different fixes.
+func quietReason(cfg Config, err error) string {
+	switch {
+	case err != nil:
+		return fmt.Sprintf("cannot read the mail settings: %v", err)
+	case cfg.Host == "" && cfg.From == "":
+		return "no mail transport is configured"
+	case cfg.Host == "":
+		return fmt.Sprintf("a sender (%s) is set but no host is", cfg.From)
+	default:
+		return fmt.Sprintf("host %s is set but no sender address is", cfg.Host)
 	}
 }
 

@@ -24,6 +24,23 @@ tag.
   path the operator chose not to use, and hide that the relay is broken. Each
   tab's **Send test** exercises its own transport.
 
+### Observability
+
+- **The notification outbox is now visible.** `/metrics` gained
+  `rmm_notifications_pending`, `rmm_notifications_failed` and
+  `rmm_notifications_oldest_pending_seconds`. Alert delivery failing is the
+  failure that hides every other failure — it is noticed by not being told about
+  anything — and until now nothing exposed it. A healthy outbox drains within a
+  worker tick, so alert on the age gauge.
+- **The worker speaks when delivery breaks.** The *first* failed send is logged
+  with the transport host, attempt number and retry delay, instead of only the
+  fifth — which meant ~30 minutes of backoff with nothing in the log. Repeats of
+  the same error stay quiet so an outage does not flood it. A transport that
+  cannot deliver at all now logs once, with a reason that distinguishes "nothing
+  configured" from a half-filled profile (a host with no sender, say) that would
+  previously have stopped every alert in complete silence; recovery is logged
+  too. Log lines name the relay, which matters now that there are two.
+
 ### Security
 
 - **A user's email address is now administrator-only to change.** It is where a

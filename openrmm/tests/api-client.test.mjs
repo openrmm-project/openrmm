@@ -125,3 +125,13 @@ test('the settings screen wires both SMTP profiles and no self-service address',
   // The preferences card saves subscriptions only.
   assert.match(screens, /api\.updateMyNotifications\(\{ subscriptions: subs \}\)/);
 });
+
+// Updating a task is a PUT, and the API validates the complete schedule. The
+// inline enabled toggle must therefore preserve the task instead of sending a
+// PATCH-shaped body containing only `enabled`.
+test('the task toggle keeps the complete task when changing enabled state', async () => {
+  const screens = await readFile(path.join(root, 'src', 'screens-rmm.jsx'), 'utf8');
+
+  assert.match(screens,
+    /api\.updateTask\(t\.id,\s*\{\s*\.\.\.t,\s*enabled:\s*!t\.enabled\s*\}\)/);
+});

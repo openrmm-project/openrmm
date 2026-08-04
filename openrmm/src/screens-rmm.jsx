@@ -268,7 +268,16 @@ function TasksScreen() {
     }
     return 'Every ' + (t.interval_sec < 3600 ? Math.round(t.interval_sec / 60) + 'm' : Math.round(t.interval_sec / 3600) + 'h');
   };
-  const toggle = async (t) => { await api.updateTask(t.id, { enabled: !t.enabled }); toast.success(t.enabled ? 'Task disabled' : 'Task enabled'); };
+  const toggle = async (t) => {
+    // Task updates use PUT, so the server validates the entire schedule. Keep
+    // the current task fields when changing just the enabled state.
+    try {
+      await api.updateTask(t.id, { ...t, enabled: !t.enabled });
+      toast.success(t.enabled ? 'Task disabled' : 'Task enabled');
+    } catch (e) {
+      toast.error('Failed to update task', e.message);
+    }
+  };
   const [runningTask, setRunningTask] = useState(null); // { task, count } pending confirm
   const askRun = async (t) => {
     try { const { count } = await api.taskTargets(t.id); setRunningTask({ task: t, count }); }

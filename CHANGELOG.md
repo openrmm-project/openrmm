@@ -50,6 +50,18 @@ tag.
   nowhere. Both now include `internal/settings` and `internal/api`. The
   workflow's own comment warned against an allowlist of test *names* for exactly
   this reason; the package list had the same flaw.
+- **The worker's log decisions are now tested, and one was wrong.** `drain` keyed
+  its "first failure" line on the message's attempt count, so a single outage —
+  which hits every queued message at once — would have logged one line per
+  message, the flood the suppression exists to prevent. It is keyed on the error
+  instead, and reset after a successful send so a later identical outage still
+  speaks. Found by the test, not by review.
+- `internal/notify` joined the DB-backed CI job; `drain` went from 0% to 70.8%,
+  the package from 25.5% to 45.5%.
+- A test pins the console's copy of the default role permissions against the Go
+  catalog. That copy had already drifted once — `users.email.manage` was added to
+  the backend and not the mirror, hiding the address editor from administrators
+  who held the permission.
 - The SMTP endpoints gained end-to-end coverage through the real router with
   real session tokens: each route writes its own profile and leaves the other
   untouched, `settings.manage` guards all six, a scoped principal cannot edit

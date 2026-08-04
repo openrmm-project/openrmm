@@ -121,6 +121,9 @@ func (s *Service) drain(ctx context.Context) {
 			if err := s.store.MarkNotificationSent(ctx, n.ID); err != nil {
 				log.Printf("notify: mark sent %s: %v", n.ID, err)
 			}
+			// Mail is moving again, so the next failure is news rather than a
+			// repeat of an outage that has since ended.
+			s.clearError()
 			continue
 		}
 		// Exponential backoff: a greylisting server (very common) rejects the
@@ -130,11 +133,16 @@ func (s *Service) drain(ctx context.Context) {
 		if err := s.store.MarkNotificationFailed(ctx, n.ID, n.Attempts, maxAttempts, reason, backoff); err != nil {
 			log.Printf("notify: mark failed %s: %v", n.ID, err)
 		}
-		// The first failure is logged, not only the fifth. Waiting for the final
-		// attempt meant ~30 minutes of backoff during which a dead relay produced
-		// no log line at all. Repeats of the same error stay quiet so a long
-		// outage does not flood the log; a different error speaks again.
-		if n.Attempts <= 1 || s.newError(reason) {
+		// The first failure of an outage is logged, not only the fifth attempt:
+		// waiting for the last one meant ~30 minutes of backoff during which a
+		// dead relay produced no log line at all.
+		//
+		// Keyed on the error rather than on the message's attempt count. One
+		// outage hits every queued message at once, so "first attempt" would put
+		// a line in the log per message — the flood this is meant to avoid. A
+		// different error is different news and speaks again, as does the same
+		// error after mail has flowed in between.
+		if s.newError(reason) {
 			log.Printf("notify: send via %s failed (attempt %d/%d, retrying in %s): %s",
 				cfg.Host, n.Attempts, maxAttempts, backoff, reason)
 		}
@@ -166,7 +174,8 @@ func (s *Service) setQuiet(quiet bool, reason string) {
 }
 
 // newError reports whether this failure differs from the last one logged, so a
-// relay that is down for hours produces one line rather than one per attempt.
+// relay that is down for hours produces one line rather than one per attempt of
+// every queued message.
 func (s *Service) newError(reason string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,6 +184,14 @@ func (s *Service) newError(reason string) bool {
 	}
 	s.lastError = reason
 	return true
+}
+
+// clearError forgets the last logged failure, so an identical error in a later
+// outage is reported instead of being mistaken for the same one still running.
+func (s *Service) clearError() {
+	s.mu.Lock()
+	s.lastError = ""
+	s.mu.Unlock()
 }
 
 // quietReason turns an unusable transport into something an operator can act on.

@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -380,4 +384,148 @@ func TestAlertsProfileConstantIsNested(t *testing.T) {
 	if settings.ProfileAlerts == settings.ProfileAccount {
 		t.Fatal("the profiles must not share a key prefix")
 	}
+}
+
+// The outbox gauges are the signal that a stopped queue is detectable from
+// outside. A typo in a gauge name breaks a dashboard silently, so the names are
+// asserted here rather than trusted.
+func TestMetricsExposeTheOutboxIntegration(t *testing.T) {
+	databaseURL := os.Getenv("RMM_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	st := newTestStore(t, databaseURL)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		SettingsEncryptionKey: "0123456789abcdef0123456789abcdef",
+		MetricsToken:          "metrics-token",
+	}
+	ts := httptest.NewServer(New(cfg, st, hub.New(), nil, nil, nil, nil, nil, nil).Router())
+	defer ts.Close()
+
+	// One queued message, so pending and the age gauge are non-trivial.
+	if err := st.EnqueueNotification(ctx, &models.Notification{
+		EventType: store.NotifyAgentOffline, Recipient: "someone@example.test",
+		Subject: "s", Body: "b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer metrics-token")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	body := string(raw)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d; body %s", res.StatusCode, body)
+	}
+	for _, gauge := range []string{
+		"rmm_notifications_pending",
+		"rmm_notifications_failed",
+		"rmm_notifications_oldest_pending_seconds",
+	} {
+		if !strings.Contains(body, "# TYPE "+gauge+" gauge") {
+			t.Errorf("missing gauge %q in:\n%s", gauge, body)
+		}
+	}
+	if !strings.Contains(body, "rmm_notifications_pending 1") {
+		t.Errorf("pending gauge should count the queued message:\n%s", body)
+	}
+}
+
+// Password resets leave through the account transport, never the alerts one.
+// Nothing else pins this: pointing deliverPasswordReset at AlertSMTPConfig would
+// compile and pass every other test, and reset links would start going out
+// through a relay chosen for monitoring mail.
+func TestPasswordResetUsesTheAccountTransportIntegration(t *testing.T) {
+	e := newSMTPE2E(t)
+
+	// Two listeners that accept and hang up. Which port is dialled identifies
+	// the transport; the send fails either way, which is fine — the question is
+	// only which relay was chosen.
+	accountRelay := newDialRecorder(t)
+	alertsRelay := newDialRecorder(t)
+
+	save := func(path string, port int, from string) {
+		body := fmt.Sprintf(`{"host":"127.0.0.1","port":%d,"from":%q,"tls_mode":"none"}`, port, from)
+		if code, out := e.do(http.MethodPut, path, body, e.admin); code != http.StatusOK {
+			t.Fatalf("saving %s: status %d (%v)", path, code, out)
+		}
+	}
+	save("/api/config/smtp", accountRelay.port, "no-reply@account.test")
+	save("/api/config/smtp/alerts", alertsRelay.port, "alerts@alerts.test")
+
+	target, err := e.store.CreateUser(e.ctx, "reset-"+uuid.NewString(), "hash", models.RoleTech)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateUserEmail(e.ctx, target.ID, "reset-target@example.test"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The endpoint answers before doing any work — that is its enumeration
+	// defence — so the delivery attempt happens in the background.
+	code, _ := e.do(http.MethodPost, "/api/auth/password-reset", `{"email":"reset-target@example.test"}`, "")
+	if code != http.StatusAccepted {
+		t.Fatalf("password reset request: status %d, want 202", code)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && accountRelay.dialled() == 0 && alertsRelay.dialled() == 0 {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if accountRelay.dialled() == 0 {
+		t.Error("the reset was not sent through the account transport")
+	}
+	if alertsRelay.dialled() != 0 {
+		t.Errorf("the reset went through the alerts relay (%d dials)", alertsRelay.dialled())
+	}
+}
+
+// dialRecorder accepts TCP connections and immediately closes them, recording
+// how many arrived. Its port is its identity.
+type dialRecorder struct {
+	port  int
+	mu    sync.Mutex
+	conns int
+}
+
+func newDialRecorder(t *testing.T) *dialRecorder {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	d := &dialRecorder{port: ln.Addr().(*net.TCPAddr).Port}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			d.mu.Lock()
+			d.conns++
+			d.mu.Unlock()
+			_ = conn.Close()
+		}
+	}()
+	return d
+}
+
+func (d *dialRecorder) dialled() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.conns
 }

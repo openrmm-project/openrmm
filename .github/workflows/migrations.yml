@@ -5,12 +5,16 @@ on:
     branches: [main]
     paths:
       - 'internal/store/**'
+      - 'internal/settings/**'
+      - 'internal/api/**'
       - 'db/schema.sql'
       - 'cmd/server/main.go'
       - '.github/workflows/migrations.yml'
   pull_request:
     paths:
       - 'internal/store/**'
+      - 'internal/settings/**'
+      - 'internal/api/**'
       - 'db/schema.sql'
       - 'cmd/server/main.go'
       - '.github/workflows/migrations.yml'
@@ -41,9 +45,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25'
-      # The whole package, not an allowlist of test names: every DB-backed test
-      # in internal/store skips silently without RMM_TEST_DATABASE_URL, so a
-      # named pattern means a new integration test is added, passes locally, and
-      # never runs here again. Postgres is already provisioned above; running the
-      # unit tests alongside it costs nothing.
-      - run: go test ./internal/store -count=1
+      # Whole packages, not an allowlist of test names: every DB-backed test
+      # skips silently without RMM_TEST_DATABASE_URL, so a named pattern means a
+      # new integration test is added, passes locally, and never runs here again.
+      # Postgres is already provisioned above; running the unit tests alongside
+      # it costs nothing.
+      #
+      # The package list has the same failure mode as a test-name list, and had
+      # already bitten: settings and api grew DB-backed tests that ran nowhere,
+      # because neither the list below nor the path filter above mentioned them.
+      # A DB-backed test in a package that is not listed here does not exist.
+      - run: go test ./internal/store ./internal/settings ./internal/api -count=1

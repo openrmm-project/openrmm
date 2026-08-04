@@ -41,6 +41,23 @@ tag.
   previously have stopped every alert in complete silence; recovery is logged
   too. Log lines name the relay, which matters now that there are two.
 
+### Tests / CI
+
+- **DB-backed tests in `internal/settings` and `internal/api` were never running
+  in CI.** The "Database migrations" workflow is the only job with a Postgres
+  service, and both its path filter and its package list named `internal/store`
+  alone — so an integration test added anywhere else passed locally and ran
+  nowhere. Both now include `internal/settings` and `internal/api`. The
+  workflow's own comment warned against an allowlist of test *names* for exactly
+  this reason; the package list had the same flaw.
+- The SMTP endpoints gained end-to-end coverage through the real router with
+  real session tokens: each route writes its own profile and leaves the other
+  untouched, `settings.manage` guards all six, a scoped principal cannot edit
+  instance-wide mail config, passwords never appear in a response or an audit
+  detail, and `users.email.manage` is genuinely required by the address route.
+  Both key assertions were verified by mutation — breaking the route binding and
+  removing the permission middleware each make them fail.
+
 ### Security
 
 - **A user's email address is now administrator-only to change.** It is where a

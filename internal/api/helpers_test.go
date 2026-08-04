@@ -1,9 +1,16 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/store"
@@ -60,4 +67,47 @@ func TestHTTPStatusFor(t *testing.T) {
 	if got := httpStatusFor(errors.New("boom")); got != http.StatusBadRequest {
 		t.Errorf("generic error mapped to %d, want 400", got)
 	}
+}
+
+// newTestStore gives a test its own Postgres schema, migrated and dropped on
+// cleanup. Per-schema rather than per-database so DB-backed tests in this
+// package neither truncate shared tables nor collide when run together.
+//
+// Skips are the caller's job: without RMM_TEST_DATABASE_URL there is nothing to
+// connect to. Note that CI runs the DB-backed packages in the "Database
+// migrations" workflow — a test added here only ever runs if that workflow's
+// package list and path filter include this package.
+func newTestStore(t *testing.T, databaseURL string) *store.Store {
+	t.Helper()
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schemaName := "api_authorization_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	database, err := url.Parse(databaseURL)
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	query := database.Query()
+	query.Set("search_path", schemaName)
+	database.RawQuery = query.Encode()
+	st, err := store.New(ctx, database.String())
+	if err != nil {
+		_, _ = admin.Exec(ctx, "DROP SCHEMA "+quotedSchema+" CASCADE")
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		st.Close()
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+quotedSchema+" CASCADE")
+		admin.Close()
+	})
+	return st
 }

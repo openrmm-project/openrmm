@@ -134,4 +134,29 @@ test('the task toggle keeps the complete task when changing enabled state', asyn
 
   assert.match(screens,
     /api\.updateTask\(t\.id,\s*\{\s*\.\.\.t,\s*enabled:\s*!t\.enabled\s*\}\)/);
+  assert.match(screens, /const \[confirmToggleTask, setConfirmToggleTask\] = useState\(null\)/);
+  assert.match(screens, /onChange=\{\(\) => setConfirmToggleTask\(t\)\}/);
+  assert.match(screens, /title=\{confirmToggleTask\?\.enabled \? 'Disable task\?' : 'Enable task\?'\}/);
+  assert.match(screens, /onConfirm=\{\(\) => toggle\(confirmToggleTask\)\}/);
+});
+
+// Checks also use a full PUT update. Toggling one must retain its definition,
+// keep the row click handler from opening the details drawer, and offer the
+// same control in the editor for changes saved alongside other fields.
+test('checks can be enabled or disabled from the list and editor', async () => {
+  const screens = await readFile(path.join(root, 'src', 'screens-rmm.jsx'), 'utf8');
+  const ui = await readFile(path.join(root, 'src', 'ui.jsx'), 'utf8');
+
+  assert.match(screens,
+    /api\.updateCheck\(c\.id,\s*\{\s*\.\.\.c,\s*enabled:\s*!c\.enabled\s*\}\)/);
+  assert.match(screens,
+    /onClick=\{\(e\) => e\.stopPropagation\(\)\}\s*>\s*<Toggle checked=\{c\.enabled\}/);
+  assert.match(screens, /const \[confirmToggle, setConfirmToggle\] = useState\(null\)/);
+  assert.match(screens, /title=\{confirmToggle\?\.enabled \? 'Disable check\?' : 'Enable check\?'\}/);
+  assert.match(screens, /onConfirm=\{\(\) => toggle\(confirmToggle\)\}/);
+  assert.match(screens, /const \[enabled, setEnabled\] = useState\(check\?\.enabled \?\? true\)/);
+  assert.match(screens, /interval_sec: Number\(interval\), enabled/);
+  assert.match(screens, /Check will be disabled when saved/);
+  assert.match(screens, /c\.enabled \? \(c\.latest\?\.status \|\| 'passing'\) : 'disabled'/);
+  assert.match(ui, /disabled: \{ c: 'muted', label: 'Disabled' \}/);
 });

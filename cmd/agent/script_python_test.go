@@ -10,14 +10,26 @@ import (
 	"time"
 )
 
-// requirePython skips when the machine running the tests has no interpreter.
-// Skipping is honest here: this exercises the execution path, and a runner
-// without Python cannot exercise it. The absent-interpreter path is covered
-// separately and needs no interpreter to test.
+// requirePython guards the tests that need a real interpreter.
+//
+// On a developer machine without Python, skipping is right: failing there would
+// blame the code for the machine. In CI it is the opposite. A Go skip counts as
+// a pass, and the job runs without -v, so a runner missing Python would produce
+// a green build that proves nothing — and the Windows and macOS runs exist
+// precisely to cover the platform-specific parts of this path (the py -3
+// lookup, path handling, killing the process tree) that cannot be exercised on
+// the Linux machines this is written on. A silent skip there would mean claiming
+// cross-platform coverage that never happened.
+//
+// So in CI the absence is a failure, loudly, instead of a pass nobody reads.
 func requirePython(t *testing.T) {
 	t.Helper()
-	if _, _, err := pythonInterpreter(); err != nil {
+	if _, _, err := pythonInterpreter(); err == nil {
+		return
+	} else if os.Getenv("CI") == "" {
 		t.Skipf("no Python interpreter available: %v", err)
+	} else {
+		t.Fatalf("this runner has no Python, so the execution path was not tested here: %v", err)
 	}
 }
 

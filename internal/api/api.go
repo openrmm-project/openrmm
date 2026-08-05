@@ -285,9 +285,17 @@ func (s *Server) Router() http.Handler {
 
 		r.With(s.requirePermission(models.PermAuditView)).Get("/audit", s.listAudit)
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config", s.updateConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp", s.getSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp", s.updateSMTPConfig)
-		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/test", s.testSMTPConfig)
+		// Two mail transports: the account one carries password resets, the alerts
+		// one carries notifications and falls back to the account transport when it
+		// names no host. Each handler is bound to its profile here rather than
+		// sniffing the request path, so no routing quirk can send a save to the
+		// wrong transport and overwrite password-reset delivery.
+		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp", s.getSMTPConfig(settings.ProfileAccount))
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp", s.updateSMTPConfig(settings.ProfileAccount))
+		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/test", s.testSMTPConfig(settings.ProfileAccount))
+		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp/alerts", s.getSMTPConfig(settings.ProfileAlerts))
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp/alerts", s.updateSMTPConfig(settings.ProfileAlerts))
+		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/alerts/test", s.testSMTPConfig(settings.ProfileAlerts))
 		r.With(s.requirePermission(models.PermEnrollmentManage)).Post("/enroll-tokens", s.createEnrollToken)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/api-tokens", s.listAPITokens)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/api-tokens", s.createAPIToken)
@@ -295,7 +303,10 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users", s.listUsers)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users", s.createUser)
 		r.With(s.requirePermission(models.PermUsersManage)).Patch("/users/{id}", s.updateUser)
-		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/email", s.setUserEmail)
+		// The address takes users.email.manage on top of users.manage: a password
+		// reset resolves an account through it, so it is an authentication factor
+		// rather than a contact detail.
+		r.With(s.requirePermission(models.PermUsersManage), s.requirePermission(models.PermUsersEmailManage)).Put("/users/{id}/email", s.setUserEmail)
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users/{id}/scopes", s.getUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)

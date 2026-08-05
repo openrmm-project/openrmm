@@ -10,7 +10,7 @@ const ROLES = { admin: 3, tech: 2, readonly: 1 };
 const DEFAULT_ROLE_PERMS = {
   readonly: ['devices.view', 'devices.remote', 'clients.view'],
   tech: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'tasks.view', 'policies.view', 'scripts.view', 'patches.view', 'patches.manage', 'devices.view', 'devices.manage', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'reports.view'],
-  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'],
+  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage'],
 };
 const PERM_ALIASES = { admin: 'settings.manage', tech: 'jobs.manage', readonly: 'devices.view' };
 const AUTH_KEY = 'rmm-ai-auth';
@@ -263,6 +263,8 @@ const api = {
   deleteUser(id) { return DELETE('/api/users/' + id); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },
+  // Needs users.email.manage on top of users.manage: the address is where a
+  // password reset lands, not just a contact detail.
   setUserEmail(id, email) { return PUT('/api/users/' + id + '/email', { email }); },
 
   /* ---- password reset (unauthenticated) ---- */
@@ -272,13 +274,19 @@ const api = {
   confirmPasswordReset(token, password) { return POST('/api/auth/password-reset/confirm', { token, password }); },
 
   /* ---- email notifications ---- */
-  // Preferences are self-service (any signed-in user); the SMTP transport below
-  // is instance-wide and needs settings.manage.
+  // Which events you receive is self-service (any signed-in user); the address
+  // they go to is not — see setUserEmail. The transports below are instance-wide
+  // and need settings.manage.
   getMyNotifications() { return GET('/api/me/notifications'); },
   updateMyNotifications(body) { return PUT('/api/me/notifications', body); },
+  // Two transports: the account one carries password resets, the alerts one
+  // carries notifications and falls back to the account one when it has no host.
   getSMTPConfig() { return GET('/api/config/smtp'); },
   updateSMTPConfig(body) { return PUT('/api/config/smtp', body); },
   testSMTP(to) { return POST('/api/config/smtp/test', { to }); },
+  getAlertSMTPConfig() { return GET('/api/config/smtp/alerts'); },
+  updateAlertSMTPConfig(body) { return PUT('/api/config/smtp/alerts', body); },
+  testAlertSMTP(to) { return POST('/api/config/smtp/alerts/test', { to }); },
 
   /* ---- roles & permissions ---- */
   listRoles() { return GET('/api/roles'); },

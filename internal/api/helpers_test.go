@@ -7,6 +7,7 @@ import (
 
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/store"
+	"github.com/p1ngu/rmm/internal/store/storetest"
 )
 
 func TestOneOf(t *testing.T) {
@@ -60,4 +61,15 @@ func TestHTTPStatusFor(t *testing.T) {
 	if got := httpStatusFor(errors.New("boom")); got != http.StatusBadRequest {
 		t.Errorf("generic error mapped to %d, want 400", got)
 	}
+}
+
+// newTestStore is storetest.NewSchema under this package's name, kept so the
+// existing DB-backed tests here read unchanged.
+//
+// Note that CI runs the DB-backed packages in the "Database migrations"
+// workflow — a test added here only ever runs if that workflow's package list
+// and path filter include this package.
+func newTestStore(t *testing.T, databaseURL string) *store.Store {
+	t.Helper()
+	return storetest.NewSchema(t, "api_test", databaseURL)
 }

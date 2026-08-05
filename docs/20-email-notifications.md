@@ -34,7 +34,8 @@ once per device.
 `RecipientsForAgentEvent` requires all of:
 
 1. an address on the user (`users.email`, optional — console-only accounts work
-   without one),
+   without one; it is also where a password reset for that account is sent, which
+   is why only `users.email.manage` may change it),
 2. an enabled subscription, or no row at all for a default-on event,
 3. the **`alerts.view`** permission the user's role carries, and
 4. the device inside the user's **access scope**.
@@ -63,6 +64,36 @@ what was not delivered.
 If SMTP is not configured, the worker leaves rows pending rather than failing
 them: they go out once an operator finishes the setup.
 
+### Knowing when delivery has stopped
+
+The outbox is the thing to watch, because alert delivery failing is the failure
+that hides every other failure — it is noticed by *not* being told about
+anything, which is to say it is not noticed.
+
+`/metrics` (token-gated) exposes three gauges:
+
+| Gauge | Meaning |
+|---|---|
+| `rmm_notifications_pending` | queued, not yet delivered |
+| `rmm_notifications_failed` | abandoned after 5 attempts; never retried again |
+| `rmm_notifications_oldest_pending_seconds` | age of the oldest undelivered message |
+
+Alert on the last one. A healthy outbox drains within a worker tick (30s), so
+minutes of backlog means mail has stopped leaving, whatever the cause.
+
+The worker's logs are the second signal, and they speak on **transitions**, not
+on every 30s tick:
+
+- The **first** failed send is logged, naming the transport host, the attempt
+  number and the retry delay — not only the fifth and final one, which used to
+  mean roughly 30 minutes of backoff with nothing in the log. Repeats of the same
+  error stay quiet; a *different* error speaks again.
+- Giving up after 5 attempts names the message and the host it failed on.
+- A transport that cannot deliver at all logs once, with a reason that separates
+  "nothing configured" from "a sender is set but no host" from "a host is set but
+  no sender" — the last being the half-filled alerts profile that would otherwise
+  stop every alert in complete silence. Recovery is logged once too.
+
 ## Configuration
 
 SMTP lives **only in the database**, unlike the AI/MeshCentral settings which
@@ -70,11 +101,40 @@ overlay an env baseline: there is no SMTP env config to overlay, and an operator
 fixing a rejected password should not need a redeploy. It is read fresh on every
 use, so a correction takes effect on the next queued message.
 
-Settings are under **Users & Settings → Email** (`settings.manage`):
+### Two transports
+
+There are **two** profiles, under two key prefixes:
+
+| Profile | Keys | Carries |
+|---|---|---|
+| Account | `smtp.*` | password resets — and alerts, unless the alerts profile overrides them |
+| Alerts | `smtp.alerts.*` | notifications |
+
+The alerts profile is optional, and how much of it you fill in decides how much
+separates the two:
+
+- **Nothing set** — alerts leave exactly like account mail. This is the upgrade
+  default, so an existing instance keeps behaving as it did.
+- **A From address (no host)** — same relay, different sender: `alerts@` for
+  monitoring, `no-reply@` for account mail. The display name travels with the
+  address, so a new `From` clears an inherited `From name` rather than rendering
+  a mismatched `OpenRMM <alerts@…>`.
+- **A host** — a genuinely separate relay, and then **nothing is inherited**.
+  Carrying the account profile's username and password to a host the operator
+  named separately would hand one server's mailbox credentials to another. An
+  alerts profile with no host of its own stores no password at all.
+
+If the alerts relay fails, alerts retry on it and are **never rerouted** through
+the account transport. A silent fallback would send mail through a path the
+operator deliberately chose not to use, and would hide that the alerts relay is
+broken.
+
+Settings are under **Users & Settings → Email** (`settings.manage`), one tab per
+profile:
 
 | Field | Notes |
 |---|---|
-| Host | Clearing it turns email off **and discards the stored password** |
+| Host | Account: clearing it turns email off **and discards the stored password**. Alerts: blank means "use the account transport" |
 | Port | Defaults to 587 |
 | Encryption | `starttls` (default) · `tls` (implicit, usually 465) · `none` |
 | Certificate check | Skip only for a private CA on a trusted network |
@@ -92,28 +152,37 @@ authenticated server to `none` fails while a password is stored**; clear the hos
 (which drops the password) and re-enter the server if that is really intended.
 
 **Send test** delivers one message synchronously with the *stored* settings, so
-save before testing. It is the only place mail is sent on a request path; the
-transport timeout (20s) bounds it.
+save before testing. Each tab tests **its own** transport, resolved the way
+delivery resolves it — testing the account transport and calling it an alert test
+is how a broken alerts relay stays hidden. It is the only place mail is sent on a
+request path; the transport timeout (20s) bounds it.
 
 ## Endpoints
 
 ```
-GET    /api/config/smtp          settings.manage   transport, password as a boolean
-PUT    /api/config/smtp          settings.manage   blank password preserves
-POST   /api/config/smtp/test     settings.manage   {"to": "…"}, blank = caller's own address
-GET    /api/me/notifications     any user          address + merged preferences
-PUT    /api/me/notifications     any user          {"email": …, "subscriptions": {…}}
-PUT    /api/users/{id}/email     users.manage      onboard a technician's address
-POST   /api/users                users.manage      accepts an optional "email"
+GET    /api/config/smtp             settings.manage   account transport, password as a boolean
+PUT    /api/config/smtp             settings.manage   blank password preserves
+POST   /api/config/smtp/test        settings.manage   {"to": "…"}, blank = caller's own address
+GET    /api/config/smtp/alerts      settings.manage   alerts profile as stored + "effective"
+PUT    /api/config/smtp/alerts      settings.manage   blank host = ride the account transport
+POST   /api/config/smtp/alerts/test settings.manage   tests the alerts transport
+GET    /api/me/notifications        any user          address (read-only) + merged preferences
+PUT    /api/me/notifications        any user          {"subscriptions": {…}}
+PUT    /api/users/{id}/email        users.manage + users.email.manage
+POST   /api/users                   users.manage      an optional "email" also needs users.email.manage
 ```
 
-Preferences are **self-service**: the address only decides where the caller's own
-alerts go, and grants no visibility their access scope does not already allow.
-Setting *someone else's* address needs `users.manage` and is an onboarding
-convenience — a technician should hear about their devices before their first
-sign-in. Every address change is audited (`user.email.update`), as are SMTP edits
-(`config.smtp.update`) and tests (`config.smtp.test`); the SMTP audit records
-which fields were touched, never their values.
+**Preferences** are self-service: which events a user hears about grants no
+visibility their access scope does not already allow. **The address is not.**
+It is where a password reset link is delivered, so whoever can rewrite it can
+take over an account that has no second factor. That takes `users.email.manage`
+— held by `admin`, and deliberately *not* implied by `users.manage`, so a
+delegated user manager can create and scope technicians without it.
+
+Address changes are audited (`user.email.update`), as are SMTP edits and tests
+per profile (`config.smtp.update` / `config.smtp.alerts.update`, and the matching
+`.test` actions); the SMTP audit records which fields were touched, never their
+values.
 
 ## Schema
 
@@ -122,9 +191,13 @@ case-insensitively among users that have one), `notification_subscriptions`
 (one row per user per event type), the `notifications` outbox, and
 `password_resets`.
 
+Migration `004_user_email_permission.sql` grants `users.email.manage` to `admin`.
+The alerts transport needs no schema: both profiles live in `app_settings`.
+
 ## Password reset
 
-Reset shares the SMTP **transport** and deliberately not the **outbox**.
+Reset uses the **account** transport (never the alerts one) and deliberately not
+the **outbox**.
 
 Queuing a reset would be wrong three times over. `notifications.body` is stored
 and never pruned, so the link — and therefore a working token — would sit in the

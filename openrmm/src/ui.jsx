@@ -113,7 +113,7 @@ const STATUS_META = {
   awaiting_approval: { c: 'warn', label: 'Awaiting approval' }, pending: { c: 'warn', label: 'Pending' }, warning: { c: 'warn', label: 'Warning' }, acked: { c: 'warn', label: 'Acked' }, new: { c: 'warn', label: 'New' },
   running: { c: 'run', label: 'Running' }, sent: { c: 'run', label: 'Sent' }, info: { c: 'run', label: 'Info' },
   failed: { c: 'bad', label: 'Failed' }, offline: { c: 'bad', label: 'Offline' }, rejected: { c: 'bad', label: 'Rejected' }, failing: { c: 'bad', label: 'Failing' }, error: { c: 'bad', label: 'Error' },
-  resolved: { c: 'muted', label: 'Resolved' },
+  resolved: { c: 'muted', label: 'Resolved' }, disabled: { c: 'muted', label: 'Disabled' },
 };
 function StatusPill({ status, label, size = 'md', pulse }) {
   const m = STATUS_META[status] || { c: 'muted', label: label || status };

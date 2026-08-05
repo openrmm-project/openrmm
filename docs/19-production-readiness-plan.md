@@ -131,9 +131,18 @@ See [18-update-signing-runbook](18-update-signing-runbook.md).
 - `/readyz` readiness probe (DB ping, 503 when down); prod container healthcheck
   now points at it. ✅
 - Token-gated `/metrics` (Prometheus text, disabled unless `RMM_METRICS_TOKEN` is
-  set): DB pool, online-agent and goroutine gauges. ✅
+  set): DB pool, online-agent and goroutine gauges, plus the notification outbox
+  (`rmm_notifications_pending`, `_failed`, `_oldest_pending_seconds`). ✅
 - **Remaining ⬜:** structured logging + log aggregation; a backup-failure alert;
   richer metrics (job queue depth, relay sessions) as needs emerge.
+
+**Alert on the outbox first.** Alert delivery failing is the failure that hides
+every other failure: you notice it by not being told about anything, which is to
+say you do not notice it. A healthy outbox drains within a worker tick (30s), so
+`rmm_notifications_oldest_pending_seconds > 600` means mail has stopped leaving,
+whatever the cause — a dead relay, a rejected password, a half-filled alerts
+profile. `rmm_notifications_failed` rising means messages were abandoned after
+five attempts and are never coming back.
 - **Acceptance:** a scraper collects `/metrics`; orchestrator gates routing on
   `/readyz`; backup failures alert.
 

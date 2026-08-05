@@ -70,7 +70,7 @@ SELECT 'admin', permission FROM (VALUES
     ('devices.view'), ('devices.manage'), ('devices.delete'), ('devices.remote'), ('devices.files'), ('devices.terminal'),
     ('clients.view'), ('clients.manage'),
     ('reports.view'), ('audit.view'),
-    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('roles.manage')
+    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage')
 ) AS p(permission)
 ON CONFLICT DO NOTHING;
 
@@ -87,8 +87,12 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT
 -- secret and enabled flag are never weakened during rotation.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_secret TEXT;
 
--- Notification address. Optional, so console-only accounts keep working; it
--- doubles as the alert recipient (see notifications below).
+-- The user's address: where their alerts are delivered, and where a password
+-- reset link is sent. Optional, so console-only accounts keep working.
+--
+-- Because a reset resolves an account through it, this is an authentication
+-- factor and not merely a contact detail: it is unique, and only
+-- users.email.manage may change it (see migration 004).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
 
 -- Case-insensitive uniqueness, but only for users that actually have an address.

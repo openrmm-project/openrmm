@@ -17,6 +17,19 @@ import (
 
 // ---------- SMTP transport (instance-wide) ----------
 
+// Two transports: /api/config/smtp is the account profile that carries password
+// resets, /api/config/smtp/alerts the optional one that carries notifications.
+// The alerts profile falls back to the account transport when it names no host
+// of its own, which is how "same relay, different sender" is expressed — see
+// settings.AlertSMTPConfig.
+//
+// Each handler is bound to its profile at route registration rather than
+// deriving it from the request path. Deriving it meant one string comparison
+// stood between a save and the wrong transport: a path the matcher did not
+// recognise fell through to the account profile, and a save routed there
+// overwrites the settings that deliver password resets. Binding it makes that
+// unrepresentable.
+
 // smtpView is the read shape. Like every other secret on the settings screen the
 // password is exposed only as a boolean: the console never needs the value back,
 // and not returning it means a compromised session cannot exfiltrate it.
@@ -34,50 +47,94 @@ func smtpView(cfg notify.Config) map[string]any {
 	}
 }
 
-func (s *Server) getSMTPConfig(w http.ResponseWriter, r *http.Request) {
+// smtpConfigFor resolves one profile. The alerts profile is returned as stored
+// *and* as it will actually be used, because a screen showing only the stored
+// fields would leave an operator guessing what an empty host means.
+func (s *Server) smtpConfigFor(r *http.Request, profile string) (view map[string]any, err error) {
+	if profile == settings.ProfileAlerts {
+		stored, err := settings.SMTPProfile(r.Context(), s.store, s.cfg, settings.ProfileAlerts)
+		if err != nil {
+			return nil, err
+		}
+		effective, err := settings.AlertSMTPConfig(r.Context(), s.store, s.cfg)
+		if err != nil {
+			return nil, err
+		}
+		out := smtpView(stored)
+		out["inherits_transport"] = stored.Host == ""
+		out["effective"] = smtpView(effective)
+		return out, nil
+	}
 	cfg, err := settings.SMTPConfig(r.Context(), s.store, s.cfg)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
-	writeJSON(w, http.StatusOK, smtpView(cfg))
+	return smtpView(cfg), nil
 }
 
-func (s *Server) updateSMTPConfig(w http.ResponseWriter, r *http.Request) {
-	if !s.requireUnrestricted(w, r, "global configuration") {
-		return
+func (s *Server) getSMTPConfig(profile string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		view, err := s.smtpConfigFor(r, profile)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
 	}
-	var in settings.SMTPSaveRequest
-	if err := decode(r, &in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	if in.From != "" && !validEmail(in.From) {
-		writeErr(w, http.StatusBadRequest, "invalid sender address")
-		return
-	}
-	cfg, err := settings.SaveSMTP(r.Context(), s.store, s.cfg, in)
-	if err != nil {
-		// SaveSMTP's failures are validation failures (bad TLS mode, credentials
-		// on a cleartext link), which the operator can act on.
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.smtp.update", "app_settings",
-		settings.AuditDetail(changedSMTP(in)))
-	writeJSON(w, http.StatusOK, smtpView(cfg))
 }
 
-func changedSMTP(in settings.SMTPSaveRequest) []string {
+func (s *Server) updateSMTPConfig(profile string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireUnrestricted(w, r, "global configuration") {
+			return
+		}
+		var in settings.SMTPSaveRequest
+		if err := decode(r, &in); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		if in.From != "" && !validEmail(in.From) {
+			writeErr(w, http.StatusBadRequest, "invalid sender address")
+			return
+		}
+		if _, err := settings.SaveSMTP(r.Context(), s.store, s.cfg, profile, in); err != nil {
+			// SaveSMTP's failures are validation failures (bad TLS mode, credentials
+			// on a cleartext link), which the operator can act on.
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		_ = s.store.AddAudit(r.Context(), actorOf(r), auditActionSMTP(profile), "app_settings",
+			settings.AuditDetail(changedSMTP(profile, in)))
+		view, err := s.smtpConfigFor(r, profile)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
+	}
+}
+
+func auditActionSMTP(profile string) string {
+	if profile == settings.ProfileAlerts {
+		return "config.smtp.alerts.update"
+	}
+	return "config.smtp.update"
+}
+
+func changedSMTP(profile string, in settings.SMTPSaveRequest) []string {
 	// The audit records which fields were submitted, never their values: the
 	// point is a trail of who touched mail delivery, not a copy of the config.
-	var out []string
 	if strings.TrimSpace(in.Host) == "" {
+		if profile == settings.ProfileAlerts {
+			// Not "cleared": the sender identity may still be set, and the profile
+			// now rides the account transport.
+			return []string{profile + "transport_inherited", profile + "from"}
+		}
 		return []string{"smtp.cleared"}
 	}
-	out = append(out, "smtp.host", "smtp.port", "smtp.from", "smtp.tls_mode")
+	out := []string{profile + "host", profile + "port", profile + "from", profile + "tls_mode"}
 	if strings.TrimSpace(in.Password) != "" {
-		out = append(out, "smtp.password")
+		out = append(out, profile+"password")
 	}
 	return out
 }
@@ -87,48 +144,67 @@ func changedSMTP(in settings.SMTPSaveRequest) []string {
 // It sends synchronously, unlike every other message in this system: the whole
 // value of a test button is telling the operator the result now. notify.Send's
 // timeout bounds how long that can take.
-func (s *Server) testSMTPConfig(w http.ResponseWriter, r *http.Request) {
-	if !s.requireUnrestricted(w, r, "global configuration") {
-		return
-	}
-	var in struct {
-		To string `json:"to"`
-	}
-	_ = decode(r, &in)
-	to := strings.TrimSpace(in.To)
-	if to == "" {
-		// Default to the caller's own address so the common case is one click.
-		if u, err := s.store.GetUserByID(r.Context(), actorOf(r)); err == nil {
-			to = u.Email
+func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireUnrestricted(w, r, "global configuration") {
+			return
 		}
+		var in struct {
+			To string `json:"to"`
+		}
+		_ = decode(r, &in)
+		to := strings.TrimSpace(in.To)
+		if to == "" {
+			// Default to the caller's own address so the common case is one click.
+			if u, err := s.store.GetUserByID(r.Context(), actorOf(r)); err == nil {
+				to = u.Email
+			}
+		}
+		if to == "" {
+			writeErr(w, http.StatusBadRequest, "no recipient: pass \"to\", or set an address on your account")
+			return
+		}
+		if !validEmail(to) {
+			writeErr(w, http.StatusBadRequest, "invalid recipient address")
+			return
+		}
+		// Each button tests the transport it sits next to, resolved the same way
+		// delivery resolves it — including the alerts profile's fallback. Testing the
+		// account transport and calling it an alert test is how a broken alert relay
+		// stays hidden.
+		var cfg notify.Config
+		var err error
+		if profile == settings.ProfileAlerts {
+			cfg, err = settings.AlertSMTPConfig(r.Context(), s.store, s.cfg)
+		} else {
+			cfg, err = settings.SMTPConfig(r.Context(), s.store, s.cfg)
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !cfg.Enabled() {
+			writeErr(w, http.StatusBadRequest, "configure an SMTP host and sender address first")
+			return
+		}
+		what := "Password reset and account mail leaves through this transport."
+		if profile == settings.ProfileAlerts {
+			what = "Alert notifications leave through this transport."
+		}
+		body := "This is a test message from OpenRMM.\n\n" + what + "\n"
+		if err := notify.Send(cfg, notify.Message{To: to, Subject: "[OpenRMM] Test message", Body: body}); err != nil {
+			// The SMTP server's own words are the most useful thing we can show, and
+			// this endpoint is already restricted to operators who can edit settings.
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		action := "config.smtp.test"
+		if profile == settings.ProfileAlerts {
+			action = "config.smtp.alerts.test"
+		}
+		_ = s.store.AddAudit(r.Context(), actorOf(r), action, "app_settings", auditLabel("to", to))
+		writeJSON(w, http.StatusOK, map[string]string{"status": "sent", "to": to})
 	}
-	if to == "" {
-		writeErr(w, http.StatusBadRequest, "no recipient: pass \"to\", or set an address on your account")
-		return
-	}
-	if !validEmail(to) {
-		writeErr(w, http.StatusBadRequest, "invalid recipient address")
-		return
-	}
-	cfg, err := settings.SMTPConfig(r.Context(), s.store, s.cfg)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !cfg.Enabled() {
-		writeErr(w, http.StatusBadRequest, "configure an SMTP host and sender address first")
-		return
-	}
-	body := "This is a test message from OpenRMM.\n\n" +
-		"If you are reading it, alert delivery is working.\n"
-	if err := notify.Send(cfg, notify.Message{To: to, Subject: "[OpenRMM] Test message", Body: body}); err != nil {
-		// The SMTP server's own words are the most useful thing we can show, and
-		// this endpoint is already restricted to operators who can edit settings.
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.smtp.test", "app_settings", auditLabel("to", to))
-	writeJSON(w, http.StatusOK, map[string]string{"status": "sent", "to": to})
 }
 
 // ---------- Per-user notification preferences ----------
@@ -174,8 +250,12 @@ func (s *Server) getMyNotifications(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	cfg, _ := settings.SMTPConfig(r.Context(), s.store, s.cfg)
+	// The alerts transport, not the account one: whether alerts can be delivered
+	// is what this screen is about.
+	cfg, _ := settings.AlertSMTPConfig(r.Context(), s.store, s.cfg)
 	writeJSON(w, http.StatusOK, map[string]any{
+		// Read-only here: shown so the user knows where their alerts land, but
+		// changing it needs users.email.manage.
 		"email":         u.Email,
 		"subscriptions": notificationPrefs(explicit),
 		// Without a transport nothing is delivered whatever the preferences say,
@@ -184,20 +264,32 @@ func (s *Server) getMyNotifications(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// updateMyNotifications sets the caller's own address and subscriptions. Email
-// is self-service because the address is where *their* alerts go; the access
-// scope that decides which devices they hear about is unaffected by it.
+// updateMyNotifications sets the caller's own subscriptions — which events they
+// hear about, not where the mail goes.
+//
+// The address is intentionally not self-service. It is also the address a
+// password reset resolves, so letting a user retarget it themselves is how an
+// account takeover starts; it takes users.email.manage. Choosing which alerts to
+// receive carries none of that risk.
 func (s *Server) updateMyNotifications(w http.ResponseWriter, r *http.Request) {
 	u, ok := s.sessionUser(w, r)
 	if !ok {
 		return
 	}
 	var in struct {
-		Email         *string         `json:"email"`         // nil = leave unchanged
+		Email         *string         `json:"email"`         // rejected unless unchanged
 		Subscriptions map[string]bool `json:"subscriptions"` // event type -> enabled
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	// Answered explicitly rather than ignored: a client that still submits the
+	// old self-service field should be told the change did not happen instead of
+	// showing the user a success it did not get. Resubmitting the current value
+	// is a no-op, so a form that round-trips the field keeps working.
+	if in.Email != nil && !strings.EqualFold(strings.TrimSpace(*in.Email), u.Email) {
+		writeErr(w, http.StatusForbidden, "changing your address requires the users.email.manage permission")
 		return
 	}
 	for eventType := range in.Subscriptions {
@@ -205,14 +297,6 @@ func (s *Server) updateMyNotifications(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "unknown event type: "+eventType)
 			return
 		}
-	}
-	if in.Email != nil {
-		updated, err := s.setEmail(r, u.ID, *in.Email)
-		if err != nil {
-			writeErr(w, emailStatus(err), emailMessage(err))
-			return
-		}
-		u = updated
 	}
 	for eventType, enabled := range in.Subscriptions {
 		if err := s.store.SetNotificationSubscription(r.Context(), u.ID, eventType, enabled); err != nil {
@@ -223,8 +307,13 @@ func (s *Server) updateMyNotifications(w http.ResponseWriter, r *http.Request) {
 	s.getMyNotifications(w, r)
 }
 
-// setUserEmail lets an operator with users.manage set someone else's address —
-// needed to onboard a technician who should get alerts before their first login.
+// setUserEmail sets a user's address: where their alerts go, and where a
+// password reset link is delivered.
+//
+// Guarded by users.email.manage on top of the usual delegation check, because
+// rewriting this address and then requesting a reset is a complete account
+// takeover for any user without a second factor. That is also why it is not
+// folded into PATCH /users/{id} alongside the role.
 func (s *Server) setUserEmail(w http.ResponseWriter, r *http.Request) {
 	target := chi.URLParam(r, "id")
 	if _, ok := s.requireUserManage(w, r, target); !ok {

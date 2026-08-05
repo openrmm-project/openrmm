@@ -308,11 +308,18 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		Username string             `json:"username"`
 		Password string             `json:"password"`
 		Role     string             `json:"role"`
-		Email    string             `json:"email"`  // optional: notification address
+		Email    string             `json:"email"`  // optional: alerts + password reset
 		Scopes   []models.UserScope `json:"scopes"` // empty = full access
 	}
 	if err := decode(r, &in); err != nil || in.Username == "" || in.Password == "" {
 		writeErr(w, http.StatusBadRequest, "username and password required")
+		return
+	}
+	// Same gate as the dedicated address route: creating an account is not a way
+	// around users.email.manage. Checked before anything is written so the
+	// request fails whole rather than leaving a half-configured user behind.
+	if in.Email != "" && !hasPermission(r, models.PermUsersEmailManage) {
+		writeErr(w, http.StatusForbidden, "setting an email address requires the users.email.manage permission")
 		return
 	}
 	// Checked before the account exists so a typo fails the whole request rather

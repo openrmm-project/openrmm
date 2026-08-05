@@ -173,7 +173,7 @@ function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
             </div>
           </div>
           <div className="space-y-3">
-            <Field label="Shell"><Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option></Select></Field>
+            <Field label="Shell"><Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>
             <Field label="Description"><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="e.g. Install 7-zip on Finance" /></Field>
             <Field label="Script"><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={150} placeholder="# runs on every selected device" /></Field>
           </div>
@@ -1099,7 +1099,7 @@ function RunScriptForm({ device, onCreated }) {
       )}
       <div className="flex gap-3">
         <Field label="Shell" className="w-44">
-          <Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option></Select>
+          <Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select>
         </Field>
         <Field label="From library" className="flex-1">
           <Select defaultValue="" onChange={(e) => { const s = (scriptsQ.data?.scripts || []).find((x) => x.id === e.target.value); if (s) { setScript(s.body); setShell(s.shell); setDesc(s.name); } }}>

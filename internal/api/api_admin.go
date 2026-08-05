@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -331,24 +329,11 @@ func (s *Server) rotateDeviceCredential(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "pending"})
 }
 
+// Credential rotation landed in 0.4.5. Shares one version comparison with the
+// other agent-capability gates so the two cannot drift on what a malformed or
+// missing version means — it means "too old", here as everywhere.
 func supportsCredentialRotation(version string) bool {
-	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".")
-	if len(parts) != 3 {
-		return false
-	}
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return false
-	}
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return false
-	}
-	patch, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return false
-	}
-	return major > 0 || minor > 4 || (minor == 4 && patch >= 5)
+	return models.AgentVersionAtLeast(version, "0.4.5")
 }
 
 // cancelDeviceCredentialRotation asks the live agent to restore its prior token.

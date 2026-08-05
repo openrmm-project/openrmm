@@ -8,6 +8,33 @@ tag.
 
 ### Added
 
+- **Scripts can be written in Python.** `python` joins bash, sh, powershell and
+  cmd everywhere a shell is chosen — the script library, the run-on-device form,
+  bulk deployment, scheduled tasks, script checks and the AI tools — and the
+  console highlights it as its own language.
+
+  The agent stages the script as an `openrmm-script-*.py` file (mode 0600,
+  removed when the run ends, including on timeout or cancel) rather than passing
+  it with `-c`: a traceback then names a file and a line instead of `<string>`,
+  Windows' ~32k command-line cap stops mattering, and a script full of quotes
+  and newlines stops being a quoting problem. The interpreter is resolved at run
+  time — `python3`, then `python`, then `py -3` on Windows — with `python3`
+  first because on a machine with both, `python` may still be Python 2, under
+  which a Python 3 script fails in ways that read like a syntax error in the
+  operator's code. A device with no interpreter exits **127** and names what was
+  tried, which is deliberately distinguishable from a script that failed.
+
+  Python needs agent **0.4.9 or later**. Older agents answer "unsupported shell"
+  only after dispatch, so the server refuses the job up front and names the
+  version to install. A bulk deployment naming any outdated device is refused
+  whole, listing the devices, rather than creating jobs for part of a selection
+  behind an approval granted for all of it.
+
+  The audit trail records which interpreter ran, on the way out
+  (`job.propose`, `job.automated`, `job.batch.propose`) and on the way back
+  (`job.result`, alongside the exit code) — so "which devices have no Python"
+  is answerable from the log alone rather than by joining back to the job row.
+
 - **Alerts can leave through their own SMTP transport.** There used to be one
   mail configuration, so monitoring mail and password resets left the same
   server under the same sender. **Users & Settings → Email** now has a tab per
@@ -23,6 +50,14 @@ tag.
   rerouted through the account transport: a silent fallback would send mail by a
   path the operator chose not to use, and hide that the relay is broken. Each
   tab's **Send test** exercises its own transport.
+
+### Changed
+
+- The agent capability gates share one version comparison
+  (`models.AgentVersionAtLeast`), so credential rotation and the Python floor
+  cannot drift on what a missing or malformed version means — it means "too
+  old", which is the only safe reading of a string the endpoint reports about
+  itself.
 
 ### Observability
 

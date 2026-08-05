@@ -137,6 +137,37 @@ The agent maps `shell` to an interpreter:
 | `cmd` | `cmd /C <script>` |
 | `sh` | `sh -c <script>` |
 | `bash` (default) | `bash -c <script>` |
+| `python` | the resolved interpreter, run against a staged file (see below) |
+
+An unknown shell is refused with exit 2 rather than falling back to Bash, so a
+typo never runs under an interpreter the operator did not choose.
 
 Execution is bounded by a 10-minute timeout; stdout/stderr and the exit code are
 returned.
+
+### Python
+
+Python is the one shell that is **staged to a file** — `openrmm-script-*.py`,
+mode 0600, removed when the run ends, including on timeout or operator cancel.
+Passing it with `-c` would work until it didn't: a traceback would point at
+`<string>` instead of a file and line, Windows caps a command line at ~32k
+characters, and a script full of quotes and newlines is one quoting mistake away
+from running as something else.
+
+The interpreter is resolved at run time, in order: **`python3`**, then
+`python`, then `py -3` on Windows only. `python3` comes first because on a
+machine with both, `python` may still be Python 2 — under which a Python 3
+script fails in ways that read like a syntax error in the operator's code. The
+`py` launcher is the reliable way to reach an interpreter that is installed but
+absent from `PATH`.
+
+A device with no interpreter exits **127** (the shell convention for "command
+not found") and says which candidates were tried. That is deliberately distinct
+from a script failure: "this device has no Python" and "this script is broken"
+are fixed by different people in different places.
+
+Python scripts require agent **0.4.9** or later. Older agents answer "unsupported
+shell", so the server refuses the job before dispatch instead — see
+`models.MinAgentVersionFor`. A bulk deployment naming any outdated device is
+refused whole, listing the devices to update, rather than creating jobs for part
+of the selection behind an approval granted for all of it.

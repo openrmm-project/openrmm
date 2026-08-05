@@ -3,6 +3,8 @@ package models
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -35,17 +37,78 @@ const (
 	ShellSh         = "sh"
 	ShellPowerShell = "powershell"
 	ShellCmd        = "cmd"
+	ShellPython     = "python"
 )
+
+// MinAgentVersionPython is the first agent release that can run a Python
+// script. Older agents answer "unsupported shell", which is a clear failure but
+// only after the job has been dispatched and waited on — so the server refuses
+// the job up front instead. Raise this only when the execution contract changes.
+const MinAgentVersionPython = "0.4.9"
 
 // SupportedShell reports whether the agent has an explicit execution path for a
 // shell. Unknown values must never silently fall back to Bash.
 func SupportedShell(shell string) bool {
 	switch shell {
-	case ShellBash, ShellSh, ShellPowerShell, ShellCmd:
+	case ShellBash, ShellSh, ShellPowerShell, ShellCmd, ShellPython:
 		return true
 	default:
 		return false
 	}
+}
+
+// MinAgentVersionFor returns the agent version a shell requires, or "" when
+// every agent that can report a version can run it.
+//
+// Only shells added after the first release need a floor: bash, sh, powershell
+// and cmd have been executable since the beginning, so gating them would refuse
+// work that would in fact succeed.
+func MinAgentVersionFor(shell string) string {
+	if shell == ShellPython {
+		return MinAgentVersionPython
+	}
+	return ""
+}
+
+// AgentVersionAtLeast compares a reported agent version against a minimum.
+//
+// An unparseable or missing version reports false: agents self-report this
+// string, so treating "unknown" as new enough would let exactly the endpoints
+// whose state is least trustworthy past a gate that exists to protect them.
+func AgentVersionAtLeast(reported, minimum string) bool {
+	got, ok := parseVersion(reported)
+	if !ok {
+		return false
+	}
+	want, ok := parseVersion(minimum)
+	if !ok {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return got[i] > want[i]
+		}
+	}
+	return true
+}
+
+// parseVersion splits a plain major.minor.patch, tolerating a leading "v".
+// Anything else — a pre-release suffix, a build tag, a short version — is not
+// something to guess at, so it fails rather than being partially understood.
+func parseVersion(v string) ([3]int, bool) {
+	var out [3]int
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(v), "v"), ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 // Agent is a managed endpoint.

@@ -35,7 +35,12 @@ import (
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-var agentVersion = "0.4.5"
+// agentVersion is overwritten at release build time from the tag (see
+// AGENT_LDFLAGS in the Makefile). The compiled-in default must still name a
+// release whose capabilities this source actually has: the server gates features
+// on this string, so an agent that under-reports is refused work it can do, and
+// one that over-reports is handed work it cannot.
+var agentVersion = "0.4.9"
 
 type state struct {
 	AgentID               string `json:"agent_id"`
@@ -844,6 +849,74 @@ func (a *agent) writeHealthMarker() error {
 
 // ---------- script execution ----------
 
+// exitNoInterpreter reports "the machine has no Python", not "the script
+// failed". 127 is the shell convention for a command that could not be found,
+// which is exactly the situation. Keeping it distinct is what separates a
+// provisioning gap from a bug in the operator's script — they are fixed by
+// different people in different places.
+const exitNoInterpreter = 127
+
+// pythonCandidates are tried in order. python3 first because on a system with
+// both, "python" may still be Python 2 — running a Python 3 script under it
+// fails in ways that read like a syntax error in the operator's code. The py
+// launcher is last and Windows-only, where it is the reliable way to reach an
+// interpreter that is installed but not on PATH.
+var pythonCandidates = []struct {
+	name string
+	args []string
+}{
+	{name: "python3"},
+	{name: "python"},
+	{name: "py", args: []string{"-3"}},
+}
+
+// pythonInterpreter resolves the interpreter to run a script with.
+//
+// The error names every candidate that was tried: "python not found" sends an
+// operator looking in the wrong place when the machine has py but no PATH entry.
+func pythonInterpreter() (string, []string, error) {
+	tried := make([]string, 0, len(pythonCandidates))
+	for _, candidate := range pythonCandidates {
+		if candidate.name == "py" && runtime.GOOS != "windows" {
+			continue
+		}
+		tried = append(tried, strings.TrimSpace(candidate.name+" "+strings.Join(candidate.args, " ")))
+		if path, err := exec.LookPath(candidate.name); err == nil {
+			return path, candidate.args, nil
+		}
+	}
+	return "", nil, fmt.Errorf("no Python interpreter found on this device (tried: %s)", strings.Join(tried, ", "))
+}
+
+// writeTempScript stages a script on disk and returns its path plus a cleanup.
+//
+// Mode 0600: the file can carry credentials the operator embedded in the
+// script, and it lives in a world-readable temp directory. The cleanup runs even
+// when the process is killed by a timeout or an operator cancel, because it is
+// deferred in the caller rather than left to the child.
+func writeTempScript(script, extension string) (string, func(), error) {
+	f, err := os.CreateTemp("", "openrmm-script-*"+extension)
+	if err != nil {
+		return "", func() {}, err
+	}
+	cleanup := func() { _ = os.Remove(f.Name()) }
+	if err := f.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if _, err := f.WriteString(script); err != nil {
+		f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return f.Name(), cleanup, nil
+}
+
 // runScriptCtx runs a script under the given context; canceling the context
 // (timeout or operator cancel) kills the process — and on Windows its whole
 // child tree (taskkill /T), so a stuck downloader/installer dies too.
@@ -858,6 +931,22 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	case "bash":
 		cmd = exec.CommandContext(ctx, "bash", "-c", script)
+	case "python":
+		interpreter, args, err := pythonInterpreter()
+		if err != nil {
+			return exitNoInterpreter, "", err.Error()
+		}
+		// Written to a file rather than passed with -c. Three reasons, all of
+		// which bite in practice: a traceback names the file and a line instead
+		// of "<string>", Windows caps a command line at ~32k characters, and a
+		// script full of quotes and newlines stops being an argument-quoting
+		// problem the moment it stops being an argument.
+		path, cleanup, err := writeTempScript(script, ".py")
+		if err != nil {
+			return 2, "", "cannot stage the script: " + err.Error()
+		}
+		defer cleanup()
+		cmd = exec.CommandContext(ctx, interpreter, append(args, path)...)
 	default:
 		return 2, "", "unsupported shell: " + shell
 	}

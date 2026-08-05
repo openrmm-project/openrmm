@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 // ---- in-memory fakes ----
@@ -16,8 +18,32 @@ type fakeStore struct {
 	jobs     map[string]*models.Job
 	agents   map[string]bool
 	clientOf map[string]string
+	// versions is what each agent reports. Absent means "current", so the
+	// existing tests keep describing agents that can run anything and only the
+	// capability-gate tests have to care.
+	versions map[string]string
 	audits   []string
 	seq      int
+}
+
+// currentAgentVersion is new enough for every capability gate in the service.
+const currentAgentVersion = "9.9.9"
+
+func (f *fakeStore) versionOf(id string) string {
+	if v, ok := f.versions[id]; ok {
+		return v
+	}
+	return currentAgentVersion
+}
+
+func (f *fakeStore) AgentVersions(_ context.Context, agentIDs []string) (map[string]store.AgentVersionInfo, error) {
+	out := make(map[string]store.AgentVersionInfo, len(agentIDs))
+	for _, id := range agentIDs {
+		if f.agents[id] {
+			out[id] = store.AgentVersionInfo{Hostname: "host-" + id, Version: f.versionOf(id)}
+		}
+	}
+	return out, nil
 }
 
 func newFakeStore() *fakeStore {
@@ -25,6 +51,7 @@ func newFakeStore() *fakeStore {
 		jobs:     map[string]*models.Job{},
 		agents:   map[string]bool{"a1": true},
 		clientOf: map[string]string{},
+		versions: map[string]string{},
 	}
 }
 
@@ -32,7 +59,7 @@ func (f *fakeStore) GetAgent(_ context.Context, id string) (*models.Agent, error
 	if !f.agents[id] {
 		return nil, errors.New("agent not found")
 	}
-	return &models.Agent{ID: id, OS: "linux"}, nil
+	return &models.Agent{ID: id, OS: "linux", Hostname: "host-" + id, Version: f.versionOf(id)}, nil
 }
 
 func (f *fakeStore) CreateJob(_ context.Context, j *models.Job) (*models.Job, error) {
@@ -170,8 +197,76 @@ func TestProposeUnknownAgent(t *testing.T) {
 
 func TestProposeRejectsUnknownShell(t *testing.T) {
 	svc, _, _ := newSvc()
-	if _, err := svc.Propose(context.Background(), "a1", "python", "print(1)", "d", "admin", true); err == nil {
+	// Deliberately an interpreter the agent has no execution path for. This used
+	// to be "python", which is now supported — see the capability tests below.
+	if _, err := svc.Propose(context.Background(), "a1", "ruby", "puts 1", "d", "admin", true); err == nil {
 		t.Fatal("unsupported shell must be rejected")
+	}
+}
+
+// Python runs only on agents new enough to have an execution path for it. The
+// check is here rather than left to the agent, which would answer "unsupported
+// shell" only after the operator waited for a dispatched job to come back.
+func TestProposePythonRequiresACapableAgent(t *testing.T) {
+	svc, fs, _ := newSvc()
+	if _, err := svc.Propose(context.Background(), "a1", "python", "print(1)", "d", "admin", true); err != nil {
+		t.Fatalf("a current agent should accept python: %v", err)
+	}
+
+	fs.versions["a1"] = "0.4.8" // one release short of MinAgentVersionPython
+	_, err := svc.Propose(context.Background(), "a1", "python", "print(1)", "d", "admin", true)
+	if err == nil {
+		t.Fatal("an outdated agent must be refused before the job exists")
+	}
+	for _, want := range []string{"host-a1", models.MinAgentVersionPython, "0.4.8"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+
+	// An agent that reports nothing is treated as too old: the version is
+	// self-reported, so "unknown" is not a reason to assume capability.
+	fs.versions["a1"] = ""
+	if _, err := svc.Propose(context.Background(), "a1", "python", "print(1)", "d", "admin", true); err == nil {
+		t.Error("an agent with no reported version must not be assumed capable")
+	}
+
+	// Bash is unaffected: it has been executable since the first release, so
+	// gating it would refuse work that would in fact succeed.
+	fs.versions["a1"] = "0.1.0"
+	if _, err := svc.Propose(context.Background(), "a1", "bash", "echo", "d", "admin", true); err != nil {
+		t.Errorf("bash should not be version-gated: %v", err)
+	}
+}
+
+// A bulk deployment is refused whole, naming the devices to update. Creating the
+// compatible jobs and dropping the rest would leave a half-targeted deployment
+// behind an approval granted for a different set of machines.
+func TestProposeBulkRefusesWhenAnyTargetIsOutdated(t *testing.T) {
+	svc, fs, _ := newSvc()
+	fs.agents["a2"], fs.agents["a3"] = true, true
+	fs.versions["a2"] = "0.4.8"
+
+	_, err := svc.ProposeBulk(context.Background(), []string{"a1", "a2", "a3"}, "python", "print(1)", "d", "admin")
+	if err == nil {
+		t.Fatal("a bulk deployment with an outdated target must be refused")
+	}
+	if !strings.Contains(err.Error(), "host-a2") {
+		t.Errorf("the error should name the outdated device, got %q", err)
+	}
+	if strings.Contains(err.Error(), "host-a1") || strings.Contains(err.Error(), "host-a3") {
+		t.Errorf("the error should name only the outdated devices, got %q", err)
+	}
+	if len(fs.jobs) != 0 {
+		t.Errorf("%d jobs were created despite the refusal", len(fs.jobs))
+	}
+
+	fs.versions["a2"] = currentAgentVersion
+	if _, err := svc.ProposeBulk(context.Background(), []string{"a1", "a2", "a3"}, "python", "print(1)", "d", "admin"); err != nil {
+		t.Fatalf("a capable fleet should be accepted: %v", err)
+	}
+	if len(fs.jobs) != 3 {
+		t.Errorf("created %d jobs, want 3", len(fs.jobs))
 	}
 }
 

@@ -152,6 +152,37 @@ func (s *Store) ListGroupsForUser(ctx context.Context, userID string) ([]models.
 // ClientForAgents maps each agent id to its company (client) id, resolved via
 // site → client. Agents with no site are omitted (they have no company). Used to
 // split a bulk deployment into one batch per company.
+// AgentVersionInfo is what a capability gate needs about one agent: the version
+// it reports, and a name to put in the message when it is too old.
+type AgentVersionInfo struct {
+	Hostname string
+	Version  string
+}
+
+// AgentVersions returns the reported version of each agent, keyed by id.
+//
+// Missing ids are absent from the map rather than zero-valued, so a caller can
+// tell "this agent reports no version" from "there is no such agent" — both bar
+// a capability gate, but only one of them is a bug.
+func (s *Store) AgentVersions(ctx context.Context, agentIDs []string) (map[string]AgentVersionInfo, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, hostname, COALESCE(version,'') FROM agents WHERE id = ANY($1)`, agentIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]AgentVersionInfo{}
+	for rows.Next() {
+		var id string
+		var info AgentVersionInfo
+		if err := rows.Scan(&id, &info.Hostname, &info.Version); err != nil {
+			return nil, err
+		}
+		out[id] = info
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ClientForAgents(ctx context.Context, agentIDs []string) (map[string]string, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT a.id, s.client_id FROM agents a JOIN sites s ON s.id = a.site_id WHERE a.id = ANY($1)`, agentIDs)

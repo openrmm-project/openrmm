@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 // Store is the persistence surface the job service needs. *store.Store satisfies
@@ -25,6 +27,7 @@ type Store interface {
 	ListDispatchableJobs(ctx context.Context, agentID string) ([]models.Job, error)
 	ListJobsByBatch(ctx context.Context, batchID string) ([]models.Job, error)
 	ClientForAgents(ctx context.Context, agentIDs []string) (map[string]string, error)
+	AgentVersions(ctx context.Context, agentIDs []string) (map[string]store.AgentVersionInfo, error)
 	AddAudit(ctx context.Context, actor, action, target string, detail []byte) error
 }
 
@@ -61,6 +64,25 @@ func (s *Service) WithNotifier(n Notifier) *Service {
 	return s
 }
 
+// agentCanRunShell refuses a shell the target agent is too old to execute.
+//
+// Checked before the job exists rather than left to the agent, which answers
+// "unsupported shell" only after dispatch — so the operator waits for a result
+// to learn something the server already knew. The message names the version to
+// install, because "not supported" without a remedy is a dead end.
+func agentCanRunShell(a *models.Agent, shell string) error {
+	minimum := models.MinAgentVersionFor(shell)
+	if minimum == "" || models.AgentVersionAtLeast(a.Version, minimum) {
+		return nil
+	}
+	reported := a.Version
+	if strings.TrimSpace(reported) == "" {
+		reported = "unknown"
+	}
+	return fmt.Errorf("%s runs %s scripts only from agent %s or later; it reports %s",
+		a.Hostname, shell, minimum, reported)
+}
+
 // Propose creates a job. If requireApproval is true the job lands in
 // awaiting_approval and is NOT dispatched until a human approves it.
 func (s *Service) Propose(ctx context.Context, agentID, shell, script, description, createdBy string, requireApproval bool) (*models.Job, error) {
@@ -73,6 +95,9 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 	}
 	if a.Status == models.AgentRevoked {
 		return nil, fmt.Errorf("agent is revoked")
+	}
+	if err := agentCanRunShell(a, shell); err != nil {
+		return nil, err
 	}
 	status := models.JobAwaitingApproval
 	if !requireApproval {
@@ -112,6 +137,9 @@ func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, desc
 	}
 	if a.Status == models.AgentRevoked {
 		return nil, fmt.Errorf("agent is revoked")
+	}
+	if err := agentCanRunShell(a, shell); err != nil {
+		return nil, err
 	}
 	j := &models.Job{
 		AgentID:          agentID,
@@ -167,6 +195,46 @@ func (s *Service) Reject(ctx context.Context, jobID, actor string) (*models.Job,
 	return s.store.GetJob(ctx, jobID)
 }
 
+// checkFleetCanRunShell refuses the deployment if any target is too old for the
+// shell, naming the devices rather than a count: "3 devices are outdated" sends
+// an operator hunting through a selection of two hundred.
+func (s *Service) checkFleetCanRunShell(ctx context.Context, agentIDs []string, shell string) error {
+	minimum := models.MinAgentVersionFor(shell)
+	if minimum == "" || len(agentIDs) == 0 {
+		return nil
+	}
+	versions, err := s.store.AgentVersions(ctx, agentIDs)
+	if err != nil {
+		return err
+	}
+	var outdated []string
+	for _, id := range agentIDs {
+		info, known := versions[id]
+		if !known || !models.AgentVersionAtLeast(info.Version, minimum) {
+			label := id
+			if known && info.Hostname != "" {
+				label = info.Hostname
+			}
+			reported := "unknown"
+			if known && strings.TrimSpace(info.Version) != "" {
+				reported = info.Version
+			}
+			outdated = append(outdated, label+" ("+reported+")")
+		}
+	}
+	if len(outdated) == 0 {
+		return nil
+	}
+	shown := outdated
+	suffix := ""
+	// A deployment can target hundreds; an error listing all of them is not read.
+	if len(shown) > 10 {
+		shown, suffix = shown[:10], fmt.Sprintf(" and %d more", len(outdated)-10)
+	}
+	return fmt.Errorf("%s scripts need agent %s or later: update %s%s",
+		shell, minimum, strings.Join(shown, ", "), suffix)
+}
+
 // ProposeBatch creates one approval-gated job per agent, all sharing a fresh
 // batch_id, for a bulk/mass deployment. Nothing is dispatched until the batch is
 // approved (ApproveBatch) — the same human-in-the-loop guardrail, once for many.
@@ -211,6 +279,15 @@ type BatchInfo struct {
 // own batch. Callers pass already-resolved + access-scoped agent ids. Shared by
 // the REST /jobs/bulk handler and the AI propose_bulk_deploy tool.
 func (s *Service) ProposeBulk(ctx context.Context, agentIDs []string, shell, script, description, createdBy string) ([]BatchInfo, error) {
+	// Checked for the whole target set before anything is created, and the whole
+	// deployment is refused if any device is too old. Creating the compatible
+	// jobs and dropping the rest would leave a half-targeted deployment behind
+	// an approval the operator granted for a different set of machines — so the
+	// answer names the devices to update, and they decide whether to update them
+	// or narrow the selection.
+	if err := s.checkFleetCanRunShell(ctx, agentIDs, shell); err != nil {
+		return nil, err
+	}
 	clientOf, err := s.store.ClientForAgents(ctx, agentIDs)
 	if err != nil {
 		return nil, err

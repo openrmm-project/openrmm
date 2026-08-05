@@ -63,7 +63,7 @@ func Tools() []Tool {
 			Description: "Propose a script to run on a device. This DOES NOT execute it: it creates a job that a human must approve first. Write the full script yourself for the device's OS. Pick the correct shell.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"agent_id":{"type":"string","description":"target device id"},
-				"shell":{"type":"string","enum":["bash","sh","powershell","cmd"],"description":"interpreter for the script"},
+				"shell":{"type":"string","enum":["bash","sh","powershell","cmd","python"],"description":"interpreter for the script"},
 				"script":{"type":"string","description":"the full script source to run"},
 				"description":{"type":"string","description":"one-line human summary of what this does"}
 			},"required":["agent_id","shell","script","description"],"additionalProperties":false}`),
@@ -104,7 +104,7 @@ func Tools() []Tool {
 				"agent_ids":{"type":"array","items":{"type":"string"},"description":"target device ids (from list_devices)"},
 				"site_id":{"type":"string","description":"optional: also target every device of this site"},
 				"group_id":{"type":"string","description":"optional: also target every device of this department (group)"},
-				"shell":{"type":"string","enum":["bash","sh","powershell","cmd"],"description":"interpreter for the script"},
+				"shell":{"type":"string","enum":["bash","sh","powershell","cmd","python"],"description":"interpreter for the script"},
 				"script":{"type":"string","description":"the full script source to run on every target"},
 				"description":{"type":"string","description":"one-line human summary of the deployment"}
 			},"required":["shell","script","description"],"additionalProperties":false}`),

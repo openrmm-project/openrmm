@@ -91,7 +91,7 @@ Units of work targeted at an agent.
 | agent_id | uuid FK → agents | cascade delete |
 | type | text | `run_script` (extensible) |
 | description | text | human summary |
-| shell | text | `bash`/`sh`/`powershell`/`cmd` |
+| shell | text | `bash`/`sh`/`powershell`/`cmd`/`python` |
 | script | text | source to run |
 | status | text | `awaiting_approval`→`pending`→`sent`→`running`→`completed`/`failed`, or `rejected` |
 | requires_approval | bool | true for AI proposals |
@@ -132,7 +132,7 @@ to its sites, and a deleted site nulls the agents'/enroll-tokens' `site_id`.
 
 ### `scripts`
 Reusable script library: `id`, `name`, `description`, `category`,
-`shell` (`bash`/`sh`/`powershell`/`cmd`), `body`, `default_args`, `created_at`,
+`shell` (`bash`/`sh`/`powershell`/`cmd`/`python`), `body`, `default_args`, `created_at`,
 `updated_at`. Run on a device via `/run-script`, which creates a job.
 
 ### `policies` / `policy_assignments`

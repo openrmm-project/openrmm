@@ -113,7 +113,7 @@ const STATUS_META = {
   awaiting_approval: { c: 'warn', label: 'Awaiting approval' }, pending: { c: 'warn', label: 'Pending' }, warning: { c: 'warn', label: 'Warning' }, acked: { c: 'warn', label: 'Acked' }, new: { c: 'warn', label: 'New' },
   running: { c: 'run', label: 'Running' }, sent: { c: 'run', label: 'Sent' }, info: { c: 'run', label: 'Info' },
   failed: { c: 'bad', label: 'Failed' }, offline: { c: 'bad', label: 'Offline' }, rejected: { c: 'bad', label: 'Rejected' }, failing: { c: 'bad', label: 'Failing' }, error: { c: 'bad', label: 'Error' },
-  resolved: { c: 'muted', label: 'Resolved' },
+  resolved: { c: 'muted', label: 'Resolved' }, disabled: { c: 'muted', label: 'Disabled' },
 };
 function StatusPill({ status, label, size = 'md', pulse }) {
   const m = STATUS_META[status] || { c: 'muted', label: label || status };
@@ -367,10 +367,13 @@ const CODE_COLORS = { comment: 'code-comment', string: 'code-string', variable: 
 const BASH_KW = new Set(['set', 'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'do', 'done', 'case', 'esac', 'function', 'return', 'exit', 'local', 'export', 'in', 'sudo', 'source']);
 const BASH_BUILTIN = new Set(['echo', 'apt', 'apt-get', 'find', 'awk', 'df', 'du', 'grep', 'sed', 'cat', 'curl', 'wget', 'systemctl', 'service', 'uptime', 'btrfs', 'mdls', 'defaults', 'rm', 'ls', 'ps', 'kill', 'chmod', 'chown', 'head', 'tail', 'printf', 'ipconfig']);
 const PS_KW = new Set(['if', 'else', 'elseif', 'foreach', 'param', 'function', 'try', 'catch', 'finally', 'return', 'while', 'for', 'switch', 'in', 'iex']);
+const PY_KW = new Set(['and', 'as', 'assert', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield', 'None', 'True', 'False', 'async', 'await']);
+const PY_BUILTIN = new Set(['print', 'len', 'range', 'open', 'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 'sorted', 'sum', 'min', 'max', 'abs', 'enumerate', 'zip', 'isinstance', 'type', 'input', 'format', 'repr', 'exit', 'self']);
 
 function tokenizeLine(line, shell) {
   const isPS = shell === 'powershell';
   const isCmd = shell === 'cmd';
+  const isPy = shell === 'python';
   const nodes = []; let key = 0;
   // whole-line comment for cmd REM / ::
   if (isCmd && /^\s*(rem|::)/i.test(line)) { return [<span key={0} className={CODE_COLORS.comment}>{line}</span>]; }
@@ -387,6 +390,7 @@ function tokenizeLine(line, shell) {
     else if (m[6]) {
       const w = m[6];
       if (isPS) { if (/^[A-Z][a-z]+-[A-Za-z]+$/.test(w)) color = CODE_COLORS.builtin; else if (PS_KW.has(w.toLowerCase())) color = CODE_COLORS.keyword; }
+      else if (isPy) { if (PY_KW.has(w)) color = CODE_COLORS.keyword; else if (PY_BUILTIN.has(w)) color = CODE_COLORS.builtin; }
       else { if (BASH_KW.has(w)) color = CODE_COLORS.keyword; else if (BASH_BUILTIN.has(w)) color = CODE_COLORS.builtin; }
     }
     nodes.push(color ? <span key={key++} className={color}>{txt}</span> : <span key={key++}>{txt}</span>);

@@ -156,7 +156,7 @@ func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, desc
 	if err != nil {
 		return nil, err
 	}
-	s.audit(ctx, "scheduler", "job.automated", j.ID, map[string]any{"agent": agentID, "host": s.hostname(ctx, agentID), "task": taskID})
+	s.audit(ctx, "scheduler", "job.automated", j.ID, map[string]any{"agent": agentID, "host": s.hostname(ctx, agentID), "task": taskID, "shell": shell})
 	s.dispatch(ctx, j)
 	return s.store.GetJob(ctx, j.ID)
 }
@@ -456,7 +456,11 @@ func (s *Service) OnResult(ctx context.Context, agentID string, res protocol.Job
 		return err
 	}
 	host := s.hostname(ctx, j.AgentID)
-	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success})
+	// The shell travels with the result so the audit log can answer "which devices
+	// could not run this interpreter" on its own. Exit 127 from a python job means
+	// the device has none installed, and needing a join back to the job row to
+	// learn that weakens the point of giving it a distinct code.
+	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success, "shell": j.Shell})
 	// The idempotency guard above means a retried result cannot mail twice: a job
 	// that is already terminal returned before reaching this point.
 	if status == models.JobFailed && s.notifier != nil {

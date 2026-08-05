@@ -23,7 +23,10 @@ type fakeStore struct {
 	// capability-gate tests have to care.
 	versions map[string]string
 	audits   []string
-	seq      int
+	// auditDetail keeps the last detail written per action, so a test can assert
+	// what the trail records and not merely that it recorded something.
+	auditDetail map[string]string
+	seq         int
 }
 
 // currentAgentVersion is new enough for every capability gate in the service.
@@ -131,6 +134,10 @@ func (f *fakeStore) ClientForAgents(_ context.Context, agentIDs []string) (map[s
 
 func (f *fakeStore) AddAudit(_ context.Context, actor, action, target string, detail []byte) error {
 	f.audits = append(f.audits, action)
+	if f.auditDetail == nil {
+		f.auditDetail = map[string]string{}
+	}
+	f.auditDetail[action] = string(detail)
 	return nil
 }
 
@@ -464,5 +471,58 @@ func TestOnResultRejectsAnotherAgentsJob(t *testing.T) {
 	got, _ := fs.GetJob(context.Background(), j.ID)
 	if got.Status == models.JobCompleted {
 		t.Fatal("foreign result must not complete the job")
+	}
+}
+
+// Which interpreter ran is part of the trail. It matters more now that a job can
+// be Python: exit 127 means the device had no interpreter, and an audit entry
+// that cannot say which shell was attempted forces a join back to the job row to
+// learn something the entry should carry itself.
+func TestAuditRecordsTheShell(t *testing.T) {
+	ctx := context.Background()
+
+	svc, fs, _ := newSvc()
+	if _, err := svc.Propose(ctx, "a1", "python", "print(1)", "d", "admin", true); err != nil {
+		t.Fatal(err)
+	}
+	assertAuditMentions(t, fs, "job.propose", "python")
+
+	svc, fs, _ = newSvc()
+	if _, err := svc.RunAutomated(ctx, "a1", "python", "print(1)", "d", nil); err != nil {
+		t.Fatal(err)
+	}
+	assertAuditMentions(t, fs, "job.automated", "python")
+
+	svc, fs, _ = newSvc()
+	if _, err := svc.ProposeBulk(ctx, []string{"a1"}, "python", "print(1)", "d", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	assertAuditMentions(t, fs, "job.batch.propose", "python")
+
+	// And on the way back: a result records the shell it ran under, so "which
+	// devices have no Python" is answerable from the audit log alone.
+	svc, fs, _ = newSvc()
+	j, err := svc.Propose(ctx, "a1", "python", "print(1)", "d", "admin", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.OnResult(ctx, "a1", protocol.JobResultMsg{
+		JobID: j.ID, Success: false, ExitCode: 127,
+		Stderr: "no Python interpreter found on this device (tried: python3, python)",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertAuditMentions(t, fs, "job.result", "python")
+	assertAuditMentions(t, fs, "job.result", "127")
+}
+
+func assertAuditMentions(t *testing.T, fs *fakeStore, action, want string) {
+	t.Helper()
+	detail, ok := fs.auditDetail[action]
+	if !ok {
+		t.Fatalf("no %s audit entry was written", action)
+	}
+	if !strings.Contains(detail, want) {
+		t.Errorf("%s detail %s should mention %q", action, detail, want)
 	}
 }

@@ -30,6 +30,11 @@ tag.
   whole, listing the devices, rather than creating jobs for part of a selection
   behind an approval granted for all of it.
 
+  The audit trail records which interpreter ran, on the way out
+  (`job.propose`, `job.automated`, `job.batch.propose`) and on the way back
+  (`job.result`, alongside the exit code) — so "which devices have no Python"
+  is answerable from the log alone rather than by joining back to the job row.
+
 ### Changed
 
 - The agent capability gates share one version comparison

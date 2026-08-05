@@ -204,6 +204,37 @@ func TestNotificationOutboxIntegration(t *testing.T) {
 	if status != "failed" || lastError != "550 no such user" {
 		t.Fatalf("status=%q last_error=%q, want failed with the reason recorded", status, lastError)
 	}
+
+	// The gauges behind /metrics. These are what make a stopped outbox visible
+	// from outside: alert delivery failing is the failure that hides every other
+	// failure, and it is otherwise noticed only by not receiving mail.
+	stats, err := st.OutboxStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Failed != 1 {
+		t.Errorf("failed = %d, want the abandoned message counted", stats.Failed)
+	}
+	if stats.Pending != 0 {
+		t.Errorf("pending = %d, want 0 (one sent, one failed)", stats.Pending)
+	}
+	if stats.OldestPendingAgeSec != 0 {
+		t.Errorf("oldest pending age = %v, want 0 for an empty pending set", stats.OldestPendingAgeSec)
+	}
+
+	// A fresh pending row makes the age gauge move off zero, which is the signal
+	// worth alerting on: a healthy outbox drains within a worker tick.
+	enqueue("three@example.test")
+	stats, err = st.OutboxStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Pending != 1 {
+		t.Errorf("pending = %d, want 1", stats.Pending)
+	}
+	if stats.OldestPendingAgeSec < 0 {
+		t.Errorf("oldest pending age = %v, want a non-negative age", stats.OldestPendingAgeSec)
+	}
 }
 
 // TestUserEmailUniquenessIntegration pins the partial unique index: addresses

@@ -89,16 +89,26 @@ function AlertsScreen({ navigate }) {
 /* ================================ CHECKS ================================== */
 function ChecksScreen() {
   const { can } = useAuth();
+  const toast = useToast();
   const checksQ = useQuery(['checks'], () => api.listChecks(), { invalidateOn: ['checks'], poll: 8000 });
   const devMap = useDeviceMap();
   const policiesQ = useQuery(['pols-c'], () => can('policies.view') ? api.listPolicies() : Promise.resolve({ policies: [] }), { invalidateOn: ['policies'] });
   const [editing, setEditing] = useState(null); // check obj or 'new'
   const [detail, setDetail] = useState(null);
+  const [confirmToggle, setConfirmToggle] = useState(null);
 
   const checks = checksQ.data?.checks || [];
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
   const summary = { passing: 0, warning: 0, failing: 0 };
-  checks.forEach((c) => { const st = c.latest?.status || 'passing'; summary[st]++; });
+  checks.forEach((c) => { if (c.enabled) { const st = c.latest?.status || 'passing'; summary[st]++; } });
+  const toggle = async (c) => {
+    try {
+      await api.updateCheck(c.id, { ...c, enabled: !c.enabled });
+      toast.success(c.enabled ? 'Check disabled' : 'Check enabled');
+    } catch (e) {
+      toast.error('Failed to update check', e.message);
+    }
+  };
 
   return (
       <Page wide>
@@ -116,18 +126,19 @@ function ChecksScreen() {
           <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
             <th className="font-semibold px-4 py-2.5">Status</th><th className="font-semibold px-3 py-2.5">Check</th>
             <th className="font-semibold px-3 py-2.5 hidden md:table-cell">Target</th><th className="font-semibold px-3 py-2.5 hidden lg:table-cell">Thresholds</th>
-            <th className="font-semibold px-3 py-2.5">Interval</th><th className="font-semibold px-4 py-2.5 text-right">Latest</th>
+            <th className="font-semibold px-3 py-2.5">Interval</th><th className="font-semibold px-3 py-2.5">Enabled</th><th className="font-semibold px-4 py-2.5 text-right">Latest</th>
           </tr></thead>
           <tbody className="divide-y divide-line">
             {checks.map((c) => {
               const t = CHECK_TYPES[c.type]; const dev = devMap[c.agent_id]; const pol = polMap[c.policy_id];
               return (
                 <tr key={c.id} onClick={() => setDetail(c)} className="cursor-pointer hover:bg-elevated/40 transition">
-                  <td className="px-4 py-3"><StatusPill status={c.latest?.status || 'passing'} size="sm" /></td>
+                  <td className="px-4 py-3"><StatusPill status={c.enabled ? (c.latest?.status || 'passing') : 'disabled'} size="sm" /></td>
                   <td className="px-3 py-3"><div className="flex items-center gap-2"><Icon name={t.icon} size={15} className="text-muted" /><div><div className="text-[13px] text-ink font-medium">{c.name}</div><div className="text-[11px] text-faint">{t.label}{!c.enabled && ' · disabled'}</div></div></div></td>
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[11.5px] text-faint mono">{c.warn_threshold != null ? `warn ${c.warn_threshold} · err ${c.err_threshold}` : '—'}</td>
                   <td className="px-3 py-3 text-[12px] text-muted">{c.interval_sec < 60 ? c.interval_sec + 's' : Math.round(c.interval_sec / 60) + 'm'}</td>
+                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><Toggle checked={c.enabled} onChange={() => setConfirmToggle(c)} disabled={!can('checks.manage')} /></td>
                   <td className="px-4 py-3 text-right text-[12.5px] mono text-ink">{c.latest?.value != null ? c.latest.value + (t.unit === 'ms' ? ' ms' : t.unit) : c.latest?.output || '—'}</td>
                 </tr>
               );
@@ -140,6 +151,12 @@ function ChecksScreen() {
 
       <CheckDetail check={detail} onClose={() => setDetail(null)} devMap={devMap} onEdit={(c) => { setDetail(null); setEditing(c); }} />
       {editing && <CheckEditor check={editing === 'new' ? null : editing} onClose={() => setEditing(null)} devMap={devMap} policies={policiesQ.data?.policies || []} />}
+      <ConfirmDialog open={!!confirmToggle} onClose={() => setConfirmToggle(null)} onConfirm={() => toggle(confirmToggle)}
+        title={confirmToggle?.enabled ? 'Disable check?' : 'Enable check?'}
+        confirmLabel={confirmToggle?.enabled ? 'Disable' : 'Enable'} danger={!!confirmToggle?.enabled}
+        body={confirmToggle && (confirmToggle.enabled
+          ? <>Disable <b>{confirmToggle.name}</b>? It will stop running until it is enabled again.</>
+          : <>Enable <b>{confirmToggle.name}</b>? It will resume running on its configured interval.</>)} />
     </Page>
   );
 }
@@ -155,7 +172,7 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
       <div className="px-5 py-4 border-b border-line flex items-start gap-3">
         <div className="h-10 w-10 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted shrink-0"><Icon name={t.icon} size={19} /></div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0"><h2 className="text-[16px] font-semibold text-ink truncate">{check.name}</h2><span className="shrink-0"><StatusPill status={check.latest?.status || 'passing'} size="sm" /></span></div>
+          <div className="flex items-center gap-2 min-w-0"><h2 className="text-[16px] font-semibold text-ink truncate">{check.name}</h2><span className="shrink-0"><StatusPill status={check.enabled ? (check.latest?.status || 'passing') : 'disabled'} size="sm" /></span></div>
           <div className="text-[12px] text-muted mt-0.5 truncate">{t.label} · {dev?.hostname || 'policy'} · every {check.interval_sec < 60 ? check.interval_sec + 's' : Math.round(check.interval_sec / 60) + 'm'}</div>
         </div>
         {can('checks.manage') && <Button size="sm" variant="secondary" icon="edit" onClick={() => onEdit(check)}>Edit</Button>}
@@ -202,6 +219,7 @@ function CheckEditor({ check, onClose, devMap, policies }) {
   const [warn, setWarn] = useState(check?.warn_threshold ?? 20);
   const [err, setErr] = useState(check?.err_threshold ?? 10);
   const [interval, setInterval] = useState(check?.interval_sec ?? 300);
+  const [enabled, setEnabled] = useState(check?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const t = CHECK_TYPES[type];
   const devices = Object.values(devMap);
@@ -209,7 +227,7 @@ function CheckEditor({ check, onClose, devMap, policies }) {
   const save = async () => {
     setBusy(true);
     const config = {}; if (t.cfg) config[t.cfg] = cfgVal;
-    const body = { type, name: name || t.label, config, interval_sec: Number(interval) };
+    const body = { type, name: name || t.label, config, interval_sec: Number(interval), enabled };
     if (t.dir !== 'state' && t.dir !== 'script') { body.warn_threshold = Number(warn); body.err_threshold = Number(err); }
     if (target.startsWith('dev:')) body.agent_id = target.slice(4); else if (target.startsWith('pol:')) body.policy_id = target.slice(4);
     try { if (check) await api.updateCheck(check.id, body); else await api.createCheck(body); toast.success(check ? 'Check updated' : 'Check created'); onClose(); }
@@ -239,6 +257,7 @@ function CheckEditor({ check, onClose, devMap, policies }) {
           </div>
         )}
         {(t.dir === 'state' || t.dir === 'script') && <Field label="Interval (s)" className="w-40"><Input type="number" value={interval} onChange={(e) => setInterval(e.target.value)} /></Field>}
+        <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={(next) => { setEnabled(next); toast.info(next ? 'Check will be enabled when saved' : 'Check will be disabled when saved'); }} /><span className="text-[13px] text-ink">Enabled</span></label>
         <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{t.dir === 'low' ? 'Alerts when the value drops below the threshold (e.g. low disk/memory).' : t.dir === 'high' ? 'Alerts when the value rises above the threshold (e.g. high CPU/latency).' : t.dir === 'state' ? 'Alerts when the service is not running.' : 'Alerts on a non-zero exit code.'}</div>
       </div>
       <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('checks.manage') && <Button variant="danger" icon="trash" onClick={del}>Delete</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? 'Save check' : 'Create check'}</Button></div>
@@ -255,6 +274,7 @@ function TasksScreen() {
   const policiesQ = useQuery(['pols-t'], () => can('policies.view') ? api.listPolicies() : Promise.resolve({ policies: [] }), { invalidateOn: ['policies'] });
   const scriptsQ = useQuery(['scripts-t'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const [editing, setEditing] = useState(null);
+  const [confirmToggleTask, setConfirmToggleTask] = useState(null);
   const tasks = tasksQ.data?.tasks || [];
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
   const scriptMap = {}; (scriptsQ.data?.scripts || []).forEach((s) => scriptMap[s.id] = s);
@@ -268,7 +288,16 @@ function TasksScreen() {
     }
     return 'Every ' + (t.interval_sec < 3600 ? Math.round(t.interval_sec / 60) + 'm' : Math.round(t.interval_sec / 3600) + 'h');
   };
-  const toggle = async (t) => { await api.updateTask(t.id, { enabled: !t.enabled }); toast.success(t.enabled ? 'Task disabled' : 'Task enabled'); };
+  const toggle = async (t) => {
+    // Task updates use PUT, so the server validates the entire schedule. Keep
+    // the current task fields when changing just the enabled state.
+    try {
+      await api.updateTask(t.id, { ...t, enabled: !t.enabled });
+      toast.success(t.enabled ? 'Task disabled' : 'Task enabled');
+    } catch (e) {
+      toast.error('Failed to update task', e.message);
+    }
+  };
   const [runningTask, setRunningTask] = useState(null); // { task, count } pending confirm
   const askRun = async (t) => {
     try { const { count } = await api.taskTargets(t.id); setRunningTask({ task: t, count }); }
@@ -299,7 +328,7 @@ function TasksScreen() {
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{schedule(t)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[12px] text-faint">{sc?.name || 'inline'}</td>
-                  <td className="px-3 py-3"><Toggle checked={t.enabled} onChange={() => toggle(t)} disabled={!can('tasks.manage')} /></td>
+                  <td className="px-3 py-3"><Toggle checked={t.enabled} onChange={() => setConfirmToggleTask(t)} disabled={!can('tasks.manage')} /></td>
                   <td className="px-4 py-3 text-right">{can('tasks.manage') && <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" icon="play" onClick={() => askRun(t)}>Run now</Button><Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(t)}>Edit</Button></div>}</td>
                 </tr>
               );
@@ -309,6 +338,12 @@ function TasksScreen() {
         {!tasksQ.loading && tasks.length === 0 && <EmptyState icon="tasks" title="No scheduled tasks" msg="Create a task to automate routine scripts." />}
       </Card>
       {editing && <TaskEditor task={editing === 'new' ? null : editing} onClose={() => setEditing(null)} devMap={devMap} policies={policiesQ.data?.policies || []} scripts={scriptsQ.data?.scripts || []} />}
+      <ConfirmDialog open={!!confirmToggleTask} onClose={() => setConfirmToggleTask(null)} onConfirm={() => toggle(confirmToggleTask)}
+        title={confirmToggleTask?.enabled ? 'Disable task?' : 'Enable task?'}
+        confirmLabel={confirmToggleTask?.enabled ? 'Disable' : 'Enable'} danger={!!confirmToggleTask?.enabled}
+        body={confirmToggleTask && (confirmToggleTask.enabled
+          ? <>Disable <b>{confirmToggleTask.name}</b>? It will stop running until it is enabled again.</>
+          : <>Enable <b>{confirmToggleTask.name}</b>? It will resume running on its configured schedule.</>)} />
       <ConfirmDialog open={!!runningTask} onClose={() => setRunningTask(null)} onConfirm={() => doRun(runningTask.task)}
         title="Run task now?" confirmLabel="Run now"
         body={runningTask && (runningTask.count === 0

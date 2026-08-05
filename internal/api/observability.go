@@ -57,6 +57,19 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		writeGauge("rmm_db_pool_acquired_conns", "Acquired (in-use) database connections.", float64(st.AcquiredConns()))
 	}
 
+	// The outbox. Alert delivery failing is the failure that hides every other
+	// failure — you notice it by not being told about anything, which is to say
+	// you do not notice it. Age of the oldest pending message is the one to
+	// alert on: a healthy outbox drains within a worker tick (30s), so minutes
+	// of backlog means mail has stopped leaving.
+	outboxCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if outbox, err := s.store.OutboxStats(outboxCtx); err == nil {
+		writeGauge("rmm_notifications_pending", "Queued alert messages not yet delivered.", float64(outbox.Pending))
+		writeGauge("rmm_notifications_failed", "Alert messages abandoned after the retry limit.", float64(outbox.Failed))
+		writeGauge("rmm_notifications_oldest_pending_seconds", "Age of the oldest undelivered message; 0 when the outbox is empty.", outbox.OldestPendingAgeSec)
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
 }

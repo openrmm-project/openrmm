@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -14,13 +13,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
-	"github.com/p1ngu/rmm/internal/store"
 )
 
 func restrictedAdminRequest(method, target, body string) *http.Request {
@@ -130,7 +126,7 @@ func TestRestrictedPrincipalCannotPromoteUserToAdminIntegration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	st := newAuthorizationTestStore(t, databaseURL)
+	st := newTestStore(t, databaseURL)
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +265,7 @@ func TestRouterAuthAndTenantScopeIsolation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	st := newAuthorizationTestStore(t, databaseURL)
+	st := newTestStore(t, databaseURL)
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -362,39 +358,4 @@ func TestRouterAuthAndTenantScopeIsolation(t *testing.T) {
 	if outsideSite.Code != http.StatusForbidden {
 		t.Fatalf("outside site status = %d, want 403; body=%s", outsideSite.Code, outsideSite.Body.String())
 	}
-}
-
-func newAuthorizationTestStore(t *testing.T, databaseURL string) *store.Store {
-	t.Helper()
-	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	schemaName := "api_authorization_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	database, err := url.Parse(databaseURL)
-	if err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	query := database.Query()
-	query.Set("search_path", schemaName)
-	database.RawQuery = query.Encode()
-	st, err := store.New(ctx, database.String())
-	if err != nil {
-		_, _ = admin.Exec(ctx, "DROP SCHEMA "+quotedSchema+" CASCADE")
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		st.Close()
-		_, _ = admin.Exec(context.Background(), "DROP SCHEMA "+quotedSchema+" CASCADE")
-		admin.Close()
-	})
-	return st
 }

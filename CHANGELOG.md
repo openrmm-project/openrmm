@@ -35,6 +35,22 @@ tag.
   (`job.result`, alongside the exit code) — so "which devices have no Python"
   is answerable from the log alone rather than by joining back to the job row.
 
+- **Alerts can leave through their own SMTP transport.** There used to be one
+  mail configuration, so monitoring mail and password resets left the same
+  server under the same sender. **Users & Settings → Email** now has a tab per
+  transport: the account one carries resets, the alerts one carries
+  notifications. Fill in only a From address and alerts go out as `alerts@`
+  through the same relay; fill in a host and they move to a separate relay
+  entirely. Leave it empty and nothing changes, which is what an upgrade does.
+
+  When the alerts profile names its own host, **nothing is inherited** — the
+  account profile's username and password are not carried to a server the
+  operator named separately, and an alerts profile with no host stores no
+  password at all. If the alerts relay fails, alerts retry there and are never
+  rerouted through the account transport: a silent fallback would send mail by a
+  path the operator chose not to use, and hide that the relay is broken. Each
+  tab's **Send test** exercises its own transport.
+
 ### Changed
 
 - The agent capability gates share one version comparison
@@ -42,6 +58,67 @@ tag.
   cannot drift on what a missing or malformed version means — it means "too
   old", which is the only safe reading of a string the endpoint reports about
   itself.
+
+### Observability
+
+- **The notification outbox is now visible.** `/metrics` gained
+  `rmm_notifications_pending`, `rmm_notifications_failed` and
+  `rmm_notifications_oldest_pending_seconds`. Alert delivery failing is the
+  failure that hides every other failure — it is noticed by not being told about
+  anything — and until now nothing exposed it. A healthy outbox drains within a
+  worker tick, so alert on the age gauge.
+- **The worker speaks when delivery breaks.** The *first* failed send is logged
+  with the transport host, attempt number and retry delay, instead of only the
+  fifth — which meant ~30 minutes of backoff with nothing in the log. Repeats of
+  the same error stay quiet so an outage does not flood it. A transport that
+  cannot deliver at all now logs once, with a reason that distinguishes "nothing
+  configured" from a half-filled profile (a host with no sender, say) that would
+  previously have stopped every alert in complete silence; recovery is logged
+  too. Log lines name the relay, which matters now that there are two.
+
+### Tests / CI
+
+- **DB-backed tests in `internal/settings` and `internal/api` were never running
+  in CI.** The "Database migrations" workflow is the only job with a Postgres
+  service, and both its path filter and its package list named `internal/store`
+  alone — so an integration test added anywhere else passed locally and ran
+  nowhere. Both now include `internal/settings` and `internal/api`. The
+  workflow's own comment warned against an allowlist of test *names* for exactly
+  this reason; the package list had the same flaw.
+- **The worker's log decisions are now tested, and one was wrong.** `drain` keyed
+  its "first failure" line on the message's attempt count, so a single outage —
+  which hits every queued message at once — would have logged one line per
+  message, the flood the suppression exists to prevent. It is keyed on the error
+  instead, and reset after a successful send so a later identical outage still
+  speaks. Found by the test, not by review.
+- `internal/notify` joined the DB-backed CI job; `drain` went from 0% to 70.8%,
+  the package from 25.5% to 45.5%.
+- A test pins the console's copy of the default role permissions against the Go
+  catalog. That copy had already drifted once — `users.email.manage` was added to
+  the backend and not the mirror, hiding the address editor from administrators
+  who held the permission.
+- The SMTP endpoints gained end-to-end coverage through the real router with
+  real session tokens: each route writes its own profile and leaves the other
+  untouched, `settings.manage` guards all six, a scoped principal cannot edit
+  instance-wide mail config, passwords never appear in a response or an audit
+  detail, and `users.email.manage` is genuinely required by the address route.
+  Both key assertions were verified by mutation — breaking the route binding and
+  removing the permission middleware each make them fail.
+
+### Security
+
+- **A user's email address is now administrator-only to change.** It is where a
+  password reset link is delivered, so it is an authentication factor, not a
+  contact detail — and it used to be self-service, which meant a user could
+  redirect their own reset, and anyone with `users.manage` could redirect
+  someone else's and take over an account that had no second factor.
+
+  Setting it now requires the new **`users.email.manage`** permission, granted
+  to `admin` and deliberately not implied by `users.manage`, so a delegated user
+  manager can still create and scope technicians. `PUT /api/me/notifications` no
+  longer accepts an address and rejects an attempt to change one; choosing
+  *which* events you receive stays self-service. `POST /api/users` requires the
+  permission when an address is supplied.
 
 ## [0.4.8] - 2026-07-24
 

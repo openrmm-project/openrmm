@@ -120,6 +120,18 @@ tag.
   *which* events you receive stays self-service. `POST /api/users` requires the
   permission when an address is supplied.
 
+## [Unreleased]
+
+### Fixed
+
+- **Run script: the library picker looked like it bound the job to a saved
+  script.** It only ever copied the script's body into the editor — nothing
+  about the job references the library, and the editor was always free to type
+  in — but the picker kept displaying the chosen name afterwards, so an operator
+  writing something ad-hoc went looking for a way to deselect it. It now springs
+  back to "Start from a saved script…" once the copy is made, and says what it
+  does.
+
 ## [0.4.8] - 2026-07-24
 
 ### Changed

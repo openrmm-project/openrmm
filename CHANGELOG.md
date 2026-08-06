@@ -8,6 +8,14 @@ tag.
 
 ### Fixed
 
+- **Run script: the library picker looked like it bound the job to a saved
+  script.** It only ever copied the script's body into the editor — nothing
+  about the job references the library, and the editor was always free to type
+  in — but the picker kept displaying the chosen name afterwards, so an operator
+  writing something ad-hoc went looking for a way to deselect it. It now springs
+  back to "Start from a saved script…" once the copy is made, and says what it
+  does.
+
 - **Auto-update could never complete without signature verification.** With
   `-update-verify off` — what `install.ps1 -LabMode` sets when no update key is
   pinned — the agent downloaded each new build and threw it away. The mode makes
@@ -141,18 +149,6 @@ tag.
   longer accepts an address and rejects an attempt to change one; choosing
   *which* events you receive stays self-service. `POST /api/users` requires the
   permission when an address is supplied.
-
-## [Unreleased]
-
-### Fixed
-
-- **Run script: the library picker looked like it bound the job to a saved
-  script.** It only ever copied the script's body into the editor — nothing
-  about the job references the library, and the editor was always free to type
-  in — but the picker kept displaying the chosen name afterwards, so an operator
-  writing something ad-hoc went looking for a way to deselect it. It now springs
-  back to "Start from a saved script…" once the copy is made, and says what it
-  does.
 
 ## [0.4.8] - 2026-07-24
 

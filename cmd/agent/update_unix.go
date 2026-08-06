@@ -23,21 +23,21 @@ func swapAndReload(exe, tmp string) error {
 		_ = os.Remove(updatePendingPath(exe))
 		return err
 	}
-	if err := os.Rename(exe+".sig", backup+".sig"); err != nil {
+	if err := renameSidecar(exe+".sig", backup+".sig"); err != nil {
 		_ = os.Rename(backup, exe)
 		_ = os.Remove(updatePendingPath(exe))
 		return err
 	}
 	if err := os.Rename(tmp, exe); err != nil {
 		_ = os.Rename(backup, exe) // restore
-		_ = os.Rename(backup+".sig", exe+".sig")
+		_ = renameSidecar(backup+".sig", exe+".sig")
 		_ = os.Remove(updatePendingPath(exe))
 		return err
 	}
-	if err := os.Rename(tmp+".sig", exe+".sig"); err != nil {
+	if err := renameSidecar(tmp+".sig", exe+".sig"); err != nil {
 		_ = os.Rename(exe, tmp)
 		_ = os.Rename(backup, exe)
-		_ = os.Rename(backup+".sig", exe+".sig")
+		_ = renameSidecar(backup+".sig", exe+".sig")
 		_ = os.Remove(updatePendingPath(exe))
 		return err
 	}
@@ -72,7 +72,7 @@ func restorePreviousBinary(exe string) error {
 		return err
 	}
 	_ = os.Remove(exe + ".sig")
-	if err := os.Rename(exe+".old.sig", exe+".sig"); err != nil {
+	if err := renameSidecar(exe+".old.sig", exe+".sig"); err != nil {
 		return err
 	}
 	_ = os.Remove(updatePendingPath(exe))

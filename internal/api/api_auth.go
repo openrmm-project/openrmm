@@ -3,10 +3,13 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -20,15 +23,52 @@ const sessionTTL = 7 * 24 * time.Hour
 
 const minPasswordLength = 12
 
-func validPassword(password, username string) bool {
+// passwordRequirement is the single statement of the rule, shown to the operator
+// and enforced here. One string so the form, the error and the check cannot
+// drift into telling the user three different things.
+const passwordRequirement = "password must be at least 12 characters and include an uppercase letter and a symbol, and must not be a common password"
+
+// passwordProblem returns why a password is unacceptable, or "" when it is fine.
+//
+// It names the specific failure rather than restating the whole rule: an
+// operator who typed eleven lowercase letters is helped by "needs an uppercase
+// letter", not by reading the policy again and guessing which part they missed.
+func passwordProblem(password, username string) string {
 	if len([]rune(password)) < minPasswordLength {
-		return false
+		return fmt.Sprintf("password must be at least %d characters", minPasswordLength)
+	}
+	var hasUpper, hasSymbol bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		// A symbol is anything that is not a letter, a digit or a space. Defining
+		// it by exclusion accepts the accented and non-Latin keyboards this fleet
+		// actually uses, instead of an ASCII allowlist that would reject them.
+		case !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsSpace(r):
+			hasSymbol = true
+		}
+	}
+	if !hasUpper {
+		return "password must include at least one uppercase letter"
+	}
+	if !hasSymbol {
+		return "password must include at least one symbol"
 	}
 	lower := strings.ToLower(password)
-	if lower == strings.ToLower(username) || lower == "passwordpassword" || lower == "123456789012" || lower == "qwertyuiop12" {
-		return false
+	if username != "" && lower == strings.ToLower(username) {
+		return "password must not be the username"
 	}
-	return true
+	for _, common := range []string{"passwordpassword", "123456789012", "qwertyuiop12"} {
+		if lower == common {
+			return "password must not be a common password"
+		}
+	}
+	return ""
+}
+
+func validPassword(password, username string) bool {
+	return passwordProblem(password, username) == ""
 }
 
 // bootstrapAdmin creates the very first admin user, only when no users exist.
@@ -42,7 +82,7 @@ func (s *Server) bootstrapAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validPassword(in.Password, in.Username) {
-		writeErr(w, http.StatusBadRequest, "password must be at least 12 characters and not be a common password")
+		writeErr(w, http.StatusBadRequest, passwordProblem(in.Password, in.Username))
 		return
 	}
 	hash, err := auth.HashPassword(in.Password)
@@ -180,7 +220,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validPassword(in.NewPassword, "") {
-		writeErr(w, http.StatusBadRequest, "new password must be at least 12 characters and not be a common password")
+		writeErr(w, http.StatusBadRequest, passwordProblem(in.NewPassword, ""))
 		return
 	}
 	userID := actorOf(r)
@@ -329,7 +369,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validPassword(in.Password, in.Username) {
-		writeErr(w, http.StatusBadRequest, "password must be at least 12 characters and not be a common password")
+		writeErr(w, http.StatusBadRequest, passwordProblem(in.Password, in.Username))
 		return
 	}
 	if in.Role == "" {
@@ -630,6 +670,56 @@ func (s *Server) disable2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.disable", uid, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": false})
+}
+
+// setUserDisabled withdraws or restores an account's access.
+//
+// The alternative to deleting: deletion cascades away sessions, scopes, tokens
+// and subscriptions, which is right for an account created by mistake and wrong
+// for a person who left — there the account must stop working while the record
+// of what it did survives.
+//
+// Live sessions are ended immediately rather than left to expire. A disable that
+// leaves an open tab working is not a disable, and the operator doing it is
+// usually reacting to something.
+func (s *Server) setUserDisabled(disabled bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		target, ok := s.requireUserManage(w, r, id)
+		if !ok {
+			return
+		}
+		if disabled {
+			// The same two guards the role and delete paths carry: locking
+			// yourself out is never intended, and the built-in admin is the
+			// account that recovers the instance.
+			if id == actorOf(r) {
+				writeErr(w, http.StatusBadRequest, "you cannot disable your own account")
+				return
+			}
+			if target.Username == "admin" {
+				writeErr(w, http.StatusBadRequest, "the built-in admin account cannot be disabled")
+				return
+			}
+		}
+		user, err := s.store.SetUserDisabled(r.Context(), id, disabled)
+		if err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+		action := "user.enable"
+		if disabled {
+			action = "user.disable"
+			if err := s.store.DeleteUserSessions(r.Context(), id); err != nil {
+				// The account is already barred — SessionPrincipal filters on
+				// disabled_at — so a failure here is worth recording, not worth
+				// failing the request and leaving the operator unsure.
+				log.Printf("user.disable: could not end sessions for %s: %v", id, err)
+			}
+		}
+		_ = s.store.AddAudit(r.Context(), actorOf(r), action, id, auditLabel("username", user.Username))
+		writeJSON(w, http.StatusOK, user)
+	}
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {

@@ -120,6 +120,35 @@ tag.
   *which* events you receive stays self-service. `POST /api/users` requires the
   permission when an address is supplied.
 
+## [Unreleased]
+
+### Added
+
+- **Users can be disabled instead of deleted.** Deletion cascades — sessions,
+  scopes, API tokens, notification subscriptions all go with it — which is right
+  for an account created by mistake and wrong for a person who left, where the
+  account must stop working while the record of what it did survives.
+
+  Disabling ends live sessions immediately (a disable that leaves an open tab
+  working is not a disable), stops API tokens bound to that user, stops alert
+  mail, and refuses a password reset — otherwise a way back in. Unbound API
+  tokens are unaffected. It records **when** access was withdrawn and re-disabling
+  keeps the original timestamp, because that is the value an incident review
+  reads. You cannot disable your own account or the built-in admin, the same two
+  guards the role and delete paths already carry.
+
+### Changed
+
+- **Passwords now require an uppercase letter and a symbol**, alongside the
+  existing 12-character minimum. A symbol is anything that is not a letter, a
+  digit or a space — defined by exclusion so accented and non-Latin keyboards are
+  accepted rather than rejected by an ASCII allowlist.
+
+  The error names the specific failure ("needs an uppercase letter") instead of
+  restating the whole policy and leaving the operator to guess which part they
+  missed, and the create-user form says what is still missing rather than showing
+  a greyed-out button with no explanation — which is what prompted this.
+
 ## [0.4.8] - 2026-07-24
 
 ### Changed

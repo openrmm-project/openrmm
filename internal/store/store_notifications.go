@@ -69,6 +69,7 @@ func (s *Store) RecipientsForAgentEvent(ctx context.Context, agentID, eventType 
 		LEFT JOIN notification_subscriptions ns
 		       ON ns.user_id = u.id AND ns.event_type = $2
 		WHERE u.email IS NOT NULL AND u.email <> ''
+		  AND u.disabled_at IS NULL
 		  AND COALESCE(ns.enabled, $3)
 		  AND EXISTS (
 		        SELECT 1 FROM role_permissions rp

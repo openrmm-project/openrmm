@@ -121,9 +121,8 @@ func (s *Server) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	if !validPassword(in.Password, user.Username) {
-		writeErr(w, http.StatusBadRequest,
-			"password must be at least 12 characters and not be a common password — request a new link and try again")
+	if problem := passwordProblem(in.Password, user.Username); problem != "" {
+		writeErr(w, http.StatusBadRequest, problem+" — the link is still valid, try again")
 		return
 	}
 	hash, err := auth.HashPassword(in.Password)

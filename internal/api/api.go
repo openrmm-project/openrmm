@@ -310,6 +310,10 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users/{id}/scopes", s.getUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)
+		// Disable is the non-destructive counterpart to delete: the account stops
+		// working, the record of what it did stays.
+		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/disable", s.setUserDisabled(true))
+		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/enable", s.setUserDisabled(false))
 		r.With(s.requirePermission(models.PermUsersManage)).Delete("/users/{id}", s.deleteUser)
 		r.With(s.requirePermissionAny(models.PermRolesManage, models.PermUsersManage, models.PermAPITokensManage)).Get("/roles", s.listRoles)
 		r.With(s.requirePermission(models.PermRolesManage)).Get("/permissions", s.listPermissions)

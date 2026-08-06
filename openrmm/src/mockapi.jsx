@@ -261,6 +261,9 @@ const api = {
   createUser(body) { return POST('/api/users', body); },
   updateUserRole(id, role) { return PATCH('/api/users/' + id, { role }); },
   deleteUser(id) { return DELETE('/api/users/' + id); },
+  // Disable is the non-destructive counterpart to delete: access stops, the
+  // account and its audit trail stay.
+  setUserDisabled(id, disabled) { return POST('/api/users/' + id + (disabled ? '/disable' : '/enable')); },
   getUserScopes(id) { return GET('/api/users/' + id + '/scopes'); },
   setUserScopes(id, scopes) { return PUT('/api/users/' + id + '/scopes', { scopes }); },
   // Needs users.email.manage on top of users.manage: the address is where a

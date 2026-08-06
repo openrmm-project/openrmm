@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/p1ngu/rmm/internal/models"
@@ -22,22 +23,59 @@ func TestOneOf(t *testing.T) {
 	}
 }
 
-func TestValidPassword(t *testing.T) {
+func TestPasswordProblem(t *testing.T) {
 	tests := []struct {
 		name, password, username string
-		want                     bool
+		wantProblem              string // "" = accepted
 	}{
-		{"long passphrase", "correct horse battery staple", "admin", true},
-		{"too short", "hunter2", "admin", false},
-		{"common", "passwordpassword", "admin", false},
-		{"same as username", "longadministrator", "LongAdministrator", false},
+		{"meets every rule", "Correct horse battery staple!", "admin", ""},
+		{"symbol may be accented punctuation", "Umasenhalonga¿", "admin", ""},
+		{"digits count as neither upper nor symbol", "Abcdefghijk1", "admin", "symbol"},
+		{"too short even when complex", "Ab!2345", "admin", "at least 12"},
+		{"no uppercase", "correct horse battery staple!", "admin", "uppercase"},
+		{"no symbol", "CorrectHorseBattery", "admin", "symbol"},
+		{"same as username", "Administrator!", "Administrator!", "username"},
+		{"common password", "passwordpassword", "admin", "uppercase"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := validPassword(tt.password, tt.username); got != tt.want {
-				t.Fatalf("validPassword() = %t, want %t", got, tt.want)
+			got := passwordProblem(tt.password, tt.username)
+			if tt.wantProblem == "" {
+				if got != "" {
+					t.Fatalf("passwordProblem() = %q, want it accepted", got)
+				}
+				return
+			}
+			if got == "" {
+				t.Fatalf("password %q should have been rejected", tt.password)
+			}
+			if !strings.Contains(got, tt.wantProblem) {
+				t.Errorf("problem = %q, want it to mention %q", got, tt.wantProblem)
 			}
 		})
+	}
+}
+
+// The message names the specific failure. Restating the whole policy makes an
+// operator re-read it and guess which part they missed.
+func TestPasswordProblemNamesTheSpecificFailure(t *testing.T) {
+	if got := passwordProblem("correcthorsebattery", "admin"); strings.Contains(got, "symbol") {
+		t.Errorf("a password missing both should report the first missing rule, got %q", got)
+	}
+	if got := passwordProblem("Correcthorsebattery", "admin"); !strings.Contains(got, "symbol") {
+		t.Errorf("only the symbol is missing here, got %q", got)
+	}
+}
+
+// validPassword is the boolean face of the same rule; the two must not drift.
+func TestValidPasswordAgreesWithPasswordProblem(t *testing.T) {
+	for _, p := range []string{
+		"Correct horse battery staple!", "short", "correcthorsebatterystaple",
+		"CORRECTHORSEBATTERY", "Correcthorsebattery1",
+	} {
+		if validPassword(p, "admin") != (passwordProblem(p, "admin") == "") {
+			t.Errorf("validPassword and passwordProblem disagree on %q", p)
+		}
 	}
 }
 

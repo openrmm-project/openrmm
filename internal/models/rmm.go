@@ -66,7 +66,14 @@ type User struct {
 	Permissions []string  `json:"permissions,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	TOTPEnabled bool      `json:"totp_enabled"`
+	// DisabledAt withdraws access without deleting the account, so what the user
+	// did stays on the record. Nil means active; the timestamp answers "when was
+	// this revoked", which is the question an incident review asks.
+	DisabledAt *time.Time `json:"disabled_at,omitempty"`
 }
+
+// Disabled reports whether this account may still authenticate.
+func (u User) Disabled() bool { return u.DisabledAt != nil }
 
 // UserScope restricts a user's access to a client/site/group/agent subtree. A user
 // with no scopes has full access. Applies to tech/readonly; admins are full.

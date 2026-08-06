@@ -43,10 +43,12 @@ func TestHTTPBase(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	if got := truncate("hello", 10); got != "hello" {
+	// truncateRunes replaced the byte-slicing truncate; see output_test.go for
+	// the multi-byte behaviour that motivated it.
+	if got := truncateRunes("hello", 10); got != "hello" {
 		t.Errorf("truncate under cap changed value: %q", got)
 	}
-	got := truncate("hello world", 5)
+	got := truncateRunes("hello world", 5)
 	if got[:5] != "hello" || got == "hello world" {
 		t.Errorf("truncate over cap = %q, want prefix kept + marker", got)
 	}

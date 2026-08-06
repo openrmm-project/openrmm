@@ -120,6 +120,29 @@ tag.
   *which* events you receive stays self-service. `POST /api/users` requires the
   permission when an address is supplied.
 
+## [Unreleased]
+
+### Fixed
+
+- **Accented characters were destroyed in script output.** `Olá, Miquéias!`
+  reached the database as `Ol<?>, Miqu<?>ias!`. A redirected child on Windows
+  writes the system code page, not UTF-8 — Python uses cp1252 on a pt-BR
+  install — so each accented byte was invalid UTF-8 on its own, and marshalling
+  it replaced the byte with U+FFFD. That substitution is **lossy**: nothing
+  downstream could recover the character, and rows already stored stay corrupted.
+
+  Python is now asked for UTF-8 stdio (`PYTHONIOENCODING`, honoured since 2.6 —
+  not `-X utf8`, whose Python 3.7 requirement would fail the whole script on an
+  older interpreter). Output that still fails the UTF-8 check is decoded from the
+  code page the OS reports rather than discarded, which covers cmd, Windows
+  PowerShell and anything else that ignores the request.
+
+- **Truncation split characters in half.** The output cap sliced bytes, so a
+  limit landing inside a multi-byte character produced an invalid tail — which
+  the JSON layer then replaced. This corrupted UTF-8 output from Linux and macOS
+  agents too, not only Windows. Truncation is now rune-aware, and the byte-slicing
+  helper is gone so the next call site cannot reintroduce it.
+
 ## [0.4.8] - 2026-07-24
 
 ### Changed

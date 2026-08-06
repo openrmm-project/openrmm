@@ -947,6 +947,17 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 		}
 		defer cleanup()
 		cmd = exec.CommandContext(ctx, interpreter, append(args, path)...)
+		// Ask Python for UTF-8 stdio. Without it a redirected interpreter writes
+		// the system code page — cp1252 on a pt-BR Windows — whose accented bytes
+		// are not valid UTF-8, and the JSON layer then replaces each one with
+		// U+FFFD, losing it for good. Asking is lossless; decodeOutput is only
+		// the fallback for interpreters that ignore this.
+		//
+		// The environment variable rather than -X utf8: PEP 540's flag needs
+		// Python 3.7, and an older interpreter would fail the whole script with
+		// "unknown option" instead of merely mis-encoding it. PYTHONIOENCODING
+		// has been honoured since 2.6 and touches only stdio.
+		cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 	default:
 		return 2, "", "unsupported shell: " + shell
 	}
@@ -973,7 +984,9 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 		}
 	}
 	// Cap captured output to avoid OOM / DB bloat from runaway scripts.
-	return exitCode, truncate(stdout.String(), maxJobOutput), truncate(stderr.String(), maxJobOutput)
+	return exitCode,
+		truncateRunes(decodeOutput(stdout.Bytes()), maxJobOutput),
+		truncateRunes(decodeOutput(stderr.Bytes()), maxJobOutput)
 }
 
 // maxJobOutput bounds stdout/stderr captured per job (1 MiB each).
@@ -1045,7 +1058,7 @@ func (a *agent) runCheck(chk protocol.RunCheckMsg) {
 	}
 
 	a.queue(protocol.MsgCheckResult, protocol.CheckResultMsg{
-		CheckID: chk.CheckID, Value: value, Output: truncate(output, 4000), Success: success,
+		CheckID: chk.CheckID, Value: value, Output: truncateRunes(output, 4000), Success: success,
 	})
 }
 
@@ -1084,13 +1097,6 @@ func winServiceRunning(name string) (bool, string) {
 	out, _ := exec.CommandContext(ctx, "sc", "query", name).CombinedOutput()
 	running := strings.Contains(string(out), "RUNNING")
 	return running, string(out)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…(truncated)"
 }
 
 // ---------- inventory ----------

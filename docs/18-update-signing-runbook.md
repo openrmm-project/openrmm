@@ -237,6 +237,25 @@ neglected offline box is often *less* safe than a well-controlled GitHub secret.
 A hardware token (YubiKey/YubiHSM, both support Ed25519) is the non-extractable
 version of the same idea.
 
+## Verification modes and auto-update
+
+| Mode | Signature | Rollback transaction |
+|---|---|---|
+| `strict` (default) | required; a bad or missing one aborts the update | signed both ways, re-verified before any rollback |
+| `warn` | verified, failure logged rather than fatal | signed both ways |
+| `off` | not fetched, not checked | **hashes only** |
+
+`off` is lab-only, and what `install.ps1 -LabMode` selects when no update key is
+pinned. Auto-update works there, but the rollback record carries integrity
+(hashes) without authenticity (signatures) — because the agent in that mode
+already installs whatever `/dl/` serves without checking who signed it, there is
+no authenticity to record.
+
+A transaction *recorded* with signatures is always validated with them, whatever
+the agent's current mode. Flipping an agent to `off` therefore cannot turn a
+signed record into an unchecked one; the check keys on what was written, not on
+how the agent happens to be running now.
+
 ## Guardrails
 
 - Never set `RMM_UPDATE_VERIFY=off` in production; keep it `strict`.

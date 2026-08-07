@@ -6,6 +6,55 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Accented characters were destroyed in script output.** `Olá, Miquéias!`
+  reached the database as `Ol<?>, Miqu<?>ias!`. A redirected child on Windows
+  writes the system code page, not UTF-8 — Python uses cp1252 on a pt-BR
+  install — so each accented byte was invalid UTF-8 on its own, and marshalling
+  it replaced the byte with U+FFFD. That substitution is **lossy**: nothing
+  downstream could recover the character, and rows already stored stay corrupted.
+
+  Python is now asked for UTF-8 stdio (`PYTHONIOENCODING`, honoured since 2.6 —
+  not `-X utf8`, whose Python 3.7 requirement would fail the whole script on an
+  older interpreter). Output that still fails the UTF-8 check is decoded from the
+  code page the OS reports rather than discarded, which covers cmd, Windows
+  PowerShell and anything else that ignores the request.
+
+- **Truncation split characters in half.** The output cap sliced bytes, so a
+  limit landing inside a multi-byte character produced an invalid tail — which
+  the JSON layer then replaced. This corrupted UTF-8 output from Linux and macOS
+  agents too, not only Windows. Truncation is now rune-aware, and the byte-slicing
+  helper is gone so the next call site cannot reintroduce it.
+
+- **Run script: the library picker looked like it bound the job to a saved
+  script.** It only ever copied the script's body into the editor — nothing
+  about the job references the library, and the editor was always free to type
+  in — but the picker kept displaying the chosen name afterwards, so an operator
+  writing something ad-hoc went looking for a way to deselect it. It now springs
+  back to "Start from a saved script…" once the copy is made, and says what it
+  does.
+
+- **Auto-update could never complete without signature verification.** With
+  `-update-verify off` — what `install.ps1 -LabMode` sets when no update key is
+  pinned — the agent downloaded each new build and threw it away. The mode makes
+  the signature step return nothing by design, and the next step demanded the
+  very proof it had just skipped: *"a verified Ed25519 candidate signature is
+  required"*. Every interval, forever, visible only to whoever read the agent's
+  own log.
+
+  Signature proofs are now required only when signatures are being verified.
+  Under `off` the rollback transaction is recorded with hashes alone, which is
+  strictly more than it had before — an agent in that mode already installs
+  whatever `/dl/` serves without checking who signed it. `strict` and `warn` are
+  untouched, and a transaction *recorded* with signatures is always validated
+  with them, so flipping an agent to `off` cannot turn a signed record into an
+  unchecked one.
+
+  The Windows and Unix swap paths also renamed the `.sig` sidecars
+  unconditionally and failed the whole update when a file the mode guarantees
+  will not exist was missing.
+
 ### Added
 
 - **Scripts can be written in Python.** `python` joins bash, sh, powershell and

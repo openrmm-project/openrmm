@@ -1101,8 +1101,19 @@ function RunScriptForm({ device, onCreated }) {
         <Field label="Shell" className="w-44">
           <Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select>
         </Field>
-        <Field label="From library" className="flex-1">
-          <Select defaultValue="" onChange={(e) => { const s = (scriptsQ.data?.scripts || []).find((x) => x.id === e.target.value); if (s) { setScript(s.body); setShell(s.shell); setDesc(s.name); } }}>
+        {/* Inserts a copy and springs back to the placeholder. Leaving the chosen
+            name selected read as "this job is bound to that library script", so
+            an operator writing something ad-hoc looked for a way to deselect —
+            when the editor below was theirs to type in all along. Nothing about
+            the job references the library: only shell, script and description
+            are submitted. */}
+        <Field label="From library" className="flex-1" hint="Copies the saved script into the editor; edit it freely afterwards.">
+          <Select value="" onChange={(e) => {
+            const s = (scriptsQ.data?.scripts || []).find((x) => x.id === e.target.value);
+            if (!s) return;
+            setScript(s.body); setShell(s.shell); setDesc(s.name);
+            toast.info('Loaded "' + s.name + '"', 'Edit it below — the job is not tied to the library.');
+          }}>
             <option value="">Start from a saved script…</option>
             {(scriptsQ.data?.scripts || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>

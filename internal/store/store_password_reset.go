@@ -19,7 +19,7 @@ func (s *Store) UserByEmail(ctx context.Context, email string) (id, username str
 		return "", "", ErrNotFound
 	}
 	err = s.pool.QueryRow(ctx,
-		`SELECT id, username FROM users WHERE lower(email)=$1`, normalized).Scan(&id, &username)
+		`SELECT id, username FROM users WHERE lower(email)=$1 AND disabled_at IS NULL`, normalized).Scan(&id, &username)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNotFound
 	}

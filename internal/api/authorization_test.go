@@ -35,7 +35,7 @@ func restrictedAdminRequest(method, target, body string) *http.Request {
 func TestRestrictedPrincipalCannotCreateAdminUser(t *testing.T) {
 	s := &Server{}
 	req := restrictedAdminRequest(http.MethodPost, "/api/users",
-		`{"username":"new-admin","password":"correct horse battery staple","role":"admin","scopes":[{"scope_type":"site","scope_id":"00000000-0000-0000-0000-000000000001"}]}`)
+		`{"username":"new-admin","password":"Correct horse battery staple!","role":"admin","scopes":[{"scope_type":"site","scope_id":"00000000-0000-0000-0000-000000000001"}]}`)
 	rr := httptest.NewRecorder()
 
 	s.createUser(rr, req)

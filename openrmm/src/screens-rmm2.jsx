@@ -678,6 +678,9 @@ function APITokensPanel() {
           )}
         </div>
       </Modal>
+      <ConfirmDialog open={!!confirmDisable} onClose={() => setConfirmDisable(null)} onConfirm={() => toggleDisabled(confirmDisable)}
+        title="Disable this user?" confirmLabel="Disable user"
+        body={<><b>{confirmDisable?.username}</b> is signed out immediately and cannot sign in again until re-enabled. API tokens bound to them stop working, and they stop receiving alert email. The account and its audit trail are kept — use <b>Remove</b> to delete it.</>} />
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => { del(confirmDel); setConfirmDel(null); }} danger title="Revoke API token?" body={<>This immediately revokes <b>{confirmDel?.name || 'this token'}</b>. Any MCP connector or integration using it stops working. This cannot be undone.</>} confirmLabel="Revoke token" />
     </Card>
   );
@@ -936,6 +939,24 @@ function NotificationsCard() {
   );
 }
 
+// Mirrors passwordProblem in internal/api/api_auth.go. The server is the
+// authority; this exists so the form can say what is missing instead of leaving
+// a grey button with no explanation, which is what operators hit.
+function passwordProblem(pw) {
+  if (!pw) return 'Enter a password';
+  if ([...pw].length < 12) return 'At least 12 characters';
+  if (!/[A-ZÀ-Þ]/.test(pw)) return 'Needs an uppercase letter';
+  // A symbol is anything that is not a letter, a digit or a space — defined by
+  // exclusion so accented and non-Latin keyboards are accepted.
+  if (!/[^\p{L}\p{N}\s]/u.test(pw)) return 'Needs a symbol';
+  return '';
+}
+function passwordHint(pw) {
+  const problem = passwordProblem(pw);
+  if (!pw) return '12+ characters, with an uppercase letter and a symbol.';
+  return problem || 'Meets the requirements.';
+}
+
 function UsersPanel({ canAdmin }) {
   const toast = useToast();
   const { can } = useAuth();
@@ -961,6 +982,7 @@ function UsersPanel({ canAdmin }) {
   const [newEmail, setNewEmail] = useState('');
   const [editEmail, setEditEmail] = useState(null); // { user, value } while editing an address
   const [emailBusy, setEmailBusy] = useState(false);
+  const [confirmDisable, setConfirmDisable] = useState(null);
   const users = usersQ.data?.users || [];
   const roles = rolesQ.data?.roles || [{ key: 'readonly', name: 'Read-only' }, { key: 'tech', name: 'Technician' }, { key: 'admin', name: 'Administrator' }];
   const roleLabel = (r) => r.name ? `${r.key} — ${r.name}` : r.key;
@@ -983,6 +1005,15 @@ function UsersPanel({ canAdmin }) {
       toast.success('Address updated', editEmail.value.trim() ? editEmail.user.username + ' now receives alerts' : 'Email alerts are off for ' + editEmail.user.username);
     } catch (e) { toast.error('Could not update address', e.message); }
     finally { setEmailBusy(false); }
+  };
+  const toggleDisabled = async (u) => {
+    try {
+      await api.setUserDisabled(u.id, !u.disabled_at);
+      setConfirmDisable(null);
+      usersQ.refetch();
+      toast.success(u.disabled_at ? 'User enabled' : 'User disabled',
+        u.disabled_at ? u.username + ' can sign in again' : u.username + ' is signed out and cannot sign in');
+    } catch (e) { toast.error('Failed', e.message); }
   };
   const del = async (id) => { try { await api.deleteUser(id); toast.info('User removed'); } catch (e) { toast.error('Failed', e.message); } };
   const reset2fa = async (u) => { try { await api.reset2FA(u.id); toast.info('2FA reset', u.username + ' can now sign in with their password'); usersQ.refetch(); } catch (e) { toast.error('Failed', e.message); } };
@@ -1032,7 +1063,11 @@ function UsersPanel({ canAdmin }) {
         <tbody className="divide-y divide-line">
           {users.map((u) => (
             <tr key={u.id} className="hover:bg-elevated/40 transition">
-              <td className="px-4 py-3"><div className="flex items-center gap-2.5"><Avatar name={u.username} size={28} /><span className="text-[13px] text-ink font-medium">{u.username}</span></div></td>
+              <td className="px-4 py-3"><div className="flex items-center gap-2.5">
+                <Avatar name={u.username} size={28} />
+                <span className={cx('text-[13px] font-medium', u.disabled_at ? 'text-faint line-through' : 'text-ink')}>{u.username}</span>
+                {u.disabled_at && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-elevated text-faint" title={'Disabled ' + fmtTime(u.disabled_at)}>disabled</span>}
+              </div></td>
               <td className="px-3 py-3 text-[12px] mono">
                 {u.email ? <span className="text-muted">{u.email}</span> : <span className="text-faint">— no alerts</span>}
               </td>
@@ -1048,6 +1083,9 @@ function UsersPanel({ canAdmin }) {
                     {canEmail && <Button size="sm" variant="ghost" icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} title="Set this user's address — alerts, and password reset">Email</Button>}
                     {u.role !== 'admin' && <Button size="sm" variant="ghost" icon="shield" onClick={() => openEdit(u)}>Scope</Button>}
                     {u.totp_enabled && <Button size="sm" variant="ghost" icon="key" onClick={() => setConfirmReset(u)} title="Disable this user's 2FA so they can sign in and re-enroll">Reset 2FA</Button>}
+                    {u.username !== 'admin' && (u.disabled_at
+                      ? <Button size="sm" variant="ghost" icon="check" onClick={() => toggleDisabled(u)} title="Let this user sign in again">Enable</Button>
+                      : <Button size="sm" variant="ghost" icon="shield" onClick={() => setConfirmDisable(u)} title="Revoke access without deleting the account">Disable</Button>)}
                     {u.username !== 'admin' && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(u)}>Remove</Button>}
                   </div>
                 )}
@@ -1061,7 +1099,11 @@ function UsersPanel({ canAdmin }) {
           <div className="text-[15px] font-semibold text-ink mb-4">Add user</div>
           <div className="space-y-3">
             <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="tech@company" autoFocus /></Field>
-            <Field label="Password" hint={password.length > 0 && password.length < 12 ? 'At least 12 characters' : undefined}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="at least 12 characters" className={password.length > 0 && password.length < 12 ? 'border-bad' : ''} /></Field>
+            <Field label="Password" hint={passwordHint(password)}>
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="12+ characters, an uppercase letter and a symbol"
+                className={password.length > 0 && passwordProblem(password) ? 'border-bad' : ''} />
+            </Field>
             {/* Offered only to operators who may set it — the backend rejects an
                 address from anyone without users.email.manage. */}
             {canEmail && <Field label="Email address" hint="Optional. Where their alerts go, and where a password reset link would be sent."><Input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="tech@company.com" autoComplete="off" /></Field>}
@@ -1070,7 +1112,8 @@ function UsersPanel({ canAdmin }) {
               ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
               : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} /></Field>}
           </div>
-          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || password.length < 12}>Create user</Button></div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || !!passwordProblem(password)}
+            title={!username ? 'Enter a username' : (passwordProblem(password) || undefined)}>Create user</Button></div>
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />

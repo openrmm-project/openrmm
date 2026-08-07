@@ -99,6 +99,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
     ON users (lower(email)) WHERE email IS NOT NULL AND email <> '';
 
+-- Disabling a user, as an alternative to deleting one: access stops, the record
+-- of what the account did survives. A timestamp rather than a boolean, because
+-- "when was access withdrawn" is the question an incident review asks.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_disabled
+    ON users (disabled_at) WHERE disabled_at IS NOT NULL;
+
 -- One-time 2FA recovery codes. Stored hashed (SHA-256); single-use (used_at set
 -- on consumption). Used to log in when the authenticator is lost.
 CREATE TABLE IF NOT EXISTS user_recovery_codes (

@@ -98,7 +98,7 @@ func (s *Store) BootstrapAdmin(ctx context.Context, username, passwordHash, toke
 // GetUserAuth returns the id, role and password hash for a username.
 func (s *Store) GetUserAuth(ctx context.Context, username string) (id, role, passwordHash string, err error) {
 	err = s.pool.QueryRow(ctx,
-		`SELECT id, role, password_hash FROM users WHERE username=$1`, username).
+		`SELECT id, role, password_hash FROM users WHERE username=$1 AND disabled_at IS NULL`, username).
 		Scan(&id, &role, &passwordHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", ErrNotFound
@@ -225,8 +225,8 @@ func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
 func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var u models.User
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled FROM users WHERE id=$1`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled)
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -239,7 +239,7 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error
 // ListUsers returns all users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled FROM users ORDER BY username`)
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -260,8 +260,8 @@ func (s *Store) UpdateUserRole(ctx context.Context, id, role string) (*models.Us
 	var u models.User
 	err := s.pool.QueryRow(ctx,
 		`UPDATE users SET role=$2 WHERE id=$1
-		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled`,
-		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled)
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at`,
+		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -283,14 +283,42 @@ func (s *Store) UpdateUserEmail(ctx context.Context, id, email string) (*models.
 	var u models.User
 	err := s.pool.QueryRow(ctx,
 		`UPDATE users SET email=$2 WHERE id=$1
-		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled`,
-		id, arg).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled)
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at`,
+		id, arg).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		return nil, ErrConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// DeleteUserSessions ends every live session for a user. Used when access is
+// withdrawn: a disable that leaves an open browser tab working is not a disable.
+func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, userID)
+	return err
+}
+
+// SetUserDisabled withdraws or restores an account's access.
+//
+// Idempotent on purpose: disabling an already-disabled user keeps the original
+// timestamp, so a second click does not rewrite when access was actually
+// withdrawn — the value an incident review depends on.
+func (s *Store) SetUserDisabled(ctx context.Context, id string, disabled bool) (*models.User, error) {
+	var u models.User
+	err := s.pool.QueryRow(ctx,
+		`UPDATE users SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) ELSE NULL END
+		 WHERE id=$1
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at`,
+		id, disabled).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -316,7 +344,7 @@ func (s *Store) CreateSession(ctx context.Context, userID, tokenHash string, exp
 func (s *Store) SessionPrincipal(ctx context.Context, tokenHash string) (userID, role string, err error) {
 	err = s.pool.QueryRow(ctx,
 		`SELECT u.id, u.role FROM sessions se JOIN users u ON u.id = se.user_id
-		 WHERE se.token_hash=$1 AND se.expires_at > now()`, tokenHash).Scan(&userID, &role)
+		 WHERE se.token_hash=$1 AND se.expires_at > now() AND u.disabled_at IS NULL`, tokenHash).Scan(&userID, &role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrNotFound
 	}
@@ -340,8 +368,10 @@ func (s *Store) DeleteUserSessionsExcept(ctx context.Context, userID, keepTokenH
 // APITokenRole returns the role and bound user id (empty if unscoped) for an API
 // token hash, if it exists.
 func (s *Store) APITokenRole(ctx context.Context, hash string) (role, userID string, ok bool, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT role, COALESCE(user_id::text, '') FROM api_tokens
-		WHERE token_hash=$1 AND (expires_at IS NULL OR expires_at > now())`, hash).Scan(&role, &userID)
+	err = s.pool.QueryRow(ctx, `SELECT t.role, COALESCE(t.user_id::text, '') FROM api_tokens t
+		LEFT JOIN users u ON u.id = t.user_id
+		WHERE t.token_hash=$1 AND (t.expires_at IS NULL OR t.expires_at > now())
+		  AND (t.user_id IS NULL OR u.disabled_at IS NULL)`, hash).Scan(&role, &userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", false, nil
 	}

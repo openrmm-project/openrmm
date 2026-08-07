@@ -198,7 +198,9 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | POST | `/api/users` | `users.manage` | `{username,password,role,scopes?}` (`scopes`: array of `{scope_type,scope_id}`; `scope_type` = `client`/`site`/`group`/`agent`). An optional `email` additionally requires `users.email.manage` |
 | PUT | `/api/users/{id}/email` | `users.manage` + `users.email.manage` | `{email}` — where their alerts go, and where a password reset link is sent (unique; blank clears) |
 | PATCH | `/api/users/{id}` | `users.manage` | `{role}` update a user's role |
-| DELETE | `/api/users/{id}` | `users.manage` | Remove a user |
+| POST | `/api/users/{id}/disable` | `users.manage` | Withdraw access without deleting: sessions end immediately, bound API tokens stop, alert mail stops, no password reset is issued. Cannot target yourself or the built-in admin |
+| POST | `/api/users/{id}/enable` | `users.manage` | Restore access |
+| DELETE | `/api/users/{id}` | `users.manage` | Remove a user (cascades; prefer disable for a person who left) |
 | GET | `/api/users/{id}/scopes` | `users.manage` | List a user's access-scope assignments |
 | PUT | `/api/users/{id}/scopes` | `users.manage` | Replace scope assignments (`[]` = unrestricted; supports `client`/`site`/`group`/`agent`) |
 

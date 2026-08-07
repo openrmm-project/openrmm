@@ -6,6 +6,36 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Run script: the library picker looked like it bound the job to a saved
+  script.** It only ever copied the script's body into the editor — nothing
+  about the job references the library, and the editor was always free to type
+  in — but the picker kept displaying the chosen name afterwards, so an operator
+  writing something ad-hoc went looking for a way to deselect it. It now springs
+  back to "Start from a saved script…" once the copy is made, and says what it
+  does.
+
+- **Auto-update could never complete without signature verification.** With
+  `-update-verify off` — what `install.ps1 -LabMode` sets when no update key is
+  pinned — the agent downloaded each new build and threw it away. The mode makes
+  the signature step return nothing by design, and the next step demanded the
+  very proof it had just skipped: *"a verified Ed25519 candidate signature is
+  required"*. Every interval, forever, visible only to whoever read the agent's
+  own log.
+
+  Signature proofs are now required only when signatures are being verified.
+  Under `off` the rollback transaction is recorded with hashes alone, which is
+  strictly more than it had before — an agent in that mode already installs
+  whatever `/dl/` serves without checking who signed it. `strict` and `warn` are
+  untouched, and a transaction *recorded* with signatures is always validated
+  with them, so flipping an agent to `off` cannot turn a signed record into an
+  unchecked one.
+
+  The Windows and Unix swap paths also renamed the `.sig` sidecars
+  unconditionally and failed the whole update when a file the mode guarantees
+  will not exist was missing.
+
 ### Added
 
 - **Scripts can be written in Python.** `python` joins bash, sh, powershell and

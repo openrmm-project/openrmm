@@ -129,11 +129,14 @@ func (a *agent) maybeSelfUpdate() {
 		_ = os.Remove(tmp)
 		return
 	}
-	if err := writeLocalArtifactSignature(tmp+".sig", signature); err != nil {
-		log.Printf("update: could not stage candidate signature: %v", err)
-		_ = os.Remove(updatePendingPath(exe))
-		_ = os.Remove(tmp)
-		return
+	// No sidecar to stage when nothing was verified; swapAndReload tolerates it.
+	if len(signature) > 0 {
+		if err := writeLocalArtifactSignature(tmp+".sig", signature); err != nil {
+			log.Printf("update: could not stage candidate signature: %v", err)
+			_ = os.Remove(updatePendingPath(exe))
+			_ = os.Remove(tmp)
+			return
+		}
 	}
 	if err := swapAndReload(exe, tmp); err != nil {
 		log.Printf("update: could not apply update: %v", err)
@@ -373,16 +376,43 @@ type pendingUpdate struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+// renameSidecar moves an optional .sig next to a binary. A missing sidecar is
+// not an error: under "off" there is no signature to carry, and failing the
+// whole swap over a file the mode says will not exist is what kept lab agents
+// from ever updating.
+func renameSidecar(from, to string) error {
+	if err := os.Rename(from, to); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func writePendingUpdate(exe, candidate, etag, previousVersion, candidateVersion string, signature []byte) error {
-	if len(signature) == 0 {
-		return fmt.Errorf("a verified Ed25519 candidate signature is required")
-	}
-	previousSignature, err := readLocalArtifactSignature(exe + ".sig")
-	if err != nil {
-		return fmt.Errorf("current binary has no local signature proof; reinstall with a signed installer before auto-update: %w", err)
-	}
-	if err := verifyLocalArtifactSignature(exe, previousSignature); err != nil {
-		return fmt.Errorf("current binary signature proof failed: %w", err)
+	// Signature proofs are demanded only when signatures are being verified.
+	// Requiring them under "off" was a contradiction that stopped auto-update
+	// dead: that mode makes verifiedArtifactSignature return nothing by design,
+	// and the next step then insisted on the very proof it had just skipped. The
+	// agent downloaded a new build every interval, discarded it, and never
+	// updated — silently, unless someone read its log.
+	//
+	// Under "off" the transaction is recorded with hashes alone. That is not a
+	// weakening: an agent in that mode already installs whatever /dl/ serves
+	// without checking who signed it, so hash-only rollback records are strictly
+	// more than it had before. Anything other than "off" is unchanged.
+	verifying := updateVerifyMode() != "off"
+	var previousSignature []byte
+	if verifying {
+		if len(signature) == 0 {
+			return fmt.Errorf("a verified Ed25519 candidate signature is required")
+		}
+		var err error
+		previousSignature, err = readLocalArtifactSignature(exe + ".sig")
+		if err != nil {
+			return fmt.Errorf("current binary has no local signature proof; reinstall with a signed installer before auto-update: %w", err)
+		}
+		if err := verifyLocalArtifactSignature(exe, previousSignature); err != nil {
+			return fmt.Errorf("current binary signature proof failed: %w", err)
+		}
 	}
 	previousHash, err := hashFile(exe)
 	if err != nil {
@@ -446,7 +476,16 @@ func validatePendingRollback(exe string) (pendingUpdate, error) {
 	if err != nil {
 		return pending, err
 	}
-	if pending.PreviousVersion == "" || pending.CandidateVersion == "" || len(pending.PreviousSignature) == 0 || len(pending.CandidateSignature) == 0 {
+	if pending.PreviousVersion == "" || pending.CandidateVersion == "" {
+		return pending, fmt.Errorf("pending update has no recorded rollback transaction")
+	}
+	// Keyed on what the transaction actually recorded, not on the current mode.
+	// A transaction written with signatures is always validated with them, so
+	// flipping the agent to "off" cannot turn a signed record into one that
+	// skips verification. A record without them is honoured only by an agent
+	// that is not verifying anyway.
+	signed := len(pending.PreviousSignature) > 0 && len(pending.CandidateSignature) > 0
+	if !signed && updateVerifyMode() != "off" {
 		return pending, fmt.Errorf("pending update has no authenticated rollback proof")
 	}
 	if err := validateUpgradeVersion(pending.PreviousVersion, pending.CandidateVersion); err != nil {
@@ -463,19 +502,21 @@ func validatePendingRollback(exe string) (pendingUpdate, error) {
 	if currentHash != pending.CandidateSHA256 || previousHash != pending.PreviousSHA256 {
 		return pending, fmt.Errorf("rollback artifacts do not match the recorded transaction")
 	}
-	currentSignature, err := readLocalArtifactSignature(exe + ".sig")
-	if err != nil || !bytes.Equal(currentSignature, pending.CandidateSignature) {
-		return pending, fmt.Errorf("candidate signature sidecar does not match the recorded transaction")
-	}
-	previousSignature, err := readLocalArtifactSignature(exe + ".old.sig")
-	if err != nil || !bytes.Equal(previousSignature, pending.PreviousSignature) {
-		return pending, fmt.Errorf("previous signature sidecar does not match the recorded transaction")
-	}
-	if err := verifyLocalArtifactSignature(exe, pending.CandidateSignature); err != nil {
-		return pending, fmt.Errorf("candidate signature proof failed: %w", err)
-	}
-	if err := verifyLocalArtifactSignature(exe+".old", pending.PreviousSignature); err != nil {
-		return pending, fmt.Errorf("previous binary signature proof failed: %w", err)
+	if signed {
+		currentSignature, err := readLocalArtifactSignature(exe + ".sig")
+		if err != nil || !bytes.Equal(currentSignature, pending.CandidateSignature) {
+			return pending, fmt.Errorf("candidate signature sidecar does not match the recorded transaction")
+		}
+		previousSignature, err := readLocalArtifactSignature(exe + ".old.sig")
+		if err != nil || !bytes.Equal(previousSignature, pending.PreviousSignature) {
+			return pending, fmt.Errorf("previous signature sidecar does not match the recorded transaction")
+		}
+		if err := verifyLocalArtifactSignature(exe, pending.CandidateSignature); err != nil {
+			return pending, fmt.Errorf("candidate signature proof failed: %w", err)
+		}
+		if err := verifyLocalArtifactSignature(exe+".old", pending.PreviousSignature); err != nil {
+			return pending, fmt.Errorf("previous binary signature proof failed: %w", err)
+		}
 	}
 	return pending, nil
 }

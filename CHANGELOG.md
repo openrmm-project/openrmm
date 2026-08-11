@@ -57,6 +57,24 @@ tag.
 
 ### Added
 
+- **A script's category is picked, not retyped.** The field was free text with no
+  list behind it, so nothing offered what already existed and one category became
+  two that differed by a keystroke — with no way to put them back together short
+  of opening every affected script and retyping the name identically.
+
+  A category is not a row anywhere: it exists exactly as long as some script names
+  it, which is why this adds no table. What it adds is the list that was missing.
+  `GET /api/script-categories` returns the names in use with their script counts;
+  the editor's Category field became a picker over that list that can also name a
+  new one, and the library gained a category filter.
+
+  `PUT /api/script-categories/{name}` rewrites every script filed under the old
+  name, and a **Categories** window lists them for renaming. Renaming onto a name
+  already in use **merges** the two — the repair for a category a typo split in
+  half — and the console says so before doing it, because afterwards they are not
+  separable. Emptying a category returns its scripts to uncategorized and keeps
+  the scripts. Both are audited.
+
 - **Users can be disabled instead of deleted.** Deletion cascades — sessions,
   scopes, API tokens, notification subscriptions all go with it — which is right
   for an account created by mistake and wrong for a person who left, where the

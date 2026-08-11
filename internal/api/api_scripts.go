@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -15,6 +17,69 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"scripts": scripts})
+}
+
+// listScriptCategories returns the categories in use with their script counts.
+//
+// The console needs them for two things: offering what already exists when a
+// script is filed, so a category is picked rather than retyped, and listing them
+// for renaming. Free text with no such list is how one category becomes two that
+// differ by a keystroke.
+func (s *Server) listScriptCategories(w http.ResponseWriter, r *http.Request) {
+	categories, err := s.store.ListScriptCategories(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"categories": categories})
+}
+
+// renameScriptCategory renames a category across every script filed under it,
+// or empties it when the new name is blank.
+//
+// Renaming onto a name already in use merges the two. That is not an accident to
+// guard against — it is the repair for a category that a typo split in half —
+// but the console confirms it, because the operator has to know the two are
+// about to become one.
+func (s *Server) renameScriptCategory(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
+	from := chi.URLParam(r, "name")
+	if from == "" {
+		writeErr(w, http.StatusBadRequest, "category required")
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	to := strings.TrimSpace(in.Name)
+	if to == from {
+		writeErr(w, http.StatusBadRequest, "the category already has that name")
+		return
+	}
+	moved, err := s.store.RenameScriptCategory(r.Context(), from, to)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Nothing carried the name, so there was no category to rename. Reported
+	// rather than answered with a cheerful zero.
+	if moved == 0 {
+		writeErr(w, http.StatusNotFound, "no scripts are filed under "+from)
+		return
+	}
+	action := "script.category.rename"
+	if to == "" {
+		action = "script.category.clear"
+	}
+	detail, _ := json.Marshal(map[string]any{"from": from, "to": to, "scripts": moved})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), action, from, detail)
+	writeJSON(w, http.StatusOK, map[string]any{"name": to, "scripts": moved})
 }
 
 func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {

@@ -313,6 +313,12 @@ const api = {
   createScript(body) { return POST('/api/scripts', body); },
   updateScript(id, body) { return PUT('/api/scripts/' + id, body); },
   deleteScript(id) { return DELETE('/api/scripts/' + id); },
+  // Categories are not rows: they exist while scripts name them. Listing them is
+  // what lets the editor offer what already exists instead of asking for free
+  // text, and renaming rewrites every script filed under the old name — onto a
+  // name in use, that is a merge.
+  listScriptCategories() { return GET('/api/script-categories'); },
+  renameScriptCategory(name, newName) { return PUT('/api/script-categories/' + encodeURIComponent(name), { name: newName }); },
   // Run an ad-hoc script on a device -> approval-gated job (POST /api/jobs).
   runScript(agentId, body) {
     return POST('/api/jobs', {

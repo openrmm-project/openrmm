@@ -801,6 +801,49 @@ func (s *Store) GetScript(ctx context.Context, id string) (*models.Script, error
 	return scanScript(s.pool.QueryRow(ctx, `SELECT `+scriptCols+` FROM scripts WHERE id=$1`, id))
 }
 
+// ListScriptCategories returns the categories in use, with how many scripts
+// carry each.
+//
+// A category is not a row anywhere — it exists exactly as long as some script
+// names it. That is why there is nothing to "create": a category comes into
+// being when a script is saved under it, and renaming is an update across the
+// scripts that share the name.
+func (s *Store) ListScriptCategories(ctx context.Context) ([]models.ScriptCategory, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT category, count(*) FROM scripts WHERE category <> '' GROUP BY category ORDER BY category`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.ScriptCategory{}
+	for rows.Next() {
+		var c models.ScriptCategory
+		if err := rows.Scan(&c.Name, &c.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// RenameScriptCategory moves every script under `from` to `to` and reports how
+// many moved. When `to` is already in use the two merge, which is the only way
+// to undo a typo that has already split one category in half.
+func (s *Store) RenameScriptCategory(ctx context.Context, from, to string) (int64, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE scripts SET category=$2, updated_at=now() WHERE category=$1`, from, to)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ClearScriptCategory returns every script under `name` to uncategorized. The
+// category then stops existing, because nothing names it any more.
+func (s *Store) ClearScriptCategory(ctx context.Context, name string) (int64, error) {
+	return s.RenameScriptCategory(ctx, name, "")
+}
+
 // ListScripts returns the library.
 func (s *Store) ListScripts(ctx context.Context) ([]models.Script, error) {
 	rows, err := s.pool.Query(ctx, `SELECT `+scriptCols+` FROM scripts ORDER BY category, name`)

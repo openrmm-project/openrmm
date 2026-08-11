@@ -48,21 +48,34 @@ function ScriptsScreen() {
   );
 }
 
-// Renaming and emptying the categories in use. There is nothing to create here:
-// a category exists because scripts name it, so it is born in the script editor.
-// What this window is for is the repair — the two names that mean the same thing,
-// and the one that should not exist at all.
+// Creating, renaming and removing categories. A category is registered in its
+// own right, so it can be named here before any script is filed under it —
+// naming the filing scheme first is how people actually sort things.
 function CategoryManager({ categories, onClose }) {
   const toast = useToast();
   const [editing, setEditing] = useState(null);  // { name, value } being renamed
   const [confirm, setConfirm] = useState(null);  // { kind, from, to, count }
+  const [adding, setAdding] = useState(null);    // the name being created
   const [busy, setBusy] = useState(false);
 
+  const create = async () => {
+    const name = (adding || '').trim();
+    if (!name) { setAdding(null); return; }
+    setBusy(true);
+    try {
+      await api.createScriptCategory(name);
+      setAdding(null);
+      toast.success('Category created', 'File scripts under it from the script editor.');
+    } catch (e) { toast.error('Could not create the category', e.message); }
+    finally { setBusy(false); }
+  };
   const apply = async () => {
     if (!confirm) return;
     setBusy(true);
     try {
-      const { scripts } = await api.renameScriptCategory(confirm.from, confirm.to);
+      const { scripts } = confirm.kind === 'clear'
+        ? await api.deleteScriptCategory(confirm.from)
+        : await api.renameScriptCategory(confirm.from, confirm.to);
       setEditing(null); setConfirm(null);
       toast.success(confirm.kind === 'clear' ? 'Category removed' : confirm.kind === 'merge' ? 'Categories merged' : 'Category renamed',
         scripts + ' script' + (scripts === 1 ? '' : 's') + ' updated');
@@ -81,10 +94,23 @@ function CategoryManager({ categories, onClose }) {
   return (
     <Modal open onClose={() => { if (!busy) onClose(); }} width="max-w-lg">
       <div className="p-5">
-        <div className="text-[15px] font-semibold text-ink mb-1">Script categories</div>
-        <div className="text-[12px] text-muted mb-4">A category exists while scripts are filed under it — new ones are named when you save a script. Renaming one onto another merges them.</div>
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div className="text-[15px] font-semibold text-ink">Script categories</div>
+          {!adding && <Button size="sm" variant="ghost" icon="plus" onClick={() => setAdding('')}>Add category</Button>}
+        </div>
+        <div className="text-[12px] text-muted mb-4">Create one here and file scripts into it from the script editor. Renaming one onto another merges them.</div>
+        {adding !== null && (
+          <div className="flex items-center gap-2 rounded-xl border border-brand/30 bg-brandsoft px-3 py-2 mb-2">
+            <Icon name="grid" size={14} className="text-brandhi shrink-0" />
+            <Input value={adding} autoFocus placeholder="Backup" className="h-8 flex-1"
+              onChange={(e) => setAdding(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setAdding(null); }} />
+            <Button size="sm" variant="ghost" onClick={() => setAdding(null)} disabled={busy}>Cancel</Button>
+            <Button size="sm" variant="primary" loading={busy} disabled={!adding.trim()} onClick={create}>Create</Button>
+          </div>
+        )}
         {categories.length === 0
-          ? <EmptyState icon="grid" title="No categories yet" msg="Every script is uncategorized." />
+          ? <EmptyState icon="grid" title="No categories yet" msg="Add one, or save a script under a new name." />
           : <div className="space-y-1.5 max-h-[380px] overflow-y-auto scroll-area">
             {categories.map((c) => (
               <div key={c.name} className="flex items-center gap-2 rounded-xl border border-line bg-card px-3 py-2">
@@ -110,7 +136,7 @@ function CategoryManager({ categories, onClose }) {
         title={confirm?.kind === 'clear' ? 'Remove this category?' : confirm?.kind === 'merge' ? 'Merge the two categories?' : 'Rename this category?'}
         confirmLabel={confirm?.kind === 'clear' ? 'Remove category' : confirm?.kind === 'merge' ? 'Merge' : 'Rename'}
         body={confirm && (confirm.kind === 'clear'
-          ? <>The <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'} under <b>{confirm.from}</b> become uncategorized. The scripts themselves are kept.</>
+          ? <>The category <b>{confirm.from}</b> is removed{confirm.count > 0 ? <>, and its <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'} become uncategorized</> : ' (nothing is filed under it)'}. The scripts themselves are kept.</>
           : confirm.kind === 'merge'
             ? <><b>{confirm.from}</b> and <b>{confirm.to}</b> become one. The <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'} under <b>{confirm.from}</b> move across, and the two stop being separable.</>
             : <>Rename <b>{confirm.from}</b> to <b>{confirm.to}</b>, across <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'}.</>)} />

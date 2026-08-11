@@ -119,14 +119,69 @@ func TestRenameScriptCategoryMergesIntoAnExistingOneIntegration(t *testing.T) {
 	}
 }
 
-// Emptying a category returns its scripts to uncategorized. The scripts survive;
-// the category stops existing because nothing names it.
-func TestClearScriptCategoryKeepsTheScriptsIntegration(t *testing.T) {
+// A category can be named before any script is filed under it — the reason it is
+// registered rather than inferred from the scripts.
+func TestCreateScriptCategoryWithoutAnyScriptIntegration(t *testing.T) {
+	f := newScriptFixture(t)
+
+	if rec := f.do(http.MethodPost, "/api/script-categories", `{"name":"Backup"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got := f.categories()
+	if len(got) != 1 || got[0].Name != "Backup" || got[0].Count != 0 {
+		t.Fatalf("categories = %+v, want Backup with no scripts", got)
+	}
+	if f.audit("script.category.create") == nil {
+		t.Error("no script.category.create audit entry")
+	}
+
+	// Filing a script under it later just counts.
+	f.script("a", "Backup")
+	if got := f.categories(); len(got) != 1 || got[0].Count != 1 {
+		t.Errorf("categories after filing = %+v, want Backup with 1", got)
+	}
+}
+
+// A name already taken is a conflict — including when only a script carries it
+// and the registry has not adopted it yet, which would otherwise "succeed" while
+// changing nothing.
+func TestCreateScriptCategoryRejectsDuplicatesIntegration(t *testing.T) {
+	f := newScriptFixture(t)
+	f.script("a", "Networking")
+
+	for _, tt := range []struct {
+		name, body string
+		want       int
+	}{
+		{"in use by a script", `{"name":"Networking"}`, http.StatusConflict},
+		{"differing only by case", `{"name":"networking"}`, http.StatusConflict},
+		{"blank", `{"name":"   "}`, http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if rec := f.do(http.MethodPost, "/api/script-categories", tt.body); rec.Code != tt.want {
+				t.Errorf("status = %d, want %d (body=%s)", rec.Code, tt.want, rec.Body.String())
+			}
+		})
+	}
+	if got := f.categories(); len(got) != 1 {
+		t.Errorf("a rejected create added a category: %+v", got)
+	}
+
+	// Registering twice through the script editor path is silent, not an error.
+	f.script("b", "Networking")
+	if got := f.categories(); len(got) != 1 || got[0].Count != 2 {
+		t.Errorf("categories = %+v, want one Networking with 2", got)
+	}
+}
+
+// Removing a category returns its scripts to uncategorized. The scripts survive;
+// deleting a category is a filing decision, not a way to delete work.
+func TestDeleteScriptCategoryKeepsTheScriptsIntegration(t *testing.T) {
 	f := newScriptFixture(t)
 	kept := f.script("a", "Temporary")
 
-	if rec := f.do(http.MethodPut, "/api/script-categories/Temporary", `{"name":""}`); rec.Code != http.StatusOK {
-		t.Fatalf("clear status = %d, body=%s", rec.Code, rec.Body.String())
+	if rec := f.do(http.MethodDelete, "/api/script-categories/Temporary", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	if got := f.categories(); len(got) != 0 {
 		t.Errorf("categories = %+v, want none", got)
@@ -138,8 +193,8 @@ func TestClearScriptCategoryKeepsTheScriptsIntegration(t *testing.T) {
 	if sc.Category != "" {
 		t.Errorf("category = %q, want empty", sc.Category)
 	}
-	if entry := f.audit("script.category.clear"); entry == nil {
-		t.Error("no script.category.clear audit entry")
+	if entry := f.audit("script.category.delete"); entry == nil {
+		t.Error("no script.category.delete audit entry")
 	}
 }
 
@@ -155,6 +210,7 @@ func TestRenameScriptCategoryRejectsBadInputIntegration(t *testing.T) {
 		// with a cheerful zero would hide a typo in the request itself.
 		{"unknown category", "/api/script-categories/Nonexistent-" + uuid.NewString(), `{"name":"X"}`, http.StatusNotFound},
 		{"same name", "/api/script-categories/Maintenance", `{"name":"Maintenance"}`, http.StatusBadRequest},
+		{"blank name points at DELETE", "/api/script-categories/Maintenance", `{"name":""}`, http.StatusBadRequest},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := f.do(http.MethodPut, tt.path, tt.body)

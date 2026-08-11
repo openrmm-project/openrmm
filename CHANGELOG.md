@@ -134,10 +134,14 @@ tag.
   two that differed by a keystroke — with no way to put them back together short
   of opening every affected script and retyping the name identically.
 
-  A category is not a row anywhere: it exists exactly as long as some script names
-  it, which is why this adds no table. What it adds is the list that was missing.
-  `GET /api/script-categories` returns the names in use with their script counts;
-  the editor's Category field became a picker over that list that can also name a
+  Migration `007` gives categories a registry of their own, seeded with the ones
+  already in use, so a category can be **named before any script is filed under
+  it** — the Categories window has **Add**. `scripts.category` still holds the
+  name rather than a foreign key: the table is a catalogue, not the owner of the
+  relationship, so a script written straight through the API can still carry a
+  name nobody registered and listing unions both.
+
+  The editor's Category field became a picker over that list that can also name a
   new one, and the library gained a category filter.
 
   `PUT /api/script-categories/{name}` rewrites every script filed under the old

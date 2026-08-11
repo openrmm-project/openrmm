@@ -34,8 +34,44 @@ func (s *Server) listScriptCategories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"categories": categories})
 }
 
-// renameScriptCategory renames a category across every script filed under it,
-// or empties it when the new name is blank.
+// createScriptCategory registers a category before any script is filed under it,
+// which is what lets an operator name the filing scheme first and sort into it
+// afterwards.
+func (s *Server) createScriptCategory(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name required")
+		return
+	}
+	// A name already in use is a conflict even when only a script carries it and
+	// the registry has not adopted it yet — otherwise "creating" it would look
+	// like it worked and quietly change nothing.
+	if exists, err := s.store.ScriptCategoryExists(r.Context(), name); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if exists {
+		writeErr(w, http.StatusConflict, "that category already exists")
+		return
+	}
+	if err := s.store.CreateScriptCategory(r.Context(), name); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script.category.create", name, nil)
+	writeJSON(w, http.StatusCreated, models.ScriptCategory{Name: name})
+}
+
+// renameScriptCategory renames a category and every script filed under it.
 //
 // Renaming onto a name already in use merges the two. That is not an accident to
 // guard against — it is the repair for a category that a typo split in half —
@@ -46,10 +82,6 @@ func (s *Server) renameScriptCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from := chi.URLParam(r, "name")
-	if from == "" {
-		writeErr(w, http.StatusBadRequest, "category required")
-		return
-	}
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -58,8 +90,21 @@ func (s *Server) renameScriptCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	to := strings.TrimSpace(in.Name)
+	if to == "" {
+		// Emptying a category is its own operation, because it also unfiles the
+		// scripts. DELETE says that; a blank rename would not.
+		writeErr(w, http.StatusBadRequest, "name required — use DELETE to remove a category")
+		return
+	}
 	if to == from {
 		writeErr(w, http.StatusBadRequest, "the category already has that name")
+		return
+	}
+	if exists, err := s.store.ScriptCategoryExists(r.Context(), from); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !exists {
+		writeErr(w, http.StatusNotFound, "no such category: "+from)
 		return
 	}
 	moved, err := s.store.RenameScriptCategory(r.Context(), from, to)
@@ -67,19 +112,34 @@ func (s *Server) renameScriptCategory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Nothing carried the name, so there was no category to rename. Reported
-	// rather than answered with a cheerful zero.
-	if moved == 0 {
-		writeErr(w, http.StatusNotFound, "no scripts are filed under "+from)
+	detail, _ := json.Marshal(map[string]any{"from": from, "to": to, "scripts": moved})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script.category.rename", from, detail)
+	writeJSON(w, http.StatusOK, map[string]any{"name": to, "scripts": moved})
+}
+
+// deleteScriptCategory removes a category and returns its scripts to
+// uncategorized. The scripts survive — this is a filing decision, not a way to
+// delete work.
+func (s *Server) deleteScriptCategory(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
 		return
 	}
-	action := "script.category.rename"
-	if to == "" {
-		action = "script.category.clear"
+	name := chi.URLParam(r, "name")
+	if exists, err := s.store.ScriptCategoryExists(r.Context(), name); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if !exists {
+		writeErr(w, http.StatusNotFound, "no such category: "+name)
+		return
 	}
-	detail, _ := json.Marshal(map[string]any{"from": from, "to": to, "scripts": moved})
-	_ = s.store.AddAudit(r.Context(), actorOf(r), action, from, detail)
-	writeJSON(w, http.StatusOK, map[string]any{"name": to, "scripts": moved})
+	unfiled, err := s.store.DeleteScriptCategory(r.Context(), name)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"name": name, "scripts": unfiled})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script.category.delete", name, detail)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "scripts": unfiled})
 }
 
 func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +168,7 @@ func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.store.RegisterScriptCategory(r.Context(), out.Category)
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -126,6 +187,7 @@ func (s *Server) updateScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, _ := s.store.GetScript(r.Context(), sc.ID)
+	s.store.RegisterScriptCategory(r.Context(), out.Category)
 	writeJSON(w, http.StatusOK, out)
 }
 

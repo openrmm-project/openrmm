@@ -809,8 +809,17 @@ func (s *Store) GetScript(ctx context.Context, id string) (*models.Script, error
 // being when a script is saved under it, and renaming is an update across the
 // scripts that share the name.
 func (s *Store) ListScriptCategories(ctx context.Context) ([]models.ScriptCategory, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT category, count(*) FROM scripts WHERE category <> '' GROUP BY category ORDER BY category`)
+	// The union matters: the registry holds categories nobody has filed a script
+	// under yet, and a script written straight through the API can carry a name
+	// nobody registered. Listing only one side would hide one of them.
+	rows, err := s.pool.Query(ctx, `
+		WITH names AS (
+			SELECT name FROM script_categories
+			UNION
+			SELECT DISTINCT category FROM scripts WHERE category <> ''
+		)
+		SELECT n.name, (SELECT count(*) FROM scripts s WHERE s.category = n.name)
+		  FROM names n ORDER BY n.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -826,22 +835,97 @@ func (s *Store) ListScriptCategories(ctx context.Context) ([]models.ScriptCatego
 	return out, rows.Err()
 }
 
-// RenameScriptCategory moves every script under `from` to `to` and reports how
-// many moved. When `to` is already in use the two merge, which is the only way
-// to undo a typo that has already split one category in half.
+// isUniqueViolation reports whether err is Postgres' 23505, which every unique
+// index reports and which callers turn into ErrConflict.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// CreateScriptCategory registers a category so it can exist before any script is
+// filed under it. ErrConflict when the name is taken, compared without case
+// because "Networking" and "networking" are the same category to everyone except
+// a byte comparison.
+func (s *Store) CreateScriptCategory(ctx context.Context, name string) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO script_categories (id, name) VALUES ($1,$2)`, newID(), name)
+	if isUniqueViolation(err) {
+		return ErrConflict
+	}
+	return err
+}
+
+// ScriptCategoryExists reports whether a category is registered or in use.
+func (s *Store) ScriptCategoryExists(ctx context.Context, name string) (bool, error) {
+	var exists bool
+	// Both arms compare without case. The registry's unique index already does,
+	// and a script carrying "Networking" has to block registering "networking" —
+	// otherwise the catalogue itself becomes the source of the duplicate.
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM script_categories WHERE lower(name)=lower($1)
+		UNION ALL
+		SELECT 1 FROM scripts WHERE lower(category)=lower($1))`, name).Scan(&exists)
+	return exists, err
+}
+
+// RenameScriptCategory renames the registry entry and every script filed under
+// it, reporting how many scripts moved. When `to` is already registered the two
+// merge — the only way to undo a typo that has already split one category in
+// half — so the old entry is dropped rather than colliding with the new one.
 func (s *Store) RenameScriptCategory(ctx context.Context, from, to string) (int64, error) {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE scripts SET category=$2, updated_at=now() WHERE category=$1`, from, to)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	defer tx.Rollback(ctx)
+
+	var taken bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM script_categories WHERE lower(name)=lower($1))`, to).Scan(&taken); err != nil {
+		return 0, err
+	}
+	if taken {
+		if _, err := tx.Exec(ctx, `DELETE FROM script_categories WHERE lower(name)=lower($1)`, from); err != nil {
+			return 0, err
+		}
+	} else if _, err := tx.Exec(ctx,
+		`UPDATE script_categories SET name=$2 WHERE lower(name)=lower($1)`, from, to); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE scripts SET category=$2, updated_at=now() WHERE category=$1`, from, to)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
 }
 
-// ClearScriptCategory returns every script under `name` to uncategorized. The
-// category then stops existing, because nothing names it any more.
-func (s *Store) ClearScriptCategory(ctx context.Context, name string) (int64, error) {
-	return s.RenameScriptCategory(ctx, name, "")
+// DeleteScriptCategory removes the registry entry and returns every script filed
+// under it to uncategorized, reporting how many. The scripts themselves survive:
+// deleting a category is a filing decision, not a way to delete work.
+func (s *Store) DeleteScriptCategory(ctx context.Context, name string) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM script_categories WHERE lower(name)=lower($1)`, name); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE scripts SET category='', updated_at=now() WHERE category=$1`, name)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}
+
+// RegisterScriptCategory adopts a name a script was just saved under, so a
+// category named in the script editor shows up in the catalogue too. Best
+// effort: the listing unions both sides, so a failure here loses nothing.
+func (s *Store) RegisterScriptCategory(ctx context.Context, name string) {
+	if name == "" {
+		return
+	}
+	_, _ = s.pool.Exec(ctx,
+		`INSERT INTO script_categories (id, name) VALUES ($1,$2) ON CONFLICT DO NOTHING`, newID(), name)
 }
 
 // ListScripts returns the library.

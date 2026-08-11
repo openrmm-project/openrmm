@@ -318,7 +318,9 @@ const api = {
   // text, and renaming rewrites every script filed under the old name — onto a
   // name in use, that is a merge.
   listScriptCategories() { return GET('/api/script-categories'); },
+  createScriptCategory(name) { return POST('/api/script-categories', { name }); },
   renameScriptCategory(name, newName) { return PUT('/api/script-categories/' + encodeURIComponent(name), { name: newName }); },
+  deleteScriptCategory(name) { return DELETE('/api/script-categories/' + encodeURIComponent(name)); },
   // Run an ad-hoc script on a device -> approval-gated job (POST /api/jobs).
   runScript(agentId, body) {
     return POST('/api/jobs', {

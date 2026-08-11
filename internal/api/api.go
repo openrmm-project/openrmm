@@ -261,7 +261,9 @@ func (s *Server) Router() http.Handler {
 		// a script id, and a sibling path would sit next to /scripts/{id} where
 		// only chi's static-before-param rule keeps them apart.
 		r.With(s.requirePermission(models.PermScriptsView)).Get("/script-categories", s.listScriptCategories)
+		r.With(s.requirePermission(models.PermScriptsManage)).Post("/script-categories", s.createScriptCategory)
 		r.With(s.requirePermission(models.PermScriptsManage)).Put("/script-categories/{name}", s.renameScriptCategory)
+		r.With(s.requirePermission(models.PermScriptsManage)).Delete("/script-categories/{name}", s.deleteScriptCategory)
 
 		r.With(s.requirePermission(models.PermPatchesView)).Get("/devices/{id}/patches", s.listDevicePatches)
 		r.With(s.requirePermission(models.PermPatchesView)).Get("/patches", s.listPatchCatalog)

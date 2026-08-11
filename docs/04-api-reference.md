@@ -202,7 +202,7 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | POST | `/api/users/{id}/enable` | `users.manage` | Restore access |
 | DELETE | `/api/users/{id}` | `users.manage` | Remove a user (cascades; prefer disable for a person who left) |
 | GET | `/api/users/{id}/scopes` | `users.manage` | List a user's access-scope assignments |
-| PUT | `/api/users/{id}/scopes` | `users.manage` | Replace scope assignments (`[]` = unrestricted; supports `client`/`site`/`group`/`agent`) |
+| PUT | `/api/users/{id}/scopes` | `users.manage` | Replace scope assignments (`[]` = unrestricted; supports `client`/`site`/`group`/`agent`). Audited as `user.scopes.update`, flagging the `[]` case as `full_access` — it is the widest grant this endpoint makes |
 
 ### Account
 

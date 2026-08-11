@@ -772,9 +772,6 @@ function APITokensPanel() {
           )}
         </div>
       </Modal>
-      <ConfirmDialog open={!!confirmDisable} onClose={() => setConfirmDisable(null)} onConfirm={() => toggleDisabled(confirmDisable)}
-        title="Disable this user?" confirmLabel="Disable user"
-        body={<><b>{confirmDisable?.username}</b> is signed out immediately and cannot sign in again until re-enabled. API tokens bound to them stop working, and they stop receiving alert email. The account and its audit trail are kept — use <b>Remove</b> to delete it.</>} />
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => { del(confirmDel); setConfirmDel(null); }} danger title="Revoke API token?" body={<>This immediately revokes <b>{confirmDel?.name || 'this token'}</b>. Any MCP connector or integration using it stops working. This cannot be undone.</>} confirmLabel="Revoke token" />
     </Card>
   );
@@ -1064,6 +1061,8 @@ function UsersPanel({ canAdmin }) {
   const [password, setPassword] = useState('');
   const [newRole, setNewRole] = useState('tech');
   const [scopes, setScopes] = useState([]); // [] = full access
+  const [scopeMode, setScopeMode] = useState('full');     // new user's picker mode
+  const [editScopeMode, setEditScopeMode] = useState('full'); // edited user's picker mode
   const [confirmDel, setConfirmDel] = useState(null);
   const [confirmReset, setConfirmReset] = useState(null);
   const [editUser, setEditUser] = useState(null);   // user whose scope is being edited
@@ -1081,7 +1080,10 @@ function UsersPanel({ canAdmin }) {
   const roles = rolesQ.data?.roles || [{ key: 'readonly', name: 'Read-only' }, { key: 'tech', name: 'Technician' }, { key: 'admin', name: 'Administrator' }];
   const roleLabel = (r) => r.name ? `${r.key} — ${r.name}` : r.key;
 
-  const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setNewEmail(''); setCreating(false); };
+  const reset = () => { setUsername(''); setPassword(''); setNewRole('tech'); setScopes([]); setScopeMode('full'); setNewEmail(''); setCreating(false); };
+  // "Restricted to…" with nothing selected sends the same empty list as full
+  // access, so saving it would quietly grant the fleet. Both forms refuse it.
+  const scopeIncomplete = (mode, list) => mode === 'restricted' && list.length === 0;
   const create = async () => {
     try {
       await api.createUser({ username, password, role: newRole, email: newEmail.trim(), scopes: scopes.map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })) });
@@ -1127,11 +1129,18 @@ function UsersPanel({ canAdmin }) {
   // Open the scope editor: fetch the user's current scopes first, then render the
   // picker (so its mode initializes from the loaded selection).
   const openEdit = async (u) => {
-    setEditUser(u); setEditLoading(true); setEditScopes([]);
+    setEditUser(u); setEditLoading(true); setEditScopes([]); setEditScopeMode('full');
     try {
       const r = await api.getUserScopes(u.id);
-      setEditScopes((r.scopes || []).map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id })));
-    } catch (e) { toast.error('Failed to load scope', e.message); }
+      const loaded = (r.scopes || []).map((s) => ({ scope_type: s.scope_type, scope_id: s.scope_id }));
+      setEditScopes(loaded);
+      setEditScopeMode(loaded.length ? 'restricted' : 'full');
+    } catch (e) {
+      // Opening the picker on a failed load would show an empty selection that
+      // looks like "full access", and saving it would grant exactly that.
+      toast.error('Failed to load scope', e.message);
+      setEditUser(null);
+    }
     finally { setEditLoading(false); }
   };
   const saveEdit = async () => {
@@ -1172,15 +1181,28 @@ function UsersPanel({ canAdmin }) {
               </td>
               <td className="px-3 py-3 text-[12px] text-muted tabular">{fmtTime(u.created_at)}</td>
               <td className="px-4 py-3 text-right">
-                {canAdmin && (
-                  <div className="flex items-center justify-end gap-1">
-                    {canEmail && <Button size="sm" variant="ghost" icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} title="Set this user's address — alerts, and password reset">Email</Button>}
-                    {u.role !== 'admin' && <Button size="sm" variant="ghost" icon="shield" onClick={() => openEdit(u)}>Scope</Button>}
-                    {u.totp_enabled && <Button size="sm" variant="ghost" icon="key" onClick={() => setConfirmReset(u)} title="Disable this user's 2FA so they can sign in and re-enroll">Reset 2FA</Button>}
-                    {u.username !== 'admin' && (u.disabled_at
-                      ? <Button size="sm" variant="ghost" icon="check" onClick={() => toggleDisabled(u)} title="Let this user sign in again">Enable</Button>
-                      : <Button size="sm" variant="ghost" icon="shield" onClick={() => setConfirmDisable(u)} title="Revoke access without deleting the account">Disable</Button>)}
-                    {u.username !== 'admin' && <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmDel(u)}>Remove</Button>}
+                {/* One kebab per row rather than a row of buttons: the actions
+                    are per-user and mostly rare, and Remove sat one slip away
+                    from Disable. Same Dropdown/MenuItem the device and site rows
+                    use. The built-in admin keeps only the actions it may have,
+                    so the menu is omitted entirely when nothing is left. */}
+                {canAdmin && (canEmail || u.role !== 'admin' || u.totp_enabled || u.username !== 'admin') && (
+                  <div className="flex items-center justify-end">
+                    <Dropdown align="right" width="w-56" trigger={
+                      <button className="text-faint hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-elevated" title={'Actions for ' + u.username} aria-label={'Actions for ' + u.username}>
+                        <Icon name="dots" size={16} fill />
+                      </button>}>
+                      {canEmail && <MenuItem icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} hint={u.email ? undefined : 'unset'}>Email address</MenuItem>}
+                      {u.role !== 'admin' && <MenuItem icon="shield" onClick={() => openEdit(u)}>Access scope</MenuItem>}
+                      {u.totp_enabled && <MenuItem icon="key" onClick={() => setConfirmReset(u)}>Reset 2FA</MenuItem>}
+                      {/* Withdrawing and deleting access are separated from the
+                          rest: they are the two that are painful to undo. */}
+                      {u.username !== 'admin' && <div className="my-1 border-t border-line" />}
+                      {u.username !== 'admin' && (u.disabled_at
+                        ? <MenuItem icon="check" onClick={() => toggleDisabled(u)}>Enable sign-in</MenuItem>
+                        : <MenuItem icon="lock" onClick={() => setConfirmDisable(u)}>Disable sign-in</MenuItem>)}
+                      {u.username !== 'admin' && <MenuItem icon="trash" danger onClick={() => setConfirmDel(u)}>Remove user</MenuItem>}
+                    </Dropdown>
                   </div>
                 )}
               </td>
@@ -1204,10 +1226,11 @@ function UsersPanel({ canAdmin }) {
             <Field label="Role"><Select value={newRole} onChange={(e) => setNewRole(e.target.value)}>{roles.map((r) => <option key={r.key} value={r.key}>{roleLabel(r)}</option>)}</Select></Field>
             {newRole === 'admin'
               ? <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={13} />Admins always have full access (scope does not apply).</div>
-              : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} /></Field>}
+              : <Field label="Access scope"><ScopePicker scopes={scopes} setScopes={setScopes} mode={scopeMode} setMode={setScopeMode} /></Field>}
           </div>
-          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create} disabled={!username || !!passwordProblem(password)}
-            title={!username ? 'Enter a username' : (passwordProblem(password) || undefined)}>Create user</Button></div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={reset}>Cancel</Button><Button variant="primary" onClick={create}
+            disabled={!username || !!passwordProblem(password) || (newRole !== 'admin' && scopeIncomplete(scopeMode, scopes))}
+            title={!username ? 'Enter a username' : (passwordProblem(password) || (newRole !== 'admin' && scopeIncomplete(scopeMode, scopes) ? 'Select at least one scope, or choose Full access' : undefined))}>Create user</Button></div>
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => del(confirmDel.id)} danger title="Remove user?" body={<>This revokes <b>{confirmDel?.username}</b>'s access immediately.</>} confirmLabel="Remove user" />
@@ -1237,13 +1260,19 @@ function UsersPanel({ canAdmin }) {
           <div className="text-[12px] text-muted mb-4">Define which Companies, Sites, Departments or machines <b className="text-ink">{editUser?.username}</b> can access. Empty = full access.</div>
           {editLoading
             ? <div className="py-8 flex items-center justify-center gap-2 text-faint text-[12.5px]"><Spinner size={14} />Loading current scope…</div>
-            : <ScopePicker key={editUser?.id} scopes={editScopes} setScopes={setEditScopes} />}
-          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving} disabled={editLoading} onClick={() => setConfirmScopeSave(true)}>Save scope</Button></div>
+            : <ScopePicker key={editUser?.id} scopes={editScopes} setScopes={setEditScopes} mode={editScopeMode} setMode={setEditScopeMode} />}
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditUser(null)} disabled={editSaving}>Cancel</Button><Button variant="primary" loading={editSaving}
+            disabled={editLoading || scopeIncomplete(editScopeMode, editScopes)}
+            title={scopeIncomplete(editScopeMode, editScopes) ? 'Select at least one scope, or choose Full access' : undefined}
+            onClick={() => setConfirmScopeSave(true)}>Save scope</Button></div>
         </div>
       </Modal>
       <ConfirmDialog open={!!confirmReset} onClose={() => setConfirmReset(null)} onConfirm={() => reset2fa(confirmReset)} danger title="Reset two-factor?" body={<>This turns off 2FA for <b>{confirmReset?.username}</b> and invalidates their recovery codes. They'll sign in with just their password until they re-enroll. Use only to recover a locked-out user.</>} confirmLabel="Reset 2FA" />
       <ConfirmDialog open={!!pendingRole} onClose={() => setPendingRole(null)} onConfirm={changeRole} title="Change user role?" body={<>Change <b>{pendingRole?.user?.username}</b> from <b>{pendingRole?.user?.role}</b> to <b>{pendingRole?.role}</b>? This changes what they can access and manage.</>} confirmLabel="Change role" />
       <ConfirmDialog open={confirmScopeSave} onClose={() => setConfirmScopeSave(false)} onConfirm={saveEdit} title="Save access scope?" body={<>Update access for <b>{editUser?.username}</b> to {editScopes.length ? <b>{editScopes.length} selected scope(s)</b> : <b>full access</b>}?</>} confirmLabel="Save scope" />
+      <ConfirmDialog open={!!confirmDisable} onClose={() => setConfirmDisable(null)} onConfirm={() => toggleDisabled(confirmDisable)}
+        title="Disable this user?" confirmLabel="Disable user"
+        body={<><b>{confirmDisable?.username}</b> is signed out immediately and cannot sign in again until re-enabled. API tokens bound to them stop working, and they stop receiving alert email. The account and its audit trail are kept — use <b>Remove</b> to delete it.</>} />
     </Card>
   );
 }
@@ -1367,7 +1396,11 @@ function RoleEditor({ role, roles, permissions, onClose }) {
 // sites load when a company is expanded, machines when a site is expanded.
 // Empty = full access. Machines without a department stay directly under the
 // site. scopes is [{scope_type, scope_id}]; selection keys are "type:id".
-function ScopePicker({ scopes, setScopes }) {
+// mode/setMode are owned by the caller: "Restricted to…" with nothing selected
+// is indistinguishable from full access in the payload (both send []), so the
+// caller has to see the mode to refuse that save rather than silently widening
+// the user's access. See the callers' scopeIncomplete.
+function ScopePicker({ scopes, setScopes, mode, setMode }) {
   const [clients, setClients] = useState(null);
   const [sitesBy, setSitesBy] = useState({});   // clientId -> [sites]
   const [devsBy, setDevsBy] = useState({});      // siteId -> [devices]
@@ -1378,8 +1411,8 @@ function ScopePicker({ scopes, setScopes }) {
   const [allSites, setAllSites] = useState(null); // every site (for search + parent lookup)
   const [found, setFound] = useState([]);          // device search results
   // Mode is independent of the selection so "Restricted" works before any node is
-  // picked (empty selection still means full access on save — hinted below).
-  const [mode, setMode] = useState(scopes.length > 0 ? 'restricted' : 'full');
+  // picked; the caller refuses to save that state rather than reading it as full
+  // access.
   const restricted = mode === 'restricted';
   const searching = q.trim().length > 0;
   const scopeKey = scopes.map((s) => s.scope_type + ':' + s.scope_id).sort().join('|');
@@ -1535,7 +1568,7 @@ function ScopePicker({ scopes, setScopes }) {
         </div>
       )}
       {restricted && scopes.length === 0
-        ? <div className="text-[11px] text-warn flex items-center gap-1.5"><Icon name="alert" size={12} />Select at least one item — with no selection the user has full access.</div>
+        ? <div className="text-[11px] text-bad flex items-center gap-1.5"><Icon name="alert" size={12} />Select at least one item, or choose <b>Full access</b> — a restricted user with nothing selected cannot be saved.</div>
         : <div className="text-[11px] text-faint">Selecting a company covers all its sites/departments/devices (the union of the selections).</div>}
     </div>
   );

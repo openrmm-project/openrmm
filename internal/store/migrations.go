@@ -45,12 +45,16 @@ var migrationV4SQL string
 //go:embed migrations/005_user_disable.sql
 var migrationV5SQL string
 
+//go:embed migrations/006_user_scope_integrity.sql
+var migrationV6SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
 	{version: 3, name: "email_notifications", sql: migrationV3SQL},
 	{version: 4, name: "user_email_permission", sql: migrationV4SQL},
 	{version: 5, name: "user_disable", sql: migrationV5SQL},
+	{version: 6, name: "user_scope_integrity", sql: migrationV6SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

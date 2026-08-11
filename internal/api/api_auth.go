@@ -467,9 +467,16 @@ func (s *Server) getUserScopes(w http.ResponseWriter, r *http.Request) {
 }
 
 // setUserScopes replaces a user's access scopes.
+//
+// An empty list is full fleet access, which is the widest grant this endpoint
+// can make and is byte-identical to "I meant to restrict them but picked
+// nothing". The console refuses to send the second one; here both are audited,
+// because a scope change is otherwise the only user mutation that leaves no
+// trace of who widened whose access.
 func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if _, ok := s.requireUserManage(w, r, id); !ok {
+	target, ok := s.requireUserManage(w, r, id)
+	if !ok {
 		return
 	}
 	var in struct {
@@ -482,10 +489,24 @@ func (s *Server) setUserScopes(w http.ResponseWriter, r *http.Request) {
 	if !s.validateDelegatedScopes(w, r, in.Scopes) {
 		return
 	}
+	before, err := s.store.ListUserScopes(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := s.store.ReplaceUserScopes(r.Context(), id, in.Scopes); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	detail, _ := json.Marshal(map[string]any{
+		"username": target.Username,
+		"from":     len(before),
+		"to":       len(in.Scopes),
+		// The interesting transition for an incident review is the one into full
+		// access; the counts alone would bury it.
+		"full_access": len(in.Scopes) == 0,
+	})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.scopes.update", id, detail)
 	writeJSON(w, http.StatusOK, map[string]any{"scopes": in.Scopes})
 }
 

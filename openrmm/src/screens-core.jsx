@@ -18,20 +18,60 @@ function PageHeader({ title, subtitle, actions, children }) {
   );
 }
 
-/* dropdown menu */
+/* dropdown menu
+   Positioned fixed against the trigger rather than absolutely inside it: these
+   menus open from rows that sit in cards with `overflow-hidden` (the users and
+   devices tables, the site list), and an absolutely positioned menu is clipped
+   by that — the last row's menu was cut off entirely. Fixed positioning escapes
+   every ancestor's overflow.
+   The direction is chosen from the space available, so a row near the bottom of
+   the window opens upward instead of off-screen. GAP is the breathing room the
+   old `mt-1.5` gave. */
+const DROPDOWN_GAP = 6;
+const DROPDOWN_MARGIN = 16;   // never touch the window edge
+const DROPDOWN_TYPICAL = 240; // open upward only when less than this fits below
+
 function Dropdown({ trigger, children, align = 'right', width = 'w-52' }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState(null);
   const ref = useRef(null);
+
+  const locate = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const below = window.innerHeight - r.bottom;
+    const up = below < DROPDOWN_TYPICAL && r.top > below;
+    setPlace({
+      up,
+      ...(up ? { bottom: window.innerHeight - r.top + DROPDOWN_GAP } : { top: r.bottom + DROPDOWN_GAP }),
+      ...(align === 'right' ? { right: Math.max(DROPDOWN_MARGIN, window.innerWidth - r.right) } : { left: Math.max(DROPDOWN_MARGIN, r.left) }),
+      maxHeight: (up ? r.top : below) - DROPDOWN_GAP - DROPDOWN_MARGIN,
+    });
+  };
+
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    window.addEventListener('mousedown', h); return () => window.removeEventListener('mousedown', h);
+    const away = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    // A fixed menu does not travel with its trigger, so anything that moves the
+    // trigger closes it rather than leaving it stranded mid-page.
+    const dismiss = () => setOpen(false);
+    window.addEventListener('mousedown', away);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('scroll', dismiss, true);
+    return () => {
+      window.removeEventListener('mousedown', away);
+      window.removeEventListener('resize', dismiss);
+      window.removeEventListener('scroll', dismiss, true);
+    };
   }, [open]);
+
   return (
     <div className="relative" ref={ref}>
-      <div onClick={() => setOpen((o) => !o)}>{trigger}</div>
-      {open && (
-        <div className={cx('absolute z-50 mt-1.5 rounded-xl border border-line2 bg-elevated shadow-2xl shadow-black/40 py-1 animate-scale-in', width, align === 'right' ? 'right-0' : 'left-0')} onClick={() => setOpen(false)}>
+      <div onClick={() => { if (!open) locate(); setOpen((o) => !o); }}>{trigger}</div>
+      {open && place && (
+        <div style={{ position: 'fixed', top: place.top, bottom: place.bottom, left: place.left, right: place.right, maxHeight: place.maxHeight }}
+          className={cx('z-50 overflow-y-auto scroll-area rounded-xl border border-line2 bg-elevated shadow-2xl shadow-black/40 py-1 animate-scale-in', width)}
+          onClick={() => setOpen(false)}>
           {children}
         </div>
       )}

@@ -809,7 +809,10 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scopeType,
 			return false
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "scope not found")
+			// Naming it matters: a request carries several scopes, and the one
+			// that fails is often a stale reference the caller did not knowingly
+			// send back. "scope not found" alone left no way to tell which.
+			writeErr(w, http.StatusNotFound, "scope not found: "+scopeType+" "+scopeID)
 			return false
 		}
 		return true

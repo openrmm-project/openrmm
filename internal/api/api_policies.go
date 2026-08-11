@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -42,6 +43,39 @@ func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, p)
+}
+
+// updatePolicy renames a policy and rewrites its description.
+//
+// Both were write-once: the console could create a policy and delete it, and
+// nothing in between, so a typo in the name of a policy assigned across the
+// fleet could only be fixed by rebuilding it — losing its checks, tasks and
+// assignments on the way. The same manage gate as delete, because renaming what
+// a scope is assigned to is a change to what operators think they are applying.
+func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requirePolicy(w, r, id, true) {
+		return
+	}
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		writeErr(w, http.StatusBadRequest, "name required")
+		return
+	}
+	p, err := s.store.UpdatePolicy(r.Context(), id, strings.TrimSpace(in.Name), in.Description)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "policy.update", id, auditLabel("name", p.Name))
+	writeJSON(w, http.StatusOK, p)
 }
 
 func (s *Server) deletePolicy(w http.ResponseWriter, r *http.Request) {

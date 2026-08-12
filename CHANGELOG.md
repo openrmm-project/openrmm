@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-11
+
 ### Changed
 
 - **User row actions moved into a three-dot menu.** Email, Scope, Reset 2FA,
@@ -15,6 +17,13 @@ tag.
   same `Dropdown`/`MenuItem` the device, site and client rows already use.
 
 ### Fixed
+
+- **Windows patch titles preserve accented characters.** The Windows Update
+  scanner handed PowerShell's code-page bytes directly to the JSON decoder, so
+  localized titles such as `Atualização de Segurança` were stored as
+  `Atualiza��o de Seguran�a`. The agent now decodes redirected PowerShell output
+  at capture time, before JSON can replace the original bytes irreversibly.
+  Existing corrupted titles are refreshed by the next patch scan.
 
 - **Dropdown menus were clipped by the card they opened from.** Every card that
   holds a table sets `overflow-hidden` to keep the corners rounded, and the menu

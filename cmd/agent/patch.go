@@ -66,7 +66,15 @@ func scanWindowsPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("windows update scan: %w", err)
 	}
-	trimmed := strings.TrimSpace(string(out))
+	return parseWindowsPatchOutput(out)
+}
+
+// parseWindowsPatchOutput decodes PowerShell's redirected output before JSON
+// unmarshalling. Windows PowerShell writes in the active Windows code page, so
+// handing those bytes directly to encoding/json replaces accented characters
+// with U+FFFD and permanently corrupts titles such as "Atualização de Segurança".
+func parseWindowsPatchOutput(out []byte) ([]protocol.PatchItem, error) {
+	trimmed := strings.TrimSpace(decodeOutput(out))
 	if trimmed == "" {
 		return nil, nil
 	}

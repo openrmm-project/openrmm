@@ -129,6 +129,28 @@ tag.
 
 ### Added
 
+- **A script's category is picked, not retyped.** The field was free text with no
+  list behind it, so nothing offered what already existed and one category became
+  two that differed by a keystroke — with no way to put them back together short
+  of opening every affected script and retyping the name identically.
+
+  Migration `007` gives categories a registry of their own, seeded with the ones
+  already in use, so a category can be **named before any script is filed under
+  it** — the Categories window has **Add**. `scripts.category` still holds the
+  name rather than a foreign key: the table is a catalogue, not the owner of the
+  relationship, so a script written straight through the API can still carry a
+  name nobody registered and listing unions both.
+
+  The editor's Category field became a picker over that list that can also name a
+  new one, and the library gained a category filter.
+
+  `PUT /api/script-categories/{name}` rewrites every script filed under the old
+  name, and a **Categories** window lists them for renaming. Renaming onto a name
+  already in use **merges** the two — the repair for a category a typo split in
+  half — and the console says so before doing it, because afterwards they are not
+  separable. Emptying a category returns its scripts to uncategorized and keeps
+  the scripts. Both are audited.
+
 - **Policies can be edited.** A policy's name and description were write-once:
   the console could create one and delete it, and nothing in between. Fixing a
   typo in a policy assigned across the fleet meant rebuilding it and losing its

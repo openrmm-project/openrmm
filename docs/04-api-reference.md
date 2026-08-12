@@ -291,6 +291,10 @@ boolean `*_set` flags.
 | POST | `/api/scripts` | `scripts.manage` | Create (`name,shell,body,category,...`) |
 | PUT | `/api/scripts/{id}` | `scripts.manage` | Update |
 | DELETE | `/api/scripts/{id}` | `scripts.manage` | Delete |
+| GET | `/api/script-categories` | `scripts.view` | Registered categories **and** those only a script carries, with script counts → `{categories:[{name,count}]}` |
+| POST | `/api/script-categories` | `scripts.manage` | Register a category (`{name}`) so it exists before any script is filed under it. 409 when the name is taken, compared without case. Audited as `script.category.create` |
+| PUT | `/api/script-categories/{name}` | `scripts.manage` | Rename the category and every script filed under it (`{name:"new"}`). Onto a name in use this **merges** the two. 404 when no such category. Audited as `script.category.rename` |
+| DELETE | `/api/script-categories/{name}` | `scripts.manage` | Remove the category and return its scripts to uncategorized. The scripts are kept. Audited as `script.category.delete` |
 | POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval}` → approval-gated job. `require_approval:false` is honored only when the caller also has `jobs.manage` and the server allows unapproved jobs. |
 
 ## Checks & results

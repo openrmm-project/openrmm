@@ -210,7 +210,14 @@ function Select({ children, ...props }) {
 // Combobox is a searchable single-select. Drop-in for <Select> when the option
 // list is long: options are [{ value, label, group? }]; typing filters by label
 // (and group). Keeps the native Select styling so the two read the same.
-function Combobox({ value, onChange, options = [], placeholder = 'Select…', disabled, className }) {
+// creatable turns the picker into "choose one of these, or name a new one": the
+// search box doubles as the field for a value that does not exist yet, offered
+// as an explicit "Create …" row. Without it a free-text field is the only way to
+// file something under a new name, and free text is how one category becomes
+// two that differ by a keystroke.
+// With creatable the value need not appear in options, so it is displayed as
+// typed rather than falling back to the placeholder.
+function Combobox({ value, onChange, options = [], placeholder = 'Select…', disabled, className, creatable }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef(null);
@@ -233,11 +240,16 @@ function Combobox({ value, onChange, options = [], placeholder = 'Select…', di
     bucket.items.push(o);
   });
   const pick = (v) => { onChange(v); setOpen(false); setQ(''); };
+  // Offer creation only for a name that is not already on the list — otherwise
+  // "Create Networking" would sit under the Networking that already exists.
+  const typed = q.trim();
+  const canCreate = creatable && typed !== '' && !options.some((o) => o.label.toLowerCase() === typed.toLowerCase());
+  const shown = selected ? selected.label : (creatable && value ? value : placeholder);
   return (
     <div className={cx('relative', className)} ref={ref}>
       <button type="button" disabled={disabled} onClick={() => setOpen((v) => !v)}
-        className={cx(inputCls, 'appearance-none pr-8 text-left flex items-center', disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer', !selected && 'text-faint')}>
-        <span className="truncate">{selected ? selected.label : placeholder}</span>
+        className={cx(inputCls, 'appearance-none pr-8 text-left flex items-center', disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer', !selected && !(creatable && value) && 'text-faint')}>
+        <span className="truncate">{shown}</span>
       </button>
       <Icon name="chevdown" size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
       {open && (
@@ -245,12 +257,26 @@ function Combobox({ value, onChange, options = [], placeholder = 'Select…', di
           <div className="p-1.5 border-b border-line">
             <div className="relative">
               <Icon name="search" size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
-              <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…"
-                className={cx(inputCls, 'h-8 pl-8')} onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); } }} />
+              <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder={creatable ? 'Search or type a new one…' : 'Search…'}
+                className={cx(inputCls, 'h-8 pl-8')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { setOpen(false); return; }
+                  // Enter commits the typed name, so naming a new one never needs
+                  // the mouse.
+                  if (e.key === 'Enter' && canCreate) { e.preventDefault(); pick(typed); }
+                }} />
             </div>
           </div>
           <div className="max-h-60 overflow-auto py-1">
-            {groups.length === 0 && <div className="px-3 py-2 text-[12px] text-faint">No matches</div>}
+            {groups.length === 0 && !canCreate && <div className="px-3 py-2 text-[12px] text-faint">No matches</div>}
+            {canCreate && (
+              <button type="button" onClick={() => pick(typed)}
+                className="w-full text-left px-3 py-1.5 text-[13px] flex items-center gap-2 text-brandhi hover:bg-app transition">
+                <Icon name="plus" size={14} className="shrink-0" />
+                <span className="truncate">Create “{typed}”</span>
+              </button>
+            )}
+            {canCreate && groups.length > 0 && <div className="my-1 border-t border-line" />}
             {groups.map((g) => (
               <div key={g.name || '_'}>
                 {g.name && <div className="px-3 pt-1.5 pb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-faint">{g.name}</div>}

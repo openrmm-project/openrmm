@@ -33,7 +33,10 @@ function stripNonCode(source) {
     // JSX text: from a tag-closing '>' or an expression-closing '}' up to the
     // next '<' or '{'. The lookbehind keeps '=>' (and comparisons) intact, which
     // would otherwise swallow real code.
-    .replace(/(?<![=<>!-])>[^<>{}]*/g, '>')
+    // The lookbehind protects `=>`, `>>` and `->`. It must NOT protect `<`: the
+    // only `>` preceded by one is a JSX fragment (`<>`), whose text is prose and
+    // has to go the same way as any other.
+    .replace(/(?<![=>!-])>[^<>{}]*/g, '>')
     .replace(/\}[^<>{}]*</g, '}<')
     // Prose between two JSX expressions: `{n} selected · {m}`. Anything with
     // punctuation that code uses is left alone, so `} catch (e) {` survives.

@@ -152,6 +152,18 @@ Reusable script library: `id`, `name`, `description`, `category`,
 `shell` (`bash`/`sh`/`powershell`/`cmd`/`python`), `body`, `default_args`, `created_at`,
 `updated_at`. Run on a device via `/run-script`, which creates a job.
 
+### `script_categories`
+The catalogue of category names (`id`, `name`, `created_at`), added by migration
+`007`. Unique on `lower(name)`, because "Networking" and "networking" are the
+same category to everyone except a byte comparison.
+
+`scripts.category` keeps the **name**, not a foreign key: this table exists so a
+category can be named *before* any script is filed under it, not to own the
+relationship. A script written straight through the API can therefore carry a
+name nobody registered, so listing unions the registry with the categories in use
+and such a category is never invisible. Saving a script adopts its category into
+the registry, so the two do not drift.
+
 ### `policies` / `policy_assignments`
 A **policy** (id, name, description) bundles checks and tasks.
 `policy_assignments` attaches a policy to a scope: `scope_type`

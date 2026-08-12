@@ -244,6 +244,20 @@ CREATE TABLE IF NOT EXISTS scripts (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The catalogue of script categories. scripts.category keeps the name rather
+-- than a foreign key: this table exists so a category can be named before any
+-- script is filed under it, not to own the relationship. Listing unions both, so
+-- a name only a script carries is still visible. See migration 007.
+CREATE TABLE IF NOT EXISTS script_categories (
+    id         UUID PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Case-insensitive: "Networking" and "networking" are the same category to
+-- everyone except a byte comparison.
+CREATE UNIQUE INDEX IF NOT EXISTS script_categories_name_key
+    ON script_categories (lower(name));
+
 CREATE TABLE IF NOT EXISTS jobs (
     id                UUID PRIMARY KEY,
     agent_id          UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,

@@ -4,15 +4,30 @@
 function ScriptsScreen() {
   const { can } = useAuth();
   const scriptsQ = useQuery(['scripts'], () => api.listScripts(), { invalidateOn: ['scripts'] });
+  const categoriesQ = useQuery(['script-cats'], () => api.listScriptCategories(), { invalidateOn: ['scripts'] });
   const [editing, setEditing] = useState(null);
+  const [managing, setManaging] = useState(false);
   const [q, setQ] = useState('');
-  const scripts = (scriptsQ.data?.scripts || []).filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || s.category.toLowerCase().includes(q.toLowerCase()));
+  const [cat, setCat] = useState('');
+  const categories = categoriesQ.data?.categories || [];
+  const scripts = (scriptsQ.data?.scripts || [])
+    .filter((s) => !cat || s.category === cat)
+    .filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || s.category.toLowerCase().includes(q.toLowerCase()));
 
   return (
     <Page wide>
       <PageHeader title="Script library" subtitle="Reusable scripts. Running one creates an approval-gated job."
-        actions={can('scripts.manage') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New script</Button>} />
-      <Card className="mb-4"><div className="flex items-center gap-2 p-2.5"><div className="relative flex-1"><Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search scripts…" className={cx(inputCls, 'pl-9')} /></div></div></Card>
+        actions={can('scripts.manage') && <div className="flex items-center gap-2">
+          <Button variant="ghost" icon="grid" onClick={() => setManaging(true)}>Categories</Button>
+          <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>New script</Button>
+        </div>} />
+      <Card className="mb-4"><div className="flex items-center gap-2 p-2.5">
+        <div className="relative flex-1"><Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search scripts…" className={cx(inputCls, 'pl-9')} /></div>
+        <Select value={cat} onChange={(e) => setCat(e.target.value)} className="w-auto min-w-[170px]">
+          <option value="">Every category</option>
+          {categories.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.count})</option>)}
+        </Select>
+      </div></Card>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {scripts.map((s) => (
           <button key={s.id} onClick={() => setEditing(s)} className="text-left rounded-2xl border border-line bg-card hover:border-line2 hover:bg-elevated/40 transition p-4 group">
@@ -27,12 +42,109 @@ function ScriptsScreen() {
         ))}
       </div>
       {!scriptsQ.loading && scripts.length === 0 && <Card><EmptyState icon="script" title="No scripts" msg="Add a script to the library." /></Card>}
-      {editing && <ScriptEditor script={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />}
+      {editing && <ScriptEditor script={editing === 'new' ? null : editing} onClose={() => setEditing(null)} categories={categories} />}
+      {managing && <CategoryManager categories={categories} onClose={() => setManaging(false)} />}
     </Page>
   );
 }
 
-function ScriptEditor({ script, onClose }) {
+// Creating, renaming and removing categories. A category is registered in its
+// own right, so it can be named here before any script is filed under it —
+// naming the filing scheme first is how people actually sort things.
+function CategoryManager({ categories, onClose }) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(null);  // { name, value } being renamed
+  const [confirm, setConfirm] = useState(null);  // { kind, from, to, count }
+  const [adding, setAdding] = useState(null);    // the name being created
+  const [busy, setBusy] = useState(false);
+
+  const create = async () => {
+    const name = (adding || '').trim();
+    if (!name) { setAdding(null); return; }
+    setBusy(true);
+    try {
+      await api.createScriptCategory(name);
+      setAdding(null);
+      toast.success('Category created', 'File scripts under it from the script editor.');
+    } catch (e) { toast.error('Could not create the category', e.message); }
+    finally { setBusy(false); }
+  };
+  const apply = async () => {
+    if (!confirm) return;
+    setBusy(true);
+    try {
+      const { scripts } = confirm.kind === 'clear'
+        ? await api.deleteScriptCategory(confirm.from)
+        : await api.renameScriptCategory(confirm.from, confirm.to);
+      setEditing(null); setConfirm(null);
+      toast.success(confirm.kind === 'clear' ? 'Category removed' : confirm.kind === 'merge' ? 'Categories merged' : 'Category renamed',
+        scripts + ' script' + (scripts === 1 ? '' : 's') + ' updated');
+    } catch (e) { toast.error('Failed', e.message); }
+    finally { setBusy(false); }
+  };
+  const askRename = (c) => {
+    const to = (editing?.value || '').trim();
+    if (!to || to === c.name) { setEditing(null); return; }
+    // Renaming onto a name already in use is a merge, not a rename. The operator
+    // has to be told, because the two stop being distinguishable afterwards.
+    const merging = categories.some((x) => x.name !== c.name && x.name.toLowerCase() === to.toLowerCase());
+    setConfirm({ kind: merging ? 'merge' : 'rename', from: c.name, to, count: c.count });
+  };
+
+  return (
+    <Modal open onClose={() => { if (!busy) onClose(); }} width="max-w-lg">
+      <div className="p-5">
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <div className="text-[15px] font-semibold text-ink">Script categories</div>
+          {!adding && <Button size="sm" variant="ghost" icon="plus" onClick={() => setAdding('')}>Add category</Button>}
+        </div>
+        <div className="text-[12px] text-muted mb-4">Create one here and file scripts into it from the script editor. Renaming one onto another merges them.</div>
+        {adding !== null && (
+          <div className="flex items-center gap-2 rounded-xl border border-brand/30 bg-brandsoft px-3 py-2 mb-2">
+            <Icon name="grid" size={14} className="text-brandhi shrink-0" />
+            <Input value={adding} autoFocus placeholder="Backup" className="h-8 flex-1"
+              onChange={(e) => setAdding(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') create(); if (e.key === 'Escape') setAdding(null); }} />
+            <Button size="sm" variant="ghost" onClick={() => setAdding(null)} disabled={busy}>Cancel</Button>
+            <Button size="sm" variant="primary" loading={busy} disabled={!adding.trim()} onClick={create}>Create</Button>
+          </div>
+        )}
+        {categories.length === 0
+          ? <EmptyState icon="grid" title="No categories yet" msg="Add one, or save a script under a new name." />
+          : <div className="space-y-1.5 max-h-[380px] overflow-y-auto scroll-area">
+            {categories.map((c) => (
+              <div key={c.name} className="flex items-center gap-2 rounded-xl border border-line bg-card px-3 py-2">
+                {editing?.name === c.name ? (
+                  <Input value={editing.value} autoFocus className="h-8 flex-1"
+                    onChange={(e) => setEditing({ name: c.name, value: e.target.value })}
+                    onKeyDown={(e) => { if (e.key === 'Enter') askRename(c); if (e.key === 'Escape') setEditing(null); }} />
+                ) : (
+                  <><Icon name="grid" size={14} className="text-muted shrink-0" />
+                    <span className="flex-1 text-[13px] text-ink truncate">{c.name}</span>
+                    <span className="text-[11.5px] text-faint tabular">{c.count} script{c.count === 1 ? '' : 's'}</span></>
+                )}
+                {editing?.name === c.name
+                  ? <><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button><Button size="sm" variant="primary" onClick={() => askRename(c)}>Rename</Button></>
+                  : <><Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing({ name: c.name, value: c.name })} title={'Rename ' + c.name} />
+                    <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirm({ kind: 'clear', from: c.name, to: '', count: c.count })} title={'Remove ' + c.name} /></>}
+              </div>
+            ))}
+          </div>}
+        <div className="flex justify-end mt-5"><Button variant="ghost" onClick={onClose} disabled={busy}>Done</Button></div>
+      </div>
+      <ConfirmDialog open={!!confirm} onClose={() => setConfirm(null)} onConfirm={apply} danger={confirm?.kind !== 'rename'}
+        title={confirm?.kind === 'clear' ? 'Remove this category?' : confirm?.kind === 'merge' ? 'Merge the two categories?' : 'Rename this category?'}
+        confirmLabel={confirm?.kind === 'clear' ? 'Remove category' : confirm?.kind === 'merge' ? 'Merge' : 'Rename'}
+        body={confirm && (confirm.kind === 'clear'
+          ? <>The category <b>{confirm.from}</b> is removed{confirm.count > 0 ? <>, and its <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'} become uncategorized</> : ' (nothing is filed under it)'}. The scripts themselves are kept.</>
+          : confirm.kind === 'merge'
+            ? <><b>{confirm.from}</b> and <b>{confirm.to}</b> become one. The <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'} under <b>{confirm.from}</b> move across, and the two stop being separable.</>
+            : <>Rename <b>{confirm.from}</b> to <b>{confirm.to}</b>, across <b>{confirm.count}</b> script{confirm.count === 1 ? '' : 's'}.</>)} />
+    </Modal>
+  );
+}
+
+function ScriptEditor({ script, onClose, categories = [] }) {
   const { can } = useAuth();
   const toast = useToast();
   const devMap = useDeviceMap();
@@ -63,7 +175,15 @@ function ScriptEditor({ script, onClose }) {
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} disabled={readOnly} placeholder="Disk cleanup" /></Field>
-          <Field label="Category"><Input value={category} onChange={(e) => setCategory(e.target.value)} disabled={readOnly} /></Field>
+          {/* Pick an existing category or name a new one. A plain text field was
+              how "Networking" and "Netwoking" both came to exist. */}
+          <Field label="Category" hint={readOnly ? undefined : 'Pick one in use, or type a name to create it.'}>
+            {/* The label is the bare name: `creatable` decides whether to offer
+                "Create X" by comparing what was typed against these labels, so a
+                decorated label would offer to create a category that exists. */}
+            <Combobox value={category} onChange={setCategory} disabled={readOnly} creatable placeholder="Uncategorized"
+              options={categories.map((c) => ({ value: c.name, label: c.name }))} />
+          </Field>
         </div>
         <Field label="Description"><Input value={desc} onChange={(e) => setDesc(e.target.value)} disabled={readOnly} /></Field>
         <Field label="Shell" className="w-44"><Select value={shell} onChange={(e) => setShell(e.target.value)} disabled={readOnly}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>

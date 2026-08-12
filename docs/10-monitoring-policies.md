@@ -46,6 +46,16 @@ Reusable scripts (`name`, `category`, `shell`, `body`, `default_args`). Run one
 on a device with `POST /api/devices/{id}/run-script { script_id, require_approval }`
 — this creates a job on the normal approval-gated path.
 
+**Categories** are a catalogue of their own (`script_categories`), so one can be
+named before any script is filed under it; `scripts.category` still stores the
+name. The editor picks from what exists or names a new one, rather than accepting
+free text — free text is how a category becomes two that differ by a keystroke.
+Renaming a category rewrites every script filed under it, and renaming onto a
+name already in use **merges** the two, which is the only repair for a split that
+already happened. Removing one returns its scripts to uncategorized; the scripts
+are kept. All three are audited (`script.category.create` / `.rename` /
+`.delete`).
+
 ## Monitoring checks
 
 A **check** is owned by an agent (direct) **or** a policy (inherited). Types:

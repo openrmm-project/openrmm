@@ -128,6 +128,14 @@ type Script struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// ScriptCategory is a category as it actually exists: a name some scripts share.
+// There is no category table — the name lives on each script — so a category is
+// only ever reported alongside how many scripts keep it alive.
+type ScriptCategory struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
 // Policy bundles checks and tasks that are inherited by agents in scope.
 type Policy struct {
 	ID          string    `json:"id"`

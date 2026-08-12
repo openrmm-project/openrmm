@@ -1464,8 +1464,9 @@ func collectNetwork() []map[string]string {
 	return nics
 }
 
-// collectSoftware returns installed software (name + version), per OS. Bounded
-// by a timeout so a slow query never stalls telemetry; capped in size.
+// collectSoftware returns installed software (name + version + manufacturer),
+// per OS. Bounded by a timeout so a slow query never stalls telemetry; capped
+// in size.
 func collectSoftware() []map[string]string {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -1489,16 +1490,20 @@ func capSoftware(sw []map[string]string) []map[string]string {
 }
 
 func softwareWindows(ctx context.Context) []map[string]string {
-	const ps = `Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion | Sort-Object DisplayName -Unique | ConvertTo-Json -Compress`
+	const ps = `Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion,Publisher | Sort-Object DisplayName -Unique | ConvertTo-Json -Compress`
 	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
 	if err != nil {
 		return nil
 	}
+	return parseWindowsSoftware(out)
+}
+
+func parseWindowsSoftware(out []byte) []map[string]string {
 	trimmed := strings.TrimSpace(string(out))
 	if strings.HasPrefix(trimmed, "{") { // single entry -> wrap as array
 		trimmed = "[" + trimmed + "]"
 	}
-	var arr []struct{ DisplayName, DisplayVersion string }
+	var arr []struct{ DisplayName, DisplayVersion, Publisher string }
 	if json.Unmarshal([]byte(trimmed), &arr) != nil {
 		return nil
 	}
@@ -1507,16 +1512,16 @@ func softwareWindows(ctx context.Context) []map[string]string {
 		if a.DisplayName == "" {
 			continue
 		}
-		sw = append(sw, map[string]string{"name": a.DisplayName, "version": a.DisplayVersion})
+		sw = append(sw, map[string]string{"name": a.DisplayName, "version": a.DisplayVersion, "manufacturer": a.Publisher})
 	}
 	return capSoftware(sw)
 }
 
 func softwareLinux(ctx context.Context) []map[string]string {
-	if out, err := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}\t${Version}\n").Output(); err == nil {
+	if out, err := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Package}\t${Version}\t${Maintainer}\n").Output(); err == nil {
 		return parseTabbed(out)
 	}
-	if out, err := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}\t%{VERSION}\n").Output(); err == nil {
+	if out, err := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}\t%{VERSION}\t%{VENDOR}\n").Output(); err == nil {
 		return parseTabbed(out)
 	}
 	return nil
@@ -1529,12 +1534,15 @@ func parseTabbed(out []byte) []map[string]string {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 2)
-		v := ""
-		if len(parts) == 2 {
-			v = parts[1]
+		parts := strings.SplitN(line, "\t", 3)
+		version, manufacturer := "", ""
+		if len(parts) > 1 {
+			version = parts[1]
 		}
-		sw = append(sw, map[string]string{"name": parts[0], "version": v})
+		if len(parts) > 2 {
+			manufacturer = parts[2]
+		}
+		sw = append(sw, map[string]string{"name": parts[0], "version": version, "manufacturer": manufacturer})
 	}
 	return capSoftware(sw)
 }
@@ -1544,10 +1552,16 @@ func softwareDarwin(ctx context.Context) []map[string]string {
 	if err != nil {
 		return nil
 	}
+	return parseDarwinSoftware(out)
+}
+
+func parseDarwinSoftware(out []byte) []map[string]string {
 	var doc struct {
 		Apps []struct {
-			Name    string `json:"_name"`
-			Version string `json:"version"`
+			Name         string `json:"_name"`
+			Version      string `json:"version"`
+			SignedBy     any    `json:"signed_by"`
+			ObtainedFrom string `json:"obtained_from"`
 		} `json:"SPApplicationsDataType"`
 	}
 	if json.Unmarshal(out, &doc) != nil {
@@ -1558,7 +1572,14 @@ func softwareDarwin(ctx context.Context) []map[string]string {
 		if a.Name == "" {
 			continue
 		}
-		sw = append(sw, map[string]string{"name": a.Name, "version": a.Version})
+		manufacturer := a.ObtainedFrom
+		for _, signer := range hardwareSlice(a.SignedBy) {
+			if value := strings.TrimSpace(hardwareString(signer)); value != "" {
+				manufacturer = value
+				break
+			}
+		}
+		sw = append(sw, map[string]string{"name": a.Name, "version": a.Version, "manufacturer": manufacturer})
 	}
 	return capSoftware(sw)
 }

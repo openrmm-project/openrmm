@@ -14,6 +14,7 @@ function fmtBytes(b) {
 const REPORT_COLUMNS = {
   software: [
     { key: 'name', label: 'Software', text: (r) => r.name, className: 'text-ink font-medium' },
+    { key: 'manufacturer', label: 'Manufacturer', text: (r) => r.manufacturer },
     { key: 'version', label: 'Version', text: (r) => r.version, className: 'mono text-muted' },
     { key: 'hostname', label: 'Host', text: (r) => r.hostname },
     { key: 'client', label: 'Client', text: (r) => r.client },

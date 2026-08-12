@@ -66,12 +66,13 @@ const reportJoins = `
 
 // SoftwareRow is one installed package on one machine.
 type SoftwareRow struct {
-	Name       string `json:"name"`
-	Version    string `json:"version"`
-	Hostname   string `json:"hostname"`
-	Client     string `json:"client"`
-	Site       string `json:"site"`
-	Department string `json:"department"`
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	Manufacturer string `json:"manufacturer"`
+	Hostname     string `json:"hostname"`
+	Client       string `json:"client"`
+	Site         string `json:"site"`
+	Department   string `json:"department"`
 }
 
 // SoftwareReport returns one row per (package, machine) across the in-scope
@@ -80,6 +81,7 @@ func (s *Store) SoftwareReport(ctx context.Context, f ReportFilter) ([]SoftwareR
 	where, args := f.where()
 	q := `
 		SELECT COALESCE(sw->>'name',''), COALESCE(sw->>'version',''),
+		       COALESCE(sw->>'manufacturer', sw->>'publisher', sw->>'vendor', ''),
 		       a.hostname, COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,'')
 		FROM inventory inv
 		JOIN agents a ON a.id = inv.agent_id` + reportJoins + `
@@ -96,7 +98,7 @@ func (s *Store) SoftwareReport(ctx context.Context, f ReportFilter) ([]SoftwareR
 	var out []SoftwareRow
 	for rows.Next() {
 		var r SoftwareRow
-		if err := rows.Scan(&r.Name, &r.Version, &r.Hostname, &r.Client, &r.Site, &r.Department); err != nil {
+		if err := rows.Scan(&r.Name, &r.Version, &r.Manufacturer, &r.Hostname, &r.Client, &r.Site, &r.Department); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

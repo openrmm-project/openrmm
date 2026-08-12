@@ -95,4 +95,23 @@ func TestAgentDefaultVersionClearsTheShellFloors(t *testing.T) {
 		t.Errorf("the agent reports %q by default, below the python floor %q — a source-built agent would be refused python it can run",
 			version, MinAgentVersionPython)
 	}
+
+	// The build overrides that constant with an ldflag, so the source default is
+	// not what a built agent actually reports. Checking only the constant is how
+	// this slipped through once: the source said 0.4.9 while every `make agent`
+	// stamped 0.4.5 and had its Python jobs refused.
+	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatalf("cannot read the Makefile: %v", err)
+	}
+	const versionMarker = "VERSION ?= "
+	j := strings.Index(string(makefile), versionMarker)
+	if j < 0 {
+		t.Fatal("cannot find the Makefile's default VERSION")
+	}
+	built := strings.TrimSpace(strings.SplitN(string(makefile)[j+len(versionMarker):], "\n", 2)[0])
+	if !AgentVersionAtLeast(built, MinAgentVersionPython) {
+		t.Errorf("the Makefile stamps %q into the agent, below the python floor %q — every locally built agent would be refused python it can run",
+			built, MinAgentVersionPython)
+	}
 }

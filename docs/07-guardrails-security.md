@@ -55,10 +55,25 @@ did it.
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random
   secret; rotate it by issuing scoped `api_tokens` and retiring the bootstrap.
-- Users: bcrypt password hashes. A user can **change their own password**
-  (`POST /api/me/password`): the current password is verified, a minimum length is
-  enforced, the change is audited (`user.password.change`), and the user's **other
-  sessions are revoked**. Optional **two-factor (TOTP, RFC 6238)** per
+- Users: bcrypt password hashes. **Password policy:** at least 12 characters,
+  with an uppercase letter and a symbol, and not the username or a well-known
+  password. A symbol is anything that is not a letter, a digit or a space —
+  defined by exclusion so accented and non-Latin keyboards are accepted rather
+  than rejected by an ASCII allowlist. The rule lives in one place
+  (`passwordProblem`, `internal/api/api_auth.go`) and its error names the
+  specific failure, so an operator is not left re-reading the policy guessing
+  which part they missed.
+- A user can **change their own password** (`POST /api/me/password`): the current
+  password is verified, the policy is enforced, the change is audited
+  (`user.password.change`), and the user's **other sessions are revoked**.
+- **Disabling an account** (`POST /api/users/{id}/disable`, `users.manage`) is the
+  non-destructive counterpart to deleting one: access stops, the account and its
+  audit trail stay. Live sessions are ended immediately — a disable that leaves an
+  open tab working is not a disable — API tokens bound to that user stop, alert
+  mail stops, and no password reset is issued. Unbound API tokens are unaffected.
+  You cannot disable your own account or the built-in `admin`. Deletion still
+  exists and still cascades; prefer disable for a person who left, so what the
+  account did remains on the record. Optional **two-factor (TOTP, RFC 6238)** per
   user — `internal/auth/totp.go` (HMAC-SHA1, ±1 step, constant-time compare).
   Setup returns a QR/secret; once enabled, login requires a `code` and returns
   `401 {totp_required:true}` until a valid code is supplied. The TOTP secret is

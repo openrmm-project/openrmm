@@ -143,7 +143,7 @@ function adaptInventory(inv) {
       disks,
       hardware,
       network: { interfaces: (d.network_interfaces || []).map((n) => ({ name: n.name, ipv4: n.ipv4, mac: n.mac })) },
-      software: (d.software || []).map((s) => ({ name: s.name, version: s.version })),
+      software: (d.software || []).map((s) => ({ name: s.name, version: s.version, manufacturer: first(s.manufacturer, s.publisher, s.vendor) })),
       agent: { version: d.agent_version, last_check_in: inv && inv.collected_at },
       raw: d,
     },

@@ -171,3 +171,27 @@ shell", so the server refuses the job before dispatch instead — see
 `models.MinAgentVersionFor`. A bulk deployment naming any outdated device is
 refused whole, listing the devices to update, rather than creating jobs for part
 of the selection behind an approval granted for all of it.
+
+### Output encoding
+
+A redirected child process on Windows writes in the **system code page**, not
+UTF-8: Python resolves `locale.getpreferredencoding()` (cp1252 on a pt-BR
+install), cmd and Windows PowerShell use the OEM page. Accented bytes are then
+not valid UTF-8 on their own, and marshalling them as JSON replaces each with
+U+FFFD — a **lossy** substitution, so `Olá, Miquéias` became `Ol<?>, Miqu<?>ias`
+in the database with no way to recover it downstream.
+
+Two defences, in order of preference:
+
+1. **Ask the interpreter.** Python is run with `PYTHONIOENCODING=utf-8` — the
+   variable rather than `-X utf8`, whose Python 3.7 requirement would fail the
+   whole script with "unknown option" on an older interpreter instead of merely
+   mis-encoding its output.
+2. **Decode what still is not UTF-8**, using the code page the OS reports
+   (`GetConsoleOutputCP`, falling back to `GetACP`), rather than discarding the
+   byte. This covers cmd, Windows PowerShell and anything that ignores the
+   request. Valid UTF-8 is passed through untouched.
+
+Truncation of long output is **rune-aware**: slicing bytes at the cap used to
+split a multi-byte character and leave an invalid tail, which corrupted output
+from Linux and macOS agents too, not only Windows.

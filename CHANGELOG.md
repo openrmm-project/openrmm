@@ -188,6 +188,12 @@ tag.
   reads. You cannot disable your own account or the built-in admin, the same two
   guards the role and delete paths already carry.
 
+- **Software reports include Manufacturer.** Agents now collect the Windows
+  Publisher, Linux package Maintainer/Vendor, or macOS signing identity/source;
+  Reports → Software exposes it in the table, search, column picker, CSV, REST,
+  and AI inventory output. Existing inventory remains compatible and shows a
+  blank value until the next agent inventory refresh.
+
 - **Scripts can be written in Python.** `python` joins bash, sh, powershell and
   cmd everywhere a shell is chosen — the script library, the run-on-device form,
   bulk deployment, scheduled tasks, script checks and the AI tools — and the

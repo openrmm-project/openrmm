@@ -9,8 +9,8 @@ Status legend: ✅ done · 🟡 in progress · ⬜ not started.
 
 ## Current state (2026-07-27) — resume here
 
-Still a **development / localhost** deployment (`http://192.168.0.40:3005`, one
-Windows test endpoint). Since the 07-21 snapshot below:
+Still a **development / localhost** deployment (one Windows test endpoint). Since
+the 07-21 snapshot below:
 
 - ✅ Shipped through `v0.4.8`; the Windows installer verifies Ed25519 in-process
   and no longer needs OpenSSL (`CHANGELOG.md`).

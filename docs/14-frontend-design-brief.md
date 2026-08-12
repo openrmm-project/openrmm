@@ -211,8 +211,13 @@ daily-at-time; enabled toggle). Show last run + link to the jobs it produced
 - Surface the open-alert count as a badge in the nav and on the dashboard.
 
 ### 10.7 Users & settings
-Users: list/create/delete users with role (`users.manage`). Show AI provider +
-remote provider config (read-only). Enrollment token management.
+Users: list/create/**disable**/delete users with role (`users.manage`). Disable is
+the non-destructive counterpart to delete — the row shows the state and the
+confirmation spells out the difference. Editing a user's email address takes
+`users.email.manage` on top, so those controls are hidden without it. The
+password field states the whole rule and the create button says why it is
+disabled, rather than greying out unexplained. Show AI provider + remote provider
+config (read-only). Enrollment token management.
 
 **API tokens / MCP connectors** (`api_tokens.manage`): list/create/revoke API tokens
 (`GET/POST/DELETE /api/api-tokens`). On create, show the secret **once** with a

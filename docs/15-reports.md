@@ -16,7 +16,7 @@ Each agent upserts one `inventory` row (`agent_id` PK, `data JSONB`,
 `collected_at`) — the **latest snapshot** (no history; see *Future work*). The
 JSONB carries `cpu_model`, `cpu_cores`, `mem_total_bytes`, `platform`,
 `platform_version`, `kernel_version`, `disks[]`, `network_interfaces[]`,
-`software[]` (each `{name, version}`, collected per-OS) and a nested
+`software[]` (each `{name, version, manufacturer}`, collected per-OS) and a nested
 `hardware{}` object (`manufacturer`, `system_model`, `serial_number`, `bios`,
 `motherboard{}`, `storage_devices[]`, `gpus[]`). The hardware report flattens
 that object — joining GPU and storage-device names into single cells (`gpu` /
@@ -33,7 +33,7 @@ index (`idx_inventory_data`) backs the JSONB lookups.
 
 | Report | One row per | Columns |
 |--------|-------------|---------|
-| `software` | (package, machine) | name, version, hostname, client, site, department |
+| `software` | (package, machine) | name, version, manufacturer, hostname, client, site, department |
 | `hardware` | machine with inventory | hostname, os, arch, manufacturer, model, serial_number, cpu_model, cpu_cores, mem_total_bytes, gpu, storage, storage_bytes, bios, platform, platform_version, kernel_version, ip, mac, client, site, department |
 | `machines` | machine (online or not) | hostname, os, arch, status, agent_version, cpu_model, mem_total_bytes, ip, mac, client, site, department, last_seen, collected_at |
 

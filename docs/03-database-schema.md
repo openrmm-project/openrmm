@@ -51,6 +51,19 @@ Console accounts. `password_hash` (bcrypt), `role` (role key such as
 optional TOTP 2FA. Setup/rotation writes the pending candidate; confirmation
 atomically promotes it, so an active factor is not weakened mid-rotation.
 
+`email` is the user's address: where their alerts are delivered, and where a
+password reset link is sent. Because a reset resolves an account through it, it
+is an authentication factor rather than a contact detail — unique when set, and
+only `users.email.manage` may change it.
+
+`disabled_at` (nullable) withdraws access without deleting the account, so the
+record of what it did survives. Nil means active. Every path that grants access
+filters on it in SQL rather than trusting a caller to check: password login,
+session lookup, API tokens bound to that user, alert delivery, and the
+password-reset lookup — that last one otherwise being a way straight back in.
+A timestamp rather than a boolean because "when was access withdrawn" is what an
+incident review asks, and re-disabling keeps the original value.
+
 ### `roles` / `role_permissions`
 Role definitions and their permission keys. `roles.role_key` is the stable key
 stored in `users.role` and `api_tokens.role`; `system=true` marks the built-in

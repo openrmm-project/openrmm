@@ -160,3 +160,11 @@ test('checks can be enabled or disabled from the list and editor', async () => {
   assert.match(screens, /c\.enabled \? \(c\.latest\?\.status \|\| 'passing'\) : 'disabled'/);
   assert.match(ui, /disabled: \{ c: 'muted', label: 'Disabled' \}/);
 });
+
+test('the software report exposes its manufacturer column', async () => {
+  const reports = await readFile(path.join(root, 'src', 'screens-reports.jsx'), 'utf8');
+
+  assert.match(reports,
+    /\{ key: 'name', label: 'Software',[^\n]+\n\s*\{ key: 'manufacturer', label: 'Manufacturer', text: \(r\) => r\.manufacturer \}/,
+    'Manufacturer should appear immediately after Software');
+});

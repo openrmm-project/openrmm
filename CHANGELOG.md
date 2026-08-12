@@ -151,6 +151,30 @@ tag.
   separable. Emptying a category returns its scripts to uncategorized and keeps
   the scripts. Both are audited.
 
+- **Policies can be edited.** A policy's name and description were write-once:
+  the console could create one and delete it, and nothing in between. Fixing a
+  typo in a policy assigned across the fleet meant rebuilding it and losing its
+  checks, tasks and assignments on the way. `PUT /api/policies/{id}` and an
+  **Edit** button in the policy drawer now rename and re-describe in place;
+  everything hanging off the policy is untouched, and the change is audited as
+  `policy.update`.
+
+  The create form also gained the **Description** field. The API had accepted one
+  since the beginning and the form never sent it, so every policy read "No
+  description" permanently — there was no later opportunity to set it.
+
+- **A policy's checks and tasks can be changed from the policy.** The drawer
+  listed them as plain rows, with the enabled toggle wired to an empty handler
+  and rendered `disabled`, so the only way to change anything a policy contained
+  was to leave, find it again on the Checks or Scheduled tasks screen, and edit
+  it there. Each row now has **Edit**, tasks can be enabled and disabled in place
+  (behind the same confirmation the tasks screen uses), and each tab can add a
+  new one with the policy pre-selected as its target.
+
+  The forms are the ones those screens already use, reached through `window`
+  because the build gives each source file its own block scope — a second copy
+  would have drifted from the first.
+
 - **Users can be disabled instead of deleted.** Deletion cascades — sessions,
   scopes, API tokens, notification subscriptions all go with it — which is right
   for an account created by mistake and wrong for a person who left, where the

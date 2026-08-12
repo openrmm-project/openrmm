@@ -110,6 +110,19 @@ whose scope covers it (its own id, its site, or its client). Resolution happens
 in the store (`ChecksForAgent` / `TasksForAgent`), so one policy can push a
 baseline of checks/tasks to a whole client at once.
 
+`PUT /api/policies/{id}` renames a policy and rewrites its description. It is a
+relabel: the checks, tasks and assignments hanging off it are untouched, which
+is the point — a typo in the name of a policy assigned across the fleet used to
+be fixable only by rebuilding the policy, losing everything it contained.
+Audited as `policy.update`.
+
+The policy drawer manages what a policy **contains**, not only what it is
+assigned to: each check and task can be edited in place, tasks can be enabled and
+disabled there, and a new one can be added with the policy pre-selected as its
+target. The forms are the ones the Checks and Scheduled tasks screens use.
+Changing a policy's contents takes `checks.manage` / `tasks.manage`; renaming the
+policy itself takes `policies.manage`.
+
 ## Alerts
 
 Raised automatically when a check is `failing`/`warning` or an agent goes offline

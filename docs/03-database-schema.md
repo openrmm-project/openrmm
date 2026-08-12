@@ -76,6 +76,23 @@ Site, a Department (`group`), or a specific device; a user with no rows is
 | scope_id | uuid | id of the client/site/group/agent |
 | | | unique on (user_id, scope_type, scope_id) |
 
+`scope_id` is **polymorphic**, so no foreign key can cover it. Triggers on
+`clients`, `sites`, `device_groups` and `agents` stand in for one (migration
+`006`): a scope row dies with its target. Triggers rather than cleanup in the
+delete handlers, because deleting a company cascades to its sites and departments
+and a cascade never reaches application code.
+
+Without them a deleted device left a row behind, and a dangling row is not
+inert: the scope editor counted it but could not draw it, and since the console
+sends back the scopes it loaded, **every** save for that account failed
+validation on an entry the operator could neither see nor remove.
+
+An account left with **no rows at all** by that pruning is **disabled**, not
+promoted: an empty set means unrestricted, so deleting the last thing a
+restricted technician could see would otherwise hand them the whole fleet.
+Deliberately granting full access (replacing the set with an empty one) is
+unaffected — the rule lives only in the pruning path.
+
 ### `api_tokens`
 Hashed API tokens for the UI/integrations (token_hash, name, role key, nullable
 `user_id`). The role key resolves to the same permission set as a user role. When

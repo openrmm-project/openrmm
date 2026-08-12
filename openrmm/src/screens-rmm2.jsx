@@ -230,9 +230,22 @@ function PoliciesScreen() {
   const [detail, setDetail] = useState(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  // The API has always accepted a description; the form never sent one, so every
+  // policy read "No description" for good — there was no way to set it later.
+  const [newDesc, setNewDesc] = useState('');
   const policies = policiesQ.data?.policies || [];
 
-  const create = async () => { const p = await api.createPolicy({ name: newName }); setCreating(false); setNewName(''); toast.success('Policy created'); setDetail(p); };
+  const resetCreate = () => { setCreating(false); setNewName(''); setNewDesc(''); };
+  const create = async () => {
+    try {
+      const p = await api.createPolicy({ name: newName.trim(), description: newDesc.trim() });
+      resetCreate(); toast.success('Policy created'); setDetail(p);
+    } catch (e) { toast.error('Could not create policy', e.message); }
+  };
+  // Any non-GET already invalidates every query, so the card list refreshes
+  // itself; what it cannot do is update the drawer's own copy of the policy, so
+  // a rename has to be handed back or the header keeps the old name.
+  const onPolicySaved = (p) => setDetail(p);
 
   return (
     <Page wide>
@@ -241,8 +254,19 @@ function PoliciesScreen() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {policies.map((p) => <PolicyCard key={p.id} policy={p} onClick={() => setDetail(p)} />)}
       </div>
-      {detail && <PolicyDetail policy={detail} onClose={() => setDetail(null)} />}
-      <Modal open={creating} onClose={() => setCreating(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">New policy</div><Field label="Name"><Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Servers — baseline" autoFocus /></Field><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button><Button variant="primary" onClick={create} disabled={!newName}>Create</Button></div></div></Modal>
+      {detail && <PolicyDetail policy={detail} onClose={() => setDetail(null)} onSaved={onPolicySaved} />}
+      <Modal open={creating} onClose={resetCreate} width="max-w-md">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-4">New policy</div>
+          <div className="space-y-3">
+            <Field label="Name"><Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Servers — baseline" autoFocus /></Field>
+            <Field label="Description" hint="Optional. What this policy is for — shown on the card and in the drawer.">
+              <Input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Baseline checks for every production server" />
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={resetCreate}>Cancel</Button><Button variant="primary" onClick={create} disabled={!newName.trim()}>Create</Button></div>
+        </div>
+      </Modal>
     </Page>
   );
 }
@@ -265,10 +289,12 @@ function PolicyCard({ policy, onClick }) {
   );
 }
 
-function PolicyDetail({ policy, onClose }) {
+function PolicyDetail({ policy, onClose, onSaved }) {
   const { can } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState('checks');
+  const [editing, setEditing] = useState(null); // { name, description } while renaming
+  const [savingEdit, setSavingEdit] = useState(false);
   const checksQ = useQuery([policy.id, 'pcd'], () => can('checks.view') ? api.listChecks({ policy_id: policy.id }) : Promise.resolve({ checks: [] }), { invalidateOn: ['checks'] });
   const tasksQ = useQuery([policy.id, 'ptd'], () => can('tasks.view') ? api.listTasks({ policy_id: policy.id }) : Promise.resolve({ tasks: [] }), { invalidateOn: ['tasks'] });
   const asgQ = useQuery([policy.id, 'pad'], () => api.listAssignments(policy.id), { invalidateOn: ['policies'] });
@@ -276,6 +302,26 @@ function PolicyDetail({ policy, onClose }) {
   const sitesQ = useQuery(['st-pol'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
   const devMap = useDeviceMap();
   const [addScope, setAddScope] = useState('');
+  // Editing a policy's checks and tasks in place. The editors come from
+  // screens-rmm.jsx via window (each source file is its own block scope), so the
+  // forms here are the same ones the Checks and Scheduled tasks screens use
+  // rather than a second copy that would drift.
+  const scriptsQ = useQuery(['scripts-pol'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
+  const policiesQ = useQuery(['pols-pol'], () => api.listPolicies(), { invalidateOn: ['policies'] });
+  const [editCheck, setEditCheck] = useState(null); // check object, or 'new'
+  const [editTask, setEditTask] = useState(null);   // task object, or 'new'
+  const [confirmToggleTask, setConfirmToggleTask] = useState(null);
+  const canChecks = can('checks.manage'), canTasks = can('tasks.manage');
+
+  // Task updates go through PUT, so the server revalidates the whole schedule;
+  // resend the task unchanged apart from the flag being flipped.
+  const toggleTask = async (t) => {
+    try {
+      await api.updateTask(t.id, { ...t, enabled: !t.enabled });
+      toast.success(t.enabled ? 'Task disabled' : 'Task enabled', t.name);
+    } catch (e) { toast.error('Failed to update task', e.message); }
+    finally { setConfirmToggleTask(null); }
+  };
 
   const checks = checksQ.data?.checks || [], tasks = tasksQ.data?.tasks || [], asg = asgQ.data?.assignments || [];
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
@@ -285,18 +331,54 @@ function PolicyDetail({ policy, onClose }) {
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info('Assignment removed'); };
   const [confirmDel, setConfirmDel] = useState(false);
   const del = async () => { try { await api.deletePolicy(policy.id); toast.info('Policy deleted'); onClose(); } catch (e) { toast.error('Failed', e.message); } };
+  const saveEdit = async () => {
+    if (!editing?.name.trim()) return;
+    setSavingEdit(true);
+    try {
+      const updated = await api.updatePolicy(policy.id, { name: editing.name.trim(), description: editing.description.trim() });
+      setEditing(null);
+      onSaved?.(updated);
+      toast.success('Policy updated', 'Its checks, tasks and assignments are unchanged.');
+    } catch (e) { toast.error('Could not update policy', e.message); }
+    finally { setSavingEdit(false); }
+  };
 
   return (
     <Drawer open onClose={onClose} width="max-w-[720px]">
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-10 w-10 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="policy" size={19} /></div>
-        <div className="flex-1"><h2 className="text-[16px] font-semibold text-ink">{policy.name}</h2><div className="text-[12px] text-muted">{policy.description || 'No description'}</div></div>
+        <div className="flex-1 min-w-0"><h2 className="text-[16px] font-semibold text-ink truncate">{policy.name}</h2><div className="text-[12px] text-muted truncate">{policy.description || 'No description'}</div></div>
+        {can('policies.manage') && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing({ name: policy.name, description: policy.description || '' })}>Edit</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'checks', label: 'Checks', count: checks.length }, { value: 'tasks', label: 'Tasks', count: tasks.length }, { value: 'assign', label: 'Assignments', count: asg.length }]} />
       <div className="flex-1 overflow-y-auto scroll-area p-5">
-        {tab === 'checks' && (checks.length ? <div className="space-y-2">{checks.map((c) => { const t = CHECK_TYPES[c.type]; return <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3"><Icon name={t.icon} size={15} className="text-muted" /><div className="flex-1"><div className="text-[13px] text-ink font-medium">{c.name}</div><div className="text-[11px] text-faint">{t.label} · {c.warn_threshold != null ? `warn ${c.warn_threshold}/err ${c.err_threshold}` : ''}</div></div><StatusPill status={c.latest?.status || 'passing'} size="sm" /></div>; })}</div> : <EmptyState icon="check" title="No checks in this policy" />)}
-        {tab === 'tasks' && (tasks.length ? <div className="space-y-2">{tasks.map((t) => <div key={t.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3"><Icon name="tasks" size={15} className="text-muted" /><div className="flex-1"><div className="text-[13px] text-ink font-medium">{t.name}</div><div className="text-[11px] text-faint">{t.schedule_kind === 'daily' ? 'Daily at ' + minuteToHHMM(t.run_at_minute) : 'Every ' + Math.round(t.interval_sec / 60) + 'm'}</div></div><Toggle checked={t.enabled} onChange={() => { }} disabled /></div>)}</div> : <EmptyState icon="tasks" title="No tasks in this policy" />)}
+        {tab === 'checks' && (
+          <div className="space-y-3">
+            {canChecks && <div className="flex justify-end"><Button size="sm" variant="ghost" icon="plus" onClick={() => setEditCheck('new')}>Add check</Button></div>}
+            {checks.length ? <div className="space-y-2">{checks.map((c) => { const t = CHECK_TYPES[c.type]; return (
+              <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3">
+                <Icon name={t.icon} size={15} className="text-muted" />
+                <div className="flex-1 min-w-0"><div className="text-[13px] text-ink font-medium truncate">{c.name}</div><div className="text-[11px] text-faint">{t.label} · {c.warn_threshold != null ? `warn ${c.warn_threshold}/err ${c.err_threshold}` : ''}</div></div>
+                <StatusPill status={c.latest?.status || 'passing'} size="sm" />
+                {canChecks && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditCheck(c)}>Edit</Button>}
+              </div>); })}</div>
+              : <EmptyState icon="check" title="No checks in this policy" msg={canChecks ? 'Add one to run it on every agent this policy covers.' : undefined} />}
+          </div>
+        )}
+        {tab === 'tasks' && (
+          <div className="space-y-3">
+            {canTasks && <div className="flex justify-end"><Button size="sm" variant="ghost" icon="plus" onClick={() => setEditTask('new')}>Add task</Button></div>}
+            {tasks.length ? <div className="space-y-2">{tasks.map((t) => (
+              <div key={t.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3">
+                <Icon name="tasks" size={15} className="text-muted" />
+                <div className="flex-1 min-w-0"><div className="text-[13px] text-ink font-medium truncate">{t.name}</div><div className="text-[11px] text-faint">{t.schedule_kind === 'daily' ? 'Daily at ' + minuteToHHMM(t.run_at_minute) : 'Every ' + Math.round(t.interval_sec / 60) + 'm'}</div></div>
+                <Toggle checked={t.enabled} onChange={() => setConfirmToggleTask(t)} disabled={!canTasks} />
+                {canTasks && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditTask(t)}>Edit</Button>}
+              </div>))}</div>
+              : <EmptyState icon="tasks" title="No tasks in this policy" msg={canTasks ? 'Add one to run a script on every agent this policy covers.' : undefined} />}
+          </div>
+        )}
         {tab === 'assign' && (
           <div className="space-y-4">
             <div className="flex items-start gap-2.5 rounded-xl border border-brand/25 bg-brandsoft px-3.5 py-3"><Icon name="info" size={16} className="text-brandhi mt-0.5 shrink-0" /><div className="text-[12.5px] text-ink leading-relaxed">Assigning to a <b>client</b> or <b>site</b> pushes every check and task in this policy to <b>all agents in that scope</b>. Agent-level assignments target a single device.</div></div>
@@ -330,6 +412,37 @@ function PolicyDetail({ policy, onClose }) {
         </div>
       )}
       <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={del} danger title="Delete policy?" body={<>This removes <b>{policy.name}</b> with its checks, tasks and assignments. This cannot be undone.</>} confirmLabel="Delete policy" />
+      {editCheck && <CheckEditor check={editCheck === 'new' ? null : editCheck} onClose={() => setEditCheck(null)}
+        devMap={devMap} policies={policiesQ.data?.policies || []} defaultPolicyId={policy.id} />}
+      {editTask && <TaskEditor task={editTask === 'new' ? null : editTask} onClose={() => setEditTask(null)}
+        devMap={devMap} policies={policiesQ.data?.policies || []} scripts={scriptsQ.data?.scripts || []} defaultPolicyId={policy.id} />}
+      <ConfirmDialog open={!!confirmToggleTask} onClose={() => setConfirmToggleTask(null)} onConfirm={() => toggleTask(confirmToggleTask)}
+        title={confirmToggleTask?.enabled ? 'Disable task?' : 'Enable task?'}
+        confirmLabel={confirmToggleTask?.enabled ? 'Disable' : 'Enable'} danger={!!confirmToggleTask?.enabled}
+        body={confirmToggleTask && (confirmToggleTask.enabled
+          ? <>Disable <b>{confirmToggleTask.name}</b>? It stops running on every agent this policy covers until it is enabled again.</>
+          : <>Enable <b>{confirmToggleTask.name}</b>? It resumes on its schedule for every agent this policy covers.</>)} />
+      <Modal open={!!editing} onClose={() => { if (!savingEdit) setEditing(null); }} width="max-w-md">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-1">Edit policy</div>
+          <div className="text-[12px] text-muted mb-4">Renaming changes only the label. The checks, tasks and assignments stay exactly as they are.</div>
+          <div className="space-y-3">
+            <Field label="Name">
+              <Input value={editing?.name || ''} autoFocus onChange={(e) => setEditing((s) => ({ ...s, name: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); }} />
+            </Field>
+            <Field label="Description" hint="Optional. Shown on the policy card and here.">
+              <Input value={editing?.description || ''} placeholder="Baseline checks for every production server"
+                onChange={(e) => setEditing((s) => ({ ...s, description: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); }} />
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 mt-5">
+            <Button variant="ghost" onClick={() => setEditing(null)} disabled={savingEdit}>Cancel</Button>
+            <Button variant="primary" loading={savingEdit} disabled={!editing?.name.trim()} onClick={saveEdit}>Save changes</Button>
+          </div>
+        </div>
+      </Modal>
     </Drawer>
   );
 }

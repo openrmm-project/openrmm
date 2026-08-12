@@ -43,6 +43,14 @@ Every sensitive transition writes an immutable `audit_log` row:
 actor, target, and detail. Surface this in the UI and ship it off-box for
 tamper-evidence in production.
 
+Account changes are recorded the same way: `user.role.update`, `user.disable` /
+`user.enable`, and `user.scopes.update`. The last one carries how many scopes the
+user had before and after and whether the result is **full fleet access** —
+because the widest grant this API can make is an *empty* scope list, which is
+byte-identical to a restriction that selected nothing. It was the only user
+mutation that could hand over the entire fleet without leaving a trace of who
+did it.
+
 ## Authentication
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random
@@ -91,6 +99,13 @@ tamper-evidence in production.
   cannot see or touch out-of-scope devices. **The AI/MCP respects the same scope**
   (see `06-ai-chat`). Chat sessions are owned (`created_by`) and private to their
   creator.
+- **An empty scope set means unrestricted**, which makes "restrict this user to
+  nothing" indistinguishable from "give this user everything" in the payload. The
+  console therefore refuses to save a *restricted* selection with nothing picked
+  — granting the fleet has to go through the explicit **Full access** choice —
+  and the API audits the empty case as `full_access`. The same asymmetry is why
+  losing every scope row to a deleted target disables the account instead
+  (see [03-database-schema](03-database-schema.md)).
 - **Delegation cannot widen authority.** A scoped user manager cannot create an
   unrestricted user, delegate global `admin`, assign permissions it lacks, or
   manage a user whose scopes escape its own. A scoped API-token manager can issue

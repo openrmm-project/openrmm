@@ -152,6 +152,11 @@ CREATE TABLE IF NOT EXISTS user_scopes (
     UNIQUE (user_id, scope_type, scope_id)
 );
 CREATE INDEX IF NOT EXISTS idx_user_scopes_user ON user_scopes(user_id);
+-- scope_id is polymorphic, so no foreign key can cover it. Triggers on each
+-- referenced table stand in for one — see migration 006. Without them a deleted
+-- device leaves a row that the scope editor cannot draw and that makes every
+-- subsequent save for that user fail validation. Accounts left with no rows at
+-- all are disabled rather than promoted to full fleet access.
 
 -- Editable instance configuration. Secret values are encrypted by the server
 -- before storage and are never returned by the API.

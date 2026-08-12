@@ -6,7 +6,79 @@ tag.
 
 ## [Unreleased]
 
+### Changed
+
+- **User row actions moved into a three-dot menu.** Email, Scope, Reset 2FA,
+  Disable and Remove sat side by side on every row, so the widest row drove the
+  column and **Remove** was one slip away from **Disable**. They are now one
+  kebab per user, with the two irreversible actions below a separator, using the
+  same `Dropdown`/`MenuItem` the device, site and client rows already use.
+
 ### Fixed
+
+- **Dropdown menus were clipped by the card they opened from.** Every card that
+  holds a table sets `overflow-hidden` to keep the corners rounded, and the menu
+  was positioned absolutely inside it — so the last row's menu was cut off (150px
+  of a 161px menu, in the users table). Menus are now positioned `fixed` against
+  their trigger, which no ancestor's overflow can clip, and open upward when the
+  trigger sits near the bottom of the window. This affected the device, site and
+  client menus too, not just the new one.
+
+- **Disabling a user did nothing, and opening API tokens blanked the console.**
+  The "Disable this user?" confirmation was pasted into `APITokensPanel` instead
+  of `UsersPanel`. The button set state nobody rendered, so clicking Disable was
+  silently inert — no dialog, no request, nothing in the audit log; and the
+  panel that did render it referenced three identifiers it does not declare, so
+  opening the **API tokens** tab threw `ReferenceError: confirmDisable is not
+  defined` and React unmounted the whole console to a white page.
+
+  The build gives each source file its own block scope, so this compiled and
+  shipped. A test now walks every screen and fails on any component that reads
+  another component's `useState` bindings, which is the general form of the
+  mistake rather than this one instance of it.
+
+- **Emptying a user's scope silently granted them the whole fleet.** Unchecking
+  the last box while still in "Restricted to…" left the picker showing
+  `0 selected`, and saving reported *"Scope updated · full access"* — because a
+  restricted selection of nothing serializes to the same empty list as full
+  access, and the API cannot tell the two apart. An operator narrowing someone's
+  access could widen it to everything by unchecking one box.
+
+  The picker's mode now belongs to the form, which refuses to save
+  restricted-but-empty: granting the fleet has to go through the **Full access**
+  radio. A failed scope load closes the editor instead of presenting an empty
+  selection that saves as full access.
+
+- **A user scoped to a deleted device could never have their scope changed
+  again.** `user_scopes.scope_id` is polymorphic — client, site, department or
+  device depending on `scope_type` — so no foreign key covered it, and deleting a
+  device left the rows naming it behind. The console loads the stored scopes into
+  the editor and sends them back on save, so every save for that account failed
+  with `scope not found` — including the save that would have removed the stale
+  row. The entry could not be seen either: the tree counted it (*"1 selected"*)
+  but had no device to draw, so it looked like nothing was selected.
+
+  Migration `006` purges stranded rows and adds triggers on `clients`, `sites`,
+  `device_groups` and `agents` so a scope row dies with its target. Triggers
+  rather than cleanup in the delete handlers, because deleting a company cascades
+  to its sites and departments and a cascade never reaches application code.
+
+  An account left with **no** rows at all is disabled rather than promoted —
+  an empty scope set means unrestricted, so deleting the last thing a restricted
+  technician could see would otherwise hand them the whole fleet. Deliberately
+  granting full access is unaffected; the rule lives in the pruning path only.
+
+- **`scope not found` now names the scope that was not found.** A request carries
+  several, and the one that fails is usually a stale reference the console sent
+  back without the operator knowing it was there.
+
+### Security
+
+- **Scope changes are audited.** `user.scopes.update` records the actor, the
+  target, how many scopes there were before and after, and whether the result is
+  full fleet access. Role changes, disables and address changes were all
+  audited; the one mutation that could hand over the entire fleet left no trace
+  of who did it.
 
 - **Accented characters were destroyed in script output.** `Olá, Miquéias!`
   reached the database as `Ol<?>, Miqu<?>ias!`. A redirected child on Windows

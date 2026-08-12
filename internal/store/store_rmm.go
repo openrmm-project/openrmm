@@ -959,6 +959,24 @@ func (s *Store) PolicyManageAllowedForUser(ctx context.Context, userID, policyID
 }
 
 // DeletePolicy removes a policy (cascades to its checks/tasks/assignments).
+// UpdatePolicy renames a policy and rewrites its description. The checks, tasks
+// and assignments hanging off it are untouched — this is the label, not the
+// contents.
+func (s *Store) UpdatePolicy(ctx context.Context, id, name, desc string) (*models.Policy, error) {
+	var p models.Policy
+	err := s.pool.QueryRow(ctx,
+		`UPDATE policies SET name=$2, description=$3 WHERE id=$1
+		 RETURNING id, name, description, created_at`,
+		id, name, desc).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 func (s *Store) DeletePolicy(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM policies WHERE id=$1`, id)
 	return err

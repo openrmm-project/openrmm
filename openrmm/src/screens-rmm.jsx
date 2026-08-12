@@ -209,12 +209,12 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
   );
 }
 
-function CheckEditor({ check, onClose, devMap, policies }) {
+function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
   const toast = useToast();
   const { can } = useAuth();
   const [type, setType] = useState(check?.type || 'diskspace');
   const [name, setName] = useState(check?.name || '');
-  const [target, setTarget] = useState(check?.policy_id ? 'pol:' + check.policy_id : check?.agent_id ? 'dev:' + check.agent_id : '');
+  const [target, setTarget] = useState(check?.policy_id ? 'pol:' + check.policy_id : check?.agent_id ? 'dev:' + check.agent_id : defaultPolicyId ? 'pol:' + defaultPolicyId : '');
   const [cfgVal, setCfgVal] = useState(check ? (Object.values(check.config || {})[0] || '') : '');
   const [warn, setWarn] = useState(check?.warn_threshold ?? 20);
   const [err, setErr] = useState(check?.err_threshold ?? 10);
@@ -353,11 +353,13 @@ function TasksScreen() {
   );
 }
 
-function TaskEditor({ task, onClose, devMap, policies, scripts }) {
+// defaultPolicyId pre-selects the target when the editor is opened from inside a
+// policy, where "which policy" is not a question the operator should be re-asked.
+function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId }) {
   const toast = useToast();
   const { can } = useAuth();
   const [name, setName] = useState(task?.name || '');
-  const [target, setTarget] = useState(task?.policy_id ? 'pol:' + task.policy_id : task?.agent_id ? 'dev:' + task.agent_id : '');
+  const [target, setTarget] = useState(task?.policy_id ? 'pol:' + task.policy_id : task?.agent_id ? 'dev:' + task.agent_id : defaultPolicyId ? 'pol:' + defaultPolicyId : '');
   const [scriptId, setScriptId] = useState(task?.script_id || '');
   const [kind, setKind] = useState(task?.schedule_kind || 'interval');
   const [intervalSec, setIntervalSec] = useState(task?.interval_sec || 3600);
@@ -437,3 +439,9 @@ window.ChecksScreen = ChecksScreen;
 window.TasksScreen = TasksScreen;
 window.CHECK_TYPES = CHECK_TYPES;
 window.SEV = SEV;
+// The build gives each source file its own block scope, so the policy drawer in
+// screens-rmm2.jsx cannot reach these without going through window. It edits the
+// checks and tasks a policy owns with the same editors this screen uses, rather
+// than a second, drifting copy of the same forms.
+window.CheckEditor = CheckEditor;
+window.TaskEditor = TaskEditor;

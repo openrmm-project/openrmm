@@ -247,6 +247,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies", s.listPolicies)
 		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies/{id}/assignments", s.listPolicyAssignments)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies", s.createPolicy)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Put("/policies/{id}", s.updatePolicy)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/{id}", s.deletePolicy)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/assignments", s.createPolicyAssignment)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/assignments/{aid}", s.deletePolicyAssignment)

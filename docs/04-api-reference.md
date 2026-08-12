@@ -320,6 +320,7 @@ boolean `*_set` flags.
 |--------|------|------------|-------------|
 | GET | `/api/policies` | `policies.view` | List policies |
 | POST | `/api/policies` | `policies.manage` | `{name,description}` |
+| PUT | `/api/policies/{id}` | `policies.manage` | Rename a policy / rewrite its description (`{name,description}`). Relabels only — checks, tasks and assignments are untouched. Audited as `policy.update` |
 | DELETE | `/api/policies/{id}` | `policies.manage` | Delete |
 | GET | `/api/policies/{id}/assignments` | `policies.view` | List assignments |
 | POST | `/api/policies/{id}/assignments` | `policies.manage` | `{scope_type: client\|site\|agent, scope_id}` |

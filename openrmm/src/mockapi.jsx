@@ -350,6 +350,7 @@ const api = {
   /* ---- policies ---- */
   listPolicies() { return GET('/api/policies'); },
   createPolicy(body) { return POST('/api/policies', body); },
+  updatePolicy(id, body) { return PUT('/api/policies/' + id, body); },
   deletePolicy(id) { return DELETE('/api/policies/' + id); },
   listAssignments(policyId) { return GET('/api/policies/' + policyId + '/assignments'); },
   createAssignment(policyId, body) { return POST('/api/policies/' + policyId + '/assignments', body); },

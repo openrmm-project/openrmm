@@ -6,6 +6,70 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Monitoring and alerts survive the things that used to lose them.** The old
+  loop dispatched a check, waited for a result, and raised an alert the moment
+  one threshold reading crossed the line. A dropped agent left a check that had
+  been sent and would never be answered; a value oscillating around its
+  threshold produced an alert per reading; an alert nobody could silence kept
+  mailing; and a crash between "picked a notification off the queue" and "sent
+  it" lost the message.
+
+  Migration `008` adds the state each of those needs, leaving the existing check
+  and alert rows intact.
+
+  **Checks now have a dispatch record.** `check_executions` tracks each one sent
+  to an agent with a deadline, and a partial unique index allows only one pending
+  execution per (check, agent) — so a slow agent is never sent the same check
+  twice. Passing the deadline marks it `timed_out` rather than leaving it pending
+  forever, and `rmm_check_timeouts_total` counts it. `check_states` carries the
+  per-agent streak, so a decision is made from a run of readings rather than the
+  latest one.
+
+  **Alerts stop flapping.** A check declares how many consecutive failures raise
+  it (`failure_count`), how many consecutive successes clear it
+  (`recovery_count`), a `hysteresis` band a recovering value must clear by, and a
+  `cooldown_sec` before the same condition may raise again. The defaults (2, 2,
+  2, 300s) turn a value oscillating on the threshold into one alert instead of
+  one per reading.
+
+  **An alert is a lifecycle, not a row that appears and disappears.** It carries
+  a `condition_key` so the same condition deduplicates into one alert with an
+  occurrence count and first/last-seen times, the observed and threshold values
+  that raised it, who acknowledged or resolved it and how, and a `version` for
+  optimistic concurrency so two operators acting at once cannot silently
+  overwrite each other. `alert_events` keeps the timeline. An alert that returns
+  after being resolved records what it reopened from.
+
+  **Alerts can be silenced.** `alert_suppressions` holds a `silence` or
+  `maintenance` window with a reason and an author, so a known-noisy condition or
+  a planned maintenance window stops mailing without anyone deleting the alert or
+  disabling the check. The console gained acknowledge, suppress, silence and bulk
+  actions, and an alert timeline.
+
+  **Queued mail is leased, not just claimed.** A worker takes a notification with
+  a lease token and a 5-minute expiry; a crash mid-send returns the message to the
+  queue when the lease lapses instead of losing it, and a `dedupe_key` unique
+  index stops the same alert being mailed twice. `rmm_notifications_processing`
+  joins the queue gauges.
+
+  **Denormalized scope on the alert** (`agent_hostname`, `site_id`, `client_id`,
+  `group_id`) so the alert list can be filtered and paginated by scope without a
+  join per row — and so an alert still names its device after the device is gone.
+
+  New endpoints: `GET /api/alerts/{id}`, `GET /api/alerts/{id}/events`,
+  `POST /api/alerts/{id}/suppress`, `POST /api/alerts/bulk`,
+  `GET|POST /api/alert-suppressions`, `DELETE /api/alert-suppressions/{id}`, and
+  `GET /api/checks/{id}/instances`.
+
+  **Retention.** Monitoring history is pruned daily with 90-day defaults, tunable
+  per install with `RMM_ALERT_RETENTION_DAYS`, `RMM_CHECK_RESULT_RETENTION_DAYS`
+  and `RMM_NOTIFICATION_RETENTION_DAYS`. The purge never age-deletes an active
+  alert, a pending check execution, or queued mail — retention trims history, it
+  does not drop work still in flight.
+
+
 ## [0.5.0] - 2026-08-11
 
 ### Changed

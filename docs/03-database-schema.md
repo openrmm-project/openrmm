@@ -197,7 +197,31 @@ A monitoring check, owned **either** by an agent **or** a policy — exactly one
 | warn_threshold, err_threshold | double | nullable |
 | interval_sec | int | run cadence (default 300) |
 | enabled | bool | default true |
+| failure_count | int | consecutive failures before the alert is raised (1–100, default 2) |
+| recovery_count | int | consecutive successes before it clears (1–100, default 2) |
+| hysteresis | double | band a recovering value must clear the threshold by (0–100, default 2) |
+| cooldown_sec | int | quiet period before the same condition may raise again (default 300) |
+| timeout_sec | int | how long a dispatched execution may stay unanswered (5–86400, default 180) |
 | created_at | timestamptz | |
+
+### `check_executions`
+One dispatch of a check to an agent (`id`, `check_id`, `agent_id`, `status`,
+`dispatched_at`, `deadline_at`, `completed_at`). Status is
+`pending`/`completed`/`timed_out`/`canceled`.
+
+A **partial unique index on (check_id, agent_id) where status = 'pending'**
+allows only one outstanding execution per pair, so a slow or disconnected agent
+is never sent the same check again while the first is still owed. Passing
+`deadline_at` marks the row `timed_out` instead of leaving it pending forever —
+without this a dropped agent left a check that had been sent and would never be
+answered. `check_results.execution_id` links a result back to the dispatch that
+asked for it.
+
+### `check_states`
+The per-(check, agent) running state a flap decision needs: `status`,
+`consecutive_failures`, `consecutive_successes`, `last_value`, `last_output`,
+`last_result_at`, `last_dispatch_at`, `reconciled_at`. The streaks are what let
+an alert be raised from a *run* of readings rather than from the latest one.
 
 ### `check_results`
 Latest status + history per (check, agent): `id`, `check_id` FK → checks,
@@ -222,6 +246,25 @@ Scheduled automation, owned by an agent or a policy (like checks).
 Each dispatched run links back via `jobs.task_id`.
 
 ### `alerts`
+Beyond the original fields, an alert carries its whole lifecycle (migration
+`008`):
+
+- **Identity and dedup** — `condition_key` collapses repeats of the same
+  condition into one alert, counted by `occurrence_count` with `first_seen_at` /
+  `last_seen_at`, so a value oscillating on its threshold is one alert rather
+  than one per reading.
+- **Evidence** — `observed_value`, `threshold_value`, `output`.
+- **Scope, denormalized** — `agent_hostname`, `site_id`, `client_id`, `group_id`,
+  `agent_snapshot_id`. The list can be filtered and paginated by scope without a
+  join per row, and an alert still names its device after the device is deleted.
+- **Attribution** — `acked_at`/`acked_by`, `resolved_by`, `resolution_kind`,
+  `resolution_note`, and `reopened_from` when a resolved condition returns.
+- **Concurrency** — `version`, so two operators acting at once cannot silently
+  overwrite each other (the API takes `expected_version`).
+- **Silencing** — `silenced_until`, `silenced_by`, `silence_reason`.
+- **Delivery** — `last_notified_at`, `notification_pending`, `notification_kind`,
+  `notification_seq`.
+
 Raised by a failing/warning check or an offline agent.
 | Column | Type | Notes |
 |--------|------|-------|
@@ -236,6 +279,16 @@ Raised by a failing/warning check or an offline agent.
 
 A partial unique index (`uq_alert_open` on `source_type, source_id, agent_id`
 where `status <> 'resolved'`) guarantees **at most one open alert per source**.
+
+### `alert_events`
+The timeline of an alert (`alert_id`, `event_type`, actor, detail, timestamp) —
+raised, acknowledged, suppressed, resolved, reopened. The alert row holds current
+state; this holds how it got there.
+
+### `alert_suppressions`
+A silence or maintenance window (`kind` = `silence`/`maintenance`, `ends_at`,
+`reason`, author). Lets a known-noisy condition or a planned window stop mailing
+without deleting the alert or disabling the check.
 
 ### `sessions`
 Browser login sessions (id, `user_id` FK → users, `token_hash` unique,

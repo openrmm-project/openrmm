@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -281,6 +282,7 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
+	s.closeRetiredDeviceMonitoring(r, id, "revoked")
 	s.terminateAgentTransport(r.Context(), id)
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "device.revoke", id, label)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
@@ -390,11 +392,21 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.closeRetiredDeviceMonitoring(r, id, "deleted")
 	// The durable delete succeeds before the in-memory relay is permanently
 	// fenced. A failed database operation must not leave an active device blocked.
 	s.terminateAgentTransport(r.Context(), id)
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "device.delete", id, auditLabel("hostname", label))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) closeRetiredDeviceMonitoring(r *http.Request, id, kind string) {
+	if _, err := s.store.CancelAgentCheckExecutions(r.Context(), id); err != nil {
+		log.Printf("cancel checks for %s device %s: %v", kind, id, err)
+	}
+	if _, err := s.store.ResolveAlertsForRetiredAgent(r.Context(), id, actorOf(r), kind, time.Now()); err != nil {
+		log.Printf("resolve alerts for %s device %s: %v", kind, id, err)
+	}
 }
 
 // terminateAgentTransport fences an endpoint from every in-memory control and

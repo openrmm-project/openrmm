@@ -148,7 +148,8 @@ function DashboardScreen({ navigate }) {
   const online = devices.filter((d) => d.status === 'online').length;
   const awaiting = jobs.filter((j) => j.status === 'awaiting_approval');
   const failures = jobs.filter((j) => j.status === 'failed');
-  const openAlerts = alerts.filter((a) => a.status !== 'resolved');
+  const openAlerts = alerts.filter((a) => a.status === 'new' || a.status === 'acked');
+  const openAlertCount = alertsQ.data?.counts?.open ?? openAlerts.length;
 
   const submitAsk = () => { if (ask.trim()) { sessionStorage.setItem('rmm-ask', ask.trim()); navigate('chat', { prompt: ask.trim() }); } };
 
@@ -186,7 +187,7 @@ function DashboardScreen({ navigate }) {
         {can('devices.view') && <StatTile label="Total devices" value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
         {can('devices.view') && <StatTile label="Online" value={online} icon="dot" tone="ok" sub={`${devices.length - online} offline`} onClick={() => navigate('devices')} />}
         {can('jobs.view') && <StatTile label="Awaiting approval" value={awaiting.length} icon="flash" tone="warn" highlight={awaiting.length > 0} onClick={() => navigate('jobs')} sub="needs a human" />}
-        {can('alerts.view') && <StatTile label="Open alerts" value={openAlerts.length} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
+        {can('alerts.view') && <StatTile label="Open alerts" value={openAlertCount} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
         {can('jobs.view') && <StatTile label="Recent failures" value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
       </div>
       )}

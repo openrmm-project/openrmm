@@ -88,6 +88,12 @@ type Config struct {
 	// MetricsToken guards the Prometheus /metrics endpoint. When empty (default)
 	// the endpoint is disabled; when set, scrapers must send it as a bearer token.
 	MetricsToken string
+
+	// Monitoring history retention. Only resolved/terminal rows are purged;
+	// active alerts, pending executions and queued mail are never age-deleted.
+	AlertRetentionDays        int
+	CheckResultRetentionDays  int
+	NotificationRetentionDays int
 }
 
 func env(key, def string) string {
@@ -193,6 +199,9 @@ func Load() (*Config, error) {
 		SettingsEncryptionKey:      settingsKey,
 		APIRateLimit:               envInt("RMM_API_RATE_LIMIT", 600),
 		MetricsToken:               os.Getenv("RMM_METRICS_TOKEN"),
+		AlertRetentionDays:         envInt("RMM_ALERT_RETENTION_DAYS", 90),
+		CheckResultRetentionDays:   envInt("RMM_CHECK_RESULT_RETENTION_DAYS", 90),
+		NotificationRetentionDays:  envInt("RMM_NOTIFICATION_RETENTION_DAYS", 90),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")

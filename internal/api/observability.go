@@ -47,9 +47,18 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	writeGauge := func(name, help string, value float64) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n%s %g\n", name, help, name, name, value)
 	}
+	writeCounter := func(name, help string, value uint64) {
+		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", name, help, name, name, value)
+	}
 
 	writeGauge("rmm_agents_online", "Agents with a live WebSocket connection.", float64(s.hub.OnlineCount()))
 	writeGauge("rmm_goroutines", "Number of goroutines in the server process.", float64(runtime.NumGoroutine()))
+	if s.sched != nil {
+		stats := s.sched.Stats()
+		writeCounter("rmm_alert_processing_errors_total", "Monitoring and alert reconciliation errors.", stats.ProcessingErrors)
+		writeCounter("rmm_check_dispatch_failures_total", "Check dispatches rejected by an unavailable agent queue.", stats.DispatchFailures)
+		writeCounter("rmm_check_timeouts_total", "Durable check executions that reached their deadline.", stats.TimedOutChecks)
+	}
 
 	if st := s.store.PoolStat(); st != nil {
 		writeGauge("rmm_db_pool_total_conns", "Total database connections in the pool.", float64(st.TotalConns()))
@@ -66,6 +75,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if outbox, err := s.store.OutboxStats(outboxCtx); err == nil {
 		writeGauge("rmm_notifications_pending", "Queued alert messages not yet delivered.", float64(outbox.Pending))
+		writeGauge("rmm_notifications_processing", "Alert messages currently held by a delivery lease.", float64(outbox.Processing))
 		writeGauge("rmm_notifications_failed", "Alert messages abandoned after the retry limit.", float64(outbox.Failed))
 		writeGauge("rmm_notifications_oldest_pending_seconds", "Age of the oldest undelivered message; 0 when the outbox is empty.", outbox.OldestPendingAgeSec)
 	}

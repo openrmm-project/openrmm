@@ -69,7 +69,9 @@ func main() {
 		return smtpCfg, cfg.PublicURL, err
 	})
 	jobSvc.WithNotifier(notifier)
-	sched := scheduler.New(st, h, jobSvc, patchSvc).WithNotifier(notifier, cfg.PublicURL)
+	sched := scheduler.New(st, h, jobSvc, patchSvc).
+		WithNotifier(notifier, cfg.PublicURL).
+		WithRetention(cfg.AlertRetentionDays, cfg.CheckResultRetentionDays, cfg.NotificationRetentionDays)
 
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()

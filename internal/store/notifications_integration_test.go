@@ -177,10 +177,14 @@ func TestNotificationOutboxIntegration(t *testing.T) {
 	}
 
 	// A send failure is rescheduled, so the next drain must not pick it up again.
-	if err := st.MarkNotificationFailed(ctx, claimed[0].ID, 1, 5, "greylisted", 2*time.Minute); err != nil {
+	if claimed[0].LeaseToken == nil || claimed[1].LeaseToken == nil {
+		t.Fatal("claimed notifications have no fencing lease")
+	}
+	if err := st.MarkNotificationFailedLeased(ctx, claimed[0].ID, *claimed[0].LeaseToken,
+		1, 5, "greylisted", 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.MarkNotificationSent(ctx, claimed[1].ID); err != nil {
+	if err := st.MarkNotificationSentLeased(ctx, claimed[1].ID, *claimed[1].LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	again, err := st.ClaimPendingNotifications(ctx, 10)
@@ -193,7 +197,15 @@ func TestNotificationOutboxIntegration(t *testing.T) {
 
 	// Exhausting the attempt budget is terminal: a permanently bouncing address
 	// must not keep the worker busy forever.
-	if err := st.MarkNotificationFailed(ctx, claimed[0].ID, 5, 5, "550 no such user", time.Minute); err != nil {
+	if _, err := st.pool.Exec(ctx, `UPDATE notifications SET next_attempt_at=now() WHERE id=$1`, claimed[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	exhausted, err := st.ClaimPendingNotifications(ctx, 10)
+	if err != nil || len(exhausted) != 1 || exhausted[0].LeaseToken == nil {
+		t.Fatalf("reclaim for terminal failure = %#v, err=%v", exhausted, err)
+	}
+	if err := st.MarkNotificationFailedLeased(ctx, exhausted[0].ID, *exhausted[0].LeaseToken,
+		5, 5, "550 no such user", time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	var status, lastError string

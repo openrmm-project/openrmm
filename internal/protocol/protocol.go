@@ -27,6 +27,7 @@ const (
 	MsgRemoteQueryResult = "remote_query_result" // agent -> server: reply to a remote_query
 	MsgRunCheck          = "run_check"           // server -> agent: execute a monitoring check
 	MsgCheckResult       = "check_result"        // agent -> server: raw check outcome
+	MsgCheckResultAck    = "check_result_ack"    // server -> agent: check result persisted, drop it from the outbox
 
 	MsgPatchScan    = "patch_scan"    // server -> agent: scan for missing OS patches
 	MsgPatchReport  = "patch_report"  // agent -> server: list of missing patches
@@ -231,15 +232,22 @@ type RemoteQueryResultMsg struct {
 // RunCheckMsg asks the agent to execute a monitoring check. The agent returns a
 // raw value/output; the server applies thresholds and computes the status.
 type RunCheckMsg struct {
-	CheckID string          `json:"check_id"`
-	Type    string          `json:"type"`
-	Config  json.RawMessage `json:"config"`
+	CheckID     string          `json:"check_id"`
+	ExecutionID string          `json:"execution_id,omitempty"`
+	Type        string          `json:"type"`
+	Config      json.RawMessage `json:"config"`
+	TimeoutSec  int             `json:"timeout_sec,omitempty"`
 }
 
 // CheckResultMsg is the raw outcome of a check on the endpoint.
 type CheckResultMsg struct {
-	CheckID string   `json:"check_id"`
-	Value   *float64 `json:"value,omitempty"` // numeric checks: free %, load %, or exit code
-	Output  string   `json:"output"`
-	Success bool     `json:"success"` // boolean checks: reachable / running / exit==0
+	CheckID     string   `json:"check_id"`
+	ExecutionID string   `json:"execution_id,omitempty"`
+	Value       *float64 `json:"value,omitempty"` // numeric checks: free %, load %, or exit code
+	Output      string   `json:"output"`
+	Success     bool     `json:"success"` // boolean checks: reachable / running / exit==0
+}
+
+type CheckResultAckMsg struct {
+	ExecutionID string `json:"execution_id"`
 }

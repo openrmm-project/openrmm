@@ -1208,18 +1208,22 @@ func (s *Store) DeleteAssignment(ctx context.Context, id string) error {
 const policyFilter = `policy_id IN (
 	SELECT pa.policy_id FROM policy_assignments pa
 	WHERE (pa.scope_type='agent'  AND pa.scope_id=$1)
+	   OR (pa.scope_type='group'  AND pa.scope_id=(SELECT group_id FROM agents WHERE id=$1))
 	   OR (pa.scope_type='site'   AND pa.scope_id=$2)
 	   OR (pa.scope_type='client' AND pa.scope_id=$3)
 )`
 
 // ===================== Checks =====================
 
-const checkCols = `id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold, interval_sec, enabled, created_at`
+const checkCols = `id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold,
+	interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled, created_at`
 
 func scanCheck(row pgx.Row) (*models.Check, error) {
 	var c models.Check
 	err := row.Scan(&c.ID, &c.AgentID, &c.PolicyID, &c.Type, &c.Name, &c.Config,
-		&c.WarnThreshold, &c.ErrThreshold, &c.IntervalSec, &c.Enabled, &c.CreatedAt)
+		&c.WarnThreshold, &c.ErrThreshold, &c.IntervalSec, &c.FailureCount,
+		&c.RecoveryCount, &c.Hysteresis, &c.CooldownSec, &c.TimeoutSec,
+		&c.Enabled, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1238,10 +1242,28 @@ func (s *Store) CreateCheck(ctx context.Context, c *models.Check) (*models.Check
 	if c.IntervalSec <= 0 {
 		c.IntervalSec = 300
 	}
+	if c.FailureCount <= 0 {
+		c.FailureCount = 2
+	}
+	if c.RecoveryCount <= 0 {
+		c.RecoveryCount = 2
+	}
+	if c.Hysteresis < 0 {
+		c.Hysteresis = 0
+	}
+	if c.CooldownSec < 0 {
+		c.CooldownSec = 0
+	}
+	if c.TimeoutSec <= 0 {
+		c.TimeoutSec = 180
+	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO checks (id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold, interval_sec, enabled)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		c.ID, c.AgentID, c.PolicyID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold, c.ErrThreshold, c.IntervalSec, c.Enabled)
+		`INSERT INTO checks (id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold,
+		                      interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		c.ID, c.AgentID, c.PolicyID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold,
+		c.ErrThreshold, c.IntervalSec, c.FailureCount, c.RecoveryCount, c.Hysteresis,
+		c.CooldownSec, c.TimeoutSec, c.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,8 +1330,13 @@ func (s *Store) UpdateCheck(ctx context.Context, c *models.Check) error {
 		c.Config = []byte("{}")
 	}
 	_, err := s.pool.Exec(ctx,
-		`UPDATE checks SET type=$2, name=$3, config=$4, warn_threshold=$5, err_threshold=$6, interval_sec=$7, enabled=$8 WHERE id=$1`,
-		c.ID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold, c.ErrThreshold, c.IntervalSec, c.Enabled)
+		`UPDATE checks SET type=$2, name=$3, config=$4, warn_threshold=$5, err_threshold=$6,
+		                   interval_sec=$7, enabled=$8, failure_count=$9, recovery_count=$10,
+		                   hysteresis=$11, cooldown_sec=$12, timeout_sec=$13
+		 WHERE id=$1`,
+		c.ID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold, c.ErrThreshold,
+		c.IntervalSec, c.Enabled, c.FailureCount, c.RecoveryCount, c.Hysteresis,
+		c.CooldownSec, c.TimeoutSec)
 	return err
 }
 
@@ -1323,8 +1350,9 @@ func (s *Store) DeleteCheck(ctx context.Context, id string) error {
 func (s *Store) AddCheckResult(ctx context.Context, r *models.CheckResult) error {
 	r.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO check_results (id, check_id, agent_id, status, value, output) VALUES ($1,$2,$3,$4,$5,$6)`,
-		r.ID, r.CheckID, r.AgentID, r.Status, r.Value, r.Output)
+		`INSERT INTO check_results (id, check_id, agent_id, execution_id, status, value, output)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		r.ID, r.CheckID, r.AgentID, r.ExecutionID, r.Status, r.Value, r.Output)
 	return err
 }
 
@@ -1345,20 +1373,33 @@ func (s *Store) LastCheckResultTime(ctx context.Context, checkID, agentID string
 // ListCheckResults returns recent results for a check. If agentID is empty, it
 // returns results across all agents (used for the latest-status pill).
 func (s *Store) ListCheckResults(ctx context.Context, checkID, agentID string, limit int) ([]models.CheckResult, error) {
+	return s.ListCheckResultsForUser(ctx, checkID, agentID, "", false, limit)
+}
+
+// ListCheckResultsForUser applies access scope before ORDER BY/LIMIT. Filtering
+// an already-limited fleet result in the API could return an empty page even
+// when the restricted user's devices had newer history just beyond that limit.
+func (s *Store) ListCheckResultsForUser(ctx context.Context, checkID, agentID, userID string, scoped bool, limit int) ([]models.CheckResult, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	var rows pgx.Rows
-	var err error
-	if agentID != "" {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, check_id, agent_id, status, value, output, ran_at FROM check_results
-			 WHERE check_id=$1 AND agent_id=$2 ORDER BY ran_at DESC LIMIT $3`, checkID, agentID, limit)
-	} else {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, check_id, agent_id, status, value, output, ran_at FROM check_results
-			 WHERE check_id=$1 ORDER BY ran_at DESC LIMIT $2`, checkID, limit)
-	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT cr.id, cr.check_id, cr.agent_id, cr.execution_id,
+		       cr.status, cr.value, cr.output, cr.ran_at
+		FROM check_results cr
+		JOIN agents a ON a.id=cr.agent_id
+		LEFT JOIN sites si ON si.id=a.site_id
+		WHERE cr.check_id=$1
+		  AND (NULLIF($2,'')::uuid IS NULL OR cr.agent_id=NULLIF($2,'')::uuid)
+		  AND (NOT $4 OR EXISTS (
+			SELECT 1 FROM user_scopes us WHERE us.user_id=NULLIF($3,'')::uuid AND (
+				(us.scope_type='agent' AND us.scope_id=a.id) OR
+				(us.scope_type='group' AND us.scope_id=a.group_id) OR
+				(us.scope_type='site' AND us.scope_id=a.site_id) OR
+				(us.scope_type='client' AND us.scope_id=si.client_id)
+			)
+		  ))
+		ORDER BY cr.ran_at DESC LIMIT $5`, checkID, agentID, userID, scoped, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1366,7 +1407,8 @@ func (s *Store) ListCheckResults(ctx context.Context, checkID, agentID string, l
 	var out []models.CheckResult
 	for rows.Next() {
 		var r models.CheckResult
-		if err := rows.Scan(&r.ID, &r.CheckID, &r.AgentID, &r.Status, &r.Value, &r.Output, &r.RanAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.CheckID, &r.AgentID, &r.ExecutionID,
+			&r.Status, &r.Value, &r.Output, &r.RanAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -1492,16 +1534,17 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 }
 
 // AgentIDsForPolicy resolves every agent a policy applies to, expanding its
-// assignments the same way policyFilter does (agent / site / client scope). Used
+// assignments the same way policyFilter does (agent / group / site / client scope). Used
 // by "run now" to fan a policy task out to its current targets.
 func (s *Store) AgentIDsForPolicy(ctx context.Context, policyID string) ([]string, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT a.id FROM agents a
 		 LEFT JOIN sites si ON si.id = a.site_id
-		 WHERE EXISTS (
+		 WHERE a.revoked_at IS NULL AND EXISTS (
 		   SELECT 1 FROM policy_assignments pa
 		   WHERE pa.policy_id=$1 AND (
 		        (pa.scope_type='agent'  AND pa.scope_id = a.id)
+		     OR (pa.scope_type='group'  AND pa.scope_id = a.group_id)
 		     OR (pa.scope_type='site'   AND pa.scope_id = a.site_id)
 		     OR (pa.scope_type='client' AND pa.scope_id = si.client_id)))`, policyID)
 	if err != nil {
@@ -1543,21 +1586,14 @@ func (s *Store) LastTaskRunTime(ctx context.Context, taskID, agentID string) (ti
 // failing transition. Notifying on the row count instead of on every evaluation
 // is the difference between one email per incident and one every half minute.
 func (s *Store) RaiseAlert(ctx context.Context, agentID *string, sourceType string, sourceID *string, severity, message string) (opened bool, alertID string, err error) {
-	id := newID()
-	err = s.pool.QueryRow(ctx,
-		`INSERT INTO alerts (id, agent_id, source_type, source_id, severity, message)
-		 VALUES ($1,$2,$3,$4,$5,$6)
-		 ON CONFLICT (source_type, source_id, agent_id) WHERE status <> 'resolved' DO NOTHING
-		 RETURNING id`,
-		id, agentID, sourceType, sourceID, severity, message).Scan(&alertID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Already open: not an error, just not a transition.
-		return false, "", nil
-	}
+	transition, err := s.ObserveAlert(ctx, AlertObservation{
+		AgentID: agentID, SourceType: sourceType, SourceID: sourceID,
+		ConditionKey: "default", Severity: severity, Message: message,
+	})
 	if err != nil {
 		return false, "", err
 	}
-	return true, alertID, nil
+	return transition.Opened, transition.Alert.ID, nil
 }
 
 // ResolveAlertsForSource closes any open alert for a source and reports how many
@@ -1565,65 +1601,37 @@ func (s *Store) RaiseAlert(ctx context.Context, agentID *string, sourceType stri
 // a recovery email should be tied to — on-call cares more about "it is back" than
 // about the original failure.
 func (s *Store) ResolveAlertsForSource(ctx context.Context, sourceType string, sourceID *string, agentID *string) (int64, error) {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE alerts SET status='resolved', resolved_at=now()
-		 WHERE status<>'resolved' AND source_type=$1
-		   AND source_id IS NOT DISTINCT FROM $2 AND agent_id IS NOT DISTINCT FROM $3`,
-		sourceType, sourceID, agentID)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	resolved, err := s.ResolveAlertSource(ctx, sourceType, sourceID, agentID,
+		"system", "automatic", "Condition recovered.", time.Now())
+	return int64(len(resolved)), err
 }
 
 // ListAlerts returns alerts, optionally filtered by status.
 func (s *Store) ListAlerts(ctx context.Context, status string, limit int) ([]models.Alert, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
-	var rows pgx.Rows
-	var err error
-	if status != "" {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, agent_id, source_type, source_id, severity, message, status, created_at, resolved_at
-			 FROM alerts WHERE status=$1 ORDER BY created_at DESC LIMIT $2`, status, limit)
-	} else {
-		rows, err = s.pool.Query(ctx,
-			`SELECT id, agent_id, source_type, source_id, severity, message, status, created_at, resolved_at
-			 FROM alerts ORDER BY created_at DESC LIMIT $1`, limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []models.Alert
-	for rows.Next() {
-		var a models.Alert
-		if err := rows.Scan(&a.ID, &a.AgentID, &a.SourceType, &a.SourceID, &a.Severity, &a.Message, &a.Status, &a.CreatedAt, &a.ResolvedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+	return s.ListAlertsPage(ctx, AlertListOptions{Status: status, Limit: limit})
 }
 
 // SetAlertStatus updates an alert's status by id (e.g. ack/resolve).
 // AlertAgent returns the agent an alert belongs to (nil for non-device alerts).
 func (s *Store) AlertAgent(ctx context.Context, id string) (*string, error) {
-	var agentID *string
-	err := s.pool.QueryRow(ctx, `SELECT agent_id FROM alerts WHERE id=$1`, id).Scan(&agentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+	a, err := s.GetAlert(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-	return agentID, err
+	return a.AgentSnapshotID, nil
 }
 
 func (s *Store) SetAlertStatus(ctx context.Context, id, status string) error {
-	var resolved interface{}
-	if status == models.AlertResolved {
-		resolved = time.Now()
+	action := ""
+	switch status {
+	case models.AlertAcked:
+		action = "ack"
+	case models.AlertResolved:
+		action = "resolve"
+	default:
+		return ErrConflict
 	}
-	_, err := s.pool.Exec(ctx, `UPDATE alerts SET status=$2, resolved_at=$3 WHERE id=$1`, id, status, resolved)
+	_, err := s.TransitionAlert(ctx, id, AlertAction{Action: action, Actor: "system"})
 	return err
 }
 

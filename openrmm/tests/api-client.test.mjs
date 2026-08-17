@@ -157,8 +157,43 @@ test('checks can be enabled or disabled from the list and editor', async () => {
   assert.match(screens, /const \[enabled, setEnabled\] = useState\(check\?\.enabled \?\? true\)/);
   assert.match(screens, /interval_sec: Number\(interval\), enabled/);
   assert.match(screens, /Check will be disabled when saved/);
-  assert.match(screens, /c\.enabled \? \(c\.latest\?\.status \|\| 'passing'\) : 'disabled'/);
+  assert.match(screens, /function checkAggregateStatus\(c\)/);
+  assert.match(screens, /if \(!c\.enabled\) return 'disabled'/);
+  assert.match(screens, /if \(x\.failing > 0\) return 'failing'/);
+  assert.match(screens, /if \(x\.warning > 0\) return 'warning'/);
+  assert.match(screens, /if \(x\.unknown > 0 \|\| !x\.total\) return 'unknown'/);
+  assert.match(screens, /<StatusPill status=\{checkAggregateStatus\(c\)\}/);
   assert.match(ui, /disabled: \{ c: 'muted', label: 'Disabled' \}/);
+});
+
+test('alerts client carries filters, optimistic versions, bulk actions and suppressions', async () => {
+  const { api, last } = await loadApi();
+
+  await api.listAlerts({ status: 'open', severity: 'error', cursor: 'next-page', limit: 50 });
+  const listURL = new URL(last().url);
+  assert.equal(listURL.pathname, '/api/alerts');
+  assert.equal(listURL.searchParams.get('status'), 'open');
+  assert.equal(listURL.searchParams.get('severity'), 'error');
+  assert.equal(listURL.searchParams.get('cursor'), 'next-page');
+
+  await api.ackAlert('alert-1', { expected_version: 7 });
+  assert.equal(last().url, 'https://console.test/api/alerts/alert-1/ack');
+  assert.equal(last().method, 'POST');
+  assert.deepEqual(JSON.parse(last().body), { expected_version: 7 });
+
+  await api.bulkAlertAction({ ids: ['alert-1'], action: 'resolve', expected_versions: { 'alert-1': 7 } });
+  assert.equal(last().url, 'https://console.test/api/alerts/bulk');
+  assert.equal(JSON.parse(last().body).action, 'resolve');
+
+  await api.createAlertSuppression({
+    kind: 'maintenance', scope_type: 'site', scope_id: 'site-1',
+    ends_at: '2026-08-15T12:00:00Z',
+  });
+  assert.equal(last().url, 'https://console.test/api/alert-suppressions');
+  assert.equal(last().method, 'POST');
+  await api.cancelAlertSuppression('suppression-1');
+  assert.equal(last().url, 'https://console.test/api/alert-suppressions/suppression-1');
+  assert.equal(last().method, 'DELETE');
 });
 
 test('the software report exposes its manufacturer column', async () => {

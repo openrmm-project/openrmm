@@ -225,8 +225,14 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, ch chan [
 	case protocol.MsgCheckResult:
 		var res protocol.CheckResultMsg
 		if json.Unmarshal(env.Data, &res) == nil {
-			if err := s.sched.OnCheckResult(ctx, agentID, res); err != nil {
+			ack, err := s.sched.OnCheckResult(ctx, agentID, res)
+			if err != nil {
 				log.Printf("check result error: %v", err)
+			}
+			if ack && res.ExecutionID != "" {
+				data, _ := json.Marshal(protocol.CheckResultAckMsg{ExecutionID: res.ExecutionID})
+				frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgCheckResultAck, Data: data})
+				s.hub.Send(agentID, frame)
 			}
 		}
 	case protocol.MsgPatchReport:

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -62,7 +63,11 @@ func TestCheckResultOutboxSurvivesRestartAndStopsAfterAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	// Windows has no Unix mode bits — Chmod there only toggles the read-only
+	// attribute, so a writable file reports 0666 however it was created. The mode
+	// still matters on the agents that do have them: the outbox holds check
+	// results waiting to be delivered.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("outbox permissions = %o, want 600", got)
 	}
 	if _, err := os.Stat(path + ".new"); !os.IsNotExist(err) {

@@ -6,6 +6,17 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows enrollment command had to be scrolled to be read.** It is a
+  single line carrying the server URL and the token, and the code block scrolls
+  long lines sideways rather than wrapping them — right for a script, wrong for a
+  command an operator has to check before pasting it into an elevated PowerShell.
+  The block now soft-wraps where it is used for install commands; what the Copy
+  button puts on the clipboard is unchanged, because it copies the command rather
+  than the rendering.
+
+
 ## [0.5.0] - 2026-08-11
 
 ### Changed

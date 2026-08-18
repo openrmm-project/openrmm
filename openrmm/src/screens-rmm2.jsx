@@ -609,7 +609,10 @@ function EnrollCommands({ token, site }) {
         </div>
         <CopyButton value={cmd} label="Copy command" size="sm" variant="ghost" />
       </div>
-      <CodeBlock code={cmd} shell={isWin ? 'powershell' : 'bash'} label="install agent" showCopy={false} maxHeight={180} />
+      {/* Wrapped: the Windows one-liner carries the server URL and the token on a
+          single line and ran off the right edge, so it had to be scrolled to be
+          read — and this is a command people run as Administrator. */}
+      <CodeBlock code={cmd} shell={isWin ? 'powershell' : 'bash'} label="install agent" showCopy={false} maxHeight={180} wrap />
       {isWin && <div className="text-[11.5px] text-faint mt-2">Run in an <span className="text-ink font-medium">elevated PowerShell</span> (Run as Administrator).</div>}
       {os === 'macos' && <div className="text-[11.5px] text-faint mt-2">Same installer as Linux — it auto-detects macOS (Intel &amp; Apple Silicon).</div>}
     </div>

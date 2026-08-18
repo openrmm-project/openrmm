@@ -8,12 +8,62 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request makes the previous run pointless, and each full
+# run bills ~31 minutes. Merges into main are never cancelled: that run is the
+# one that says whether main is good.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   GO_VERSION: '1.25'
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      installers: ${{ steps.filter.outputs.installers }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: filter
+        name: Work out which areas the change touches
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # No usable base (first push of a branch, forced update, re-run of an
+          # old event): assume everything changed. Skipping a job we should have
+          # run is the failure that costs more than the minutes it saves.
+          if [ -z "${BASE:-}" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "no usable diff base — running everything"
+            printf 'go=true\nfrontend=true\ninstallers=true\ndocker=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "$BASE"...HEAD)
+          echo "changed files:"; echo "$files"
+          has() { echo "$files" | grep -qE "$1"; }
+          go=false; frontend=false; installers=false; docker=false
+          has '^(cmd/|internal/|go\.(mod|sum)$)'                  && go=true
+          has '^openrmm/'                                          && frontend=true
+          has '^(deploy/public/install\.|cmd/agent/|internal/protocol/)' && installers=true
+          has '^(Dockerfile$|\.dockerignore$|deploy/)'             && docker=true
+          # A change to the workflows themselves has to be proven by running them.
+          if has '^\.github/workflows/'; then
+            go=true; frontend=true; installers=true; docker=true
+          fi
+          printf 'go=%s\nfrontend=%s\ninstallers=%s\ndocker=%s\n' "$go" "$frontend" "$installers" "$docker" | tee -a "$GITHUB_OUTPUT"
+
   go:
     name: Go vet, race, test and build
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,10 +93,14 @@ jobs:
 
   platform:
     name: Agent test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macOS is billed at ten times a Linux minute and each job is rounded up,
+        # so a 14-second run costs ten. It stays on main, not on every PR.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,6 +115,8 @@ jobs:
 
   installers-linux:
     name: Linux installer validation
+    needs: changes
+    if: needs.changes.outputs.installers == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,6 +139,8 @@ jobs:
 
   installer-windows:
     name: Windows installer verification
+    needs: changes
+    if: needs.changes.outputs.installers == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,6 +177,8 @@ jobs:
 
   installer-macos:
     name: macOS installer validation
+    needs: changes
+    if: github.event_name != 'pull_request' && needs.changes.outputs.installers == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -156,6 +216,8 @@ jobs:
 
   frontend:
     name: Frontend npm validation
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -168,6 +230,8 @@ jobs:
 
   deployment-config:
     name: Production deployment validation
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -183,6 +247,8 @@ jobs:
 
   container-scan:
     name: Container image vulnerability scan
+    needs: changes
+    if: needs.changes.outputs.docker == 'true' || needs.changes.outputs.go == 'true' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

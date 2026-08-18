@@ -20,6 +20,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+          # Take the newest patch of that minor. Without this, setup-go reuses the
+          # Go baked into the runner image, which is how CI kept building on a
+          # release that already had published security fixes.
+          check-latest: true
       - run: go mod verify
       - name: Vulnerability scan
         run: |
@@ -49,6 +53,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+          # Take the newest patch of that minor. Without this, setup-go reuses the
+          # Go baked into the runner image, which is how CI kept building on a
+          # release that already had published security fixes.
+          check-latest: true
       - run: go test ./cmd/agent ./internal/protocol -count=1
 
   installers-linux:
@@ -81,6 +89,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+          # Take the newest patch of that minor. Without this, setup-go reuses the
+          # Go baked into the runner image, which is how CI kept building on a
+          # release that already had published security fixes.
+          check-latest: true
       - name: Parse and analyze installer
         shell: pwsh
         run: |
@@ -113,6 +125,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+          # Take the newest patch of that minor. Without this, setup-go reuses the
+          # Go baked into the runner image, which is how CI kept building on a
+          # release that already had published security fixes.
+          check-latest: true
       - name: Install validation prerequisites
         run: brew install openssl@3 shellcheck
       - name: Validate installer with macOS tools

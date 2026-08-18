@@ -426,7 +426,12 @@ function tokenizeLine(line, shell) {
   return nodes;
 }
 
-function CodeBlock({ code = '', shell = 'bash', maxHeight = 320, showCopy = true, label, dryRun }) {
+// wrap soft-wraps long lines instead of scrolling them sideways. Off by default:
+// a script is easier to read when its indentation is literal and a long line is
+// visibly long. It is for the one-line commands an operator has to read and copy
+// — an install command scrolled off the right edge is one they cannot check
+// before running it as Administrator.
+function CodeBlock({ code = '', shell = 'bash', maxHeight = 320, showCopy = true, label, dryRun, wrap }) {
   const lines = code.replace(/\n$/, '').split('\n');
   return (
     <div className="rounded-xl border border-line2 bg-[#0a0b0e] overflow-hidden">
@@ -446,7 +451,7 @@ function CodeBlock({ code = '', shell = 'bash', maxHeight = 320, showCopy = true
             {lines.map((ln, i) => (
               <tr key={i} className="hover:bg-white/[0.02]">
                 <td className="select-none text-right pr-3 pl-3 text-[#3a4150] w-10 align-top tabular sticky left-0 bg-[#0a0b0e]">{i + 1}</td>
-                <td className="pr-4 py-px whitespace-pre align-top text-[#c8d0e0]">{tokenizeLine(ln, shell).length ? tokenizeLine(ln, shell) : '\u00a0'}</td>
+                <td className={cx('pr-4 py-px align-top text-[#c8d0e0]', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>{tokenizeLine(ln, shell).length ? tokenizeLine(ln, shell) : '\u00a0'}</td>
               </tr>
             ))}
           </tbody>

@@ -13,9 +13,9 @@ require (
 	github.com/kardianos/service v1.3.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/shirou/gopsutil/v3 v3.24.5
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.41.0
 )
 
 require (

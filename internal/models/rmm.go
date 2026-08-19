@@ -336,10 +336,14 @@ type Alert struct {
 	LastNotifiedAt      *time.Time `json:"last_notified_at,omitempty"`
 	NotificationPending bool       `json:"notification_pending,omitempty"`
 	NotificationKind    string     `json:"notification_kind,omitempty"`
-	NotificationSeq     int64      `json:"notification_seq,omitempty"`
-	SilencedUntil       *time.Time `json:"silenced_until,omitempty"`
-	SilencedBy          string     `json:"silenced_by,omitempty"`
-	SilenceReason       string     `json:"silence_reason,omitempty"`
+	// LastObservationID is the identity of the observation that last changed this
+	// alert. A caller that can be retried supplies one so the repeat is
+	// recognised; it is bookkeeping, not something an API client should see.
+	LastObservationID string     `json:"-"`
+	NotificationSeq   int64      `json:"notification_seq,omitempty"`
+	SilencedUntil     *time.Time `json:"silenced_until,omitempty"`
+	SilencedBy        string     `json:"silenced_by,omitempty"`
+	SilenceReason     string     `json:"silence_reason,omitempty"`
 }
 
 type AlertEvent struct {

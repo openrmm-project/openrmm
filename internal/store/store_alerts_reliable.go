@@ -21,7 +21,8 @@ const alertCols = `al.id, al.agent_id, al.source_type, al.source_id, al.conditio
 	al.acked_at, al.acked_by, al.resolved_by, al.resolution_kind,
 	al.resolution_note, al.reopened_from, al.last_notified_at,
 	al.notification_pending, al.notification_kind, al.notification_seq,
-	al.silenced_until, al.silenced_by, al.silence_reason`
+	al.silenced_until, al.silenced_by, al.silence_reason,
+	al.last_observation_id`
 
 func scanAlert(row pgx.Row) (*models.Alert, error) {
 	var a models.Alert
@@ -33,7 +34,8 @@ func scanAlert(row pgx.Row) (*models.Alert, error) {
 		&a.AckedAt, &a.AckedBy, &a.ResolvedBy, &a.ResolutionKind,
 		&a.ResolutionNote, &a.ReopenedFrom, &a.LastNotifiedAt,
 		&a.NotificationPending, &a.NotificationKind, &a.NotificationSeq,
-		&a.SilencedUntil, &a.SilencedBy, &a.SilenceReason)
+		&a.SilencedUntil, &a.SilencedBy, &a.SilenceReason,
+		&a.LastObservationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -68,6 +70,12 @@ type AlertObservation struct {
 	Output        string
 	Cooldown      time.Duration
 	ObservedAt    time.Time
+	// ObservationID identifies this observation so a delivery of it that is
+	// retried can be recognised as the same one. Callers that cannot be retried
+	// leave it empty, and every call then counts — without an identity there is
+	// nothing to deduplicate against, and guessing from timestamp and content
+	// cannot tell a retry from two distinct observations that happen to match.
+	ObservationID string
 }
 
 type AlertTransition struct {
@@ -90,13 +98,6 @@ func severityRank(v string) int {
 	default:
 		return 0
 	}
-}
-
-func equalOptionalFloat(a, b *float64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
 }
 
 func alertIdentity(sourceType string, sourceID, agentID *string, conditionKey string) string {
@@ -218,14 +219,16 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 		  AND al.condition_key=$4
 		FOR UPDATE`, obs.SourceType, obs.SourceID, obs.AgentID, obs.ConditionKey))
 	if err == nil {
-		// Reconciliation retries use the check state's stable updated_at value.
-		// If applying the state succeeded but marking it reconciled did not, the
-		// retry must finish notification delivery without inventing an occurrence.
-		sameObservation := current.LastSeenAt.Equal(obs.ObservedAt.Truncate(time.Microsecond)) &&
-			current.Severity == obs.Severity && current.Message == obs.Message &&
-			current.Output == obs.Output &&
-			equalOptionalFloat(current.ObservedValue, obs.ObservedValue) &&
-			equalOptionalFloat(current.ThresholdValue, obs.Threshold)
+		// A retry is recognised by identity, never inferred. If applying a check
+		// state succeeded but marking it reconciled did not, the retry arrives
+		// with the same ObservationID and must finish notification delivery
+		// without inventing an occurrence.
+		//
+		// Matching on timestamp and content instead used to collapse two
+		// genuinely distinct observations whenever they agreed to the
+		// microsecond, which under concurrency they do: twelve simultaneous
+		// observations of one condition recorded eleven occurrences.
+		sameObservation := obs.ObservationID != "" && obs.ObservationID == current.LastObservationID
 		if sameObservation {
 			if err := tx.Commit(ctx); err != nil {
 				return nil, err
@@ -279,11 +282,13 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 			threshold_value=$8, output=$9, version=version+1,
 			acked_at=$10, acked_by=$11, silenced_until=$12,
 			silenced_by=$13, silence_reason=$14,
-			notification_pending=$15, notification_kind=$16, notification_seq=$17
+			notification_pending=$15, notification_kind=$16, notification_seq=$17,
+			last_observation_id=$18
 			WHERE id=$1 RETURNING `+alertCols,
 			current.ID, escalated, obs.Severity, obs.Message, status, obs.ObservedAt,
 			obs.ObservedValue, obs.Threshold, obs.Output, ackedAt, ackedBy,
-			silencedUntil, silencedBy, silenceReason, pending, notificationKind, notificationSeq))
+			silencedUntil, silencedBy, silenceReason, pending, notificationKind, notificationSeq,
+			obs.ObservationID))
 		if updateErr != nil {
 			return nil, updateErr
 		}
@@ -358,14 +363,14 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 		severity, message, status, created_at, first_seen_at, last_seen_at,
 		updated_at, observed_value, threshold_value, output, reopened_from,
 		notification_pending, notification_kind, notification_seq,
-		silenced_until, silenced_by, silence_reason
+		silenced_until, silenced_by, silence_reason, last_observation_id
 	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$14,$14,
-	          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+	          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 	RETURNING `+alertCols, id, obs.AgentID, obs.SourceType, obs.SourceID,
 		obs.ConditionKey, snapshotID, hostname, siteID, clientID, groupID, obs.Severity,
 		obs.Message, status, obs.ObservedAt, obs.ObservedValue, obs.Threshold,
 		obs.Output, reopenedFrom, pending, notificationKind, notificationSeq,
-		silencedUntil, silencedBy, silenceReason))
+		silencedUntil, silencedBy, silenceReason, obs.ObservationID))
 	if err != nil {
 		return nil, err
 	}

@@ -470,6 +470,12 @@ CREATE TABLE IF NOT EXISTS alerts (
     silenced_until  TIMESTAMPTZ,
     silenced_by     TEXT NOT NULL DEFAULT '',
     silence_reason  TEXT NOT NULL DEFAULT '',
+    -- Identity of the observation that last changed this alert. A caller that
+    -- can be retried supplies a stable key and the repeat is recognised; one
+    -- that supplies none is always a new occurrence. Inferring the repeat from
+    -- timestamp and content collapsed distinct simultaneous observations, which
+    -- is what migration 009 replaced.
+    last_observation_id TEXT NOT NULL DEFAULT '',
     CONSTRAINT alerts_resolution_consistent
         CHECK ((status = 'resolved') = (resolved_at IS NOT NULL)),
     CONSTRAINT alerts_notification_valid

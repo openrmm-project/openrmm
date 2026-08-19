@@ -72,6 +72,10 @@ func observationForFixture(f alertReliabilityFixture, severity string, at time.T
 		ConditionKey: "health", Severity: severity, Message: "health threshold exceeded",
 		ObservedValue: &value, Threshold: &threshold, Output: "sample output",
 		Cooldown: 5 * time.Minute, ObservedAt: at,
+		// Mirrors the scheduler: the identity of an observation from a check is
+		// the state it was applied from, so a retry of that state carries the
+		// same one and a later state does not.
+		ObservationID: "check-state:" + at.UTC().Format(time.RFC3339Nano),
 	}
 }
 
@@ -233,6 +237,59 @@ func TestAlertLifecycleEscalationConcurrencyAndSnapshotScope(t *testing.T) {
 	}
 	if n, err := f.store.ResolveInapplicableCheckAlerts(ctx, base.Add(5*time.Minute)); err != nil || n != 1 {
 		t.Fatalf("resolved orphan alerts = %d, err=%v", n, err)
+	}
+}
+
+// A retry of one observation must not invent an occurrence, and two distinct
+// observations must not be collapsed into one because they happen to agree.
+// Identity is what separates the two cases; timestamp and content cannot.
+func TestObserveAlertCountsByObservationIdentity(t *testing.T) {
+	f := newAlertReliabilityFixture(t, "identity")
+	ctx := context.Background()
+	at := time.Now()
+	obs := AlertObservation{
+		SourceType: models.AlertSourceSystem, ConditionKey: "database",
+		Severity: models.SeverityError, Message: "database unavailable",
+		ObservedAt: at, ObservationID: "reconcile-1",
+	}
+
+	first, err := f.store.ObserveAlert(ctx, obs)
+	if err != nil || !first.Opened {
+		t.Fatalf("first observation: opened=%v err=%v", first, err)
+	}
+
+	// The same delivery again — the alert already carries this identity.
+	retry, err := f.store.ObserveAlert(ctx, obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Alert.OccurrenceCount != 1 || retry.Alert.ID != first.Alert.ID {
+		t.Fatalf("retry produced %d occurrences on %s, want 1 on %s",
+			retry.Alert.OccurrenceCount, retry.Alert.ID, first.Alert.ID)
+	}
+
+	// A different observation identical in every other respect, including the
+	// timestamp. The old guard read this as a retry and dropped it.
+	twin := obs
+	twin.ObservationID = "reconcile-2"
+	second, err := f.store.ObserveAlert(ctx, twin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Alert.OccurrenceCount != 2 {
+		t.Fatalf("a distinct observation counted %d, want 2", second.Alert.OccurrenceCount)
+	}
+
+	// And a caller with no identity at all always counts: there is nothing to
+	// deduplicate against, so guessing would be the wrong answer.
+	anonymous := obs
+	anonymous.ObservationID = ""
+	third, err := f.store.ObserveAlert(ctx, anonymous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Alert.OccurrenceCount != 3 {
+		t.Fatalf("an unidentified observation counted %d, want 3", third.Alert.OccurrenceCount)
 	}
 }
 

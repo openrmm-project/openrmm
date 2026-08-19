@@ -69,6 +69,18 @@ tag.
   alert, a pending check execution, or queued mail — retention trims history, it
   does not drop work still in flight.
 
+  **An observation carries its own identity.** Deduplicating a retried
+  observation was inferred: one whose timestamp and content matched the alert's
+  current state was read as a repeat and added no occurrence. That cannot tell
+  "the same observation delivered twice" from "two distinct observations that
+  happen to agree" — and under concurrency the second is real. Twelve
+  simultaneous observations of one condition recorded eleven occurrences,
+  because two landed in the same microsecond. A caller that can be retried now
+  supplies a stable key (the scheduler uses the check state it is applying) and
+  the alert remembers the last one applied; a caller that supplies none always
+  counts, which is the honest answer when there is nothing to deduplicate
+  against.
+
 ### Fixed
 
 - **The Windows enrollment command had to be scrolled to be read.** It is a

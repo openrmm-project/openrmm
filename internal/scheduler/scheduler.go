@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -505,6 +506,13 @@ func (s *Scheduler) OnCheckResult(ctx context.Context, agentID string, res proto
 	return true, nil
 }
 
+// checkStateObservationID identifies the check state an alert observation came
+// from. Stable across retries of the same state and distinct between states,
+// which is what lets a retry be recognised without guessing from content.
+func checkStateObservationID(checkID, agentID string, updatedAt time.Time) string {
+	return "check-state:" + checkID + ":" + agentID + ":" + strconv.FormatInt(updatedAt.UnixNano(), 10)
+}
+
 func (s *Scheduler) applyCheckState(ctx context.Context, check *models.Check, agentID string, state *models.CheckState, value *float64, output string, now time.Time) error {
 	cid, aid := check.ID, agentID
 	switch state.Status {
@@ -526,6 +534,11 @@ func (s *Scheduler) applyCheckState(ctx context.Context, check *models.Check, ag
 			ConditionKey: "health", Severity: severity, Message: message,
 			ObservedValue: value, Threshold: threshold, Output: output,
 			Cooldown: time.Duration(check.CooldownSec) * time.Second, ObservedAt: now,
+			// Applying a check state can be retried when marking it reconciled
+			// fails, and the retry must not add an occurrence. The state's own
+			// identity says so — the same triple TryMarkCheckStateReconciled
+			// uses to decide it is looking at the same state.
+			ObservationID: checkStateObservationID(cid, aid, state.UpdatedAt),
 		})
 		if err != nil {
 			return err

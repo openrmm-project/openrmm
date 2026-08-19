@@ -302,10 +302,11 @@ boolean `*_set` flags.
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | GET | `/api/checks?agent_id=&policy_id=` | `checks.view` | List checks |
-| POST | `/api/checks` | `checks.manage` | Create (`type,name,config,warn_threshold,err_threshold,interval_sec`, `agent_id` or `policy_id`) |
+| POST | `/api/checks` | `checks.manage` | Create (`type,name,config,warn_threshold,err_threshold,interval_sec`, `agent_id` or `policy_id`). Flap policy is optional: `failure_count` (1–100, default 2), `recovery_count` (1–100, default 2), `hysteresis` (0–100, default 2), `cooldown_sec` (0–604800, default 300), `timeout_sec` (5–86400, default 180) |
 | PUT | `/api/checks/{id}` | `checks.manage` | Update |
 | DELETE | `/api/checks/{id}` | `checks.manage` | Delete |
 | GET | `/api/checks/{id}/results?agent_id=&limit=` | `checks.view` | Result history |
+| GET | `/api/checks/{id}/instances` | `checks.view` | Per-agent state of this check: streaks, last value/output, pending execution and its deadline |
 
 ## Tasks (scheduled automation)
 
@@ -335,8 +336,15 @@ boolean `*_set` flags.
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | GET | `/api/alerts?status=&limit=` | `alerts.view` | List alerts |
+| GET | `/api/alerts/{id}` | `alerts.view` | One alert with its lifecycle fields (occurrence count, first/last seen, observed vs threshold value, ack/resolve attribution, `version`) |
+| GET | `/api/alerts/{id}/events` | `alerts.view` | The alert's timeline from `alert_events` |
 | POST | `/api/alerts/{id}/ack` | `alerts.manage` | Acknowledge |
 | POST | `/api/alerts/{id}/resolve` | `alerts.manage` | Resolve |
+| POST | `/api/alerts/{id}/suppress` | `alerts.manage` | Silence this alert (`{note, silence_until, expected_version}`) |
+| POST | `/api/alerts/bulk` | `alerts.manage` | One action over many: `{ids[], action: ack\|resolve\|suppress, note, silence_until, expected_versions{}}` |
+| GET | `/api/alert-suppressions` | `alerts.view` | Active silence / maintenance windows |
+| POST | `/api/alert-suppressions` | `alerts.manage` | Open a window (`kind: silence\|maintenance`, `ends_at`, `reason`) |
+| DELETE | `/api/alert-suppressions/{id}` | `alerts.manage` | Cancel a window early |
 
 ## Reports
 

@@ -50,16 +50,26 @@ later does not silently start mailing everyone.
 
 ## The outbox
 
-`notifications` is a durable queue (`pending | sent | failed`). Rows survive a
-restart, which matters because restarts and outages correlate — the alert nobody
-has read yet is exactly the one a crash must not drop.
+`notifications` is a durable queue (`pending | processing | sent | failed`).
+Rows survive a restart, which matters because restarts and outages correlate —
+the alert nobody has read yet is exactly the one a crash must not drop.
 
 The worker claims batches with `FOR UPDATE SKIP LOCKED`, so a second server
-replica can run the same worker without sending anything twice. A failed send is
-retried with exponential backoff from 2 minutes (a greylisting server rejects the
-first attempt on purpose), and is abandoned after **5 attempts** — an address
-that bounces forever must not keep a worker busy. The row stays as the record of
-what was not delivered.
+replica can run the same worker without sending anything twice. A claim is a
+**lease**: the row moves to `processing` with a `lease_token` and a five-minute
+`lease_until`, and the send is only marked against that token. A worker that
+dies between claiming a message and sending it therefore returns it to the queue
+when the lease lapses, instead of leaving it claimed forever — `FOR UPDATE SKIP
+LOCKED` alone protects concurrent workers, not a worker that stops existing.
+`rmm_notifications_processing` counts what is currently leased.
+
+A `dedupe_key` (unique when set) stops the same alert being queued twice by two
+paths racing to notify about it.
+
+A failed send is retried with exponential backoff from 2 minutes (a greylisting
+server rejects the first attempt on purpose), and is abandoned after **5
+attempts** — an address that bounces forever must not keep a worker busy. The
+row stays as the record of what was not delivered.
 
 If SMTP is not configured, the worker leaves rows pending rather than failing
 them: they go out once an operator finishes the setup.

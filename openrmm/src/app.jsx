@@ -229,7 +229,7 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
   const jobsQ = useQuery(['nav-jobs', role], () => can('jobs.view') ? api.listJobs() : Promise.resolve({ jobs: [] }), { invalidateOn: ['jobs'], poll: can('jobs.view') ? 5000 : 0 });
   const alertsQ = useQuery(['nav-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
   const awaiting = (jobsQ.data?.jobs || []).filter((j) => j.status === 'awaiting_approval').length;
-  const openAlerts = (alertsQ.data?.alerts || []).filter((a) => a.status === 'new').length;
+  const openAlerts = alertsQ.data?.counts?.new ?? (alertsQ.data?.alerts || []).filter((a) => a.status === 'new').length;
   const badges = { jobs: awaiting, alerts: openAlerts };
 
   return (

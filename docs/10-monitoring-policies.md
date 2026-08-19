@@ -75,6 +75,30 @@ agent returns a raw value/output; the server computes `passing`/`warning`/
 `failing`, stores a `check_result`, and raises or resolves the alert. Checks are
 **enabled on creation** by default.
 
+### A dispatch is tracked, not fired and forgotten
+
+Each `run_check` becomes a row in `check_executions` with a deadline
+(`timeout_sec`, default 180s). A partial unique index allows only **one pending
+execution per (check, agent)**, so an agent that is slow or has dropped is never
+sent the same check again while the first is still owed. Passing the deadline
+marks the execution `timed_out` — counted by `rmm_check_timeouts_total` — rather
+than leaving it pending forever.
+
+### One alert per condition, not per reading
+
+A single reading no longer decides anything. `check_states` keeps the per-agent
+streak and the check declares its own flap policy:
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `failure_count` | 2 | consecutive failures before the alert is raised |
+| `recovery_count` | 2 | consecutive successes before it clears |
+| `hysteresis` | 2 | band a recovering value must clear the threshold by |
+| `cooldown_sec` | 300 | quiet period before the same condition may raise again |
+
+A value oscillating on its threshold therefore produces **one** alert instead of
+one per reading. `GET /api/checks/{id}/instances` shows this state per agent.
+
 ## Scheduled tasks
 
 A **task** runs a script (from the library via `script_id`, or inline) on a
@@ -131,6 +155,30 @@ alert per source**, so alerts don't spam. When the check recovers (or the agent
 returns), the alert **auto-resolves**. Operators can `ack` or `resolve` manually.
 
 Severities: `info` / `warning` / `error`. Statuses: `new` / `acked` / `resolved`.
+
+An alert is a lifecycle rather than a row that appears and disappears. It
+deduplicates on a `condition_key` and counts occurrences with first/last-seen
+times; it records the observed and threshold values that raised it, who
+acknowledged or resolved it and how, and what it reopened from when a resolved
+condition returns. `alert_events` keeps the timeline
+(`GET /api/alerts/{id}/events`).
+
+Two operators acting at once cannot silently overwrite each other: the alert
+carries a `version` and the mutating endpoints accept `expected_version`. Bulk
+actions (`POST /api/alerts/bulk`) take a map of expected versions for the same
+reason.
+
+**Silencing.** A `silence` or `maintenance` window (`alert_suppressions`) stops a
+known-noisy condition or a planned outage from mailing, with a reason and an
+author, without deleting the alert or disabling the check. Silence one alert with
+`POST /api/alerts/{id}/suppress`, or open a standing window with
+`POST /api/alert-suppressions`.
+
+**Retention.** Monitoring history is pruned daily, 90 days by default, tunable
+with `RMM_ALERT_RETENTION_DAYS`, `RMM_CHECK_RESULT_RETENTION_DAYS` and
+`RMM_NOTIFICATION_RETENTION_DAYS`. The purge never age-deletes an active alert, a
+pending check execution, or queued mail — it trims history, it does not drop work
+still in flight.
 
 ## Endpoint summary
 

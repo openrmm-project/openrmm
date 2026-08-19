@@ -331,21 +331,13 @@ const api = {
 
   /* ---- checks ---- */
   async listChecks(params) {
-    const r = await GET('/api/checks' + qs(params));
-    const checks = (r && r.checks) || [];
-    // Attach the latest result for the status pill (best-effort, parallel).
-    await Promise.all(checks.map(async (c) => {
-      try {
-        const rr = await GET('/api/checks/' + c.id + '/results' + qs({ agent_id: c.agent_id, limit: 1 }));
-        c.latest = (rr.results || [])[0];
-      } catch (e) {}
-    }));
-    return { checks };
+    return GET('/api/checks' + qs(params));
   },
   createCheck(body) { return POST('/api/checks', body); },
   updateCheck(id, body) { return PUT('/api/checks/' + id, body); },
   deleteCheck(id) { return DELETE('/api/checks/' + id); },
   getCheckResults(id, agent_id) { return GET('/api/checks/' + id + '/results' + qs({ agent_id })); },
+  getCheckInstances(id) { return GET('/api/checks/' + id + '/instances'); },
 
   /* ---- tasks ---- */
   listTasks(params) { return GET('/api/tasks' + qs(params)); },
@@ -365,9 +357,16 @@ const api = {
   deleteAssignment(aid) { return DELETE('/api/policies/assignments/' + aid); },
 
   /* ---- alerts ---- */
-  listAlerts(status) { return GET('/api/alerts' + qs({ status })); },
-  ackAlert(id) { return POST('/api/alerts/' + id + '/ack'); },
-  resolveAlert(id) { return POST('/api/alerts/' + id + '/resolve'); },
+  listAlerts(params) { return GET('/api/alerts' + qs(typeof params === 'string' ? { status: params } : params)); },
+  getAlert(id) { return GET('/api/alerts/' + id); },
+  getAlertEvents(id) { return GET('/api/alerts/' + id + '/events'); },
+  ackAlert(id, body) { return POST('/api/alerts/' + id + '/ack', body || {}); },
+  resolveAlert(id, body) { return POST('/api/alerts/' + id + '/resolve', body || {}); },
+  suppressAlert(id, body) { return POST('/api/alerts/' + id + '/suppress', body || {}); },
+  bulkAlertAction(body) { return POST('/api/alerts/bulk', body); },
+  listAlertSuppressions(params) { return GET('/api/alert-suppressions' + qs(params)); },
+  createAlertSuppression(body) { return POST('/api/alert-suppressions', body); },
+  cancelAlertSuppression(id) { return DELETE('/api/alert-suppressions/' + id); },
 
   /* ---- reports (fleet inventory: software / hardware / machines) ---- */
   reportSoftware(params) { return GET('/api/reports/software' + qs(params || {})); },

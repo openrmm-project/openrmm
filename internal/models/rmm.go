@@ -24,9 +24,18 @@ const (
 
 // Check / result statuses.
 const (
+	CheckUnknown = "unknown"
 	CheckPassing = "passing"
 	CheckWarning = "warning"
 	CheckFailing = "failing"
+)
+
+// Durable check execution statuses.
+const (
+	CheckExecutionPending   = "pending"
+	CheckExecutionCompleted = "completed"
+	CheckExecutionTimedOut  = "timed_out"
+	CheckExecutionCanceled  = "canceled"
 )
 
 // Task schedule kinds.
@@ -46,13 +55,37 @@ const (
 
 // Alert statuses & severities.
 const (
-	AlertNew      = "new"
-	AlertAcked    = "acked"
-	AlertResolved = "resolved"
+	AlertNew        = "new"
+	AlertAcked      = "acked"
+	AlertSuppressed = "suppressed"
+	AlertResolved   = "resolved"
 
 	SeverityInfo    = "info"
 	SeverityWarning = "warning"
 	SeverityError   = "error"
+)
+
+const (
+	AlertSourceCheck  = "check"
+	AlertSourceTask   = "task"
+	AlertSourceAgent  = "agent"
+	AlertSourceSystem = "system"
+)
+
+const (
+	AlertEventOpened       = "opened"
+	AlertEventOccurrence   = "occurrence"
+	AlertEventEscalated    = "escalated"
+	AlertEventAcknowledged = "acknowledged"
+	AlertEventResolved     = "resolved"
+	AlertEventReopened     = "reopened"
+	AlertEventSuppressed   = "suppressed"
+	AlertEventUnsuppressed = "unsuppressed"
+)
+
+const (
+	SuppressionSilence     = "silence"
+	SuppressionMaintenance = "maintenance"
 )
 
 // User is a console operator.
@@ -144,7 +177,7 @@ type Policy struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// PolicyAssignment binds a policy to a client, site, or agent.
+// PolicyAssignment binds a policy to a client, site, group, or agent.
 type PolicyAssignment struct {
 	ID        string    `json:"id"`
 	PolicyID  string    `json:"policy_id"`
@@ -164,19 +197,74 @@ type Check struct {
 	WarnThreshold *float64        `json:"warn_threshold,omitempty"`
 	ErrThreshold  *float64        `json:"err_threshold,omitempty"`
 	IntervalSec   int             `json:"interval_sec"`
+	FailureCount  int             `json:"failure_count"`
+	RecoveryCount int             `json:"recovery_count"`
+	Hysteresis    float64         `json:"hysteresis"`
+	CooldownSec   int             `json:"cooldown_sec"`
+	TimeoutSec    int             `json:"timeout_sec"`
 	Enabled       bool            `json:"enabled"`
 	CreatedAt     time.Time       `json:"created_at"`
+	Instances     []CheckInstance `json:"instances,omitempty"`
+	Summary       *CheckSummary   `json:"summary,omitempty"`
 }
 
 // CheckResult is one execution of a check on an agent.
 type CheckResult struct {
-	ID      string    `json:"id"`
-	CheckID string    `json:"check_id"`
-	AgentID string    `json:"agent_id"`
-	Status  string    `json:"status"`
-	Value   *float64  `json:"value,omitempty"`
-	Output  string    `json:"output"`
-	RanAt   time.Time `json:"ran_at"`
+	ID          string    `json:"id"`
+	CheckID     string    `json:"check_id"`
+	AgentID     string    `json:"agent_id"`
+	ExecutionID *string   `json:"execution_id,omitempty"`
+	Status      string    `json:"status"`
+	Value       *float64  `json:"value,omitempty"`
+	Output      string    `json:"output"`
+	RanAt       time.Time `json:"ran_at"`
+}
+
+// CheckExecution is one durably tracked dispatch. The execution id correlates
+// server dispatch, the agent's persisted result, and the acknowledgement that
+// lets the agent remove that result from its outbox.
+type CheckExecution struct {
+	ID           string     `json:"id"`
+	CheckID      string     `json:"check_id"`
+	AgentID      string     `json:"agent_id"`
+	Status       string     `json:"status"`
+	DispatchedAt time.Time  `json:"dispatched_at"`
+	DeadlineAt   time.Time  `json:"deadline_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+// CheckState is the current per-device state of a direct or policy check.
+type CheckState struct {
+	CheckID              string     `json:"check_id"`
+	AgentID              string     `json:"agent_id"`
+	Status               string     `json:"status"`
+	ConsecutiveFailures  int        `json:"consecutive_failures"`
+	ConsecutiveSuccesses int        `json:"consecutive_successes"`
+	LastValue            *float64   `json:"last_value,omitempty"`
+	LastOutput           string     `json:"last_output"`
+	LastResultAt         *time.Time `json:"last_result_at,omitempty"`
+	LastDispatchAt       *time.Time `json:"last_dispatch_at,omitempty"`
+	ReconciledAt         *time.Time `json:"reconciled_at,omitempty"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+// CheckInstance makes a policy check honest in the UI: one definition can have
+// many independently healthy or failing target devices.
+type CheckInstance struct {
+	AgentID      string     `json:"agent_id"`
+	Hostname     string     `json:"hostname"`
+	Status       string     `json:"status"`
+	Value        *float64   `json:"value,omitempty"`
+	Output       string     `json:"output"`
+	LastResultAt *time.Time `json:"last_result_at,omitempty"`
+}
+
+type CheckSummary struct {
+	Total   int `json:"total"`
+	Unknown int `json:"unknown"`
+	Passing int `json:"passing"`
+	Warning int `json:"warning"`
+	Failing int `json:"failing"`
 }
 
 // Task is scheduled automation owned by an agent or a policy.
@@ -201,28 +289,96 @@ type Task struct {
 // in-process job so a server restart — which tends to happen exactly when
 // things are going wrong — does not drop the alert nobody has read yet.
 type Notification struct {
-	ID        string  `json:"id"`
-	EventType string  `json:"event_type"`
-	AlertID   *string `json:"alert_id,omitempty"`
-	AgentID   *string `json:"agent_id,omitempty"`
-	UserID    *string `json:"user_id,omitempty"`
-	Recipient string  `json:"recipient"`
-	Subject   string  `json:"subject"`
-	Body      string  `json:"body"`
-	Attempts  int     `json:"attempts"`
+	ID         string  `json:"id"`
+	EventType  string  `json:"event_type"`
+	AlertID    *string `json:"alert_id,omitempty"`
+	AgentID    *string `json:"agent_id,omitempty"`
+	UserID     *string `json:"user_id,omitempty"`
+	Recipient  string  `json:"recipient"`
+	Subject    string  `json:"subject"`
+	Body       string  `json:"body"`
+	Attempts   int     `json:"attempts"`
+	DedupeKey  string  `json:"dedupe_key,omitempty"`
+	LeaseToken *string `json:"lease_token,omitempty"`
 }
 
 // Alert is a notification raised by a failing check/task or an offline agent.
 type Alert struct {
+	ID                  string     `json:"id"`
+	AgentID             *string    `json:"agent_id,omitempty"`
+	SourceType          string     `json:"source_type"`
+	SourceID            *string    `json:"source_id,omitempty"`
+	ConditionKey        string     `json:"condition_key"`
+	AgentSnapshotID     *string    `json:"agent_snapshot_id,omitempty"`
+	AgentHostname       string     `json:"agent_hostname"`
+	SiteID              *string    `json:"site_id,omitempty"`
+	ClientID            *string    `json:"client_id,omitempty"`
+	GroupID             *string    `json:"group_id,omitempty"`
+	Severity            string     `json:"severity"`
+	Message             string     `json:"message"`
+	Status              string     `json:"status"`
+	CreatedAt           time.Time  `json:"created_at"`
+	FirstSeenAt         time.Time  `json:"first_seen_at"`
+	LastSeenAt          time.Time  `json:"last_seen_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	ResolvedAt          *time.Time `json:"resolved_at,omitempty"`
+	OccurrenceCount     int64      `json:"occurrence_count"`
+	ObservedValue       *float64   `json:"observed_value,omitempty"`
+	ThresholdValue      *float64   `json:"threshold_value,omitempty"`
+	Output              string     `json:"output"`
+	Version             int64      `json:"version"`
+	AckedAt             *time.Time `json:"acked_at,omitempty"`
+	AckedBy             string     `json:"acked_by,omitempty"`
+	ResolvedBy          string     `json:"resolved_by,omitempty"`
+	ResolutionKind      string     `json:"resolution_kind,omitempty"`
+	ResolutionNote      string     `json:"resolution_note,omitempty"`
+	ReopenedFrom        *string    `json:"reopened_from,omitempty"`
+	LastNotifiedAt      *time.Time `json:"last_notified_at,omitempty"`
+	NotificationPending bool       `json:"notification_pending,omitempty"`
+	NotificationKind    string     `json:"notification_kind,omitempty"`
+	// LastObservationID is the identity of the observation that last changed this
+	// alert. A caller that can be retried supplies one so the repeat is
+	// recognised; it is bookkeeping, not something an API client should see.
+	LastObservationID string     `json:"-"`
+	NotificationSeq   int64      `json:"notification_seq,omitempty"`
+	SilencedUntil     *time.Time `json:"silenced_until,omitempty"`
+	SilencedBy        string     `json:"silenced_by,omitempty"`
+	SilenceReason     string     `json:"silence_reason,omitempty"`
+}
+
+type AlertEvent struct {
+	ID            string          `json:"id"`
+	AlertID       string          `json:"alert_id"`
+	EventType     string          `json:"event_type"`
+	Actor         string          `json:"actor"`
+	Severity      *string         `json:"severity,omitempty"`
+	Message       string          `json:"message"`
+	ObservedValue *float64        `json:"observed_value,omitempty"`
+	Metadata      json.RawMessage `json:"metadata"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+type AlertSuppression struct {
 	ID         string     `json:"id"`
-	AgentID    *string    `json:"agent_id,omitempty"`
-	SourceType string     `json:"source_type"`
-	SourceID   *string    `json:"source_id,omitempty"`
-	Severity   string     `json:"severity"`
-	Message    string     `json:"message"`
-	Status     string     `json:"status"`
+	Kind       string     `json:"kind"`
+	ScopeType  string     `json:"scope_type"`
+	ScopeID    string     `json:"scope_id"`
+	StartsAt   time.Time  `json:"starts_at"`
+	EndsAt     time.Time  `json:"ends_at"`
+	Reason     string     `json:"reason"`
+	CreatedBy  string     `json:"created_by"`
 	CreatedAt  time.Time  `json:"created_at"`
-	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+	CanceledAt *time.Time `json:"canceled_at,omitempty"`
+	CanceledBy string     `json:"canceled_by,omitempty"`
+}
+
+type AlertCounts struct {
+	New        int `json:"new"`
+	Acked      int `json:"acked"`
+	Suppressed int `json:"suppressed"`
+	Resolved   int `json:"resolved"`
+	Open       int `json:"open"`
+	Total      int `json:"total"`
 }
 
 // ===================== Patch management =====================

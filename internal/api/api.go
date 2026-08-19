@@ -228,11 +228,19 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermJobsManage)).Post("/jobs/{id}/complete", s.completeJob)
 
 		r.With(s.requirePermission(models.PermAlertsView)).Get("/alerts", s.listAlerts)
+		r.With(s.requirePermission(models.PermAlertsView)).Get("/alerts/{id}", s.getAlert)
+		r.With(s.requirePermission(models.PermAlertsView)).Get("/alerts/{id}/events", s.listAlertEvents)
+		r.With(s.requirePermission(models.PermAlertsView)).Get("/alert-suppressions", s.listAlertSuppressions)
+		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/bulk", s.bulkAlertAction)
 		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/{id}/ack", s.ackAlert)
 		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/{id}/resolve", s.resolveAlert)
+		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alerts/{id}/suppress", s.suppressAlert)
+		r.With(s.requirePermission(models.PermAlertsManage)).Post("/alert-suppressions", s.createAlertSuppression)
+		r.With(s.requirePermission(models.PermAlertsManage)).Delete("/alert-suppressions/{id}", s.cancelAlertSuppression)
 
 		r.With(s.requirePermission(models.PermChecksView)).Get("/checks", s.listChecks)
 		r.With(s.requirePermission(models.PermChecksView)).Get("/checks/{id}/results", s.listCheckResults)
+		r.With(s.requirePermission(models.PermChecksView)).Get("/checks/{id}/instances", s.listCheckInstances)
 		r.With(s.requirePermission(models.PermChecksManage)).Post("/checks", s.createCheck)
 		r.With(s.requirePermission(models.PermChecksManage)).Put("/checks/{id}", s.updateCheck)
 		r.With(s.requirePermission(models.PermChecksManage)).Delete("/checks/{id}", s.deleteCheck)
@@ -954,6 +962,9 @@ func decode(r *http.Request, v any) error {
 func httpStatusFor(err error) int {
 	if errors.Is(err, store.ErrNotFound) {
 		return http.StatusNotFound
+	}
+	if errors.Is(err, store.ErrConflict) {
+		return http.StatusConflict
 	}
 	return http.StatusBadRequest
 }

@@ -132,7 +132,9 @@ See [18-update-signing-runbook](18-update-signing-runbook.md).
   now points at it. ✅
 - Token-gated `/metrics` (Prometheus text, disabled unless `RMM_METRICS_TOKEN` is
   set): DB pool, online-agent and goroutine gauges, plus the notification outbox
-  (`rmm_notifications_pending`, `_failed`, `_oldest_pending_seconds`). ✅
+  (`rmm_notifications_pending`, `_processing`, `_failed`,
+  `_oldest_pending_seconds`) and monitoring counters for processing errors,
+  dispatch failures, and check timeouts. ✅
 - **Remaining ⬜:** structured logging + log aggregation; a backup-failure alert;
   richer metrics (job queue depth, relay sessions) as needs emerge.
 
@@ -143,6 +145,11 @@ say you do not notice it. A healthy outbox drains within a worker tick (30s), so
 whatever the cause — a dead relay, a rejected password, a half-filled alerts
 profile. `rmm_notifications_failed` rising means messages were abandoned after
 five attempts and are never coming back.
+
+Monitoring history is pruned daily, with 90-day defaults. Override
+`RMM_ALERT_RETENTION_DAYS`, `RMM_CHECK_RESULT_RETENTION_DAYS`, and
+`RMM_NOTIFICATION_RETENTION_DAYS` when contractual retention differs. The purge
+never age-deletes active alerts, pending check executions, or queued mail.
 - **Acceptance:** a scraper collects `/metrics`; orchestrator gates routing on
   `/readyz`; backup failures alert.
 

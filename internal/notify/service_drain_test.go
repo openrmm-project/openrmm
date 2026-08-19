@@ -244,11 +244,19 @@ func TestDrainGivingUpNamesTheRelayIntegration(t *testing.T) {
 			TLSMode: "none", Timeout: 5 * time.Second,
 		}, "", nil
 	})
-	// Spend the attempt budget without waiting out the real backoff: claiming
-	// increments attempts and leaves next_attempt_at alone, so the row stays due.
-	// The drain below is then the final attempt.
+	// Spend the attempt budget without waiting out the real backoff. Every claim
+	// now carries a durable lease, so release that lease through the same fenced
+	// failure path the worker uses. The drain below is then the final attempt.
 	for i := 0; i < maxAttempts-1; i++ {
-		if _, err := st.ClaimPendingNotifications(ctx, 10); err != nil {
+		claimed, err := st.ClaimPendingNotificationsLeased(ctx, 10, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(claimed) != 1 || claimed[0].LeaseToken == nil {
+			t.Fatalf("attempt %d claim = %#v", i+1, claimed)
+		}
+		if err := st.MarkNotificationFailedLeased(ctx, claimed[0].ID, *claimed[0].LeaseToken,
+			claimed[0].Attempts, maxAttempts, "preloaded failure", 0); err != nil {
 			t.Fatal(err)
 		}
 	}

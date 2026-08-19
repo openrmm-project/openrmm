@@ -122,7 +122,7 @@ func (s *Server) createPolicyAssignment(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "scope_type and scope_id required")
 		return
 	}
-	if !oneOf(in.ScopeType, models.ScopeClient, models.ScopeSite, models.ScopeAgent) {
+	if !oneOf(in.ScopeType, models.ScopeClient, models.ScopeSite, models.ScopeGroup, models.ScopeAgent) {
 		writeErr(w, http.StatusBadRequest, "invalid policy scope_type")
 		return
 	}

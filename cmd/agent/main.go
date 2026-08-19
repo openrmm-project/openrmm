@@ -64,14 +64,18 @@ type agent struct {
 	conn            *websocket.Conn
 	running         map[string]context.CancelFunc // job_id -> cancel, for in-flight jobs
 	patchMu         sync.Mutex                    // scan/install/reboot must not overlap
+	checkMu         sync.Mutex
+	runningChecks   map[string]struct{} // execution_id -> running, prevents duplicate dispatch work
 
 	// outbox holds job results the server hasn't acked yet, keyed by job_id, and
 	// is persisted to disk. Results are re-sent on every (re)connect and on a
 	// timer until acked, so a dropped connection (or an agent restart) can't lose
 	// a finished job's result and strand it in "sent" server-side.
-	obmu       sync.Mutex
-	outbox     map[string]protocol.JobResultMsg
-	outboxPath string
+	obmu            sync.Mutex
+	outbox          map[string]protocol.JobResultMsg
+	outboxPath      string
+	checkOutbox     map[string]protocol.CheckResultMsg
+	checkOutboxPath string
 }
 
 // program adapts the agent to the service interface.
@@ -126,9 +130,16 @@ func main() {
 
 	cleanupUpdateTemps()
 
-	a := &agent{wsURL: *wsURL, enrollToken: *enroll, allowEnrollment: *enrollOnly, statePath: *statePath, healthPath: *healthPath, quit: make(chan struct{}), running: map[string]context.CancelFunc{}, outbox: map[string]protocol.JobResultMsg{}, outboxPath: *statePath + ".outbox"}
+	a := &agent{
+		wsURL: *wsURL, enrollToken: *enroll, allowEnrollment: *enrollOnly,
+		statePath: *statePath, healthPath: *healthPath, quit: make(chan struct{}),
+		running: map[string]context.CancelFunc{}, runningChecks: map[string]struct{}{},
+		outbox: map[string]protocol.JobResultMsg{}, outboxPath: *statePath + ".outbox",
+		checkOutbox: map[string]protocol.CheckResultMsg{}, checkOutboxPath: *statePath + ".check-outbox",
+	}
 	a.loadState()
 	a.loadOutbox()
+	a.loadCheckOutbox()
 	if a.st.AgentID != "" && a.st.AgentToken != "" {
 		// A legacy service may still pass -enroll-token, but an enrolled agent must
 		// never retain or reuse that bootstrap capability at runtime.
@@ -390,6 +401,11 @@ func (a *agent) handleFrame(raw []byte) {
 		if json.Unmarshal(env.Data, &ack) == nil {
 			a.ackResult(ack.JobID)
 		}
+	case protocol.MsgCheckResultAck:
+		var ack protocol.CheckResultAckMsg
+		if json.Unmarshal(env.Data, &ack) == nil {
+			a.ackCheckResult(ack.ExecutionID)
+		}
 	case protocol.MsgRunCheck:
 		var chk protocol.RunCheckMsg
 		if json.Unmarshal(env.Data, &chk) == nil {
@@ -471,6 +487,9 @@ func (a *agent) runJob(job protocol.JobMsg) {
 // the server acks it (job_result_ack), giving at-least-once delivery.
 func (a *agent) reportResult(res protocol.JobResultMsg) {
 	a.obmu.Lock()
+	if a.outbox == nil {
+		a.outbox = map[string]protocol.JobResultMsg{}
+	}
 	a.outbox[res.JobID] = res
 	a.saveOutbox()
 	a.obmu.Unlock()
@@ -496,9 +515,16 @@ func (a *agent) flushOutbox() {
 	for _, res := range a.outbox {
 		pending = append(pending, res)
 	}
+	checkPending := make([]protocol.CheckResultMsg, 0, len(a.checkOutbox))
+	for _, res := range a.checkOutbox {
+		checkPending = append(checkPending, res)
+	}
 	a.obmu.Unlock()
 	for _, res := range pending {
 		a.queue(protocol.MsgJobResult, res)
+	}
+	for _, res := range checkPending {
+		a.queue(protocol.MsgCheckResult, res)
 	}
 }
 
@@ -507,15 +533,85 @@ func (a *agent) loadOutbox() {
 	if err != nil {
 		return
 	}
-	_ = json.Unmarshal(b, &a.outbox)
+	loaded := map[string]protocol.JobResultMsg{}
+	if err := json.Unmarshal(b, &loaded); err != nil || loaded == nil {
+		log.Printf("warning: could not load outbox: %v", err)
+		return
+	}
+	for id, result := range loaded {
+		if id == "" || result.JobID != id {
+			delete(loaded, id)
+		}
+	}
+	a.outbox = loaded
+}
+
+func (a *agent) loadCheckOutbox() {
+	b, err := os.ReadFile(a.checkOutboxPath)
+	if err != nil {
+		return
+	}
+	loaded := map[string]protocol.CheckResultMsg{}
+	if err := json.Unmarshal(b, &loaded); err != nil || loaded == nil {
+		log.Printf("warning: could not load check outbox: %v", err)
+		return
+	}
+	for id, result := range loaded {
+		if id == "" || result.ExecutionID != id || result.CheckID == "" {
+			delete(loaded, id)
+		}
+	}
+	a.checkOutbox = loaded
 }
 
 // saveOutbox persists the outbox; callers hold a.obmu.
 func (a *agent) saveOutbox() {
-	b, _ := json.Marshal(a.outbox)
-	if err := os.WriteFile(a.outboxPath, b, 0o600); err != nil {
+	b, err := json.Marshal(a.outbox)
+	if err == nil {
+		err = writeDurableFile(a.outboxPath, b)
+	}
+	if err != nil {
 		log.Printf("warning: could not persist outbox: %v", err)
 	}
+}
+
+func (a *agent) saveCheckOutbox() {
+	b, err := json.Marshal(a.checkOutbox)
+	if err == nil {
+		err = writeDurableFile(a.checkOutboxPath, b)
+	}
+	if err != nil {
+		log.Printf("warning: could not persist check outbox: %v", err)
+	}
+}
+
+func (a *agent) reportCheckResult(res protocol.CheckResultMsg) {
+	if res.ExecutionID == "" {
+		// Compatibility with a pre-execution-id server. There is nothing stable to
+		// acknowledge, so retain the legacy best-effort behavior.
+		a.queue(protocol.MsgCheckResult, res)
+		return
+	}
+	a.obmu.Lock()
+	if a.checkOutbox == nil {
+		a.checkOutbox = map[string]protocol.CheckResultMsg{}
+	}
+	a.checkOutbox[res.ExecutionID] = res
+	a.saveCheckOutbox()
+	a.obmu.Unlock()
+	a.queue(protocol.MsgCheckResult, res)
+}
+
+func (a *agent) ackCheckResult(executionID string) {
+	if executionID == "" {
+		return
+	}
+	a.obmu.Lock()
+	if _, ok := a.checkOutbox[executionID]; ok {
+		delete(a.checkOutbox, executionID)
+		a.saveCheckOutbox()
+	}
+	a.obmu.Unlock()
 }
 
 // cancelJob kills the process of an in-flight job, if any.
@@ -592,11 +688,29 @@ func (a *agent) loadState() {
 
 func (a *agent) saveState() error {
 	b, _ := json.MarshalIndent(a.st, "", "  ")
-	tmp := a.statePath + ".new"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	if err := writeDurableFile(a.statePath, b); err != nil {
 		log.Printf("warning: could not persist agent state: %v", err)
 		return err
+	}
+	return nil
+}
+
+// writeDurableFile replaces a small state file only after its new contents are
+// on disk. A crash during a direct truncate/write could otherwise erase every
+// unacknowledged result and turn at-least-once delivery back into best effort.
+func writeDurableFile(path string, b []byte) error {
+	if path == "" {
+		return fmt.Errorf("empty state path")
+	}
+	tmp := path + ".new"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if chmodErr := f.Chmod(0o600); chmodErr != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return chmodErr
 	}
 	if _, err := f.Write(b); err == nil {
 		err = f.Sync()
@@ -606,17 +720,15 @@ func (a *agent) saveState() error {
 	}
 	if err != nil {
 		_ = os.Remove(tmp)
-		log.Printf("warning: could not persist agent state: %v", err)
 		return err
 	}
-	if err := os.Rename(tmp, a.statePath); err != nil {
+	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
-		log.Printf("warning: could not replace agent state: %v", err)
 		return err
 	}
 	// Syncing the directory makes the rename durable on filesystems that support
 	// it. Windows may reject directory Sync; the already-synced file is still safe.
-	if dir, err := os.Open(filepath.Dir(a.statePath)); err == nil {
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
 		_ = dir.Sync()
 		_ = dir.Close()
 	}
@@ -997,9 +1109,38 @@ const maxJobOutput = 1 << 20
 // runCheck executes a check by type and reports the raw outcome; the server
 // applies thresholds and decides passing/warning/failing.
 func (a *agent) runCheck(chk protocol.RunCheckMsg) {
+	if chk.ExecutionID != "" {
+		// A server retry after a lost acknowledgement should resend the durable
+		// result, not execute the check a second time.
+		a.obmu.Lock()
+		stored, complete := a.checkOutbox[chk.ExecutionID]
+		a.obmu.Unlock()
+		if complete {
+			a.queue(protocol.MsgCheckResult, stored)
+			return
+		}
+		a.checkMu.Lock()
+		if a.runningChecks == nil {
+			a.runningChecks = map[string]struct{}{}
+		}
+		if _, running := a.runningChecks[chk.ExecutionID]; running {
+			a.checkMu.Unlock()
+			return
+		}
+		a.runningChecks[chk.ExecutionID] = struct{}{}
+		a.checkMu.Unlock()
+		defer func() {
+			a.checkMu.Lock()
+			delete(a.runningChecks, chk.ExecutionID)
+			a.checkMu.Unlock()
+		}()
+	}
 	var value *float64
 	var output string
 	success := false
+	timeout := checkExecutionTimeout(chk.TimeoutSec)
+	checkCtx, cancelCheck := context.WithTimeout(context.Background(), timeout)
+	defer cancelCheck()
 
 	switch chk.Type {
 	case "diskspace":
@@ -1035,31 +1176,40 @@ func (a *agent) runCheck(chk protocol.RunCheckMsg) {
 			Host string `json:"host"`
 		}
 		_ = json.Unmarshal(chk.Config, &cfg)
-		success, output = doPing(cfg.Host)
+		success, output = doPing(checkCtx, cfg.Host)
 	case "winservice":
 		var cfg struct {
 			Service string `json:"service"`
 		}
 		_ = json.Unmarshal(chk.Config, &cfg)
-		success, output = winServiceRunning(cfg.Service)
+		success, output = winServiceRunning(checkCtx, cfg.Service)
 	case "script":
 		var cfg struct {
 			Shell  string `json:"shell"`
 			Script string `json:"script"`
 		}
 		_ = json.Unmarshal(chk.Config, &cfg)
-		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		code, out, errOut := runScriptCtx(cctx, cfg.Shell, cfg.Script)
-		ccancel()
+		code, out, errOut := runScriptCtx(checkCtx, cfg.Shell, cfg.Script)
 		fc := float64(code)
 		value, output, success = &fc, out+errOut, code == 0
 	default:
 		output = "unknown check type: " + chk.Type
 	}
 
-	a.queue(protocol.MsgCheckResult, protocol.CheckResultMsg{
-		CheckID: chk.CheckID, Value: value, Output: truncateRunes(output, 4000), Success: success,
+	a.reportCheckResult(protocol.CheckResultMsg{
+		CheckID: chk.CheckID, ExecutionID: chk.ExecutionID,
+		Value: value, Output: truncateRunes(output, 4000), Success: success,
 	})
+}
+
+func checkExecutionTimeout(timeoutSec int) time.Duration {
+	timeout := time.Duration(timeoutSec) * time.Second
+	if timeout < 5*time.Second || timeout > 24*time.Hour {
+		// Older servers did not send a timeout. Keep their historical script
+		// limit while bounding malformed values from a compromised controller.
+		return 2 * time.Minute
+	}
+	return timeout
 }
 
 func defaultDiskPath() string {
@@ -1069,12 +1219,10 @@ func defaultDiskPath() string {
 	return "/"
 }
 
-func doPing(host string) (bool, string) {
+func doPing(ctx context.Context, host string) (bool, string) {
 	if host == "" {
 		return false, "no host configured"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(ctx, "ping", "-n", "1", "-w", "3000", host)
@@ -1085,15 +1233,13 @@ func doPing(host string) (bool, string) {
 	return err == nil, string(out)
 }
 
-func winServiceRunning(name string) (bool, string) {
+func winServiceRunning(ctx context.Context, name string) (bool, string) {
 	if runtime.GOOS != "windows" {
 		return false, "winservice check only runs on Windows"
 	}
 	if name == "" {
 		return false, "no service configured"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	out, _ := exec.CommandContext(ctx, "sc", "query", name).CombinedOutput()
 	running := strings.Contains(string(out), "RUNNING")
 	return running, string(out)

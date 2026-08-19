@@ -331,10 +331,39 @@ CREATE TABLE IF NOT EXISTS checks (
     err_threshold   DOUBLE PRECISION,
     interval_sec    INTEGER NOT NULL DEFAULT 300,
     enabled         BOOLEAN NOT NULL DEFAULT true,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    failure_count   INTEGER NOT NULL DEFAULT 2
+                        CONSTRAINT checks_failure_count_valid CHECK (failure_count BETWEEN 1 AND 100),
+    recovery_count  INTEGER NOT NULL DEFAULT 2
+                        CONSTRAINT checks_recovery_count_valid CHECK (recovery_count BETWEEN 1 AND 100),
+    hysteresis      DOUBLE PRECISION NOT NULL DEFAULT 2
+                        CONSTRAINT checks_hysteresis_valid CHECK (hysteresis BETWEEN 0 AND 100),
+    cooldown_sec    INTEGER NOT NULL DEFAULT 300
+                        CONSTRAINT checks_cooldown_valid CHECK (cooldown_sec BETWEEN 0 AND 604800),
+    timeout_sec     INTEGER NOT NULL DEFAULT 180
+                        CONSTRAINT checks_timeout_valid CHECK (timeout_sec BETWEEN 5 AND 86400)
 );
 CREATE INDEX IF NOT EXISTS idx_checks_agent ON checks(agent_id);
 CREATE INDEX IF NOT EXISTS idx_checks_policy ON checks(policy_id);
+
+CREATE TABLE IF NOT EXISTS check_executions (
+    id            UUID PRIMARY KEY,
+    check_id      UUID NOT NULL REFERENCES checks(id) ON DELETE CASCADE,
+    agent_id      UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    status        TEXT NOT NULL DEFAULT 'pending'
+                      CONSTRAINT check_executions_status_valid
+                      CHECK (status IN ('pending', 'completed', 'timed_out', 'canceled')),
+    dispatched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deadline_at   TIMESTAMPTZ NOT NULL,
+    completed_at  TIMESTAMPTZ,
+    CONSTRAINT check_executions_deadline_valid CHECK (deadline_at >= dispatched_at)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_check_execution_pending
+    ON check_executions(check_id, agent_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_check_executions_deadline
+    ON check_executions(deadline_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_check_executions_history
+    ON check_executions(check_id, agent_id, dispatched_at DESC);
 
 -- Per-(check, agent) latest status + history.
 CREATE TABLE IF NOT EXISTS check_results (
@@ -344,9 +373,32 @@ CREATE TABLE IF NOT EXISTS check_results (
     status      TEXT NOT NULL, -- passing | warning | failing
     value       DOUBLE PRECISION,
     output      TEXT NOT NULL DEFAULT '',
-    ran_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    ran_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    execution_id UUID REFERENCES check_executions(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_check_results_lookup ON check_results(check_id, agent_id, ran_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_check_results_execution
+    ON check_results(execution_id) WHERE execution_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS check_states (
+    check_id              UUID NOT NULL REFERENCES checks(id) ON DELETE CASCADE,
+    agent_id              UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    status                TEXT NOT NULL DEFAULT 'unknown'
+                               CONSTRAINT check_states_status_valid
+                               CHECK (status IN ('unknown', 'passing', 'warning', 'failing')),
+    consecutive_failures  INTEGER NOT NULL DEFAULT 0,
+    consecutive_successes INTEGER NOT NULL DEFAULT 0,
+    last_value            DOUBLE PRECISION,
+    last_output           TEXT NOT NULL DEFAULT '',
+    last_result_at        TIMESTAMPTZ,
+    last_dispatch_at      TIMESTAMPTZ,
+    reconciled_at         TIMESTAMPTZ,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (check_id, agent_id),
+    CONSTRAINT check_states_counts_valid
+        CHECK (consecutive_failures >= 0 AND consecutive_successes >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_check_states_agent ON check_states(agent_id, status);
 
 -- ===================== Tasks (scheduled automation) =====================
 -- Like checks, a task is owned by an agent or a policy.
@@ -377,21 +429,118 @@ CREATE INDEX IF NOT EXISTS idx_tasks_policy ON tasks(policy_id);
 -- ===================== Alerts =====================
 
 CREATE TABLE IF NOT EXISTS alerts (
-    id          UUID PRIMARY KEY,
-    agent_id    UUID REFERENCES agents(id) ON DELETE CASCADE,
-    source_type TEXT NOT NULL,  -- check | task | agent
-    source_id   UUID,
-    severity    TEXT NOT NULL DEFAULT 'warning', -- info | warning | error
-    message     TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'new', -- new | acked | resolved
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    resolved_at TIMESTAMPTZ
+    id              UUID PRIMARY KEY,
+    agent_id        UUID REFERENCES agents(id) ON DELETE SET NULL,
+    source_type     TEXT NOT NULL CONSTRAINT alerts_source_type_valid CHECK (source_type IN
+                        ('check', 'task', 'agent', 'system', 'job', 'patch', 'update', 'backup', 'security')),
+    source_id       UUID,
+    severity        TEXT NOT NULL DEFAULT 'warning'
+                            CONSTRAINT alerts_severity_valid CHECK (severity IN ('info', 'warning', 'error')),
+    message         TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'new'
+                            CONSTRAINT alerts_status_valid CHECK (status IN ('new', 'acked', 'suppressed', 'resolved')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at     TIMESTAMPTZ,
+    condition_key   TEXT NOT NULL DEFAULT '',
+    agent_snapshot_id UUID,
+    agent_hostname  TEXT NOT NULL DEFAULT '',
+    site_id         UUID,
+    client_id       UUID,
+    group_id        UUID,
+    first_seen_at   TIMESTAMPTZ NOT NULL,
+    last_seen_at    TIMESTAMPTZ NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL,
+    occurrence_count BIGINT NOT NULL DEFAULT 1
+                              CONSTRAINT alerts_occurrence_count_valid CHECK (occurrence_count > 0),
+    observed_value  DOUBLE PRECISION,
+    threshold_value DOUBLE PRECISION,
+    output          TEXT NOT NULL DEFAULT '',
+    version         BIGINT NOT NULL DEFAULT 1
+                            CONSTRAINT alerts_version_valid CHECK (version > 0),
+    acked_at        TIMESTAMPTZ,
+    acked_by        TEXT NOT NULL DEFAULT '',
+    resolved_by     TEXT NOT NULL DEFAULT '',
+    resolution_kind TEXT NOT NULL DEFAULT '',
+    resolution_note TEXT NOT NULL DEFAULT '',
+    reopened_from   UUID REFERENCES alerts(id) ON DELETE SET NULL,
+    last_notified_at TIMESTAMPTZ,
+    notification_pending BOOLEAN NOT NULL DEFAULT false,
+    notification_kind TEXT NOT NULL DEFAULT '',
+    notification_seq BIGINT NOT NULL DEFAULT 0,
+    silenced_until  TIMESTAMPTZ,
+    silenced_by     TEXT NOT NULL DEFAULT '',
+    silence_reason  TEXT NOT NULL DEFAULT '',
+    -- Identity of the observation that last changed this alert. A caller that
+    -- can be retried supplies a stable key and the repeat is recognised; one
+    -- that supplies none is always a new occurrence. Inferring the repeat from
+    -- timestamp and content collapsed distinct simultaneous observations, which
+    -- is what migration 009 replaced.
+    last_observation_id TEXT NOT NULL DEFAULT '',
+    CONSTRAINT alerts_resolution_consistent
+        CHECK ((status = 'resolved') = (resolved_at IS NOT NULL)),
+    CONSTRAINT alerts_notification_valid
+        CHECK (notification_seq >= 0 AND notification_kind IN ('', 'opened', 'resolved'))
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status, created_at DESC);
--- At most one open alert per (source_type, source_id, agent).
+CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_agent_open
+    ON alerts(agent_id, created_at DESC) WHERE status <> 'resolved';
+CREATE INDEX IF NOT EXISTS idx_alerts_agent_snapshot
+    ON alerts(agent_snapshot_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_scope
+    ON alerts(client_id, site_id, group_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_source_history
+    ON alerts(source_type, source_id, agent_id, condition_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_silenced_until
+    ON alerts(silenced_until) WHERE status = 'suppressed';
+CREATE INDEX IF NOT EXISTS idx_alerts_notification_pending
+    ON alerts(updated_at, id) WHERE notification_pending;
+-- At most one open alert per null-safe source identity.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_open
-    ON alerts(source_type, source_id, agent_id)
+    ON alerts(
+        source_type,
+        COALESCE(source_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        COALESCE(agent_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        condition_key
+    )
     WHERE status <> 'resolved';
+
+CREATE TABLE IF NOT EXISTS alert_events (
+    id             UUID PRIMARY KEY,
+    alert_id       UUID NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+    event_type     TEXT NOT NULL CONSTRAINT alert_events_type_valid CHECK (event_type IN
+                       ('opened', 'occurrence', 'escalated', 'acknowledged',
+                        'resolved', 'reopened', 'suppressed', 'unsuppressed')),
+    actor          TEXT NOT NULL DEFAULT 'system',
+    severity       TEXT CONSTRAINT alert_events_severity_valid
+                        CHECK (severity IS NULL OR severity IN ('info', 'warning', 'error')),
+    message        TEXT NOT NULL DEFAULT '',
+    observed_value DOUBLE PRECISION,
+    metadata       JSONB NOT NULL DEFAULT '{}',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_alert_events_alert
+    ON alert_events(alert_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS alert_suppressions (
+    id          UUID PRIMARY KEY,
+    kind        TEXT NOT NULL CONSTRAINT alert_suppressions_kind_valid
+                         CHECK (kind IN ('silence', 'maintenance')),
+    scope_type  TEXT NOT NULL CONSTRAINT alert_suppressions_scope_valid
+                         CHECK (scope_type IN ('agent', 'check', 'policy', 'site', 'client', 'group')),
+    scope_id    UUID NOT NULL,
+    starts_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ends_at     TIMESTAMPTZ NOT NULL,
+    reason      TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    canceled_at TIMESTAMPTZ,
+    canceled_by TEXT NOT NULL DEFAULT '',
+    CONSTRAINT alert_suppressions_window_valid CHECK (ends_at > starts_at)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_suppressions_active
+    ON alert_suppressions(scope_type, scope_id, starts_at, ends_at)
+    WHERE canceled_at IS NULL;
 
 -- ===================== Remote sessions =====================
 
@@ -589,18 +738,28 @@ CREATE TABLE IF NOT EXISTS notifications (
     recipient       TEXT        NOT NULL,
     subject         TEXT        NOT NULL,
     body            TEXT        NOT NULL,
-    status          TEXT        NOT NULL DEFAULT 'pending', -- pending | sent | failed
+    status          TEXT        NOT NULL DEFAULT 'pending'
+                                CONSTRAINT notifications_status_valid
+                                CHECK (status IN ('pending', 'processing', 'sent', 'failed')),
     attempts        INT         NOT NULL DEFAULT 0,
     last_error      TEXT        NOT NULL DEFAULT '',
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    sent_at         TIMESTAMPTZ
+    sent_at         TIMESTAMPTZ,
+    dedupe_key      TEXT        NOT NULL DEFAULT '',
+    lease_token     UUID,
+    lease_until     TIMESTAMPTZ,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Drives the worker's claim query; partial so it stays small as sent rows pile up.
 CREATE INDEX IF NOT EXISTS idx_notifications_pending
     ON notifications (next_attempt_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_dedupe
+    ON notifications(dedupe_key) WHERE dedupe_key <> '';
+CREATE INDEX IF NOT EXISTS idx_notifications_processing_lease
+    ON notifications(lease_until) WHERE status = 'processing';
 
 -- Password reset. Only the hash is stored: a database leak must not hand out
 -- working reset links, exactly like the agent enrollment tokens.

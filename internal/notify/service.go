@@ -2,6 +2,8 @@ package notify
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -41,31 +43,39 @@ func New(st *store.Store, cfg ConfigFunc) *Service { return &Service{store: st, 
 
 // Event describes something worth telling an operator about.
 type Event struct {
-	Type     string
-	AgentID  string
-	Hostname string
-	AlertID  string
-	Subject  string
-	Body     string
+	Type      string
+	AgentID   string
+	Hostname  string
+	AlertID   string
+	Subject   string
+	Body      string
+	DedupeKey string
 }
 
 // Queue fans an event out to every in-scope subscriber.
 //
 // Callers invoke this only on a transition (an alert that just opened or just
 // resolved), never on every evaluation — see store.RaiseAlert's opened flag.
-func (s *Service) Queue(ctx context.Context, ev Event) {
+func (s *Service) Queue(ctx context.Context, ev Event) error {
 	if s == nil || ev.AgentID == "" {
-		return
+		return nil
 	}
-	cfg, _, err := s.config(ctx)
-	if err != nil || !cfg.Enabled() {
-		return // email not configured: alerts still land in the console
+	var recipients []store.NotificationRecipient
+	var err error
+	if ev.AlertID != "" {
+		recipients, err = s.store.RecipientsForAlertEvent(ctx, ev.AlertID, ev.Type, store.DefaultSubscribed(ev.Type))
+	} else {
+		recipients, err = s.store.RecipientsForAgentEvent(ctx, ev.AgentID, ev.Type, store.DefaultSubscribed(ev.Type))
 	}
-	recipients, err := s.store.RecipientsForAgentEvent(ctx, ev.AgentID, ev.Type, store.DefaultSubscribed(ev.Type))
 	if err != nil {
 		log.Printf("notify: recipients for %s: %v", ev.Type, err)
-		return
+		return err
 	}
+	dedupeKey := ev.DedupeKey
+	if dedupeKey == "" {
+		dedupeKey = eventDedupeKey(ev.Type, ev.AlertID, ev.Subject, ev.Body)
+	}
+	var queueErr error
 	for _, r := range recipients {
 		userID, alertID := r.UserID, ev.AlertID
 		n := &models.Notification{
@@ -75,14 +85,17 @@ func (s *Service) Queue(ctx context.Context, ev Event) {
 			Recipient: r.Email,
 			Subject:   ev.Subject,
 			Body:      ev.Body,
+			DedupeKey: dedupeKey + ":" + r.UserID,
 		}
 		if alertID != "" {
 			n.AlertID = &alertID
 		}
 		if err := s.store.EnqueueNotification(ctx, n); err != nil {
 			log.Printf("notify: enqueue for %s: %v", r.Email, err)
+			queueErr = errors.Join(queueErr, err)
 		}
 	}
+	return queueErr
 }
 
 // RunWorker drains the outbox until ctx is done.
@@ -110,15 +123,19 @@ func (s *Service) drain(ctx context.Context) {
 		return
 	}
 	s.setQuiet(false, "")
-	pending, err := s.store.ClaimPendingNotifications(ctx, claimBatch)
+	pending, err := s.store.ClaimPendingNotificationsLeased(ctx, claimBatch, 5*time.Minute)
 	if err != nil {
 		log.Printf("notify: claim: %v", err)
 		return
 	}
 	for _, n := range pending {
+		if n.LeaseToken == nil {
+			log.Printf("notify: claimed message %s without a lease token", n.ID)
+			continue
+		}
 		sendErr := Send(cfg, Message{To: n.Recipient, Subject: n.Subject, Body: n.Body})
 		if sendErr == nil {
-			if err := s.store.MarkNotificationSent(ctx, n.ID); err != nil {
+			if err := s.store.MarkNotificationSentLeased(ctx, n.ID, *n.LeaseToken); err != nil {
 				log.Printf("notify: mark sent %s: %v", n.ID, err)
 			}
 			// Mail is moving again, so the next failure is news rather than a
@@ -128,9 +145,10 @@ func (s *Service) drain(ctx context.Context) {
 		}
 		// Exponential backoff: a greylisting server (very common) rejects the
 		// first attempt on purpose and accepts a later retry.
-		backoff := baseBackoff * time.Duration(1<<min(n.Attempts, 4))
+		backoff := baseBackoff * time.Duration(1<<min(max(n.Attempts-1, 0), 4))
 		reason := truncate(sendErr.Error(), 500)
-		if err := s.store.MarkNotificationFailed(ctx, n.ID, n.Attempts, maxAttempts, reason, backoff); err != nil {
+		if err := s.store.MarkNotificationFailedLeased(ctx, n.ID, *n.LeaseToken,
+			n.Attempts, maxAttempts, reason, backoff); err != nil {
 			log.Printf("notify: mark failed %s: %v", n.ID, err)
 		}
 		// The first failure of an outage is logged, not only the fifth attempt:
@@ -221,8 +239,9 @@ func AlertOpenedEvent(eventType, agentID, hostname, alertID, detail, consoleURL 
 	}
 	b.WriteString("\nYou receive this because the device is inside your access scope.\n")
 	b.WriteString("Change what you are notified about in Users & Settings.\n")
+	body := b.String()
 	return Event{Type: eventType, AgentID: agentID, Hostname: hostname, AlertID: alertID,
-		Subject: subject, Body: b.String()}
+		Subject: subject, Body: body, DedupeKey: eventDedupeKey(eventType, alertID, subject, detail)}
 }
 
 // QueueJobFailed mails a failed job. It satisfies jobs.Notifier.
@@ -252,11 +271,12 @@ func (s *Service) QueueJobFailed(ctx context.Context, agentID, hostname, jobID, 
 		fmt.Fprintf(&b, "\nOpen the console: %s\n", strings.TrimRight(consoleURL, "/"))
 	}
 	s.Queue(ctx, Event{
-		Type:     store.NotifyJobFailed,
-		AgentID:  agentID,
-		Hostname: hostname,
-		Subject:  fmt.Sprintf("[OpenRMM] %s — %s", labelFor(store.NotifyJobFailed), hostname),
-		Body:     b.String(),
+		Type:      store.NotifyJobFailed,
+		AgentID:   agentID,
+		Hostname:  hostname,
+		Subject:   fmt.Sprintf("[OpenRMM] %s — %s", labelFor(store.NotifyJobFailed), hostname),
+		Body:      b.String(),
+		DedupeKey: "job_failed:" + jobID,
 	})
 }
 
@@ -286,7 +306,7 @@ func SendPasswordReset(cfg Config, to, username, resetURL string, ttl time.Durat
 
 // AlertResolvedEvent renders the recovery mail, which on-call values more than
 // the original failure notice.
-func AlertResolvedEvent(agentID, hostname, detail, consoleURL string) Event {
+func AlertResolvedEvent(eventType, agentID, hostname, alertID, detail, consoleURL string) Event {
 	subject := fmt.Sprintf("[OpenRMM] Recovered — %s", hostname)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\nDevice: %s\nRecovered: %s\n",
@@ -294,8 +314,9 @@ func AlertResolvedEvent(agentID, hostname, detail, consoleURL string) Event {
 	if consoleURL != "" {
 		fmt.Fprintf(&b, "\nOpen the console: %s\n", strings.TrimRight(consoleURL, "/"))
 	}
-	return Event{Type: store.NotifyCheckRecovered, AgentID: agentID, Hostname: hostname,
-		Subject: subject, Body: b.String()}
+	body := b.String()
+	return Event{Type: eventType, AgentID: agentID, Hostname: hostname, AlertID: alertID,
+		Subject: subject, Body: body, DedupeKey: eventDedupeKey(eventType, alertID, subject, detail)}
 }
 
 func labelFor(eventType string) string {
@@ -304,12 +325,19 @@ func labelFor(eventType string) string {
 		return "Check failing"
 	case store.NotifyAgentOffline:
 		return "Agent offline"
+	case store.NotifyAgentRecovered:
+		return "Agent recovered"
 	case store.NotifyJobFailed:
 		return "Job failed"
 	case store.NotifyCheckRecovered:
 		return "Recovered"
 	}
 	return "Alert"
+}
+
+func eventDedupeKey(eventType, alertID, subject, body string) string {
+	sum := sha256.Sum256([]byte(subject + "\x00" + body))
+	return fmt.Sprintf("%s:%s:%x", eventType, alertID, sum[:8])
 }
 
 func truncate(s string, n int) string {
@@ -321,6 +349,13 @@ func truncate(s string, n int) string {
 
 func min(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

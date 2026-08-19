@@ -1,0 +1,15 @@
+-- Give an alert observation an explicit identity.
+--
+-- Deduplicating a retried observation used to be inferred: an observation whose
+-- timestamp and content matched the alert's current state was treated as a
+-- repeat and did not add an occurrence. That guard cannot tell "the same
+-- observation, delivered twice" from "two genuinely distinct observations that
+-- happen to be identical" — and under concurrency the second case is real. Twelve
+-- simultaneous observations of one condition recorded eleven occurrences, because
+-- two of them landed in the same microsecond and one was read as a retry.
+--
+-- Identity replaces inference. A caller that can be retried supplies a stable
+-- key; the alert remembers the last one it applied and ignores a repeat of it.
+-- A caller that supplies no key is always a new occurrence, which is the honest
+-- answer: without an identity there is nothing to deduplicate against.
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS last_observation_id TEXT NOT NULL DEFAULT '';

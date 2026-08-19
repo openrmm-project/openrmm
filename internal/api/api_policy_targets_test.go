@@ -26,7 +26,7 @@ func TestTaskTargetsResolveThroughThePolicyIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, err := f.store.CreateAgent(ctx, "host-"+uuid.NewString(), "linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID)
+	agent, err := f.store.CreateAgent(ctx, "host-"+uuid.NewString(), "linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

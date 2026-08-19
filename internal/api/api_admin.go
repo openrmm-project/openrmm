@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -178,6 +179,37 @@ func (s *Server) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, g)
+}
+
+// renameGroup changes a department's name.
+//
+// A department could be created and deleted and nothing in between, so fixing a
+// typo meant deleting it — which unfiles every device under it — and building it
+// again. Renaming moves only the label.
+func (s *Server) renameGroup(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requireScope(w, r, models.ScopeGroup, id) {
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name required")
+		return
+	}
+	g, err := s.store.RenameGroup(r.Context(), id, name)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "group.rename", id, auditLabel("name", g.Name))
+	writeJSON(w, http.StatusOK, g)
 }
 
 // deleteGroup removes a group. Destructive and permission-gated; never AI/MCP.

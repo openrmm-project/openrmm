@@ -189,7 +189,7 @@ func TestRestrictedPrincipalCannotPromoteUserToAdminIntegration(t *testing.T) {
 		t.Fatalf("scoped admin identity scope=%q err=%v", identity.scopeUser, err)
 	}
 
-	agent, err := st.CreateAgent(ctx, "relay-agent", "linux", "amd64", "1.0.0", "agent-token", &site.ID)
+	agent, err := st.CreateAgent(ctx, "relay-agent", "linux", "amd64", "1.0.0", "agent-token", &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,11 +287,11 @@ func TestRouterAuthAndTenantScopeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowedAgent, err := st.CreateAgent(ctx, "allowed-agent", "linux", "amd64", "1.0.0", "agent-token", &allowedSite.ID)
+	allowedAgent, err := st.CreateAgent(ctx, "allowed-agent", "linux", "amd64", "1.0.0", "agent-token", &allowedSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherAgent, err := st.CreateAgent(ctx, "other-agent", "linux", "amd64", "1.0.0", "other-agent-token", &otherSite.ID)
+	otherAgent, err := st.CreateAgent(ctx, "other-agent", "linux", "amd64", "1.0.0", "other-agent-token", &otherSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

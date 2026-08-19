@@ -633,15 +633,24 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
   const [newDept, setNewDept] = useState('');
   const [confirmDelSite, setConfirmDelSite] = useState(false);
   const [confirmDelDept, setConfirmDelDept] = useState(null);
+  const [renamingDept, setRenamingDept] = useState(null); // { id, value } while renaming
+  const [enrollDept, setEnrollDept] = useState('');       // department the token binds to, '' = the site
   const [moveDevice, setMoveDevice] = useState(null);
   const [confirmDelDevice, setConfirmDelDevice] = useState(null);
   const [selected, setSelected] = useState(null); // device id -> open the full detail drawer (same as the Devices tab)
-  useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
+  useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); setRenamingDept(null); setEnrollDept(''); }, [site.id]);
   // Clear a generated enrollment command when the selected site/department changes.
   useEffect(() => { setEnrollToken(null); }, [site.id, focusDept]);
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
+  const renameDept = async () => {
+    const d = renamingDept; if (!d) return;
+    const name = d.value.trim();
+    if (!name || name === d.name) { setRenamingDept(null); return; }
+    try { await api.renameGroup(d.id, name); setRenamingDept(null); window.dataBus.emit('groups'); toast.success('Department renamed'); }
+    catch (e) { toast.error('Failed', e.message); }
+  };
   const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delDevice = async () => { const d = confirmDelDevice; if (!d) return; try { await api.deleteDevice(d.id); window.dataBus.emit('devices'); toast.info('Device deleted'); } catch (e) { toast.error('Failed to delete device', e.message); } };
@@ -655,7 +664,19 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       window.dataBus.emit('devices'); setMoveDevice(null); toast.success('Device moved');
     } catch (e) { toast.error('Failed to move device', e.message); }
   };
-  const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 1, ttl_hours: 24 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+  const genEnroll = async () => {
+    setBusy(true);
+    const dept = depts.find((g) => g.id === enrollDept);
+    try {
+      const t = await api.createEnrollToken({
+        description: 'Enroll for ' + site.name + (dept ? ' / ' + dept.name : ''),
+        site_id: site.id, group_id: enrollDept || undefined, uses: 1, ttl_hours: 24,
+      });
+      setEnrollToken(t.token);
+      toast.success('Enrollment token created', dept ? 'Agents land in ' + dept.name : 'Agents land in ' + site.name);
+    } catch (e) { toast.error('Failed', e.message); }
+    finally { setBusy(false); }
+  };
 
   // Group the site's devices by department; ungrouped devices fall under "No department".
   const deptIds = new Set(depts.map((g) => g.id));
@@ -734,7 +755,17 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
                   <div key={g.id} className="space-y-1.5">
                     <div className="flex items-center gap-1.5 px-0.5">
                       <Icon name="building" size={12} className="text-faint" />
-                      <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                      {renamingDept?.id === g.id ? (
+                        <Input value={renamingDept.value} autoFocus className="h-7 flex-1 max-w-[260px]"
+                          onChange={(e) => setRenamingDept({ ...renamingDept, value: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') renameDept(); if (e.key === 'Escape') setRenamingDept(null); }}
+                          onBlur={renameDept} />
+                      ) : (
+                        <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                      )}
+                      {/* Renaming used to mean deleting and rebuilding, which unfiles
+                          every device under it. Only the label moves now. */}
+                      {can('clients.manage') && renamingDept?.id !== g.id && <button onClick={() => setRenamingDept({ id: g.id, name: g.name, value: g.name })} title={'Rename ' + g.name} className="text-faint hover:text-ink p-0.5"><Icon name="edit" size={12} /></button>}
                       {can('clients.manage') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
                     </div>
                     {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
@@ -751,7 +782,19 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
             <div className="text-[12px] font-semibold text-muted">Enroll a new agent</div>
             {enrollToken && <button onClick={() => setEnrollToken(null)} className="text-[11.5px] text-faint hover:text-ink inline-flex items-center gap-1"><Icon name="close" size={12} />Hide</button>}
           </div>
-          {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
+          {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : (
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* The command does not describe the placement — the token does — so
+                  the department has to be chosen before the token is minted. */}
+              {depts.length > 0 && (
+                <Select value={enrollDept} onChange={(e) => setEnrollDept(e.target.value)} className="h-9 w-auto min-w-[190px]">
+                  <option value="">Land in {site.name}</option>
+                  {depts.map((g) => <option key={g.id} value={g.id}>Land in {g.name}</option>)}
+                </Select>
+              )}
+              <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>
+            </div>
+          )}
         </div>
       )}
       <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?" body={<>This removes <b>{site.name}</b> and its departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete site" />

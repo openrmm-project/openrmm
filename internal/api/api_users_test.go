@@ -281,11 +281,11 @@ func TestScopeSurvivesDeletingItsTargetDeviceIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doomed, err := f.store.CreateAgent(ctx, "doomed", "linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID)
+	doomed, err := f.store.CreateAgent(ctx, "doomed", "linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := f.store.CreateAgent(ctx, "replacement", "linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID)
+	replacement, err := f.store.CreateAgent(ctx, "replacement", "linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

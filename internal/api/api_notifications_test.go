@@ -87,10 +87,10 @@ func TestSMTPViewHidesPassword(t *testing.T) {
 // Auditing which fields were touched is the point; auditing their values would
 // copy the mail credentials into a table meant for a trail.
 func TestChangedSMTPRecordsFieldsNotValues(t *testing.T) {
-	changed := changedSMTP(settings.ProfileAccount, settings.SMTPSaveRequest{Host: "smtp.example.test", Password: "s3cret"})
+	changed := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{Host: "smtp.example.test", Password: "s3cret"})
 	var sawPassword bool
 	for _, field := range changed {
-		if field == "smtp.password" {
+		if field == "smtp.alerts.password" {
 			sawPassword = true
 		}
 		if field == "s3cret" {
@@ -101,14 +101,13 @@ func TestChangedSMTPRecordsFieldsNotValues(t *testing.T) {
 		t.Error("a submitted password should be recorded as a changed field")
 	}
 
-	cleared := changedSMTP(settings.ProfileAccount, settings.SMTPSaveRequest{})
-	if len(cleared) != 1 || cleared[0] != "smtp.cleared" {
-		t.Errorf("clearing the host should audit as smtp.cleared, got %v", cleared)
+	// A blank host is not a clear: the sender may still be set and the profile
+	// now rides the account transport.
+	inherited := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{})
+	if len(inherited) != 2 || inherited[0] != "smtp.alerts.transport_inherited" {
+		t.Errorf("withdrawing the host should audit as inheritance, got %v", inherited)
 	}
 
-	// The alerts profile keys its own fields, and a blank host there is not a
-	// clear: the sender may still be set and the profile now rides the account
-	// transport.
 	alerts := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{Host: "relay.example.test", Password: "s3cret"})
 	var sawAlertPassword bool
 	for _, field := range alerts {

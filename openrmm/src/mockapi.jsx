@@ -284,8 +284,8 @@ const api = {
   updateMyNotifications(body) { return PUT('/api/me/notifications', body); },
   // Two transports: the account one carries password resets, the alerts one
   // carries notifications and falls back to the account one when it has no host.
+  // Read-only: the account transport comes from RMM_SMTP_* in the server env.
   getSMTPConfig() { return GET('/api/config/smtp'); },
-  updateSMTPConfig(body) { return PUT('/api/config/smtp', body); },
   testSMTP(to) { return POST('/api/config/smtp/test', { to }); },
   getAlertSMTPConfig() { return GET('/api/config/smtp/alerts'); },
   updateAlertSMTPConfig(body) { return PUT('/api/config/smtp/alerts', body); },

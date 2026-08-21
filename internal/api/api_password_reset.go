@@ -65,11 +65,11 @@ func (s *Server) deliverPasswordReset(email string) {
 		}
 		return // no account: nothing to send, and the caller was already told nothing
 	}
-	cfg, err := settings.SMTPConfig(ctx, s.store, s.cfg)
-	if err != nil || !cfg.Enabled() {
+	cfg := settings.AccountSMTPConfig(s.cfg)
+	if !cfg.Enabled() {
 		// Minting a token nobody can receive would let it expire unused while the
 		// operator wonders why resets do not work. Say so in the log instead.
-		log.Printf("password reset: SMTP is not configured; cannot send to %s", email)
+		log.Printf("password reset: RMM_SMTP_* is not configured; cannot send to %s", email)
 		return
 	}
 	token := auth.NewToken()

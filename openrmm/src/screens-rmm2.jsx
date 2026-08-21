@@ -1790,30 +1790,22 @@ function ConfigPanel() {
   );
 }
 
-// SMTPPanel configures the instance-wide mail transport. Separate from the
-// Configuration tab because it carries its own save and a test send: proving
-// delivery works is the whole point, and it should not wait on an unrelated form.
-// Two transports, one screen. Account mail (password resets) is the one an
-// instance must have; alerts may ride it or leave through a sender — or a relay
-// — of their own, which is why the alerts profile is a second form rather than
-// two extra fields on the first.
+// SMTPPanel configures the alert mail transport. Separate from the Configuration
+// tab because it carries its own save and a test send: proving delivery works is
+// the whole point, and it should not wait on an unrelated form.
+//
+// Only one transport is editable here. Account mail — password resets — is set
+// with RMM_SMTP_* in the server environment and has no form, because on a hosted
+// instance the reset sender belongs to the operator's domain and a tenant admin
+// must not be able to repoint it. Alerts are the tenant's own choice, so they
+// stay editable; leaving the host blank sends them through the account transport.
 function SMTPPanel() {
-  const [profile, setProfile] = useState('account');
-  return (
-    <>
-      <Tabs className="mb-4" value={profile} onChange={setProfile} tabs={[
-        { value: 'account', label: 'Account & password reset' },
-        { value: 'alerts', label: 'Alert notifications' },
-      ]} />
-      {profile === 'account' ? <SMTPProfilePanel profile="account" /> : <SMTPProfilePanel profile="alerts" />}
-    </>
-  );
+  return <SMTPProfilePanel />;
 }
 
-function SMTPProfilePanel({ profile }) {
+function SMTPProfilePanel() {
   const toast = useToast();
-  const alerts = profile === 'alerts';
-  const cfgQ = useQuery(['smtp', profile], () => alerts ? api.getAlertSMTPConfig() : api.getSMTPConfig(), { invalidateOn: ['smtp'] });
+  const cfgQ = useQuery(['smtp', 'alerts'], () => api.getAlertSMTPConfig(), { invalidateOn: ['smtp'] });
   const c = cfgQ.data;
   const [form, setForm] = useState(null);
   const [testTo, setTestTo] = useState('');
@@ -1824,26 +1816,24 @@ function SMTPProfilePanel({ profile }) {
     if (!c) return;
     setForm({
       host: c.host || '', port: c.port || 587, username: c.username || '', password: '',
-      from: c.from || '', from_name: c.from_name || (alerts ? '' : 'OpenRMM'), tls_mode: c.tls_mode || 'starttls',
+      from: c.from || '', from_name: c.from_name || '', tls_mode: c.tls_mode || 'starttls',
       skip_verify: !!c.skip_verify,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   // The alerts profile with no host of its own rides the account transport, so
   // the connection fields below are inert and say so rather than lying.
-  const inherits = alerts && !(form?.host || '').trim();
-  const effective = (alerts ? c?.effective : c) || {};
+  const inherits = !(form?.host || '').trim();
+  const effective = c?.effective || {};
 
   const save = async () => {
     setSaving(true);
     try {
       const body = { ...form, port: Number(form.port) || 587 };
-      alerts ? await api.updateAlertSMTPConfig(body) : await api.updateSMTPConfig(body);
+      await api.updateAlertSMTPConfig(body);
       set('password', ''); cfgQ.refetch();
       toast.success('Mail settings saved',
-        alerts
-          ? (body.host ? 'Alerts now leave through their own relay.' : 'Alerts ride the account transport.')
-          : (body.host ? 'Send a test message to confirm delivery.' : 'Email delivery is now off.'));
+        body.host ? 'Alerts now leave through their own relay.' : 'Alerts ride the account transport.');
     } catch (e) { toast.error('Could not save mail settings', e.message); }
     finally { setSaving(false); }
   };
@@ -1851,7 +1841,7 @@ function SMTPProfilePanel({ profile }) {
   const test = async () => {
     setTesting(true);
     try {
-      const r = alerts ? await api.testAlertSMTP(testTo.trim()) : await api.testSMTP(testTo.trim());
+      const r = await api.testAlertSMTP(testTo.trim());
       toast.success('Test message sent', 'Delivered to ' + r.to + '.');
     } catch (e) { toast.error('Test failed', e.message); }
     finally { setTesting(false); }
@@ -1864,7 +1854,7 @@ function SMTPProfilePanel({ profile }) {
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      {alerts && (
+      {
         <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2.5">
           <Icon name="info" size={14} className="text-muted mt-0.5 shrink-0" />
           <div className="text-[11.5px] text-muted">
@@ -1874,7 +1864,7 @@ function SMTPProfilePanel({ profile }) {
             {effective.from && <> Currently sending as <b className="text-ink mono">{effective.from}</b>.</>}
           </div>
         </div>
-      )}
+      }
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="send" size={15} /></div>
@@ -1882,10 +1872,8 @@ function SMTPProfilePanel({ profile }) {
           <span className="ml-auto"><StatusPill status={effective.enabled ? 'online' : 'warning'} label={effective.enabled ? (inherits ? 'Inherited' : 'Configured') : 'Not configured'} size="sm" /></span>
         </div>
         <div className="space-y-3">
-          <Field label="Host" hint={alerts
-            ? 'Leave blank to send alerts through the account transport. Setting a host makes this a separate relay with its own credentials.'
-            : 'Clearing the host turns email delivery off and discards the stored password.'}>
-            <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder={alerts ? 'blank = use the account server' : 'smtp.example.com'} />
+          <Field label="Host" hint="Leave blank to send alerts through the account transport. Setting a host makes this a separate relay with its own credentials.">
+            <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder="blank = use the account server" />
           </Field>
           <Field label="Port"><Input className="mono" type="number" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="587" disabled={inherits} /></Field>
           <Field label="Encryption" hint="STARTTLS on 587 is the usual choice; TLS means implicit TLS, normally on 465.">
@@ -1910,10 +1898,10 @@ function SMTPProfilePanel({ profile }) {
           <div className="text-[13px] font-semibold text-ink">Sender &amp; credentials</div>
         </div>
         <div className="space-y-3">
-          <Field label="From address" hint={alerts ? 'Optional. Blank sends alerts under the account sender.' : undefined}>
-            <Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder={alerts ? 'alerts@example.com' : 'rmm@example.com'} />
+          <Field label="From address" hint="Optional. Blank sends alerts under the account sender.">
+            <Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder="alerts@example.com" />
           </Field>
-          <Field label="From name"><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder={alerts ? 'OpenRMM Alerts' : 'OpenRMM'} /></Field>
+          <Field label="From name"><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder="OpenRMM Alerts" /></Field>
           {/* Credentials belong to a host. An alerts profile that names none must not
               keep a password, so the fields go away instead of quietly doing nothing. */}
           {!inherits && <>

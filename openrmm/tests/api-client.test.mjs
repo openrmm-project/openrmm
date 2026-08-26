@@ -203,3 +203,31 @@ test('the software report exposes its manufacturer column', async () => {
     /\{ key: 'name', label: 'Software',[^\n]+\n\s*\{ key: 'manufacturer', label: 'Manufacturer', text: \(r\) => r\.manufacturer \}/,
     'Manufacturer should appear immediately after Software');
 });
+
+// An AI proposal is a row nobody has reviewed: created disabled and stamped with
+// its author. The console has to mark it, because a proposal that looks like
+// ordinary configuration is a proposal nobody will review.
+test('the console marks AI proposals awaiting review', async () => {
+  const rmm = await readFile(path.join(root, 'src', 'screens-rmm.jsx'), 'utf8');
+
+  assert.match(rmm, /function awaitingReview\(row\)/,
+    'the screens need a shared predicate for an unreviewed proposal');
+  assert.match(rmm, /!!row\?\.proposed_by && !row\?\.approved_by/,
+    'awaiting review means proposed but not yet approved: both fields matter');
+
+  // Both screens that own runnable configuration must show it.
+  const taskRow = rmm.slice(rmm.indexOf('function TasksScreen'));
+  assert.match(taskRow, /awaitingReview\(t\) && <ProposalBadge \/>/,
+    'the tasks table should badge an unreviewed proposal');
+  const checkRow = rmm.slice(rmm.indexOf('function ChecksScreen'), rmm.indexOf('function TasksScreen'));
+  assert.match(checkRow, /awaitingReview\(c\) && <ProposalBadge \/>/,
+    'the checks table should badge an unreviewed proposal');
+
+  // The policies screen is a separate file, so the helpers must be exported onto
+  // window — each source file is wrapped in its own block scope by the build.
+  assert.match(rmm, /window\.awaitingReview = awaitingReview/);
+  assert.match(rmm, /window\.ProposalBadge = ProposalBadge/);
+  const rmm2 = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
+  assert.match(rmm2, /awaitingReview\(policy\) &&[\s\S]{0,60}<ProposalBadge \/>/,
+    'a proposed policy should be badged on its card');
+});

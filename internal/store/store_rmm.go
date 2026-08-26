@@ -963,17 +963,19 @@ func (s *Store) DeleteScript(ctx context.Context, id string) error {
 // ===================== Policies =====================
 
 // CreatePolicy adds a policy.
-func (s *Store) CreatePolicy(ctx context.Context, name, desc string) (*models.Policy, error) {
+func (s *Store) CreatePolicy(ctx context.Context, name, desc, proposedBy string) (*models.Policy, error) {
 	id := newID()
-	if _, err := s.pool.Exec(ctx, `INSERT INTO policies (id, name, description) VALUES ($1,$2,$3)`, id, name, desc); err != nil {
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO policies (id, name, description, proposed_by) VALUES ($1,$2,$3,$4)`,
+		id, name, desc, proposedBy); err != nil {
 		return nil, err
 	}
-	return &models.Policy{ID: id, Name: name, Description: desc, CreatedAt: time.Now()}, nil
+	return &models.Policy{ID: id, Name: name, Description: desc, ProposedBy: proposedBy, CreatedAt: time.Now()}, nil
 }
 
 // ListPolicies returns all policies.
 func (s *Store) ListPolicies(ctx context.Context) ([]models.Policy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, description, created_at FROM policies ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT id, name, description, proposed_by, approved_by, created_at FROM policies ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -981,7 +983,7 @@ func (s *Store) ListPolicies(ctx context.Context) ([]models.Policy, error) {
 	var out []models.Policy
 	for rows.Next() {
 		var p models.Policy
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -992,7 +994,7 @@ func (s *Store) ListPolicies(ctx context.Context) ([]models.Policy, error) {
 // ListPoliciesForUser returns policies that apply to at least one agent in the
 // user's access scope. Unscoped users see all policies.
 func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]models.Policy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT p.id, p.name, p.description, p.created_at
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT p.id, p.name, p.description, p.proposed_by, p.approved_by, p.created_at
 		FROM policies p
 		WHERE NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
 		OR EXISTS (
@@ -1021,7 +1023,7 @@ func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]model
 	var out []models.Policy
 	for rows.Next() {
 		var p models.Policy
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -1093,8 +1095,8 @@ func (s *Store) UpdatePolicy(ctx context.Context, id, name, desc string) (*model
 	var p models.Policy
 	err := s.pool.QueryRow(ctx,
 		`UPDATE policies SET name=$2, description=$3 WHERE id=$1
-		 RETURNING id, name, description, created_at`,
-		id, name, desc).Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt)
+		 RETURNING id, name, description, proposed_by, approved_by, created_at`,
+		id, name, desc).Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1216,14 +1218,14 @@ const policyFilter = `policy_id IN (
 // ===================== Checks =====================
 
 const checkCols = `id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold,
-	interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled, created_at`
+	interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled, proposed_by, approved_by, created_at`
 
 func scanCheck(row pgx.Row) (*models.Check, error) {
 	var c models.Check
 	err := row.Scan(&c.ID, &c.AgentID, &c.PolicyID, &c.Type, &c.Name, &c.Config,
 		&c.WarnThreshold, &c.ErrThreshold, &c.IntervalSec, &c.FailureCount,
 		&c.RecoveryCount, &c.Hysteresis, &c.CooldownSec, &c.TimeoutSec,
-		&c.Enabled, &c.CreatedAt)
+		&c.Enabled, &c.ProposedBy, &c.ApprovedBy, &c.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1259,11 +1261,11 @@ func (s *Store) CreateCheck(ctx context.Context, c *models.Check) (*models.Check
 	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO checks (id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold,
-		                      interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		                      interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled, proposed_by, approved_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		c.ID, c.AgentID, c.PolicyID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold,
 		c.ErrThreshold, c.IntervalSec, c.FailureCount, c.RecoveryCount, c.Hysteresis,
-		c.CooldownSec, c.TimeoutSec, c.Enabled)
+		c.CooldownSec, c.TimeoutSec, c.Enabled, c.ProposedBy, c.ApprovedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -1332,11 +1334,11 @@ func (s *Store) UpdateCheck(ctx context.Context, c *models.Check) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE checks SET type=$2, name=$3, config=$4, warn_threshold=$5, err_threshold=$6,
 		                   interval_sec=$7, enabled=$8, failure_count=$9, recovery_count=$10,
-		                   hysteresis=$11, cooldown_sec=$12, timeout_sec=$13
+		                   hysteresis=$11, cooldown_sec=$12, timeout_sec=$13, approved_by=$14
 		 WHERE id=$1`,
 		c.ID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold, c.ErrThreshold,
 		c.IntervalSec, c.Enabled, c.FailureCount, c.RecoveryCount, c.Hysteresis,
-		c.CooldownSec, c.TimeoutSec)
+		c.CooldownSec, c.TimeoutSec, c.ApprovedBy)
 	return err
 }
 
@@ -1418,7 +1420,7 @@ func (s *Store) ListCheckResultsForUser(ctx context.Context, checkID, agentID, u
 
 // ===================== Tasks =====================
 
-const taskCols = `id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, created_at`
+const taskCols = `id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by, created_at`
 
 // int32s / ints bridge the INTEGER[] column (pgx wants []int32) and the model's
 // []int field, so callers never deal with the width mismatch.
@@ -1442,7 +1444,7 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 	var t models.Task
 	var mins []int32
 	err := row.Scan(&t.ID, &t.AgentID, &t.PolicyID, &t.Name, &t.ScriptID, &t.Shell, &t.Script,
-		&t.ScheduleKind, &t.IntervalSec, &t.RunAtMinute, &t.DaysOfWeek, &mins, &t.Enabled, &t.CreatedAt)
+		&t.ScheduleKind, &t.IntervalSec, &t.RunAtMinute, &t.DaysOfWeek, &mins, &t.Enabled, &t.ProposedBy, &t.ApprovedBy, &t.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1457,9 +1459,9 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 func (s *Store) CreateTask(ctx context.Context, t *models.Task) (*models.Task, error) {
 	t.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled)
+		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ProposedBy, t.ApprovedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -1522,8 +1524,8 @@ func (s *Store) TasksForAgent(ctx context.Context, agentID string, siteID, clien
 // UpdateTask edits a task.
 func (s *Store) UpdateTask(ctx context.Context, t *models.Task) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE tasks SET name=$2, script_id=$3, shell=$4, script=$5, schedule_kind=$6, interval_sec=$7, run_at_minute=$8, days_of_week=$9, run_at_minutes=$10, enabled=$11 WHERE id=$1`,
-		t.ID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled)
+		`UPDATE tasks SET name=$2, script_id=$3, shell=$4, script=$5, schedule_kind=$6, interval_sec=$7, run_at_minute=$8, days_of_week=$9, run_at_minutes=$10, enabled=$11, approved_by=$12 WHERE id=$1`,
+		t.ID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ApprovedBy)
 	return err
 }
 

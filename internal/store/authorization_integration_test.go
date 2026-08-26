@@ -101,7 +101,7 @@ func TestAuthorizationAndConcurrentBootstrapIntegration(t *testing.T) {
 	ok, err = st.ScopeAllowedForUser(ctx, user.ID, models.ScopeSite, siteB.ID)
 	assertAllowed("foreign site", ok, err, false)
 
-	policy, err := st.CreatePolicy(ctx, "policy", "")
+	policy, err := st.CreatePolicy(ctx, "policy", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

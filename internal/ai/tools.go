@@ -7,6 +7,7 @@ import (
 
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -14,6 +15,7 @@ import (
 type ToolContext struct {
 	Store       *store.Store
 	Jobs        *jobs.Service
+	Patches     *patches.Service
 	Actor       string // who is driving the chat (recorded as job creator / audit actor)
 	ScopeUserID string // restrict tools to this user's access scope ("" = full)
 	Permissions map[string]bool
@@ -109,6 +111,71 @@ func Tools() []Tool {
 				"description":{"type":"string","description":"one-line human summary of the deployment"}
 			},"required":["shell","script","description"],"additionalProperties":false}`),
 		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "propose_task",
+			Description: "Propose a SCHEDULED task (a script that runs on a schedule) for one device or for a policy. This DOES NOT create working automation: the task is created DISABLED and never runs until a person reviews and enables it in the console. Always tell the user their review is required. Use propose_script instead for something that should run once.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"agent_id":{"type":"string","description":"target device id; give this OR policy_id, never both"},
+				"policy_id":{"type":"string","description":"target policy id; the task then applies to every device the policy is assigned to"},
+				"name":{"type":"string","description":"short name for the task"},
+				"shell":{"type":"string","enum":["bash","sh","powershell","cmd","python"],"description":"interpreter for the script"},
+				"script":{"type":"string","description":"the full script source"},
+				"schedule_kind":{"type":"string","enum":["interval","daily","weekly"],"description":"how it repeats"},
+				"interval_sec":{"type":"integer","description":"interval schedules: seconds between runs"},
+				"run_at_minute":{"type":"integer","description":"daily schedules: minutes since midnight UTC (0-1439)"},
+				"days_of_week":{"type":"integer","description":"weekly schedules: bitmask, bit 0 = Sunday"},
+				"run_at_minutes":{"type":"array","items":{"type":"integer"},"description":"weekly schedules: times of day, minutes since midnight UTC"}
+			},"required":["name","shell","script","schedule_kind"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "propose_check",
+			Description: "Propose a monitoring check for one device or for a policy. Created DISABLED: it monitors nothing until a person reviews and enables it in the console. Types: disk_space/memory need warn_threshold above err_threshold (percent free); cpu_load needs err_threshold above warn_threshold; ping needs config {\"host\":\"...\"}; winservice needs config {\"service\":\"...\"}; script needs config {\"shell\":\"...\",\"script\":\"...\"}.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"agent_id":{"type":"string","description":"target device id; give this OR policy_id, never both"},
+				"policy_id":{"type":"string","description":"target policy id"},
+				"type":{"type":"string","enum":["disk_space","memory","cpu_load","ping","winservice","script"],"description":"what to monitor"},
+				"name":{"type":"string","description":"short name for the check"},
+				"config":{"type":"object","description":"type-specific settings"},
+				"warn_threshold":{"type":"number","description":"percent threshold for the warning level"},
+				"err_threshold":{"type":"number","description":"percent threshold for the failing level"},
+				"interval_sec":{"type":"integer","description":"seconds between runs (30-86400, default 300)"}
+			},"required":["type","name"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "propose_policy",
+			Description: "Propose a new policy (a named bundle of checks and tasks that can then be assigned to clients, sites, departments or devices). The policy is created empty and marked as awaiting review; attach tasks and checks to it with propose_task/propose_check. Only unrestricted administrators may create policies — a user confined to one client cannot.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"name":{"type":"string","description":"policy name"},
+				"description":{"type":"string","description":"what this policy is for"}
+			},"required":["name"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "install_patches",
+			Description: "Install patches on a device that a PERSON has already approved. Name the exact identifiers (from list_patches). Anything not already approved is skipped — you cannot approve a patch, and there is no tool to do so: approval is always a human decision made in the console. If the user asks you to install something unapproved, tell them it needs their approval first.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"agent_id":{"type":"string","description":"target device id"},
+				"identifiers":{"type":"array","items":{"type":"string"},"description":"exact patch identifiers to install (from list_patches)"}
+			},"required":["agent_id","identifiers"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "list_tasks",
+			Description: "List the scheduled tasks defined on one device or on one policy, including whether each is enabled and whether it is an AI proposal still awaiting a person's review.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"agent_id":{"type":"string"},"policy_id":{"type":"string"}
+			},"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "list_checks",
+			Description: "List the monitoring checks defined on one device or on one policy, including whether each is enabled and whether it is an AI proposal still awaiting a person's review.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"agent_id":{"type":"string"},"policy_id":{"type":"string"}
+			},"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "list_policies",
+			Description: "List the policies visible to the caller, with id and name. Use this to find a policy_id before proposing a task or check against it.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
 	}
 	return append(base, highLevelTools()...)
 }
@@ -147,6 +214,20 @@ func toolPermission(name string) string {
 		return models.PermDevicesView
 	case "inventory_report":
 		return models.PermReportsView
+	case "propose_task":
+		return models.PermTasksManage
+	case "propose_check":
+		return models.PermChecksManage
+	case "propose_policy":
+		return models.PermPoliciesManage
+	case "install_patches":
+		return models.PermPatchesManage
+	case "list_tasks":
+		return models.PermTasksView
+	case "list_checks":
+		return models.PermChecksView
+	case "list_policies":
+		return models.PermPoliciesView
 	default:
 		return ""
 	}
@@ -179,6 +260,20 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(fleetSummary(ctx, tc))
 	case "inventory_report":
 		return jsonResult(inventoryReport(ctx, tc, args))
+	case "propose_task":
+		return jsonResult(proposeTask(ctx, tc, args))
+	case "propose_check":
+		return jsonResult(proposeCheck(ctx, tc, args))
+	case "propose_policy":
+		return jsonResult(proposePolicy(ctx, tc, args))
+	case "install_patches":
+		return jsonResult(installPatches(ctx, tc, args))
+	case "list_tasks":
+		return jsonResult(listTasksTool(ctx, tc, args))
+	case "list_checks":
+		return jsonResult(listChecksTool(ctx, tc, args))
+	case "list_policies":
+		return jsonResult(listPoliciesTool(ctx, tc))
 	default:
 		return ToolResult{Output: fmt.Sprintf(`{"error":"unknown tool %q"}`, name)}
 	}

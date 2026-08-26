@@ -37,7 +37,7 @@ func (s *Server) createPolicy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name required")
 		return
 	}
-	p, err := s.store.CreatePolicy(r.Context(), in.Name, in.Description)
+	p, err := s.store.CreatePolicy(r.Context(), in.Name, in.Description, "")
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

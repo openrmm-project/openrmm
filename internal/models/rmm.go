@@ -171,10 +171,17 @@ type ScriptCategory struct {
 
 // Policy bundles checks and tasks that are inherited by agents in scope.
 type Policy struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// ProposedBy names the AI actor that authored this policy, empty when a
+	// person did; ApprovedBy names the person who reviewed it. A policy carries
+	// no schedule of its own, so unlike a task it is inert by construction — what
+	// makes it dangerous is the tasks and checks attached to it, and those carry
+	// their own flags and their own constraint.
+	ProposedBy string    `json:"proposed_by,omitempty"`
+	ApprovedBy string    `json:"approved_by,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // PolicyAssignment binds a policy to a client, site, group, or agent.
@@ -203,6 +210,8 @@ type Check struct {
 	CooldownSec   int             `json:"cooldown_sec"`
 	TimeoutSec    int             `json:"timeout_sec"`
 	Enabled       bool            `json:"enabled"`
+	ProposedBy    string          `json:"proposed_by,omitempty"`
+	ApprovedBy    string          `json:"approved_by,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	Instances     []CheckInstance `json:"instances,omitempty"`
 	Summary       *CheckSummary   `json:"summary,omitempty"`
@@ -269,20 +278,26 @@ type CheckSummary struct {
 
 // Task is scheduled automation owned by an agent or a policy.
 type Task struct {
-	ID           string    `json:"id"`
-	AgentID      *string   `json:"agent_id,omitempty"`
-	PolicyID     *string   `json:"policy_id,omitempty"`
-	Name         string    `json:"name"`
-	ScriptID     *string   `json:"script_id,omitempty"`
-	Shell        string    `json:"shell"`
-	Script       string    `json:"script"`
-	ScheduleKind string    `json:"schedule_kind"`
-	IntervalSec  int       `json:"interval_sec"`
-	RunAtMinute  int       `json:"run_at_minute"`
-	DaysOfWeek   int       `json:"days_of_week"`   // weekly: bitmask, bit N = time.Weekday N (0=Sun)
-	RunAtMinutes []int     `json:"run_at_minutes"` // weekly: times of day, minutes since midnight (UTC)
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string  `json:"id"`
+	AgentID      *string `json:"agent_id,omitempty"`
+	PolicyID     *string `json:"policy_id,omitempty"`
+	Name         string  `json:"name"`
+	ScriptID     *string `json:"script_id,omitempty"`
+	Shell        string  `json:"shell"`
+	Script       string  `json:"script"`
+	ScheduleKind string  `json:"schedule_kind"`
+	IntervalSec  int     `json:"interval_sec"`
+	RunAtMinute  int     `json:"run_at_minute"`
+	DaysOfWeek   int     `json:"days_of_week"`   // weekly: bitmask, bit N = time.Weekday N (0=Sun)
+	RunAtMinutes []int   `json:"run_at_minutes"` // weekly: times of day, minutes since midnight (UTC)
+	Enabled      bool    `json:"enabled"`
+	// ProposedBy names the AI actor that authored this task, empty when a person
+	// did. It is permanent provenance and survives review. ApprovedBy names the
+	// person who released it. An unreviewed proposal cannot be enabled — the
+	// scheduler selects WHERE enabled, so it never runs until someone looks.
+	ProposedBy string    `json:"proposed_by,omitempty"`
+	ApprovedBy string    `json:"approved_by,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Notification is one queued outbound message. It is a row rather than an

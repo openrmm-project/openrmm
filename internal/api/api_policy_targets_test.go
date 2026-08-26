@@ -30,7 +30,7 @@ func TestTaskTargetsResolveThroughThePolicyIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := f.store.CreatePolicy(ctx, "baseline-"+uuid.NewString(), "")
+	policy, err := f.store.CreatePolicy(ctx, "baseline-"+uuid.NewString(), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

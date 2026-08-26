@@ -181,7 +181,7 @@ func TestGroupPolicyCheckTargetsAndTrustBoundary(t *testing.T) {
 	if err := st.SetAgentGroup(ctx, agent.ID, &group.ID); err != nil {
 		t.Fatal(err)
 	}
-	policy, err := st.CreatePolicy(ctx, "group policy", "")
+	policy, err := st.CreatePolicy(ctx, "group policy", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

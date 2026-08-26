@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,95 +18,6 @@ import (
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/store"
 )
-
-func supportedCheckType(checkType string) bool {
-	switch checkType {
-	case models.CheckDiskSpace, models.CheckMemory, models.CheckCPULoad,
-		models.CheckPing, models.CheckWinService, models.CheckScript:
-		return true
-	default:
-		return false
-	}
-}
-
-func finitePercent(v *float64) bool {
-	return v != nil && !math.IsNaN(*v) && !math.IsInf(*v, 0) && *v >= 0 && *v <= 100
-}
-
-// validateCheck is shared by create/update so API clients cannot create a
-// definition the agent cannot run or the server would silently treat healthy.
-func validateCheck(c *models.Check) error {
-	c.Type = strings.TrimSpace(c.Type)
-	c.Name = strings.TrimSpace(c.Name)
-	if !supportedCheckType(c.Type) {
-		return fmt.Errorf("unsupported check type %q", c.Type)
-	}
-	if c.Name == "" || len(c.Name) > 200 {
-		return fmt.Errorf("name is required and must be at most 200 characters")
-	}
-	if c.IntervalSec < 30 || c.IntervalSec > 86400 {
-		return fmt.Errorf("interval_sec must be between 30 and 86400")
-	}
-	if c.TimeoutSec < 5 || c.TimeoutSec > 86400 {
-		return fmt.Errorf("timeout_sec must be between 5 and 86400")
-	}
-	if c.FailureCount < 1 || c.FailureCount > 100 || c.RecoveryCount < 1 || c.RecoveryCount > 100 {
-		return fmt.Errorf("failure_count and recovery_count must be between 1 and 100")
-	}
-	if math.IsNaN(c.Hysteresis) || math.IsInf(c.Hysteresis, 0) || c.Hysteresis < 0 || c.Hysteresis > 100 {
-		return fmt.Errorf("hysteresis must be between 0 and 100")
-	}
-	if c.CooldownSec < 0 || c.CooldownSec > 604800 {
-		return fmt.Errorf("cooldown_sec must be between 0 and 604800")
-	}
-	if len(c.Config) == 0 {
-		c.Config = json.RawMessage(`{}`)
-	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(c.Config, &object); err != nil || object == nil {
-		return fmt.Errorf("config must be a JSON object")
-	}
-
-	switch c.Type {
-	case models.CheckDiskSpace, models.CheckMemory:
-		if !finitePercent(c.WarnThreshold) || !finitePercent(c.ErrThreshold) || *c.ErrThreshold >= *c.WarnThreshold {
-			return fmt.Errorf("low-water checks require 0-100 thresholds with err_threshold below warn_threshold")
-		}
-	case models.CheckCPULoad:
-		if !finitePercent(c.WarnThreshold) || !finitePercent(c.ErrThreshold) || *c.ErrThreshold <= *c.WarnThreshold {
-			return fmt.Errorf("CPU checks require 0-100 thresholds with err_threshold above warn_threshold")
-		}
-	case models.CheckPing:
-		var cfg struct {
-			Host string `json:"host"`
-		}
-		if err := json.Unmarshal(c.Config, &cfg); err != nil || strings.TrimSpace(cfg.Host) == "" {
-			return fmt.Errorf("ping config.host is required")
-		}
-		c.WarnThreshold, c.ErrThreshold = nil, nil
-	case models.CheckWinService:
-		var cfg struct {
-			Service string `json:"service"`
-		}
-		if err := json.Unmarshal(c.Config, &cfg); err != nil || strings.TrimSpace(cfg.Service) == "" {
-			return fmt.Errorf("winservice config.service is required")
-		}
-		c.WarnThreshold, c.ErrThreshold = nil, nil
-	case models.CheckScript:
-		var cfg struct {
-			Shell  string `json:"shell"`
-			Script string `json:"script"`
-		}
-		if err := json.Unmarshal(c.Config, &cfg); err != nil || !models.SupportedShell(cfg.Shell) {
-			return fmt.Errorf("script config.shell is required and must be supported")
-		}
-		if strings.TrimSpace(cfg.Script) == "" {
-			return fmt.Errorf("script config.script is required")
-		}
-		c.WarnThreshold, c.ErrThreshold = nil, nil
-	}
-	return nil
-}
 
 func applyCheckDefaults(body []byte, c *models.Check, existing *models.Check) {
 	var raw map[string]json.RawMessage
@@ -168,34 +78,6 @@ func valueOrZero[T any](v *models.Check, f func(*models.Check) T) (zero T) {
 // validateSchedule normalizes and validates a task's schedule fields for its
 // kind. It mutates t (clamping the weekday bitmask) and returns a user-facing
 // error for anything the scheduler could not act on.
-func validateSchedule(t *models.Task) error {
-	switch t.ScheduleKind {
-	case models.ScheduleInterval:
-		if t.IntervalSec <= 0 {
-			return fmt.Errorf("interval_sec must be positive")
-		}
-	case models.ScheduleDaily:
-		if t.RunAtMinute < 0 || t.RunAtMinute > 1439 {
-			return fmt.Errorf("run_at_minute out of range")
-		}
-	case models.ScheduleWeekly:
-		t.DaysOfWeek &= 0x7F // keep the 7 weekday bits (Sun..Sat)
-		if t.DaysOfWeek == 0 {
-			return fmt.Errorf("weekly schedule needs at least one day of week")
-		}
-		if len(t.RunAtMinutes) == 0 {
-			return fmt.Errorf("weekly schedule needs at least one time of day")
-		}
-		for _, m := range t.RunAtMinutes {
-			if m < 0 || m > 1439 {
-				return fmt.Errorf("run_at_minutes out of range")
-			}
-		}
-	default:
-		return fmt.Errorf("unknown schedule_kind %q", t.ScheduleKind)
-	}
-	return nil
-}
 
 // enabledDefaultTrue reports the desired enabled flag: true unless the JSON body
 // explicitly set "enabled": false.
@@ -331,7 +213,7 @@ func (s *Server) createCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	c.Enabled = enabledDefaultTrue(body)
 	applyCheckDefaults(body, &c, nil)
-	if err := validateCheck(&c); err != nil {
+	if err := models.ValidateCheck(&c); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -362,10 +244,11 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	c.ID = id
 	applyCheckDefaults(body, &c, existing)
-	if err := validateCheck(&c); err != nil {
+	if err := models.ValidateCheck(&c); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	c.ApprovedBy = acceptProposal(r, existing.ProposedBy, existing.ApprovedBy, c.Enabled)
 	if err := s.store.UpdateCheck(r.Context(), &c); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -518,7 +401,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if t.Shell == "" {
 		t.Shell = models.ShellBash
 	}
-	if err := validateSchedule(&t); err != nil {
+	if err := models.ValidateSchedule(&t); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -529,6 +412,21 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, out)
+}
+
+// acceptProposal records who released an AI-authored definition. Enabling one is
+// the review: the row was inert until a person looked at it, and the database
+// refuses to enable an unreviewed proposal, so this is what turns a proposal into
+// live configuration. Provenance is untouched — proposed_by outlives acceptance,
+// so the row still says an AI wrote it long after someone approved it.
+func acceptProposal(r *http.Request, proposedBy, approvedBy string, enabled bool) string {
+	if proposedBy == "" {
+		return approvedBy // authored by a person; nothing to accept
+	}
+	if enabled && approvedBy == "" {
+		return actorOf(r)
+	}
+	return approvedBy
 }
 
 func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
@@ -551,10 +449,11 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	if t.ScheduleKind == "" {
 		t.ScheduleKind = models.ScheduleInterval
 	}
-	if err := validateSchedule(&t); err != nil {
+	if err := models.ValidateSchedule(&t); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	t.ApprovedBy = acceptProposal(r, existing.ProposedBy, existing.ApprovedBy, t.Enabled)
 	if err := s.store.UpdateTask(r.Context(), &t); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

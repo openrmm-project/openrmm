@@ -60,9 +60,9 @@ func TestValidateCheckRejectsDefinitionsThatCannotBeEvaluatedSafely(t *testing.T
 			check := validCheckForTest(models.CheckPing)
 			check.Config = json.RawMessage(`{"host":"localhost"}`)
 			tt.mutate(&check)
-			err := validateCheck(&check)
+			err := models.ValidateCheck(&check)
 			if err == nil || !strings.Contains(err.Error(), tt.problem) {
-				t.Fatalf("validateCheck() error = %v, want problem containing %q", err, tt.problem)
+				t.Fatalf("models.ValidateCheck() error = %v, want problem containing %q", err, tt.problem)
 			}
 		})
 	}
@@ -102,7 +102,7 @@ func TestValidateCheckAcceptsSupportedDefinitions(t *testing.T) {
 		}(),
 	}
 	for i := range tests {
-		if err := validateCheck(&tests[i]); err != nil {
+		if err := models.ValidateCheck(&tests[i]); err != nil {
 			t.Errorf("case %d rejected: %v", i, err)
 		}
 	}

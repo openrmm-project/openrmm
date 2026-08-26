@@ -133,7 +133,7 @@ func (s *Server) Router() http.Handler {
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; requires the MCP permission
 	// since it can propose jobs (which still require human approval).
-	mcpHandler := mcpserver.Handler(s.store, s.jobs, func(r *http.Request) mcpserver.Identity {
+	mcpHandler := mcpserver.Handler(s.store, s.jobs, s.patches, func(r *http.Request) mcpserver.Identity {
 		principal := ""
 		if token := bearer(r); token != "" && roleOf(r) != "" {
 			principal = "token:" + auth.Hash(token)

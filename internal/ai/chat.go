@@ -7,6 +7,7 @@ import (
 
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -61,14 +62,15 @@ Hard rules:
 
 // Engine runs the chat assistant against a persisted conversation.
 type Engine struct {
-	client *Client
-	store  *store.Store
-	jobs   *jobs.Service
+	client  *Client
+	store   *store.Store
+	jobs    *jobs.Service
+	patches *patches.Service
 }
 
 // NewEngine builds the chat engine.
-func NewEngine(c *Client, s *store.Store, j *jobs.Service) *Engine {
-	return &Engine{client: c, store: s, jobs: j}
+func NewEngine(c *Client, s *store.Store, j *jobs.Service, p *patches.Service) *Engine {
+	return &Engine{client: c, store: s, jobs: j, patches: p}
 }
 
 // UpdateProvider swaps model provider settings for future chat requests.
@@ -96,7 +98,7 @@ func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, sco
 		return nil, err
 	}
 
-	tc := ToolContext{Store: e.store, Jobs: e.jobs, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions}
+	tc := ToolContext{Store: e.store, Jobs: e.jobs, Patches: e.patches, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions}
 	tools := ToolsForPermissions(permissions)
 	var createdJobs []string
 

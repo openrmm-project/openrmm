@@ -173,17 +173,7 @@ func TestDisabledUserReceivesNoAlertsIntegration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	st, err := New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.pool.Exec(ctx, `TRUNCATE users, clients, agents CASCADE`); err != nil {
-		t.Fatal(err)
-	}
+	st := newIsolatedStore(t, "store_userdisable", url)
 
 	suffix := uuid.NewString()
 	agent, err := st.CreateAgent(ctx, "host-"+suffix, "linux", "amd64", "1.0.0", "tok-"+suffix, nil, nil)

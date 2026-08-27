@@ -20,17 +20,7 @@ func TestAuthorizationAndConcurrentBootstrapIntegration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	st, err := New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.pool.Exec(ctx, `TRUNCATE users, clients, policies, patch_policies CASCADE`); err != nil {
-		t.Fatal(err)
-	}
+	st := newIsolatedStore(t, "store_authz", url)
 
 	var created atomic.Int32
 	var conflicts atomic.Int32

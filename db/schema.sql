@@ -309,8 +309,14 @@ CREATE TABLE IF NOT EXISTS policies (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- AI provenance. proposed_by is permanent ('' = a person authored it);
+    -- approved_by names whoever reviewed it. See migration 010.
+    proposed_by TEXT NOT NULL DEFAULT '',
+    approved_by TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_policies_awaiting_review ON policies (created_at DESC)
+    WHERE proposed_by <> '' AND approved_by = '';
 
 -- A policy is attached to a scope: an agent, a site, or a client. Agents inherit
 -- every policy whose scope covers them.
@@ -348,9 +354,17 @@ CREATE TABLE IF NOT EXISTS checks (
     cooldown_sec    INTEGER NOT NULL DEFAULT 300
                         CONSTRAINT checks_cooldown_valid CHECK (cooldown_sec BETWEEN 0 AND 604800),
     timeout_sec     INTEGER NOT NULL DEFAULT 180
-                        CONSTRAINT checks_timeout_valid CHECK (timeout_sec BETWEEN 5 AND 86400)
+                        CONSTRAINT checks_timeout_valid CHECK (timeout_sec BETWEEN 5 AND 86400),
+    proposed_by     TEXT NOT NULL DEFAULT '',
+    approved_by     TEXT NOT NULL DEFAULT '',
+    -- An AI proposal nobody has reviewed must not be enabled: the scheduler
+    -- selects WHERE enabled, so this keeps it from ever running unseen.
+    CONSTRAINT checks_unreviewed_proposal_disabled
+        CHECK (proposed_by = '' OR approved_by <> '' OR NOT enabled)
 );
 CREATE INDEX IF NOT EXISTS idx_checks_agent ON checks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_checks_awaiting_review ON checks (created_at DESC)
+    WHERE proposed_by <> '' AND approved_by = '';
 CREATE INDEX IF NOT EXISTS idx_checks_policy ON checks(policy_id);
 
 CREATE TABLE IF NOT EXISTS check_executions (
@@ -424,9 +438,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     days_of_week  SMALLINT NOT NULL DEFAULT 0,   -- for weekly: bitmask, bit N = time.Weekday N (0=Sun)
     run_at_minutes INTEGER[] NOT NULL DEFAULT '{}', -- for weekly: times of day (minutes since midnight, UTC)
     enabled       BOOLEAN NOT NULL DEFAULT true,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    proposed_by   TEXT NOT NULL DEFAULT '',
+    approved_by   TEXT NOT NULL DEFAULT '',
+    -- A task is a script with a schedule, run pre-approved by the scheduler. An
+    -- unreviewed AI proposal must never reach it.
+    CONSTRAINT tasks_unreviewed_proposal_disabled
+        CHECK (proposed_by = '' OR approved_by <> '' OR NOT enabled)
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_awaiting_review ON tasks (created_at DESC)
+    WHERE proposed_by <> '' AND approved_by = '';
 -- Weekly schedule (days-of-week bitmask + multiple times per day). Added after
 -- the original interval/daily kinds; back-fills empty on existing rows.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS days_of_week SMALLINT NOT NULL DEFAULT 0;

@@ -62,10 +62,59 @@ server (`11-mcp`).
 | `get_job_status` | `jobs.view` | read | Status + result of a job |
 | `fleet_summary` | `devices.view` (+ `jobs.view` for recent jobs) | read | Aggregate counts + recent jobs when allowed |
 | `inventory_report` | `reports.view` | read | Fleet inventory (software/hardware/machines) by client/site/department, scope-filtered, capped at 1000 rows — see [15-reports](15-reports.md) |
-| `list_patches` | `patches.view` | read | Missing OS patches on a device (KB/advisory, classification, status) — see [16-patch-management](16-patch-management.md). Installing is a human/policy action, not an AI tool. |
+| `list_patches` | `patches.view` | read | Missing OS patches on a device (KB/advisory, classification, status) — see [16-patch-management](16-patch-management.md) |
+| `list_tasks` / `list_checks` / `list_policies` | `tasks.view` / `checks.view` / `policies.view` | read | Existing monitoring configuration, including which rows are unreviewed AI proposals |
+| `install_patches` | `patches.manage` | **write** | Install patches **a person already approved**. `ClaimApprovedPatches` filters to approved identifiers, so an unapproved one installs nothing. There is deliberately no tool to approve a patch |
 | `cancel_job` | `jobs.manage` | control | Reject a pending job or request cancel of a running one |
 | `propose_script` | `jobs.create` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
 | `propose_bulk_deploy` | `jobs.create` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
+| `propose_task` | `tasks.manage` | **write (gated)** | Create a scheduled task **disabled** and stamped `proposed_by` — the scheduler selects `WHERE enabled`, so it never runs until a person enables it |
+| `propose_check` | `checks.manage` | **write (gated)** | Same, for a monitoring check |
+| `propose_policy` | `policies.manage` | **write (gated)** | Create a policy marked as awaiting review. Unrestricted admins only, like the REST handler |
+
+### Configuration is proposed too, and here is why
+
+Letting the AI create a **task** would have quietly undone everything above. A
+task is a script with a schedule, and the scheduler runs one through
+`jobs.RunAutomated` — pre-approved, dispatched immediately, repeating forever.
+Its own comment says *"never for AI-authored scripts."* An AI able to create an
+enabled task would have been **strictly more powerful** than one able to propose
+a script: same arbitrary code, no approval, and it repeats.
+
+So configuration reuses the kill switch that already existed. A proposed task,
+check or policy is written with `enabled = false` and stamped with `proposed_by`.
+The scheduler's query already reads `WHERE enabled`, so the row is inert with no
+scheduler change at all. A person reviews it in the console — the existing Tasks,
+Checks and Policies screens badge it as **AI proposal** — and enabling it *is* the
+review.
+
+Two columns rather than one, because they answer different questions:
+
+- `proposed_by` — permanent provenance. It survives acceptance, so months later
+  the row still says an AI wrote it.
+- `approved_by` — who released it. Empty means nobody has.
+
+"Awaiting review" is therefore `proposed_by <> '' AND approved_by = ''`, and a
+`CHECK` constraint refuses to enable a row in that state. The constraint lives in
+the **database**, not in the tool, because the REST handlers are a second path
+into the same rows and a guard written in only one of them is exactly the bug the
+column exists to prevent.
+
+#### Patches: install yes, approve never
+
+`install_patches` acts rather than proposes, and it is safe for a reason that has
+nothing to do with the AI: `DispatchInstall` calls `ClaimApprovedPatches`, which
+filters to identifiers a person already approved. An unapproved id installs
+nothing. Approving a patch is the human decision about what enters the fleet, and
+there is **no tool for it** — an AI that could approve and then install would make
+the guarantee circular.
+
+#### Why not trust "the admin asked for it"
+
+Configuration is not created enabled even for an unrestricted administrator. The
+model reads inventory, hostnames and alert text — data that comes from the
+monitored machines. "An admin asked" is not evidence that an admin *authored* the
+request, so the gate does not depend on who is asking.
 
 ### Why the write tools only *propose*
 

@@ -302,7 +302,7 @@ function ChecksScreen() {
               return (
                 <tr key={c.id} onClick={() => setDetail(c)} className="cursor-pointer hover:bg-elevated/40 transition">
                   <td className="px-4 py-3"><StatusPill status={checkAggregateStatus(c)} size="sm" /></td>
-                  <td className="px-3 py-3"><div className="flex items-center gap-2"><Icon name={t.icon} size={15} className="text-muted" /><div><div className="text-[13px] text-ink font-medium">{c.name}</div><div className="text-[11px] text-faint">{t.label}{!c.enabled && ' · disabled'}</div></div></div></td>
+                  <td className="px-3 py-3"><div className="flex items-center gap-2"><Icon name={t.icon} size={15} className="text-muted" /><div><div className="flex items-center gap-2"><span className="text-[13px] text-ink font-medium">{c.name}</span>{awaitingReview(c) && <ProposalBadge />}</div><div className="text-[11px] text-faint">{t.label}{!c.enabled && ' · disabled'}</div></div></div></td>
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[11.5px] text-faint mono">{c.warn_threshold != null ? `warn ${c.warn_threshold} · err ${c.err_threshold}` : '—'}</td>
                   <td className="px-3 py-3 text-[12px] text-muted">{c.interval_sec < 60 ? c.interval_sec + 's' : Math.round(c.interval_sec / 60) + 'm'}</td>
@@ -450,6 +450,21 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
 }
 
 /* ============================ SCHEDULED TASKS ============================= */
+// awaitingReview reports an AI proposal nobody has released yet. Such a row is
+// inert — the scheduler selects WHERE enabled — and enabling it is the review.
+function awaitingReview(row) {
+  return !!row?.proposed_by && !row?.approved_by;
+}
+
+function ProposalBadge() {
+  return (
+    <span title="Proposed by the AI assistant. It does not run until you enable it."
+      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide bg-brand/15 text-brandhi">
+      <Icon name="sparkle" size={11} />AI proposal
+    </span>
+  );
+}
+
 function TasksScreen() {
   const { can } = useAuth();
   const toast = useToast();
@@ -508,7 +523,7 @@ function TasksScreen() {
               const dev = devMap[t.agent_id]; const pol = polMap[t.policy_id]; const sc = scriptMap[t.script_id];
               return (
                 <tr key={t.id} className="hover:bg-elevated/40 transition">
-                  <td className="px-4 py-3"><div className="flex items-center gap-2"><Icon name="tasks" size={15} className="text-muted" /><span className="text-[13px] text-ink font-medium">{t.name}</span></div></td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-2"><Icon name="tasks" size={15} className="text-muted" /><span className="text-[13px] text-ink font-medium">{t.name}</span>{awaitingReview(t) && <ProposalBadge />}</div></td>
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{schedule(t)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[12px] text-faint">{sc?.name || 'inline'}</td>
@@ -621,6 +636,10 @@ function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId 
 window.AlertsScreen = AlertsScreen;
 window.ChecksScreen = ChecksScreen;
 window.TasksScreen = TasksScreen;
+// Shared with the policies screen, which lives in another file (each source file
+// is wrapped in its own block scope by the build).
+window.awaitingReview = awaitingReview;
+window.ProposalBadge = ProposalBadge;
 window.CHECK_TYPES = CHECK_TYPES;
 window.SEV = SEV;
 // The build gives each source file its own block scope, so the policy drawer in

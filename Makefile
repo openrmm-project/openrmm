@@ -122,8 +122,17 @@ vet:
 tidy:
 	$(GO) mod tidy
 
+# -p 1 runs one package at a time. Several store tests TRUNCATE shared tables
+# (users, clients, agents, policies) to get a clean slate for counting, and Go
+# runs packages in parallel by default — so a truncate can delete another
+# package's fixtures mid-test, or deadlock against its inserts. CI never sees it
+# because it sets no RMM_TEST_DATABASE_URL and the integration tests skip; it
+# fires locally, where the suite is actually run against a database.
+#
+# This makes the documented path deterministic. The real fix is for those tests
+# to scope their cleanup instead of truncating shared tables.
 test:
-	$(GO) test -buildvcs=false ./...
+	$(GO) test -buildvcs=false -p 1 ./...
 
 security-check:
 	$(GO) mod verify

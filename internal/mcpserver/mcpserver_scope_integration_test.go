@@ -110,7 +110,7 @@ func (f mcpFixture) identity() Identity {
 // way Handler does per connection.
 func (f mcpFixture) session(t *testing.T, id Identity) *mcp.ClientSession {
 	t.Helper()
-	server := buildServer(f.st, f.js, id, func(context.Context) (Identity, error) { return id, nil })
+	server := buildServer(f.st, f.js, nil, id, func(context.Context) (Identity, error) { return id, nil })
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := server.Connect(f.ctx, serverTransport, nil)
 	if err != nil {

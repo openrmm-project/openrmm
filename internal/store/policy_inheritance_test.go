@@ -68,7 +68,7 @@ func newPolicyFixture(t *testing.T) *policyFixture {
 // policyWithContents creates a policy holding one check and one task.
 func (f *policyFixture) policyWithContents(name string) *models.Policy {
 	f.t.Helper()
-	p, err := f.store.CreatePolicy(f.ctx, name, "")
+	p, err := f.store.CreatePolicy(f.ctx, name, "", "")
 	if err != nil {
 		f.t.Fatal(err)
 	}

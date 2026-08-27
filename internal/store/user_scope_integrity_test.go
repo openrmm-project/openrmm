@@ -54,7 +54,7 @@ func TestDeletingAScopeTargetRemovesTheScopeRowIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, err := st.CreateAgent(ctx, "host-"+suffix, "linux", "amd64", "1.0.0", "token-"+suffix, &site.ID)
+	agent, err := st.CreateAgent(ctx, "host-"+suffix, "linux", "amd64", "1.0.0", "token-"+suffix, &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

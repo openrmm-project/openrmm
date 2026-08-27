@@ -186,7 +186,7 @@ func TestDisabledUserReceivesNoAlertsIntegration(t *testing.T) {
 	}
 
 	suffix := uuid.NewString()
-	agent, err := st.CreateAgent(ctx, "host-"+suffix, "linux", "amd64", "1.0.0", "tok-"+suffix, nil)
+	agent, err := st.CreateAgent(ctx, "host-"+suffix, "linux", "amd64", "1.0.0", "tok-"+suffix, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

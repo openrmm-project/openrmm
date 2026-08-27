@@ -29,11 +29,11 @@ func TestAgentVersionsIntegration(t *testing.T) {
 	}
 
 	suffix := uuid.NewString()
-	current, err := st.CreateAgent(ctx, "current-"+suffix, "linux", "amd64", "0.4.9", "tok-current-"+suffix, nil)
+	current, err := st.CreateAgent(ctx, "current-"+suffix, "linux", "amd64", "0.4.9", "tok-current-"+suffix, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	outdated, err := st.CreateAgent(ctx, "outdated-"+suffix, "windows", "amd64", "0.4.8", "tok-outdated-"+suffix, nil)
+	outdated, err := st.CreateAgent(ctx, "outdated-"+suffix, "windows", "amd64", "0.4.8", "tok-outdated-"+suffix, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestAgentVersionsIntegration(t *testing.T) {
 	// An agent that has never reported a version comes back as the empty string,
 	// not a NULL scan error — the gate then reads it as "too old", which is the
 	// safe direction for a value the endpoint reports about itself.
-	blank, err := st.CreateAgent(ctx, "blank-"+suffix, "linux", "amd64", "", "tok-blank-"+suffix, nil)
+	blank, err := st.CreateAgent(ctx, "blank-"+suffix, "linux", "amd64", "", "tok-blank-"+suffix, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

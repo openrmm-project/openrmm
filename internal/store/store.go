@@ -53,12 +53,18 @@ func newID() string { return uuid.NewString() }
 // ---------- Agents ----------
 
 // CreateAgent inserts a freshly enrolled agent and returns its row.
-func (s *Store) CreateAgent(ctx context.Context, hostname, os, arch, version, tokenHash string, siteID *string) (*models.Agent, error) {
+func (s *Store) CreateAgent(ctx context.Context, hostname, os, arch, version, tokenHash string, siteID, groupID *string) (*models.Agent, error) {
 	id := newID()
+	// The department is only honoured when it belongs to the site being set, the
+	// same rule SetAgentSite applies when a device moves. The enrol token cannot
+	// hold an inconsistent pair (migration 010 refuses it), so this is the second
+	// line of defence rather than the first.
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO agents (id, hostname, os, arch, version, token_hash, site_id, status, last_seen)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,'online',now())`,
-		id, hostname, os, arch, version, tokenHash, siteID)
+		`INSERT INTO agents (id, hostname, os, arch, version, token_hash, site_id, group_id, status, last_seen)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,
+		         (SELECT g.id FROM device_groups g WHERE g.id=$8 AND g.site_id=$7),
+		         'online',now())`,
+		id, hostname, os, arch, version, tokenHash, siteID, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -341,28 +347,30 @@ func (s *Store) SetRemoteIDs(ctx context.Context, id string, mesh *string) error
 // ---------- Enroll tokens ----------
 
 // CreateEnrollToken issues a new enrollment token, optionally bound to a site.
-func (s *Store) CreateEnrollToken(ctx context.Context, token, desc string, uses int, expires *time.Time, siteID *string) (*models.EnrollToken, error) {
+func (s *Store) CreateEnrollToken(ctx context.Context, token, desc string, uses int, expires *time.Time, siteID, groupID *string) (*models.EnrollToken, error) {
 	id := newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO enroll_tokens (id, token, description, uses_left, expires_at, site_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-		id, token, desc, uses, expires, siteID)
+		`INSERT INTO enroll_tokens (id, token, description, uses_left, expires_at, site_id, group_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		id, token, desc, uses, expires, siteID, groupID)
 	if err != nil {
 		return nil, err
 	}
-	return &models.EnrollToken{ID: id, Token: token, Description: desc, UsesLeft: uses, ExpiresAt: expires, CreatedAt: time.Now()}, nil
+	return &models.EnrollToken{ID: id, Token: token, Description: desc, UsesLeft: uses,
+		ExpiresAt: expires, SiteID: siteID, GroupID: groupID, CreatedAt: time.Now()}, nil
 }
 
-// ConsumeEnrollToken validates and decrements an enroll token, returning the
-// site it binds the new agent to (nil if unbound).
-func (s *Store) ConsumeEnrollToken(ctx context.Context, token string) (siteID *string, err error) {
+// ConsumeEnrollToken validates and decrements an enroll token, returning where
+// it places the new agent: the site, and the department within it when the token
+// names one. Both nil when the token is unbound.
+func (s *Store) ConsumeEnrollToken(ctx context.Context, token string) (siteID, groupID *string, err error) {
 	err = s.pool.QueryRow(ctx,
 		`UPDATE enroll_tokens SET uses_left = uses_left - 1
 		 WHERE token=$1 AND uses_left > 0 AND (expires_at IS NULL OR expires_at > now())
-		 RETURNING site_id`, token).Scan(&siteID)
+		 RETURNING site_id, group_id`, token).Scan(&siteID, &groupID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, nil, ErrNotFound
 	}
-	return siteID, err
+	return siteID, groupID, err
 }
 
 // ---------- API tokens ----------

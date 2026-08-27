@@ -158,7 +158,12 @@ type EnrollToken struct {
 	Description string     `json:"description"`
 	UsesLeft    int        `json:"uses_left"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	// Where the token places the agent. The command an operator copies does not
+	// describe the placement — the token does — so a token bound to a department
+	// is how a machine enrols straight into one.
+	SiteID    *string   `json:"site_id,omitempty"`
+	GroupID   *string   `json:"group_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Inventory is the latest collected state of an agent.

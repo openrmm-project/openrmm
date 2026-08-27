@@ -223,6 +223,7 @@ const api = {
   /* ---- departments (device groups, under a site) ---- */
   listGroups() { return GET('/api/groups'); },
   createGroup(body) { return POST('/api/groups', body); },
+  renameGroup(id, name) { return PATCH('/api/groups/' + id, { name }); },
   deleteGroup(id) { return DELETE('/api/groups/' + id); },
 
   /* ---- jobs ---- */
@@ -242,6 +243,8 @@ const api = {
   listAudit(limit = 100) { return GET('/api/audit' + qs({ limit })); },
 
   /* ---- enroll ---- */
+  // body: { description, uses, ttl_hours, site_id, group_id? } — group_id makes
+  // the agent enrol straight into a department instead of landing on the site.
   createEnrollToken(body) { return POST('/api/enroll-tokens', body); },
 
   /* ---- API tokens (MCP connectors & integrations) ---- */

@@ -46,7 +46,7 @@ func newAlertReliabilityFixture(t *testing.T, prefix string) alertReliabilityFix
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, err := st.CreateAgent(ctx, prefix+"-host", "linux", "amd64", "test", "hash", &site.ID)
+	agent, err := st.CreateAgent(ctx, prefix+"-host", "linux", "amd64", "test", "hash", &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

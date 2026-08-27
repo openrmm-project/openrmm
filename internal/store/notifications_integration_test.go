@@ -48,7 +48,7 @@ func TestNotificationRecipientsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentA, err := st.CreateAgent(ctx, "host-a", "linux", "amd64", "1", "tok-a", &siteA.ID)
+	agentA, err := st.CreateAgent(ctx, "host-a", "linux", "amd64", "1", "tok-a", &siteA.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

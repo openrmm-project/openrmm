@@ -42,7 +42,18 @@ type smtpE2E struct {
 	admin string // bearer token for an unscoped admin
 }
 
-func newSMTPE2E(t *testing.T) *smtpE2E {
+// withAccountSMTP configures the env-backed account transport for a test. It is
+// an option rather than a default because most of these tests care about the
+// alerts route, and an unset account transport is the honest starting state for
+// a self-hosted instance nobody has configured yet.
+func withAccountSMTP(host string, port int, from string) func(*config.Config) {
+	return func(c *config.Config) {
+		c.SMTPHost, c.SMTPPort, c.SMTPFrom = host, port, from
+		c.SMTPTLSMode = "none"
+	}
+}
+
+func newSMTPE2E(t *testing.T, opts ...func(*config.Config)) *smtpE2E {
 	t.Helper()
 	databaseURL := os.Getenv("RMM_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -55,6 +66,9 @@ func newSMTPE2E(t *testing.T) *smtpE2E {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{SettingsEncryptionKey: "0123456789abcdef0123456789abcdef"}
+	for _, opt := range opts {
+		opt(cfg)
+	}
 	// Only the store and config are reachable from these endpoints; Router()
 	// registers handlers without dereferencing the other services.
 	srv := New(cfg, st, hub.New(), nil, nil, nil, nil, nil, nil)
@@ -104,21 +118,26 @@ func (e *smtpE2E) do(method, path, body, bearer string) (int, map[string]any) {
 	return res.StatusCode, out
 }
 
+// The account transport as the environment would supply it. There is no request
+// body counterpart: RMM_SMTP_* is the only way in.
+func accountEnv(c *config.Config) {
+	c.SMTPHost, c.SMTPPort = "smtp.account.test", 587
+	c.SMTPUsername, c.SMTPPassword = "rmm@account.test", "account-secret"
+	c.SMTPFrom, c.SMTPFromName = "no-reply@account.test", "OpenRMM"
+	c.SMTPTLSMode = "starttls"
+}
+
 const (
-	accountBody = `{"host":"smtp.account.test","port":587,"username":"rmm@account.test",` +
-		`"password":"account-secret","from":"no-reply@account.test","from_name":"OpenRMM","tls_mode":"starttls"}`
 	alertsRelayBody = `{"host":"relay.alerts.test","port":2525,"username":"alerts@alerts.test",` +
 		`"password":"alerts-secret","from":"alerts@alerts.test","tls_mode":"tls"}`
 )
 
-// The load-bearing assertion: each route writes its own profile and leaves the
-// other alone.
-func TestSMTPRoutesWriteTheirOwnProfileIntegration(t *testing.T) {
-	e := newSMTPE2E(t)
+// The load-bearing assertion: the one writable route writes its own profile and
+// leaves the account transport alone. Their key prefixes overlap (`smtp.` vs
+// `smtp.alerts.`), so a sloppy write would silently take out password resets.
+func TestSMTPAlertsRouteWritesOnlyItsOwnProfileIntegration(t *testing.T) {
+	e := newSMTPE2E(t, accountEnv)
 
-	if code, _ := e.do(http.MethodPut, "/api/config/smtp", accountBody, e.admin); code != http.StatusOK {
-		t.Fatalf("saving the account profile: status %d", code)
-	}
 	if code, _ := e.do(http.MethodPut, "/api/config/smtp/alerts", alertsRelayBody, e.admin); code != http.StatusOK {
 		t.Fatalf("saving the alerts profile: status %d", code)
 	}
@@ -146,14 +165,34 @@ func TestSMTPRoutesWriteTheirOwnProfileIntegration(t *testing.T) {
 	}
 }
 
+// The account transport has no write endpoint at all. Hiding the form in the
+// console is a UI decision; this is the one that holds, because a hosted
+// instance's password-reset sender belongs to the operator and a tenant admin
+// with settings.manage must not be able to repoint authentication mail.
+func TestAccountSMTPRouteIsReadOnlyIntegration(t *testing.T) {
+	e := newSMTPE2E(t, accountEnv)
+
+	code, _ := e.do(http.MethodPut, "/api/config/smtp",
+		`{"host":"attacker.relay.test","port":587,"from":"no-reply@attacker.test","tls_mode":"starttls"}`, e.admin)
+	if code != http.StatusMethodNotAllowed {
+		t.Errorf("PUT /api/config/smtp: status %d, want 405 — the route must not exist", code)
+	}
+
+	_, view := e.do(http.MethodGet, "/api/config/smtp", "", e.admin)
+	if view["host"] != "smtp.account.test" {
+		t.Errorf("the write reached the transport: %v", view)
+	}
+	// The console needs to be able to say *why* there is no form.
+	if view["read_only"] != true || view["source"] != "env" {
+		t.Errorf("the account view should declare itself env-backed and read-only: %v", view)
+	}
+}
+
 // A blank host on the alerts route means "ride the account transport", and the
 // response says what will actually be used — an operator reading only the stored
 // fields would be left guessing what an empty host means.
 func TestSMTPAlertsInheritanceIsVisibleIntegration(t *testing.T) {
-	e := newSMTPE2E(t)
-	if code, _ := e.do(http.MethodPut, "/api/config/smtp", accountBody, e.admin); code != http.StatusOK {
-		t.Fatalf("saving the account profile: status %d", code)
-	}
+	e := newSMTPE2E(t, accountEnv)
 
 	code, alerts := e.do(http.MethodPut, "/api/config/smtp/alerts",
 		`{"from":"alerts@account.test","from_name":"OpenRMM Alerts"}`, e.admin)
@@ -182,8 +221,7 @@ func TestSMTPAlertsInheritanceIsVisibleIntegration(t *testing.T) {
 // it back, so a stolen session cannot use these endpoints to recover a mailbox
 // credential.
 func TestSMTPResponsesNeverCarryThePasswordIntegration(t *testing.T) {
-	e := newSMTPE2E(t)
-	e.do(http.MethodPut, "/api/config/smtp", accountBody, e.admin)
+	e := newSMTPE2E(t, accountEnv)
 	e.do(http.MethodPut, "/api/config/smtp/alerts", alertsRelayBody, e.admin)
 
 	for _, path := range []string{"/api/config/smtp", "/api/config/smtp/alerts"} {
@@ -208,7 +246,6 @@ func TestSMTPRoutesRequireSettingsManageIntegration(t *testing.T) {
 
 	for _, tt := range []struct{ method, path, body string }{
 		{http.MethodGet, "/api/config/smtp", ""},
-		{http.MethodPut, "/api/config/smtp", accountBody},
 		{http.MethodPost, "/api/config/smtp/test", `{"to":"x@example.test"}`},
 		{http.MethodGet, "/api/config/smtp/alerts", ""},
 		{http.MethodPut, "/api/config/smtp/alerts", alertsRelayBody},
@@ -235,7 +272,6 @@ func TestSMTPWritesRejectScopedPrincipalsIntegration(t *testing.T) {
 	scoped := e.session(models.RoleAdmin, []models.UserScope{{ScopeType: models.ScopeClient, ScopeID: client.ID}})
 
 	for _, tt := range []struct{ method, path, body string }{
-		{http.MethodPut, "/api/config/smtp", accountBody},
 		{http.MethodPut, "/api/config/smtp/alerts", alertsRelayBody},
 		{http.MethodPost, "/api/config/smtp/test", `{"to":"x@example.test"}`},
 		{http.MethodPost, "/api/config/smtp/alerts/test", `{"to":"x@example.test"}`},
@@ -252,8 +288,7 @@ func TestSMTPWritesRejectScopedPrincipalsIntegration(t *testing.T) {
 // The audit distinguishes the two transports, so the log answers "who moved
 // alert delivery" separately from "who moved password-reset delivery".
 func TestSMTPAuditNamesTheProfileIntegration(t *testing.T) {
-	e := newSMTPE2E(t)
-	e.do(http.MethodPut, "/api/config/smtp", accountBody, e.admin)
+	e := newSMTPE2E(t, accountEnv)
 	e.do(http.MethodPut, "/api/config/smtp/alerts", alertsRelayBody, e.admin)
 
 	rows, err := e.store.ListAudit(e.ctx, 50)
@@ -268,10 +303,12 @@ func TestSMTPAuditNamesTheProfileIntegration(t *testing.T) {
 			t.Errorf("audit detail for %s copied a password", entry.Action)
 		}
 	}
-	for _, action := range []string{"config.smtp.update", "config.smtp.alerts.update"} {
-		if !seen[action] {
-			t.Errorf("missing audit action %q; saw %v", action, seen)
-		}
+	if !seen["config.smtp.alerts.update"] {
+		t.Errorf("missing audit action %q; saw %v", "config.smtp.alerts.update", seen)
+	}
+	// And nothing claims the account transport was edited, because nothing can.
+	if seen["config.smtp.update"] {
+		t.Error("an account-profile update was audited, but that profile is env-only")
 	}
 }
 
@@ -282,10 +319,9 @@ func TestSMTPValidationRejectsBadConfigIntegration(t *testing.T) {
 	for _, tt := range []struct {
 		name, path, body string
 	}{
-		{"invalid sender", "/api/config/smtp", `{"host":"h.test","port":587,"from":"not-an-address","tls_mode":"starttls"}`},
-		{"credentials over cleartext", "/api/config/smtp", `{"host":"h.test","port":25,"from":"a@b.test","password":"p","tls_mode":"none"}`},
+		{"invalid sender", "/api/config/smtp/alerts", `{"host":"h.test","port":587,"from":"not-an-address","tls_mode":"starttls"}`},
 		{"unknown tls mode", "/api/config/smtp/alerts", `{"host":"h.test","port":587,"from":"a@b.test","tls_mode":"quantum"}`},
-		{"alerts credentials over cleartext", "/api/config/smtp/alerts", `{"host":"h.test","port":25,"from":"a@b.test","password":"p","tls_mode":"none"}`},
+		{"credentials over cleartext", "/api/config/smtp/alerts", `{"host":"h.test","port":25,"from":"a@b.test","password":"p","tls_mode":"none"}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if code, _ := e.do(http.MethodPut, tt.path, tt.body, e.admin); code != http.StatusBadRequest {
@@ -294,9 +330,6 @@ func TestSMTPValidationRejectsBadConfigIntegration(t *testing.T) {
 		})
 	}
 	// Nothing was stored by any of them.
-	if _, view := e.do(http.MethodGet, "/api/config/smtp", "", e.admin); view["host"] != "" {
-		t.Errorf("a rejected save still wrote the account transport: %v", view)
-	}
 	if _, view := e.do(http.MethodGet, "/api/config/smtp/alerts", "", e.admin); view["host"] != "" {
 		t.Errorf("a rejected save still wrote the alerts transport: %v", view)
 	}
@@ -449,22 +482,18 @@ func TestMetricsExposeTheOutboxIntegration(t *testing.T) {
 // compile and pass every other test, and reset links would start going out
 // through a relay chosen for monitoring mail.
 func TestPasswordResetUsesTheAccountTransportIntegration(t *testing.T) {
-	e := newSMTPE2E(t)
-
 	// Two listeners that accept and hang up. Which port is dialled identifies
 	// the transport; the send fails either way, which is fine — the question is
 	// only which relay was chosen.
 	accountRelay := newDialRecorder(t)
 	alertsRelay := newDialRecorder(t)
 
-	save := func(path string, port int, from string) {
-		body := fmt.Sprintf(`{"host":"127.0.0.1","port":%d,"from":%q,"tls_mode":"none"}`, port, from)
-		if code, out := e.do(http.MethodPut, path, body, e.admin); code != http.StatusOK {
-			t.Fatalf("saving %s: status %d (%v)", path, code, out)
-		}
+	e := newSMTPE2E(t, withAccountSMTP("127.0.0.1", accountRelay.port, "no-reply@account.test"))
+
+	body := fmt.Sprintf(`{"host":"127.0.0.1","port":%d,"from":%q,"tls_mode":"none"}`, alertsRelay.port, "alerts@alerts.test")
+	if code, out := e.do(http.MethodPut, "/api/config/smtp/alerts", body, e.admin); code != http.StatusOK {
+		t.Fatalf("saving the alerts profile: status %d (%v)", code, out)
 	}
-	save("/api/config/smtp", accountRelay.port, "no-reply@account.test")
-	save("/api/config/smtp/alerts", alertsRelay.port, "alerts@alerts.test")
 
 	target, err := e.store.CreateUser(e.ctx, "reset-"+uuid.NewString(), "hash", models.RoleTech)
 	if err != nil {

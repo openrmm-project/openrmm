@@ -109,6 +109,13 @@ services:
       RMM_ALLOW_UNAPPROVED_JOBS: ${RMM_ALLOW_UNAPPROVED_JOBS:-false}
       RMM_REMOTE_PROVIDER: ${RMM_REMOTE_PROVIDER:-native}
       RMM_API_RATE_LIMIT: ${RMM_API_RATE_LIMIT:-600}
+      RMM_SMTP_HOST: ${RMM_SMTP_HOST:-}
+      RMM_SMTP_PORT: ${RMM_SMTP_PORT:-587}
+      RMM_SMTP_USERNAME: ${RMM_SMTP_USERNAME:-}
+      RMM_SMTP_PASSWORD_FILE: /run/secrets/smtp_password
+      RMM_SMTP_FROM: ${RMM_SMTP_FROM:-}
+      RMM_SMTP_FROM_NAME: ${RMM_SMTP_FROM_NAME:-OpenRMM}
+      RMM_SMTP_TLS_MODE: ${RMM_SMTP_TLS_MODE:-starttls}
       RMM_ALERT_RETENTION_DAYS: ${RMM_ALERT_RETENTION_DAYS:-90}
       RMM_CHECK_RESULT_RETENTION_DAYS: ${RMM_CHECK_RESULT_RETENTION_DAYS:-90}
       RMM_NOTIFICATION_RETENTION_DAYS: ${RMM_NOTIFICATION_RETENTION_DAYS:-90}
@@ -117,6 +124,7 @@ services:
       - admin_token
       - settings_encryption_key
       - ai_api_key
+      - smtp_password
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700
     networks:
@@ -205,3 +213,7 @@ secrets:
   ai_api_key:
     # Optional: /dev/null yields an empty key without requiring a placeholder.
     file: ${RMM_AI_API_KEY_FILE:-/dev/null}
+  smtp_password:
+    # Optional, same convention: an empty password with no relay configured just
+    # means password-reset mail is off.
+    file: ${RMM_SMTP_PASSWORD_FILE:-/dev/null}

@@ -17,7 +17,8 @@ import (
 // account profile, which on a save would overwrite password-reset delivery.
 //
 // That the two never share storage is pinned here (distinct key prefixes) and,
-// end to end, by TestSaveSMTPProfilesAreIsolatedIntegration in internal/store.
+// end to end, by TestSaveSMTPAlertsDoesNotTouchAccountKeysIntegration in
+// internal/settings.
 
 // The profile constants must stay distinct and correctly prefixed: they are
 // concatenated with field names to form settings keys, so a collision would make
@@ -38,15 +39,6 @@ func TestSMTPProfilePrefixesAreDistinct(t *testing.T) {
 			// (smtp.alerts.*); what matters is that no key is shared.
 			t.Errorf("unexpected alerts key shape: %q", alertKey)
 		}
-	}
-}
-
-func TestAuditActionNamesTheProfile(t *testing.T) {
-	if got := auditActionSMTP(settings.ProfileAccount); got != "config.smtp.update" {
-		t.Errorf("account audit action = %q", got)
-	}
-	if got := auditActionSMTP(settings.ProfileAlerts); got != "config.smtp.alerts.update" {
-		t.Errorf("alerts audit action = %q", got)
 	}
 }
 

@@ -106,19 +106,49 @@ on every 30s tick:
 
 ## Configuration
 
-SMTP lives **only in the database**, unlike the AI/MeshCentral settings which
-overlay an env baseline: there is no SMTP env config to overlay, and an operator
-fixing a rejected password should not need a redeploy. It is read fresh on every
-use, so a correction takes effect on the next queued message.
+The two transports are configured in two different places, and the split is the
+point.
 
-### Two transports
-
-There are **two** profiles, under two key prefixes:
-
-| Profile | Keys | Carries |
+| Profile | Configured in | Carries |
 |---|---|---|
-| Account | `smtp.*` | password resets — and alerts, unless the alerts profile overrides them |
-| Alerts | `smtp.alerts.*` | notifications |
+| Account | `RMM_SMTP_*` env, **no console form** | password resets — and alerts, unless the alerts profile overrides them |
+| Alerts | `smtp.alerts.*` in the database, editable in Settings > Email | notifications |
+
+### Why account mail is env-only
+
+Password-reset mail is an authentication artefact, not a preference. On a hosted
+instance it goes out from the operator's own domain, and that guarantee cannot
+survive an editable copy in `app_settings`: any tenant admin holding
+`settings.manage` could repoint it. So the account transport has no console form
+and **no write endpoint** — `PUT /api/config/smtp` does not exist, and
+`settings.SaveSMTP` refuses the profile with `ErrAccountProfileReadOnly`.
+
+The cost is honest: correcting a rejected password means changing the
+environment and restarting, rather than editing a form. That is the right trade
+for the credential that guards account recovery.
+
+Set it with:
+
+```
+RMM_SMTP_HOST=smtp.example.com
+RMM_SMTP_PORT=587
+RMM_SMTP_USERNAME=no-reply@example.com
+RMM_SMTP_PASSWORD=…          # or RMM_SMTP_PASSWORD_FILE=/run/secrets/smtp_password
+RMM_SMTP_FROM=no-reply@example.com
+RMM_SMTP_FROM_NAME=OpenRMM
+RMM_SMTP_TLS_MODE=starttls   # starttls | tls | none
+RMM_SMTP_SKIP_VERIFY=false
+```
+
+An empty `RMM_SMTP_HOST` means password-reset mail is off; the reset endpoint
+still answers 202 (its enumeration defence) and logs that no transport is
+configured.
+
+### The alerts transport
+
+Alert mail is genuinely the tenant's choice, so it stays editable in the console
+and lives in the database under `smtp.alerts.*`. It is read fresh on every use,
+so a correction takes effect on the next queued message.
 
 The alerts profile is optional, and how much of it you fill in decides how much
 separates the two:
@@ -170,8 +200,8 @@ request path; the transport timeout (20s) bounds it.
 ## Endpoints
 
 ```
-GET    /api/config/smtp             settings.manage   account transport, password as a boolean
-PUT    /api/config/smtp             settings.manage   blank password preserves
+GET    /api/config/smtp             settings.manage   account transport (read-only, from env); "read_only": true
+                                                     no PUT: the account profile is env-backed
 POST   /api/config/smtp/test        settings.manage   {"to": "…"}, blank = caller's own address
 GET    /api/config/smtp/alerts      settings.manage   alerts profile as stored + "effective"
 PUT    /api/config/smtp/alerts      settings.manage   blank host = ride the account transport
@@ -189,10 +219,11 @@ take over an account that has no second factor. That takes `users.email.manage`
 — held by `admin`, and deliberately *not* implied by `users.manage`, so a
 delegated user manager can create and scope technicians without it.
 
-Address changes are audited (`user.email.update`), as are SMTP edits and tests
-per profile (`config.smtp.update` / `config.smtp.alerts.update`, and the matching
-`.test` actions); the SMTP audit records which fields were touched, never their
-values.
+Address changes are audited (`user.email.update`), as are alerts-profile edits
+(`config.smtp.alerts.update`) and both test sends (`config.smtp.test` /
+`config.smtp.alerts.test`); the SMTP audit records which fields were touched,
+never their values. There is no `config.smtp.update` action, because the account
+transport cannot be edited through the API at all.
 
 ## Schema
 

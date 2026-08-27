@@ -58,9 +58,9 @@ func newPolicyFixture(t *testing.T) *policyFixture {
 	must(err)
 	f.siteB, err = st.CreateSite(ctx, f.clientB.ID, "site-B-"+suffix)
 	must(err)
-	f.agentA, err = st.CreateAgent(ctx, "host-A-"+suffix, "linux", "amd64", "1.0.0", "tok-A-"+suffix, &f.siteA.ID)
+	f.agentA, err = st.CreateAgent(ctx, "host-A-"+suffix, "linux", "amd64", "1.0.0", "tok-A-"+suffix, &f.siteA.ID, nil)
 	must(err)
-	f.agentB, err = st.CreateAgent(ctx, "host-B-"+suffix, "linux", "amd64", "1.0.0", "tok-B-"+suffix, &f.siteB.ID)
+	f.agentB, err = st.CreateAgent(ctx, "host-B-"+suffix, "linux", "amd64", "1.0.0", "tok-B-"+suffix, &f.siteB.ID, nil)
 	must(err)
 	return f
 }

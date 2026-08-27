@@ -57,8 +57,11 @@ var migrationV8SQL string
 //go:embed migrations/009_alert_observation_identity.sql
 var migrationV9SQL string
 
-//go:embed migrations/010_ai_config_proposals.sql
+//go:embed migrations/010_enroll_token_department.sql
 var migrationV10SQL string
+
+//go:embed migrations/011_ai_config_proposals.sql
+var migrationV11SQL string
 
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
@@ -70,7 +73,8 @@ var migrations = []migration{
 	{version: 7, name: "script_categories", sql: migrationV7SQL},
 	{version: 8, name: "alert_reliability", sql: migrationV8SQL},
 	{version: 9, name: "alert_observation_identity", sql: migrationV9SQL},
-	{version: 10, name: "ai_config_proposals", sql: migrationV10SQL},
+	{version: 10, name: "enroll_token_department", sql: migrationV10SQL},
+	{version: 11, name: "ai_config_proposals", sql: migrationV11SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

@@ -195,7 +195,7 @@ func TestCheckResultScopeIsAppliedBeforeLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherAgent, err := f.store.CreateAgent(ctx, "history-other", "linux", "amd64", "test", "hash", &otherSite.ID)
+	otherAgent, err := f.store.CreateAgent(ctx, "history-other", "linux", "amd64", "test", "hash", &otherSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,35 +13,29 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
-// SMTP settings keys. These live only in the database, unlike the Editable set
-// above which overlays env-provided config: there is no SMTP env baseline to
-// overlay, and an operator fixing a rejected password should not need a redeploy.
+// SMTP transports. There are two, and they are configured in different places
+// on purpose.
 //
-// There are two profiles under two key prefixes. The account profile carries
-// password resets and is the one an instance must have; the alerts profile is
-// optional and carries notifications, so an operator can send monitoring mail
-// from a different sender — or through a different relay entirely — from the
-// mail that authenticates an account.
+// The account transport carries password resets. It is env-only — no console
+// form, no app_settings row. A hosted instance sends its tenants' password-reset
+// mail from the operator's own domain, and that guarantee cannot survive an
+// editable copy in the database: a tenant admin would simply point it somewhere
+// else, and a reset link is an authentication artefact, not a preference.
+//
+// The alerts transport carries notifications and stays fully editable in the
+// console, because who a tenant's monitoring mail comes from is genuinely their
+// choice. When it names no host of its own it rides the account transport.
 const (
-	// ProfileAccount is the primary transport: password resets, and alerts too
-	// unless the alerts profile overrides them.
+	// ProfileAccount is the env-backed transport: password resets, and the
+	// fallback for alerts. Read-only through the API.
 	ProfileAccount = "smtp."
-	// ProfileAlerts is the optional notification transport.
+	// ProfileAlerts is the optional, DB-backed notification transport.
 	ProfileAlerts = "smtp.alerts."
 )
 
-// SMTP settings keys for the account profile, kept as named constants because
-// they are the ones referenced outside this file.
-const (
-	KeySMTPHost       = "smtp.host"
-	KeySMTPPort       = "smtp.port"
-	KeySMTPUsername   = "smtp.username"
-	KeySMTPPassword   = "smtp.password" // secret
-	KeySMTPFrom       = "smtp.from"
-	KeySMTPFromName   = "smtp.from_name"
-	KeySMTPTLSMode    = "smtp.tls_mode"
-	KeySMTPSkipVerify = "smtp.skip_verify"
-)
+// ErrAccountProfileReadOnly is returned when a caller tries to write the account
+// profile, which only the environment can set.
+var ErrAccountProfileReadOnly = errors.New("the account SMTP transport is configured by the environment (RMM_SMTP_*) and cannot be edited here")
 
 // smtpFields are the per-profile key suffixes, in the order the settings screen
 // shows them.
@@ -67,17 +62,35 @@ func SMTPKeys(profile string) []string {
 // smtpSecret reports whether a key holds a password, which is stored encrypted.
 func smtpSecret(key string) bool { return strings.HasSuffix(key, ".password") }
 
-// SMTPConfig resolves the account mail transport — password resets, and the
-// fallback for alerts when no alerts profile is configured.
+// AccountSMTPConfig resolves the account mail transport — password resets, and
+// the fallback for alerts when no alerts profile is configured.
 //
-// Read fresh on every use rather than cached at startup, so a corrected host or
-// password takes effect on the next queued message instead of the next restart.
-func SMTPConfig(ctx context.Context, st *store.Store, cfg *config.Config) (notify.Config, error) {
-	rows, err := st.ListAppSettings(ctx)
-	if err != nil {
-		return notify.Config{}, err
+// Pure, and reads nothing from the database: the environment is the only source.
+// An empty host means email is off, which is the correct default for a fresh
+// self-hosted instance that has not been told where to send mail.
+func AccountSMTPConfig(cfg *config.Config) notify.Config {
+	if cfg == nil || cfg.SMTPHost == "" {
+		return notify.Config{}
 	}
-	return smtpProfile(cfg, rows, ProfileAccount), nil
+	port := cfg.SMTPPort
+	if port <= 0 {
+		port = 587 // submission with STARTTLS, the near-universal default
+	}
+	tlsMode := cfg.SMTPTLSMode
+	if tlsMode == "" {
+		tlsMode = "starttls"
+	}
+	return notify.Config{
+		Host:       cfg.SMTPHost,
+		Port:       port,
+		Username:   cfg.SMTPUsername,
+		Password:   cfg.SMTPPassword,
+		From:       cfg.SMTPFrom,
+		FromName:   cfg.SMTPFromName,
+		TLSMode:    tlsMode,
+		SkipVerify: cfg.SMTPSkipVerify,
+		Timeout:    20 * time.Second,
+	}
 }
 
 // AlertSMTPConfig resolves the transport that carries notifications.
@@ -97,7 +110,7 @@ func AlertSMTPConfig(ctx context.Context, st *store.Store, cfg *config.Config) (
 	if err != nil {
 		return notify.Config{}, err
 	}
-	return MergeAlertProfile(smtpProfile(cfg, rows, ProfileAccount), smtpProfile(cfg, rows, ProfileAlerts)), nil
+	return MergeAlertProfile(AccountSMTPConfig(cfg), smtpProfile(cfg, rows, ProfileAlerts)), nil
 }
 
 // MergeAlertProfile applies the inheritance rule described on AlertSMTPConfig.
@@ -126,6 +139,11 @@ func MergeAlertProfile(account, alerts notify.Config) notify.Config {
 func SMTPProfile(ctx context.Context, st *store.Store, cfg *config.Config, profile string) (notify.Config, error) {
 	if !ValidSMTPProfile(profile) {
 		return notify.Config{}, fmt.Errorf("unknown SMTP profile %q", profile)
+	}
+	if profile == ProfileAccount {
+		// Nothing is stored for this profile; what the operator "typed" is the
+		// environment the server booted with.
+		return AccountSMTPConfig(cfg), nil
 	}
 	rows, err := st.ListAppSettings(ctx)
 	if err != nil {
@@ -194,15 +212,19 @@ type SMTPSaveRequest struct {
 // an unencrypted link — is rejected at save time rather than discovered later as
 // a silently stuck outbox.
 //
-// A blank host means different things per profile, and that is the point. On the
-// account profile it clears the configuration, which is how an operator turns
-// email off. On the alerts profile it means "use the account transport", so the
-// sender identity is kept while the connection fields — credentials included —
-// are cleared: an alerts profile with no host of its own must not hold a
-// password for a server it does not name.
+// Only the alerts profile is writable; the account transport comes from the
+// environment and is rejected here.
+//
+// A blank host means "use the account transport", so the sender identity is kept
+// while the connection fields — credentials included — are cleared: an alerts
+// profile with no host of its own must not hold a password for a server it does
+// not name.
 func SaveSMTP(ctx context.Context, st *store.Store, cfg *config.Config, profile string, in SMTPSaveRequest) (notify.Config, error) {
 	if !ValidSMTPProfile(profile) {
 		return notify.Config{}, fmt.Errorf("unknown SMTP profile %q", profile)
+	}
+	if profile == ProfileAccount {
+		return notify.Config{}, ErrAccountProfileReadOnly
 	}
 	rows, err := st.ListAppSettings(ctx)
 	if err != nil {
@@ -242,28 +264,19 @@ func SaveSMTP(ctx context.Context, st *store.Store, cfg *config.Config, profile 
 	}
 
 	if next.Host == "" {
-		if profile == ProfileAlerts {
-			// No host here means "send alerts through the account transport". The
-			// sender identity survives — it is the whole point of the profile in
-			// this shape — while every connection field goes, credentials first:
-			// a profile that names no server must not keep a password for one.
-			if err := clear("host", "port", "username", "password", "tls_mode", "skip_verify"); err != nil {
-				return current, err
-			}
-			for _, op := range [][2]string{{"from", next.From}, {"from_name", next.FromName}} {
-				if err := st.UpsertAppSetting(ctx, profile+op[0], op[1], false); err != nil {
-					return current, err
-				}
-			}
-			return AlertSMTPConfig(ctx, st, cfg)
-		}
-		// On the account profile, clearing the host disables email outright. There
-		// is nothing left to validate, and the stored password is dropped too so a
-		// disabled config keeps no live secret.
-		if err := clear(smtpFields...); err != nil {
+		// No host here means "send alerts through the account transport". The
+		// sender identity survives — it is the whole point of the profile in this
+		// shape — while every connection field goes, credentials first: a profile
+		// that names no server must not keep a password for one.
+		if err := clear("host", "port", "username", "password", "tls_mode", "skip_verify"); err != nil {
 			return current, err
 		}
-		return notify.Config{}, nil
+		for _, op := range [][2]string{{"from", next.From}, {"from_name", next.FromName}} {
+			if err := st.UpsertAppSetting(ctx, profile+op[0], op[1], false); err != nil {
+				return current, err
+			}
+		}
+		return AlertSMTPConfig(ctx, st, cfg)
 	}
 	if err := next.Validate(); err != nil {
 		return current, err
@@ -290,8 +303,5 @@ func SaveSMTP(ctx context.Context, st *store.Store, cfg *config.Config, profile 
 			return current, err
 		}
 	}
-	if profile == ProfileAlerts {
-		return AlertSMTPConfig(ctx, st, cfg)
-	}
-	return SMTPConfig(ctx, st, cfg)
+	return AlertSMTPConfig(ctx, st, cfg)
 }

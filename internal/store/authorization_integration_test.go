@@ -71,11 +71,11 @@ func TestAuthorizationAndConcurrentBootstrapIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentA, err := st.CreateAgent(ctx, "a", "linux", "amd64", "1", "a-token", &siteA.ID)
+	agentA, err := st.CreateAgent(ctx, "a", "linux", "amd64", "1", "a-token", &siteA.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentB, err := st.CreateAgent(ctx, "b", "linux", "amd64", "1", "b-token", &siteB.ID)
+	agentB, err := st.CreateAgent(ctx, "b", "linux", "amd64", "1", "b-token", &siteB.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

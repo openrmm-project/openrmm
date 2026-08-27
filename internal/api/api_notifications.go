@@ -65,11 +65,12 @@ func (s *Server) smtpConfigFor(r *http.Request, profile string) (view map[string
 		out["effective"] = smtpView(effective)
 		return out, nil
 	}
-	cfg, err := settings.SMTPConfig(r.Context(), s.store, s.cfg)
-	if err != nil {
-		return nil, err
-	}
-	return smtpView(cfg), nil
+	// The account profile is env-backed and read-only, so there is no stored
+	// form to contrast with what is in use.
+	out := smtpView(settings.AccountSMTPConfig(s.cfg))
+	out["read_only"] = true
+	out["source"] = "env"
+	return out, nil
 }
 
 func (s *Server) getSMTPConfig(profile string) http.HandlerFunc {
@@ -98,12 +99,19 @@ func (s *Server) updateSMTPConfig(profile string) http.HandlerFunc {
 			return
 		}
 		if _, err := settings.SaveSMTP(r.Context(), s.store, s.cfg, profile, in); err != nil {
-			// SaveSMTP's failures are validation failures (bad TLS mode, credentials
-			// on a cleartext link), which the operator can act on.
+			// The account transport is env-backed: a write is not a bad request, it
+			// is a request to the wrong place. Everything else SaveSMTP rejects is a
+			// validation failure (bad TLS mode, credentials on a cleartext link),
+			// which the operator can act on.
+			if errors.Is(err, settings.ErrAccountProfileReadOnly) {
+				writeErr(w, http.StatusConflict, err.Error())
+				return
+			}
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		_ = s.store.AddAudit(r.Context(), actorOf(r), auditActionSMTP(profile), "app_settings",
+		// Only the alerts profile reaches here: SaveSMTP refused anything else.
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "config.smtp.alerts.update", "app_settings",
 			settings.AuditDetail(changedSMTP(profile, in)))
 		view, err := s.smtpConfigFor(r, profile)
 		if err != nil {
@@ -114,23 +122,13 @@ func (s *Server) updateSMTPConfig(profile string) http.HandlerFunc {
 	}
 }
 
-func auditActionSMTP(profile string) string {
-	if profile == settings.ProfileAlerts {
-		return "config.smtp.alerts.update"
-	}
-	return "config.smtp.update"
-}
-
 func changedSMTP(profile string, in settings.SMTPSaveRequest) []string {
 	// The audit records which fields were submitted, never their values: the
 	// point is a trail of who touched mail delivery, not a copy of the config.
 	if strings.TrimSpace(in.Host) == "" {
-		if profile == settings.ProfileAlerts {
-			// Not "cleared": the sender identity may still be set, and the profile
-			// now rides the account transport.
-			return []string{profile + "transport_inherited", profile + "from"}
-		}
-		return []string{"smtp.cleared"}
+		// Not "cleared": the sender identity may still be set, and the profile now
+		// rides the account transport.
+		return []string{profile + "transport_inherited", profile + "from"}
 	}
 	out := []string{profile + "host", profile + "port", profile + "from", profile + "tls_mode"}
 	if strings.TrimSpace(in.Password) != "" {
@@ -177,7 +175,7 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 		if profile == settings.ProfileAlerts {
 			cfg, err = settings.AlertSMTPConfig(r.Context(), s.store, s.cfg)
 		} else {
-			cfg, err = settings.SMTPConfig(r.Context(), s.store, s.cfg)
+			cfg = settings.AccountSMTPConfig(s.cfg)
 		}
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())

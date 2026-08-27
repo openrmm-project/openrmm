@@ -68,11 +68,11 @@ func newProposalFixture(t *testing.T) proposalFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mineAgent, err := st.CreateAgent(ctx, "mine-"+suffix, "linux", "amd64", "1.0.0", "tok-mine-"+suffix, &mineSite.ID)
+	mineAgent, err := st.CreateAgent(ctx, "mine-"+suffix, "linux", "amd64", "1.0.0", "tok-mine-"+suffix, &mineSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	theirAgent, err := st.CreateAgent(ctx, "theirs-"+suffix, "linux", "amd64", "1.0.0", "tok-theirs-"+suffix, &theirSite.ID)
+	theirAgent, err := st.CreateAgent(ctx, "theirs-"+suffix, "linux", "amd64", "1.0.0", "tok-theirs-"+suffix, &theirSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

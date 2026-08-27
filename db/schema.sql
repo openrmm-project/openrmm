@@ -230,6 +230,13 @@ CREATE TABLE IF NOT EXISTS enroll_tokens (
 );
 ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE SET NULL;
 
+-- The token also carries the department, so an agent enrols straight into one
+-- instead of landing on the site and being moved by hand. A department belongs
+-- to exactly one site and an agent's must be its own site's, so the pair has to
+-- be consistent; a trigger refuses it otherwise (migration 010).
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS group_id UUID
+    REFERENCES device_groups(id) ON DELETE SET NULL;
+
 -- ===================== Scripts & Jobs =====================
 
 CREATE TABLE IF NOT EXISTS scripts (

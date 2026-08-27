@@ -202,6 +202,22 @@ func (s *Store) ClientForAgents(ctx context.Context, agentIDs []string) (map[str
 }
 
 // DeleteGroup removes a device group (agents keep existing; group_id is nulled).
+// RenameGroup changes a department's name. Only the label moves: the devices
+// filed under it, and the site it belongs to, are untouched.
+func (s *Store) RenameGroup(ctx context.Context, id, name string) (*models.DeviceGroup, error) {
+	var g models.DeviceGroup
+	err := s.pool.QueryRow(ctx,
+		`UPDATE device_groups SET name=$2 WHERE id=$1 RETURNING id, name, site_id, created_at`,
+		id, name).Scan(&g.ID, &g.Name, &g.SiteID, &g.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
 func (s *Store) DeleteGroup(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM device_groups WHERE id=$1`, id)
 	return err

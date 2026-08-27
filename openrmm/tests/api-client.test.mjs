@@ -62,10 +62,10 @@ test('the alerts SMTP profile has endpoints of its own', async () => {
   await api.getAlertSMTPConfig();
   assert.equal(last().url, 'https://console.test/api/config/smtp/alerts');
 
-  await api.updateSMTPConfig({ host: 'smtp.account.test' });
-  assert.equal(last().url, 'https://console.test/api/config/smtp');
-  assert.equal(last().method, 'PUT');
-  assert.equal(JSON.parse(last().body).host, 'smtp.account.test');
+  // The account transport is env-backed (RMM_SMTP_*), so the client offers no
+  // way to write it: there is no PUT endpoint behind it to call.
+  assert.equal(api.updateSMTPConfig, undefined,
+    'the account SMTP profile must not be writable from the console');
 
   await api.updateAlertSMTPConfig({ host: 'relay.alerts.test' });
   assert.equal(last().url, 'https://console.test/api/config/smtp/alerts');
@@ -116,12 +116,18 @@ test('the admin permission fallback carries users.email.manage', async () => {
 // The Email screen has to offer both transports, and the notification card must
 // not offer an address field back — the backend rejects the change, so a field
 // there would be a control that silently fails.
-test('the settings screen wires both SMTP profiles and no self-service address', async () => {
+test('the settings screen edits only the alerts SMTP profile', async () => {
   const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
   for (const call of ['getAlertSMTPConfig', 'updateAlertSMTPConfig', 'testAlertSMTP']) {
     assert.match(screens, new RegExp(`api\\.${call}\\b`), `the Email screen should call ${call}`);
   }
-  assert.match(screens, /value: 'alerts'/, 'the Email screen should offer an alerts tab');
+  // Password-reset mail is configured with RMM_SMTP_* in the server environment.
+  // A hosted instance sends it from the operator's domain, and a form here would
+  // let a tenant admin repoint it — so the screen must not touch that profile.
+  for (const call of ['updateSMTPConfig', 'getSMTPConfig', 'testSMTP\\(']) {
+    assert.doesNotMatch(screens, new RegExp(`api\\.${call}`),
+      `the Email screen must not call ${call}: the account transport is env-only`);
+  }
   // The preferences card saves subscriptions only.
   assert.match(screens, /api\.updateMyNotifications\(\{ subscriptions: subs \}\)/);
 });

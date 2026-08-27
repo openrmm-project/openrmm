@@ -633,15 +633,24 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
   const [newDept, setNewDept] = useState('');
   const [confirmDelSite, setConfirmDelSite] = useState(false);
   const [confirmDelDept, setConfirmDelDept] = useState(null);
+  const [renamingDept, setRenamingDept] = useState(null); // { id, value } while renaming
+  const [enrollDept, setEnrollDept] = useState('');       // department the token binds to, '' = the site
   const [moveDevice, setMoveDevice] = useState(null);
   const [confirmDelDevice, setConfirmDelDevice] = useState(null);
   const [selected, setSelected] = useState(null); // device id -> open the full detail drawer (same as the Devices tab)
-  useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); }, [site.id]);
+  useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); setRenamingDept(null); setEnrollDept(''); }, [site.id]);
   // Clear a generated enrollment command when the selected site/department changes.
   useEffect(() => { setEnrollToken(null); }, [site.id, focusDept]);
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
+  const renameDept = async () => {
+    const d = renamingDept; if (!d) return;
+    const name = d.value.trim();
+    if (!name || name === d.name) { setRenamingDept(null); return; }
+    try { await api.renameGroup(d.id, name); setRenamingDept(null); window.dataBus.emit('groups'); toast.success('Department renamed'); }
+    catch (e) { toast.error('Failed', e.message); }
+  };
   const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delDevice = async () => { const d = confirmDelDevice; if (!d) return; try { await api.deleteDevice(d.id); window.dataBus.emit('devices'); toast.info('Device deleted'); } catch (e) { toast.error('Failed to delete device', e.message); } };
@@ -655,7 +664,19 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
       window.dataBus.emit('devices'); setMoveDevice(null); toast.success('Device moved');
     } catch (e) { toast.error('Failed to move device', e.message); }
   };
-  const genEnroll = async () => { setBusy(true); try { const t = await api.createEnrollToken({ description: 'Enroll for ' + site.name, site_id: site.id, uses: 1, ttl_hours: 24 }); setEnrollToken(t.token); toast.success('Enrollment token created'); } finally { setBusy(false); } };
+  const genEnroll = async () => {
+    setBusy(true);
+    const dept = depts.find((g) => g.id === enrollDept);
+    try {
+      const t = await api.createEnrollToken({
+        description: 'Enroll for ' + site.name + (dept ? ' / ' + dept.name : ''),
+        site_id: site.id, group_id: enrollDept || undefined, uses: 1, ttl_hours: 24,
+      });
+      setEnrollToken(t.token);
+      toast.success('Enrollment token created', dept ? 'Agents land in ' + dept.name : 'Agents land in ' + site.name);
+    } catch (e) { toast.error('Failed', e.message); }
+    finally { setBusy(false); }
+  };
 
   // Group the site's devices by department; ungrouped devices fall under "No department".
   const deptIds = new Set(depts.map((g) => g.id));
@@ -734,7 +755,17 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
                   <div key={g.id} className="space-y-1.5">
                     <div className="flex items-center gap-1.5 px-0.5">
                       <Icon name="building" size={12} className="text-faint" />
-                      <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                      {renamingDept?.id === g.id ? (
+                        <Input value={renamingDept.value} autoFocus className="h-7 flex-1 max-w-[260px]"
+                          onChange={(e) => setRenamingDept({ ...renamingDept, value: e.target.value })}
+                          onKeyDown={(e) => { if (e.key === 'Enter') renameDept(); if (e.key === 'Escape') setRenamingDept(null); }}
+                          onBlur={renameDept} />
+                      ) : (
+                        <span className="text-[11px] uppercase tracking-wide text-faint font-semibold flex-1">{g.name} <span className="font-normal text-faint/70">· {items.length}</span></span>
+                      )}
+                      {/* Renaming used to mean deleting and rebuilding, which unfiles
+                          every device under it. Only the label moves now. */}
+                      {can('clients.manage') && renamingDept?.id !== g.id && <button onClick={() => setRenamingDept({ id: g.id, name: g.name, value: g.name })} title={'Rename ' + g.name} className="text-faint hover:text-ink p-0.5"><Icon name="edit" size={12} /></button>}
                       {can('clients.manage') && <button onClick={() => setConfirmDelDept(g)} title="Delete department" className="text-faint hover:text-bad p-0.5"><Icon name="trash" size={12} /></button>}
                     </div>
                     {items.length ? items.map(renderDevice) : <div className="text-[12px] text-faint px-0.5 py-1">No devices in this department.</div>}
@@ -751,7 +782,19 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
             <div className="text-[12px] font-semibold text-muted">Enroll a new agent</div>
             {enrollToken && <button onClick={() => setEnrollToken(null)} className="text-[11.5px] text-faint hover:text-ink inline-flex items-center gap-1"><Icon name="close" size={12} />Hide</button>}
           </div>
-          {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>}
+          {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : (
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* The command does not describe the placement — the token does — so
+                  the department has to be chosen before the token is minted. */}
+              {depts.length > 0 && (
+                <Select value={enrollDept} onChange={(e) => setEnrollDept(e.target.value)} className="h-9 w-auto min-w-[190px]">
+                  <option value="">Land in {site.name}</option>
+                  {depts.map((g) => <option key={g.id} value={g.id}>Land in {g.name}</option>)}
+                </Select>
+              )}
+              <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>Generate enrollment command</Button>
+            </div>
+          )}
         </div>
       )}
       <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?" body={<>This removes <b>{site.name}</b> and its departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete site" />
@@ -1790,30 +1833,22 @@ function ConfigPanel() {
   );
 }
 
-// SMTPPanel configures the instance-wide mail transport. Separate from the
-// Configuration tab because it carries its own save and a test send: proving
-// delivery works is the whole point, and it should not wait on an unrelated form.
-// Two transports, one screen. Account mail (password resets) is the one an
-// instance must have; alerts may ride it or leave through a sender — or a relay
-// — of their own, which is why the alerts profile is a second form rather than
-// two extra fields on the first.
+// SMTPPanel configures the alert mail transport. Separate from the Configuration
+// tab because it carries its own save and a test send: proving delivery works is
+// the whole point, and it should not wait on an unrelated form.
+//
+// Only one transport is editable here. Account mail — password resets — is set
+// with RMM_SMTP_* in the server environment and has no form, because on a hosted
+// instance the reset sender belongs to the operator's domain and a tenant admin
+// must not be able to repoint it. Alerts are the tenant's own choice, so they
+// stay editable; leaving the host blank sends them through the account transport.
 function SMTPPanel() {
-  const [profile, setProfile] = useState('account');
-  return (
-    <>
-      <Tabs className="mb-4" value={profile} onChange={setProfile} tabs={[
-        { value: 'account', label: 'Account & password reset' },
-        { value: 'alerts', label: 'Alert notifications' },
-      ]} />
-      {profile === 'account' ? <SMTPProfilePanel profile="account" /> : <SMTPProfilePanel profile="alerts" />}
-    </>
-  );
+  return <SMTPProfilePanel />;
 }
 
-function SMTPProfilePanel({ profile }) {
+function SMTPProfilePanel() {
   const toast = useToast();
-  const alerts = profile === 'alerts';
-  const cfgQ = useQuery(['smtp', profile], () => alerts ? api.getAlertSMTPConfig() : api.getSMTPConfig(), { invalidateOn: ['smtp'] });
+  const cfgQ = useQuery(['smtp', 'alerts'], () => api.getAlertSMTPConfig(), { invalidateOn: ['smtp'] });
   const c = cfgQ.data;
   const [form, setForm] = useState(null);
   const [testTo, setTestTo] = useState('');
@@ -1824,26 +1859,24 @@ function SMTPProfilePanel({ profile }) {
     if (!c) return;
     setForm({
       host: c.host || '', port: c.port || 587, username: c.username || '', password: '',
-      from: c.from || '', from_name: c.from_name || (alerts ? '' : 'OpenRMM'), tls_mode: c.tls_mode || 'starttls',
+      from: c.from || '', from_name: c.from_name || '', tls_mode: c.tls_mode || 'starttls',
       skip_verify: !!c.skip_verify,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   // The alerts profile with no host of its own rides the account transport, so
   // the connection fields below are inert and say so rather than lying.
-  const inherits = alerts && !(form?.host || '').trim();
-  const effective = (alerts ? c?.effective : c) || {};
+  const inherits = !(form?.host || '').trim();
+  const effective = c?.effective || {};
 
   const save = async () => {
     setSaving(true);
     try {
       const body = { ...form, port: Number(form.port) || 587 };
-      alerts ? await api.updateAlertSMTPConfig(body) : await api.updateSMTPConfig(body);
+      await api.updateAlertSMTPConfig(body);
       set('password', ''); cfgQ.refetch();
       toast.success('Mail settings saved',
-        alerts
-          ? (body.host ? 'Alerts now leave through their own relay.' : 'Alerts ride the account transport.')
-          : (body.host ? 'Send a test message to confirm delivery.' : 'Email delivery is now off.'));
+        body.host ? 'Alerts now leave through their own relay.' : 'Alerts ride the account transport.');
     } catch (e) { toast.error('Could not save mail settings', e.message); }
     finally { setSaving(false); }
   };
@@ -1851,7 +1884,7 @@ function SMTPProfilePanel({ profile }) {
   const test = async () => {
     setTesting(true);
     try {
-      const r = alerts ? await api.testAlertSMTP(testTo.trim()) : await api.testSMTP(testTo.trim());
+      const r = await api.testAlertSMTP(testTo.trim());
       toast.success('Test message sent', 'Delivered to ' + r.to + '.');
     } catch (e) { toast.error('Test failed', e.message); }
     finally { setTesting(false); }
@@ -1864,7 +1897,7 @@ function SMTPProfilePanel({ profile }) {
 
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      {alerts && (
+      {
         <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2.5">
           <Icon name="info" size={14} className="text-muted mt-0.5 shrink-0" />
           <div className="text-[11.5px] text-muted">
@@ -1874,7 +1907,7 @@ function SMTPProfilePanel({ profile }) {
             {effective.from && <> Currently sending as <b className="text-ink mono">{effective.from}</b>.</>}
           </div>
         </div>
-      )}
+      }
       <Card className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="send" size={15} /></div>
@@ -1882,10 +1915,8 @@ function SMTPProfilePanel({ profile }) {
           <span className="ml-auto"><StatusPill status={effective.enabled ? 'online' : 'warning'} label={effective.enabled ? (inherits ? 'Inherited' : 'Configured') : 'Not configured'} size="sm" /></span>
         </div>
         <div className="space-y-3">
-          <Field label="Host" hint={alerts
-            ? 'Leave blank to send alerts through the account transport. Setting a host makes this a separate relay with its own credentials.'
-            : 'Clearing the host turns email delivery off and discards the stored password.'}>
-            <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder={alerts ? 'blank = use the account server' : 'smtp.example.com'} />
+          <Field label="Host" hint="Leave blank to send alerts through the account transport. Setting a host makes this a separate relay with its own credentials.">
+            <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder="blank = use the account server" />
           </Field>
           <Field label="Port"><Input className="mono" type="number" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="587" disabled={inherits} /></Field>
           <Field label="Encryption" hint="STARTTLS on 587 is the usual choice; TLS means implicit TLS, normally on 465.">
@@ -1910,10 +1941,10 @@ function SMTPProfilePanel({ profile }) {
           <div className="text-[13px] font-semibold text-ink">Sender &amp; credentials</div>
         </div>
         <div className="space-y-3">
-          <Field label="From address" hint={alerts ? 'Optional. Blank sends alerts under the account sender.' : undefined}>
-            <Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder={alerts ? 'alerts@example.com' : 'rmm@example.com'} />
+          <Field label="From address" hint="Optional. Blank sends alerts under the account sender.">
+            <Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder="alerts@example.com" />
           </Field>
-          <Field label="From name"><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder={alerts ? 'OpenRMM Alerts' : 'OpenRMM'} /></Field>
+          <Field label="From name"><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder="OpenRMM Alerts" /></Field>
           {/* Credentials belong to a host. An alerts profile that names none must not
               keep a password, so the fields go away instead of quietly doing nothing. */}
           {!inherits && <>

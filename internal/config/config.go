@@ -49,6 +49,21 @@ type Config struct {
 	// opens rustdesk://<id>. Off by default.
 	RustDeskEnabled bool
 
+	// SMTP* configure the account mail transport: password resets, and the
+	// fallback sender for alerts. Unlike the AI and MeshCentral settings this one
+	// is env-only and has no console form. A hosted instance sends its tenants
+	// password-reset mail from the operator's own domain, and that guarantee
+	// cannot survive an editable copy in app_settings — a tenant admin could
+	// simply point it elsewhere. Alert mail stays editable in the console.
+	SMTPHost       string
+	SMTPPort       int
+	SMTPUsername   string
+	SMTPPassword   string
+	SMTPFrom       string
+	SMTPFromName   string
+	SMTPTLSMode    string
+	SMTPSkipVerify bool
+
 	// Security.
 	// MCPAllowedIPs is an optional allowlist (comma-separated IPs/CIDRs) for the
 	// /mcp endpoint. Empty = no app-level IP restriction (deployer's choice).
@@ -164,6 +179,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	smtpPassword, err := secretEnv("RMM_SMTP_PASSWORD")
+	if err != nil {
+		return nil, err
+	}
 	databasePassword, err := secretEnv("RMM_DATABASE_PASSWORD")
 	if err != nil {
 		return nil, err
@@ -189,6 +208,14 @@ func Load() (*Config, error) {
 		MeshCentralUser:            env("RMM_MESHCENTRAL_USER", "admin"),
 		MeshCentralEnabled:         os.Getenv("RMM_MESHCENTRAL_ENABLED") != "false",
 		RustDeskEnabled:            os.Getenv("RMM_RUSTDESK_ENABLED") == "true",
+		SMTPHost:                   strings.TrimSpace(os.Getenv("RMM_SMTP_HOST")),
+		SMTPPort:                   envInt("RMM_SMTP_PORT", 587),
+		SMTPUsername:               os.Getenv("RMM_SMTP_USERNAME"),
+		SMTPPassword:               smtpPassword,
+		SMTPFrom:                   strings.TrimSpace(os.Getenv("RMM_SMTP_FROM")),
+		SMTPFromName:               env("RMM_SMTP_FROM_NAME", "OpenRMM"),
+		SMTPTLSMode:                env("RMM_SMTP_TLS_MODE", "starttls"),
+		SMTPSkipVerify:             os.Getenv("RMM_SMTP_SKIP_VERIFY") == "true",
 		MCPAllowedIPs:              splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:        os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:          os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",

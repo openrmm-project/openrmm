@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -12,6 +13,9 @@ import (
 
 // These run against a real Postgres because the behaviour under test *is* the
 // persistence: which rows a save writes, and which it leaves alone.
+//
+// Only the alerts profile is persisted at all. The account transport comes from
+// the environment, so it is set here as config fields rather than saved rows.
 func smtpStore(t *testing.T) (context.Context, *store.Store, *config.Config) {
 	t.Helper()
 	url := os.Getenv("RMM_TEST_DATABASE_URL")
@@ -28,34 +32,58 @@ func smtpStore(t *testing.T) (context.Context, *store.Store, *config.Config) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{AdminToken: "a-long-admin-token-used-as-key-material"}
-	// Start from a known state: both profiles cleared.
-	for _, profile := range []string{ProfileAccount, ProfileAlerts} {
-		for _, key := range SMTPKeys(profile) {
-			if err := st.UpsertAppSetting(ctx, key, "", smtpSecret(key)); err != nil {
-				t.Fatal(err)
-			}
+	cfg := &config.Config{
+		AdminToken:   "a-long-admin-token-used-as-key-material",
+		SMTPHost:     "smtp.account.test",
+		SMTPPort:     587,
+		SMTPUsername: "rmm@account.test",
+		SMTPPassword: "account-secret",
+		SMTPFrom:     "no-reply@account.test",
+		SMTPFromName: "OpenRMM",
+		SMTPTLSMode:  "starttls",
+	}
+	// Start from a known state: the one persisted profile cleared.
+	for _, key := range SMTPKeys(ProfileAlerts) {
+		if err := st.UpsertAppSetting(ctx, key, "", smtpSecret(key)); err != nil {
+			t.Fatal(err)
 		}
 	}
 	return ctx, st, cfg
 }
 
-func saveAccount(t *testing.T, ctx context.Context, st *store.Store, cfg *config.Config) {
-	t.Helper()
-	if _, err := SaveSMTP(ctx, st, cfg, ProfileAccount, SMTPSaveRequest{
-		Host: "smtp.account.test", Port: 587, Username: "rmm@account.test",
-		Password: "account-secret", From: "no-reply@account.test", FromName: "OpenRMM",
-		TLSMode: "starttls",
-	}); err != nil {
-		t.Fatalf("save account profile: %v", err)
+// The account transport is the operator's, not the tenant's: on a hosted
+// instance it sends password resets from the operator's own domain. A save that
+// could reach it would hand a tenant admin the ability to repoint authentication
+// mail, so the write is refused outright rather than merely hidden in the UI.
+func TestSaveSMTPRefusesTheAccountProfileIntegration(t *testing.T) {
+	ctx, st, cfg := smtpStore(t)
+
+	_, err := SaveSMTP(ctx, st, cfg, ProfileAccount, SMTPSaveRequest{
+		Host: "attacker.relay.test", Port: 587, From: "no-reply@attacker.test", TLSMode: "starttls",
+	})
+	if !errors.Is(err, ErrAccountProfileReadOnly) {
+		t.Fatalf("err = %v, want ErrAccountProfileReadOnly", err)
+	}
+	// And it wrote nothing on the way out.
+	if got := AccountSMTPConfig(cfg); got.Host != "smtp.account.test" || got.From != "no-reply@account.test" {
+		t.Fatalf("the refused save still changed the account transport: %+v", got)
+	}
+	rows, err := st.ListAppSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range SMTPKeys(ProfileAccount) {
+		if row, ok := rows[key]; ok && row.Value != "" {
+			t.Errorf("%s was persisted (%q); the account profile has no database form", key, row.Value)
+		}
 	}
 }
 
-// Saving one profile must not disturb the other. A save that reached the wrong
-// keys would silently take out password-reset delivery.
-func TestSaveSMTPProfilesAreIsolatedIntegration(t *testing.T) {
+// Saving the alerts profile must not reach the account keys — their prefixes
+// overlap (`smtp.` vs `smtp.alerts.`), which is exactly how a sloppy write would
+// silently take out password-reset delivery.
+func TestSaveSMTPAlertsDoesNotTouchAccountKeysIntegration(t *testing.T) {
 	ctx, st, cfg := smtpStore(t)
-	saveAccount(t, ctx, st, cfg)
 
 	if _, err := SaveSMTP(ctx, st, cfg, ProfileAlerts, SMTPSaveRequest{
 		Host: "relay.alerts.test", Port: 2525, Username: "alerts@alerts.test",
@@ -64,10 +92,7 @@ func TestSaveSMTPProfilesAreIsolatedIntegration(t *testing.T) {
 		t.Fatalf("save alerts profile: %v", err)
 	}
 
-	account, err := SMTPConfig(ctx, st, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	account := AccountSMTPConfig(cfg)
 	if account.Host != "smtp.account.test" || account.From != "no-reply@account.test" {
 		t.Fatalf("the alerts save changed the account profile: %+v", account)
 	}
@@ -89,7 +114,6 @@ func TestSaveSMTPProfilesAreIsolatedIntegration(t *testing.T) {
 // that names no server has no business holding a password for one.
 func TestSaveSMTPAlertsBlankHostKeepsSenderDropsCredentialsIntegration(t *testing.T) {
 	ctx, st, cfg := smtpStore(t)
-	saveAccount(t, ctx, st, cfg)
 
 	// First give alerts a relay of its own, so there is a password to drop.
 	if _, err := SaveSMTP(ctx, st, cfg, ProfileAlerts, SMTPSaveRequest{
@@ -132,33 +156,28 @@ func TestSaveSMTPAlertsBlankHostKeepsSenderDropsCredentialsIntegration(t *testin
 	}
 }
 
-// Clearing the account host turns email off and drops its password, and must not
-// take the alerts profile's own stored settings with it.
-func TestSaveSMTPClearingAccountLeavesAlertsIntegration(t *testing.T) {
+// With no account transport in the environment, an alerts profile that names its
+// own relay still works. Email being "off" instance-wide is an account-profile
+// fact, and must not be inferred onto a relay the operator configured.
+func TestAlertsKeepTheirRelayWhenAccountMailIsOffIntegration(t *testing.T) {
 	ctx, st, cfg := smtpStore(t)
-	saveAccount(t, ctx, st, cfg)
 	if _, err := SaveSMTP(ctx, st, cfg, ProfileAlerts, SMTPSaveRequest{
 		Host: "relay.alerts.test", Port: 2525, From: "alerts@alerts.test", TLSMode: "tls",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := SaveSMTP(ctx, st, cfg, ProfileAccount, SMTPSaveRequest{}); err != nil {
-		t.Fatalf("clear account profile: %v", err)
-	}
-	account, err := SMTPConfig(ctx, st, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if account.Host != "" || account.Password != "" {
-		t.Errorf("clearing should drop the host and password, got %+v", account)
+	// The environment supplies no account transport at all.
+	cfg.SMTPHost, cfg.SMTPPassword, cfg.SMTPFrom = "", "", ""
+	if got := AccountSMTPConfig(cfg); got.Enabled() {
+		t.Fatalf("account mail should be off with no RMM_SMTP_HOST, got %+v", got)
 	}
 	alerts, err := AlertSMTPConfig(ctx, st, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if alerts.Host != "relay.alerts.test" || !alerts.Enabled() {
-		t.Errorf("alerts keep their own relay when account mail is turned off, got %+v", alerts)
+		t.Errorf("alerts keep their own relay when account mail is off, got %+v", alerts)
 	}
 }
 

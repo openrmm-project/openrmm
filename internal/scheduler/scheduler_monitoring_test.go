@@ -102,7 +102,7 @@ func TestFailureAndRecoveryCountsGateAlertTransitions(t *testing.T) {
 	}
 	st := storetest.NewSchema(t, "scheduler_alert_state", databaseURL)
 	ctx := context.Background()
-	agent, err := st.CreateAgent(ctx, "counted-host", "linux", "amd64", "test", "hash", nil)
+	agent, err := st.CreateAgent(ctx, "counted-host", "linux", "amd64", "test", "hash", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestGroupPolicyCheckTargetsAndTrustBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent, err := st.CreateAgent(ctx, "group-host", "linux", "amd64", "test", "hash", &site.ID)
+	agent, err := st.CreateAgent(ctx, "group-host", "linux", "amd64", "test", "hash", &site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

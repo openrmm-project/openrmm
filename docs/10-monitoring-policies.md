@@ -107,6 +107,14 @@ schedule. The scheduler dispatches due tasks as **pre-approved** jobs
 require human approval). Each run is linked via `jobs.task_id`. Tasks may be
 owned by an agent or a policy.
 
+That pre-approved dispatch is exactly why a task the AI wrote does not simply
+start running. `propose_task` and `propose_check` create the row **disabled** and
+stamped with `proposed_by`; the scheduler selects `WHERE enabled`, so it stays
+inert until a person enables it on this screen — and enabling it is the review,
+recorded as `approved_by`. The database refuses to enable an unreviewed proposal.
+Rows waiting for review are badged **AI proposal** in the console. See
+[07-guardrails-security](07-guardrails-security.md#configuration-proposals-the-second-gate).
+
 **Schedule kinds** (`schedule_kind`):
 
 | Kind | Fields | Fires |

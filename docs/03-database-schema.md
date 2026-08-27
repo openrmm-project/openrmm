@@ -44,6 +44,12 @@ the agent's own site.
 ### `enroll_tokens`
 One-time / limited-use enrollment tokens (token, uses_left, expires_at).
 
+`site_id` and the optional `group_id` decide where an enrolling agent lands. A
+trigger (`enroll_token_group_matches_site`) rejects an inconsistent pair, so a
+token can never name a department belonging to a different site than the one it
+enrols into. The installer's `--site` flag does **not** decide this — it is
+accepted and discarded; the destination comes from the token row.
+
 ### `users`
 Console accounts. `password_hash` (bcrypt), `role` (role key such as
 `admin`/`tech`/`readonly` or a custom role), `totp_secret` (encrypted, nullable),
@@ -197,6 +203,8 @@ A monitoring check, owned **either** by an agent **or** a policy — exactly one
 | warn_threshold, err_threshold | double | nullable |
 | interval_sec | int | run cadence (default 300) |
 | enabled | bool | default true |
+| proposed_by | text | AI actor that authored it (`''` = a person). **Permanent** provenance: it survives review |
+| approved_by | text | who released it (`''` = nobody yet) |
 | failure_count | int | consecutive failures before the alert is raised (1–100, default 2) |
 | recovery_count | int | consecutive successes before it clears (1–100, default 2) |
 | hysteresis | double | band a recovering value must clear the threshold by (0–100, default 2) |
@@ -237,13 +245,25 @@ Scheduled automation, owned by an agent or a policy (like checks).
 | name | text | |
 | script_id | uuid FK → scripts | nullable; inline `shell`+`script` is the fallback |
 | shell, script | text | inline source when no `script_id` |
-| schedule_kind | text | `interval` / `daily` |
+| schedule_kind | text | `interval` / `daily` / `weekly` |
 | interval_sec | int | for `interval` |
 | run_at_minute | int | for `daily`: minutes since midnight (UTC) |
+| days_of_week | smallint | for `weekly`: bitmask, bit N = `time.Weekday` N (0 = Sunday) |
+| run_at_minutes | int[] | for `weekly`: times of day, minutes since midnight (UTC) |
 | enabled | bool | default true |
+| proposed_by | text | AI actor that authored it (`''` = a person). **Permanent** provenance: it survives review |
+| approved_by | text | who released it (`''` = nobody yet) |
 | created_at | timestamptz | |
 
 Each dispatched run links back via `jobs.task_id`.
+
+**`tasks` and `checks` both carry `CHECK (proposed_by = '' OR approved_by <> ''
+OR NOT enabled)`.** An AI proposal nobody has reviewed cannot be enabled, and the
+scheduler only ever selects `WHERE enabled` — so it cannot run. The rule is in the
+database because the AI tools and the REST handlers are separate paths into these
+rows; see [07-guardrails-security](07-guardrails-security.md). `policies` carries
+the same two columns for provenance, but no constraint: a policy has no schedule
+of its own, and what makes it dangerous is the tasks and checks attached to it.
 
 ### `alerts`
 Beyond the original fields, an alert carries its whole lifecycle (migration

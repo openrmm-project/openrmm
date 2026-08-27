@@ -147,12 +147,12 @@ func (s *Server) attachAgentConnection(ctx context.Context, agentID string, conn
 // the one it already stored).
 func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (id, token, cancelCredentialRotationID string, err error) {
 	if reg.EnrollToken != "" {
-		siteID, err := s.store.ConsumeEnrollToken(ctx, reg.EnrollToken)
+		siteID, groupID, err := s.store.ConsumeEnrollToken(ctx, reg.EnrollToken)
 		if err != nil {
 			return "", "", "", errors.New("invalid or exhausted enroll token")
 		}
 		token = auth.NewToken()
-		a, err := s.store.CreateAgent(ctx, reg.Hostname, reg.OS, reg.Arch, reg.Version, auth.Hash(token), siteID)
+		a, err := s.store.CreateAgent(ctx, reg.Hostname, reg.OS, reg.Arch, reg.Version, auth.Hash(token), siteID, groupID)
 		if err != nil {
 			return "", "", "", err
 		}

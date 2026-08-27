@@ -193,6 +193,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermClientsView)).Get("/sites", s.listSites)
 		r.With(s.requirePermission(models.PermClientsView)).Get("/groups", s.listGroups)
 		r.With(s.requirePermission(models.PermClientsManage)).Post("/groups", s.createGroup)
+		r.With(s.requirePermission(models.PermClientsManage)).Patch("/groups/{id}", s.renameGroup)
 		r.With(s.requirePermission(models.PermClientsManage)).Delete("/groups/{id}", s.deleteGroup)
 		r.With(s.requirePermission(models.PermClientsManage)).Post("/clients", s.createClient)
 		r.With(s.requirePermission(models.PermClientsManage)).Patch("/clients/{id}", s.updateClient)
@@ -977,6 +978,9 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 		Uses        int     `json:"uses"`
 		TTLHours    int     `json:"ttl_hours"`
 		SiteID      *string `json:"site_id"`
+		// Optional: bind the token to a department so the agent enrols straight
+		// into it rather than landing on the site and being moved by hand.
+		GroupID *string `json:"group_id"`
 	}
 	_ = decode(r, &in)
 	if in.Uses <= 0 {
@@ -997,12 +1001,34 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.GroupID != nil && *in.GroupID != "" {
+		// A department is reachable only through its site, so binding to one
+		// without naming the site would leave the placement ambiguous.
+		if in.SiteID == nil || *in.SiteID == "" {
+			writeErr(w, http.StatusBadRequest, "site_id is required when binding a token to a department")
+			return
+		}
+		if !s.requireScope(w, r, models.ScopeGroup, *in.GroupID) {
+			return
+		}
+		// The database refuses an inconsistent pair (migration 010); saying so
+		// here turns a constraint violation into an answer the operator can act on.
+		g, err := s.store.GetGroup(r.Context(), *in.GroupID)
+		if err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+		if g.SiteID == nil || *g.SiteID != *in.SiteID {
+			writeErr(w, http.StatusBadRequest, "that department does not belong to the site the token is bound to")
+			return
+		}
+	}
 	var expires *time.Time
 	if in.TTLHours > 0 {
 		t := time.Now().Add(time.Duration(in.TTLHours) * time.Hour)
 		expires = &t
 	}
-	tok, err := s.store.CreateEnrollToken(r.Context(), auth.NewToken(), in.Description, in.Uses, expires, in.SiteID)
+	tok, err := s.store.CreateEnrollToken(r.Context(), auth.NewToken(), in.Description, in.Uses, expires, in.SiteID, in.GroupID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

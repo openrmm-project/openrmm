@@ -8,6 +8,32 @@ tag.
 
 ### Added
 
+- **An agent can enrol straight into a department.** The enrolment token has
+  always carried where the agent lands — `enroll_tokens.site_id` is read at
+  registration and written to the agent — but departments were never part of it,
+  so every machine arrived at the site and someone moved it by hand afterwards.
+  The token now carries the department too, and the site detail lets you choose
+  it before minting the token.
+
+  The installers are untouched. The command an operator copies does not describe
+  the placement, the token does; `install.sh` has always accepted and discarded
+  its `--site` argument for that reason.
+
+  A department belongs to exactly one site, and an agent's must be its own
+  site's — the rule `SetAgentSite` already applies when a device moves. A token
+  naming an inconsistent pair is refused where it is written (migration `010`),
+  and enrolment ignores a department outside the site it is placing the agent in,
+  so the state that rule prevents cannot be created by either route.
+
+- **A department can be renamed.** It could be created and deleted and nothing
+  in between, so fixing a typo meant deleting it — which unfiles every device
+  under it — and building it again. `PATCH /api/groups/{id}` moves only the
+  label; the devices and the site it belongs to are untouched. Audited as
+  `group.rename`.
+
+
+### Added
+
 - **Monitoring and alerts survive the things that used to lose them.** The old
   loop dispatched a check, waited for a result, and raised an alert the moment
   one threshold reading crossed the line. A dropped agent left a check that had

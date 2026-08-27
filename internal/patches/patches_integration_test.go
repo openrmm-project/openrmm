@@ -32,7 +32,7 @@ func TestDispatchInstallClaimsApprovedPatchesAndRequeuesOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	agent, err := st.CreateAgent(ctx, "patch-agent", "linux", "amd64", "1.0.0", "token", nil)
+	agent, err := st.CreateAgent(ctx, "patch-agent", "linux", "amd64", "1.0.0", "token", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

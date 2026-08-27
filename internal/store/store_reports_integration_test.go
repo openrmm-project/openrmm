@@ -73,11 +73,11 @@ func newReportFixture(t *testing.T) reportFixture {
 
 	f.mineHost = "mine-host-" + suffix
 	f.theirHost = "their-host-" + suffix
-	mineAgent, err := st.CreateAgent(ctx, f.mineHost, "linux", "amd64", "1.0.0", "tok-mine-"+suffix, &mineSite.ID)
+	mineAgent, err := st.CreateAgent(ctx, f.mineHost, "linux", "amd64", "1.0.0", "tok-mine-"+suffix, &mineSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	theirAgent, err := st.CreateAgent(ctx, f.theirHost, "linux", "amd64", "1.0.0", "tok-theirs-"+suffix, &theirSite.ID)
+	theirAgent, err := st.CreateAgent(ctx, f.theirHost, "linux", "amd64", "1.0.0", "tok-theirs-"+suffix, &theirSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

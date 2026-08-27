@@ -78,11 +78,11 @@ func newScopeFixture(t *testing.T) scopeFixture {
 	f := scopeFixture{ctx: ctx, st: st, js: jobs.New(st, nilSender{})}
 	f.mineHost, f.theirHost = "mine-host-"+suffix, "their-host-"+suffix
 
-	mineAgent, err := st.CreateAgent(ctx, f.mineHost, "linux", "amd64", "1.0.0", "tok-mine-"+suffix, &mineSite.ID)
+	mineAgent, err := st.CreateAgent(ctx, f.mineHost, "linux", "amd64", "1.0.0", "tok-mine-"+suffix, &mineSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	theirAgent, err := st.CreateAgent(ctx, f.theirHost, "linux", "amd64", "1.0.0", "tok-theirs-"+suffix, &theirSite.ID)
+	theirAgent, err := st.CreateAgent(ctx, f.theirHost, "linux", "amd64", "1.0.0", "tok-theirs-"+suffix, &theirSite.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

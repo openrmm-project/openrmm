@@ -308,7 +308,6 @@ func (s *Server) Router() http.Handler {
 		// sniffing the request path, so no routing quirk can send a save to the
 		// wrong transport and overwrite password-reset delivery.
 		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp", s.getSMTPConfig(settings.ProfileAccount))
-		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp", s.updateSMTPConfig(settings.ProfileAccount))
 		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/test", s.testSMTPConfig(settings.ProfileAccount))
 		r.With(s.requirePermission(models.PermSettingsManage)).Get("/config/smtp/alerts", s.getSMTPConfig(settings.ProfileAlerts))
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp/alerts", s.updateSMTPConfig(settings.ProfileAlerts))

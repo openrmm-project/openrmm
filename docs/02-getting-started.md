@@ -148,3 +148,31 @@ curl -s -X POST localhost:8080/api/chat/sessions/$SID/messages \
 The reply includes `created_job_ids` for any jobs the AI proposed — surface those
 in the UI for approval. (Requires a working AI provider; set `RMM_AI_API_KEY` or
 point `RMM_AI_BASE_URL` at a local model.)
+
+## Running the tests
+
+```bash
+make test          # unit tests only
+cd openrmm && npm test
+```
+
+That is **not the whole suite**. Most of what verifies scope isolation, the
+approval gates, migrations and the alert lifecycle is DB-backed, and those tests
+`t.Skip` when there is no database. A green run without one proves much less than
+it looks like it does:
+
+```bash
+# any Postgres 16 you are willing to have written to
+export RMM_TEST_DATABASE_URL='postgres://rmm:rmm@localhost:5432/rmm_test?sslmode=disable'
+make test
+```
+
+CI sets no `RMM_TEST_DATABASE_URL`, so the integration tests skip there. Run them
+locally before trusting a change to anything security-relevant.
+
+Each DB-backed test gets a **schema of its own** (`storetest.NewSchema`), created
+and dropped around the test, so packages running in parallel cannot see each
+other's fixtures. Add new DB tests that way rather than deleting or truncating
+shared tables: a truncate reaches into whatever another package is doing at the
+time, which shows up as a vanished fixture or a deadlock rather than as an
+obvious mistake.

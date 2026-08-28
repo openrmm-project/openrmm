@@ -70,10 +70,16 @@ database, scheduler, agent hub, AI provider, relay, backup, or edge.
 |--------|------|------------|-------------|
 | POST | `/api/enroll-tokens` | `enrollment.manage` | Create an enroll token |
 
-Body: `{ "description": "lab", "uses": 1, "ttl_hours": 24 }` (all optional;
-`uses` defaults to 1). Prefer one-use tokens for individual endpoints; a multi-use
-token is an intentionally broader enrollment capability. Returns the token object
-— **the token value is only shown here**.
+Body: `{ "description": "lab", "uses": 1, "ttl_hours": 24, "site_id": "…",
+"group_id": "…" }` (all optional; `uses` defaults to 1). Prefer one-use tokens for
+individual endpoints; a multi-use token is an intentionally broader enrollment
+capability. Returns the token object — **the token value is only shown here**.
+
+`site_id` and `group_id` decide where the agent lands: give `group_id` to enrol
+straight into a department. The department must belong to the given site — an
+inconsistent pair is rejected, by the handler and again by a database trigger.
+The installer's `--site` flag does not affect this; it is accepted and discarded,
+because the destination is a property of the token, not of the command line.
 
 A caller restricted by access scope must bind the token to a site directly in its
 site/client scope. Unbound tokens, or tokens for a site reached only through a
@@ -404,6 +410,7 @@ Department); it never spans companies/sites. Optional.
 |--------|------|------------|-------------|
 | GET | `/api/groups` | `clients.view` | List departments (each carries its `site_id`) |
 | POST | `/api/groups` | `clients.manage` | `{name, site_id}` — `site_id` is **required** |
+| PATCH | `/api/groups/{id}` | `clients.manage` | `{name}` rename a department (audited as `group.rename`) |
 | DELETE | `/api/groups/{id}` | `clients.manage` | Delete a department (audited) |
 | PATCH | `/api/devices/{id}/group` | `clients.manage` | `{group_id}` assign/clear — the department must be in the device's own site |
 | DELETE | `/api/devices/{id}` | `devices.delete` | Delete a device (audited; never via AI/MCP) |

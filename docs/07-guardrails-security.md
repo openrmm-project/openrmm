@@ -10,6 +10,11 @@ These controls are built in.
   status `awaiting_approval`. This applies to both the built-in chat and the
   **MCP** surface (external AI like Claude/ChatGPT) — same permission-filtered
   tool catalog, same gate.
+- **Configuration is proposed too.** `propose_task`, `propose_check` and
+  `propose_policy` write the row **disabled**, stamped with `proposed_by`. The
+  scheduler selects `WHERE enabled`, so a proposal never runs; a person enables it
+  in the console, and that act *is* the review. See
+  [Configuration proposals](#configuration-proposals-the-second-gate) below.
 - **Every ad-hoc script run requires approval by default.** `POST /api/jobs` and
   `run-script` ignore `require_approval:false` unless the deployer explicitly sets
   `RMM_ALLOW_UNAPPROVED_JOBS=true`.
@@ -24,8 +29,54 @@ These controls are built in.
   respectively (`DELETE /api/devices/{id}`, `DELETE /api/groups/{id}`) — a
   deliberate human action in the tool, audited (`device.delete` / `group.delete`).
   The AI/MCP surface has **no** delete tool, so external AI can never delete anything.
-- **Scheduled tasks** are the one pre-approved path: they require `tasks.manage`,
-  are authorized at creation and fully audited; disable a task to stop it.
+- **Scheduled tasks** are the one pre-approved path: the scheduler dispatches a
+  due task through `jobs.RunAutomated`, which creates the job already approved.
+  They require `tasks.manage`, are authorized at creation and fully audited;
+  disable a task to stop it. Because that path skips approval by design, a task
+  the AI authored may not reach it until a person has enabled it — see below.
+
+## Configuration proposals (the second gate)
+
+Letting the AI create a task would have undone the gate above, and it is worth
+being explicit about why. A task is a script with a schedule, and the scheduler
+runs one **pre-approved and immediately, forever**. An AI able to create an
+*enabled* task would therefore have been strictly more powerful than one able to
+propose a script: the same arbitrary code, with no approval, repeating.
+
+So configuration reuses the switch that already existed:
+
+- `propose_task` / `propose_check` / `propose_policy` write the row with
+  `enabled = false` and set `proposed_by` to the proposing actor.
+- The scheduler's own queries already read `WHERE enabled`, so a proposal is
+  inert **with no scheduler change at all**.
+- A person reviews it on the existing Tasks / Checks / Policies screens, which
+  badge it as an *AI proposal*, and enabling it records `approved_by`.
+
+Two columns, because they answer different questions. `proposed_by` is permanent
+provenance and survives acceptance — months later the row still says an AI wrote
+it. `approved_by` names who released it. "Awaiting review" is therefore
+`proposed_by <> '' AND approved_by = ''`.
+
+A **CHECK constraint** refuses to enable a row that is proposed but not approved.
+That guard lives in the database rather than in the tool, because the REST
+handlers are a second path into the same rows, and a guard written in only one of
+them is exactly the bug the column exists to prevent.
+
+### Patches: install yes, approve never
+
+`install_patches` acts rather than proposes. It is safe for a reason that has
+nothing to do with the AI: `DispatchInstall` calls `ClaimApprovedPatches`, which
+claims only identifiers a person already approved, so an unapproved id installs
+nothing. Approving a patch is the human decision about what enters the fleet, and
+there is deliberately **no tool for it** — an assistant that could approve and
+then install would make the guarantee circular.
+
+### Why the gate does not depend on who is asking
+
+Configuration is not created enabled even for an unrestricted administrator. The
+model reads inventory, hostnames and alert text, all of which come from the
+monitored machines. "An admin asked" is not evidence that an admin *authored* the
+request, so the gate is not conditioned on the caller.
 
 ## MCP surface controls
 

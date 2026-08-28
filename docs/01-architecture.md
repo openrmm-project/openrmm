@@ -28,6 +28,7 @@ internal/
   jobs/          # job lifecycle: propose/approve/reject/dispatch/result + audit
   patches/       # approved patch scan/install/reboot dispatch and result handling
   scheduler/     # dispatches due checks/tasks, evaluates results, raises/resolves alerts
+  notify/        # durable email outbox: leases a queued message, sends it, retries with backoff
   ai/            # OpenAI-compatible client, permission-filtered tool catalog, tool loop
   mcpserver/     # exposes the same permission/scope-filtered tools over Streamable HTTP
   remote/        # RemoteProvider abstraction (native + terminal + meshcentral) + session relay

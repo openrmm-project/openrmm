@@ -6,8 +6,10 @@ ChatGPT, and others — can connect and manage the fleet in natural language.
 
 It reuses the **exact same permission-filtered tool catalog and implementations**
 as the built-in chat (`ai.ToolsForPermissions` / `ai.Execute`), so both surfaces
-behave identically. Write-capable tools only create **approval-gated** job
-proposals. External AI can propose, never execute directly, never delete.
+behave identically. Write-capable tools **propose**: jobs land in
+`awaiting_approval`, and tasks, checks and policies land disabled and stamped for
+review. External AI never executes a script directly and never deletes. The single
+tool that acts, `install_patches`, is bounded by what a person already approved.
 
 Verified end-to-end: `initialize` → `tools/list` → `tools/call` over HTTP, with
 scoped tokens and IP allowlisting.
@@ -95,8 +97,12 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
    has `mcp.use` (the built-in `tech` role is the default); revoke it
    independently of everything else. Never put the bootstrap/admin token in a client.
 3. **TLS everywhere** for public exposure; or no public exposure at all (Tailscale).
-4. **Approval guardrail.** External AI can only create job proposals → human
-   approves in the tool. It has no direct execute/delete tools. See
+4. **Approval guardrail.** External AI proposes; a human releases. Jobs are
+   created `awaiting_approval`; tasks, checks and policies are created **disabled**
+   and stamped `proposed_by`, and the database refuses to enable one nobody has
+   reviewed. It has no execute-a-script and no delete tools. The one tool that
+   acts is `install_patches`, and it can only install what a person had already
+   approved — there is no tool to approve a patch. See
    [07-guardrails-security](07-guardrails-security.md).
 5. **Least privilege.** The `/mcp` group requires `mcp.use`, not broad admin
    access.
@@ -126,6 +132,11 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
 | Capability | Allowed? |
 |------------|----------|
 | List devices, read inventory, fleet summary, job status | ✅ only with matching permissions |
+| List tasks, checks and policies | ✅ with `tasks.view` / `checks.view` / `policies.view` |
 | Propose scripts/bulk/high-level actions | ✅ only with `jobs.create`; awaits human approval |
+| Propose a task, check or policy | ✅ with `tasks.manage` / `checks.manage` / `policies.manage` — created **disabled**; it never runs until a person enables it |
+| Install patches | ✅ with `patches.manage`, but **only ones a person already approved**; unapproved identifiers install nothing |
+| Approve a patch | ❌ no such tool — approval is always a human decision |
+| Enable a task, check or policy it proposed | ❌ the database refuses an unreviewed proposal |
 | Execute a script directly | ❌ |
 | Delete a device or group | ❌ (permission-gated human action in the tool) |

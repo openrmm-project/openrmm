@@ -79,9 +79,17 @@ see intersecting assignments but cannot create/update/delete global definitions.
 Audit events include scans, approvals/declines, installs, policy changes and
 reboots.
 
-The AI/MCP catalog currently provides read-only `list_patches`. It does **not**
-provide a direct `apply_updates` tool. Operators install through the scoped human
-API/UI or preconfigured policy automation.
+The AI/MCP catalog provides `list_patches` (read) and `install_patches`. The
+second one acts, and is bounded by the approval step rather than by the tool:
+`DispatchInstall` claims through `ClaimApprovedPatches`, so it can only install
+identifiers a person **already approved**, and an unapproved one installs nothing.
+It must name identifiers explicitly — an empty list is rejected rather than
+treated as "install everything".
+
+There is deliberately **no tool to approve a patch**. Approval is the human
+decision about what enters the fleet, and an assistant that could approve and then
+install would make the bound above circular. Operators approve through the scoped
+human API/UI or preconfigured policy automation.
 
 ## Policy behavior
 

@@ -19,8 +19,8 @@ guardrails (approval, audit). The product's differentiator.
 - **Script library** + run-on-device.
 - **Monitoring checks** (diskspace, memory, cpuload, ping, winservice, script)
   with thresholds, history, and a server-driven scheduler.
-- **Scheduled tasks** (interval/daily) dispatched as pre-approved automation.
-- **Policies** assigned to client/site/agent; agents inherit checks/tasks.
+- **Scheduled tasks** (interval/daily/weekly) dispatched as pre-approved automation.
+- **Policies** assigned to client/site/department/agent; agents inherit checks/tasks.
 - **Alerts** with auto-raise/auto-resolve, dedup, ack/resolve, offline detection.
 - **Rich inventory** via gopsutil (CPU, memory, disks, platform, uptime).
 - **Agent as a system service** (install/uninstall via kardianos/service).

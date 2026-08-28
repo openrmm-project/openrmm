@@ -41,6 +41,7 @@ available only through explicit lab mode.
 | `job_result` | `{ job_id, exit_code, stdout, stderr, success }` | finalize the job (server replies `job_result_ack`) |
 | `patch_report` | `{ os, patches:[{identifier,title,classification,kb,reboot_required,...}] }` | upsert the device's missing patches ([16](16-patch-management.md)) |
 | `patch_result` | `{ request_id, results:[{identifier,success,reboot_required,error}], reboot_required }` | record an install run |
+| `check_result` | `{ check_id, execution_id, value, output, success }` | record one check run; the server replies `check_result_ack`. `value` carries the number for threshold checks (free %, load %, exit code), `success` the verdict for boolean ones (reachable / running / exit == 0) |
 | `remote_status` | (reserved) | native remote-session state |
 | `credential_rotated` | `{ rotation_id }` | confirm durable replacement storage; replacement-token reconnect commits it |
 | `credential_rotation_canceled` | `{ rotation_id }` | confirm durable restoration; re-sent until `credential_rotation_canceled_ack` arrives |
@@ -54,10 +55,13 @@ once on connect).
 |------|------|--------|
 | `job` | `{ job_id, type, shell, script }` | run it, reply with `job_result` |
 | `job_result_ack` | `{ job_id }` | confirm a `job_result` was durably recorded; the agent drops it from its retry outbox |
+| `check_result_ack` | `{ execution_id }` | same for a `check_result`, keyed by the execution rather than the check: a result may be re-sent until it is acknowledged |
 | `remote_start` | `{ session_id, agent_ticket, kind, allow_files }` | connect a remote module to the relay; the agent derives `/ws/remote` from its own control WebSocket origin |
 | `credential_rotate` | `{ rotation_id, agent_token }` | durably store the replacement credential, then reconnect with it |
 | `credential_rotation_cancel` | `{ rotation_id }` | durably restore the prior credential and confirm it |
 | `credential_rotation_canceled_ack` | `{ rotation_id }` | server recorded restoration; drop the persisted confirmation retry |
+| `job_cancel` | `{ job_id }` | stop a job: reject it if it has not started, or kill the running process |
+| `run_check` | `{ check_id, execution_id, type, config, timeout_sec }` | run one monitoring check now, reply with `check_result`. `execution_id` identifies this run, so a retry is recognised as the same observation rather than a new one ([10](10-monitoring-policies.md)) |
 | `patch_scan` | `{}` | scan for missing OS patches, reply with `patch_report` |
 | `patch_install` | `{ request_id, identifiers }` | install only the explicit approved identifiers; an empty list is rejected, reply with `patch_result` |
 | `reboot` | `{ delay_seconds }` | reboot the host |

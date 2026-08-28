@@ -267,7 +267,7 @@ jobs:
       # repositories"). Keep it non-blocking so the signed release still
       # publishes; it starts producing provenance automatically once the repo is
       # public. The Ed25519 .sig files remain the enforced update-integrity check.
-      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         continue-on-error: true
         with:
           subject-path: 'release/*'

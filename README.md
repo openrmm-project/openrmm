@@ -144,4 +144,23 @@ limitations.
 OpenRMM is licensed under the **GNU Affero General Public License v3.0**
 (AGPL-3.0-only); see [`LICENSE`](LICENSE). The AGPL's network clause (section 13)
 means anyone who runs a modified version as a network service must offer that
-version's source to its users. Copyright (C) 2026 OpenRMM contributors.
+version's source to its users.
+
+Copyright (C) 2026 Miqueias Gonçalves. Contributors retain copyright in their own
+contributions and license them under the [CLA](CLA.md).
+
+### Commercial licensing
+
+The AGPL is a real obligation, not a formality: if you modify OpenRMM and offer
+it to others over a network, you must offer them that modified source. That is
+fine for most self-hosted use, and deliberately awkward for building a closed
+product on top of it.
+
+If you need to embed OpenRMM in something you do not want to publish, a separate
+commercial licence is available — the same code, without the AGPL's source
+obligations. Ask via the address on the GitHub profile.
+
+Contributing is unaffected by that: you keep the copyright in your work. The
+[CLA](CLA.md) grants a licence broad enough to cover both distributions, because
+the alternative is a project that can never change its own terms. See
+[CONTRIBUTING](CONTRIBUTING.md).

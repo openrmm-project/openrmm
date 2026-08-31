@@ -41,14 +41,11 @@ func newReportFixture(t *testing.T) reportFixture {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
-	st, err := New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// A schema of its own. The isolation assertions were written with unique
+	// suffixes and so tolerated a shared schema, but a COUNT cannot: it sees
+	// every other test's fixtures too, and "2 machines have nginx" quietly
+	// became 4 as soon as a second test in this file ran.
+	st := newIsolatedStore(t, "store_reports", url)
 
 	suffix := uuid.NewString()
 	f := reportFixture{st: st, ctx: ctx, minePrefix: suffix}
@@ -225,5 +222,99 @@ func TestReportRowsCarryTheirOwnTenantLabelsIntegration(t *testing.T) {
 		if !strings.HasPrefix(r.Client, "mine-") {
 			t.Errorf("row for %s is labelled with client %q", r.Hostname, r.Client)
 		}
+	}
+}
+
+// Counting in the database is the point: "how many machines have nginx" costs
+// one query and is exact, where a model reading a thousand rows to count them
+// costs a context window and produces a number that only looks right.
+func TestInventorySummaryCountsMachinesNotRowsIntegration(t *testing.T) {
+	f := newReportFixture(t)
+
+	// Both machines report the same package, so a summary must say two machines
+	// and not two unrelated rows.
+	groups, _, err := f.st.InventorySummary(f.ctx, ReportFilter{ScopeUserID: f.fullUser}, "software", "name", "nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("match=nginx returned %d groups, want 1: %+v", len(groups), groups)
+	}
+	if groups[0].Machines != 2 {
+		t.Errorf("machines = %d, want 2 — the count must be distinct devices", groups[0].Machines)
+	}
+}
+
+// The summary is filtered by the caller's access scope like everything else. A
+// count that quietly included another tenant would be worse than a leaked row:
+// it looks authoritative and nothing in it reveals the extra data.
+func TestInventorySummaryRespectsScopeIntegration(t *testing.T) {
+	f := newReportFixture(t)
+
+	scoped, _, err := f.st.InventorySummary(f.ctx, ReportFilter{ScopeUserID: f.scopedUser}, "software", "name", "nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) != 1 || scoped[0].Machines != 1 {
+		t.Fatalf("a user scoped to one company counted %+v; want a single machine", scoped)
+	}
+
+	// And an out-of-scope filter cannot widen it.
+	cross, _, err := f.st.InventorySummary(f.ctx,
+		ReportFilter{ScopeUserID: f.scopedUser, ScopeType: "client", ScopeID: f.theirClientID},
+		"software", "name", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cross) != 0 {
+		t.Errorf("a cross-tenant summary returned %+v, want nothing", cross)
+	}
+}
+
+// group_by comes from the caller, so it must select from a whitelist rather than
+// reach SQL as text — a report parameter that becomes a column name is how an
+// endpoint turns into an injection point.
+func TestInventorySummaryRejectsUnknownGroupIntegration(t *testing.T) {
+	f := newReportFixture(t)
+
+	_, _, err := f.st.InventorySummary(f.ctx, ReportFilter{}, "software", "name; DROP TABLE agents", "")
+	if err == nil {
+		t.Fatal("an arbitrary group_by was accepted")
+	}
+	// The error should say what IS allowed, not only that this was not.
+	if !strings.Contains(err.Error(), "try one of:") {
+		t.Errorf("the refusal should list the options: %v", err)
+	}
+	// The table is obviously still there, but assert it rather than assume.
+	var n int
+	if err := f.st.pool.QueryRow(f.ctx, `SELECT count(*) FROM agents`).Scan(&n); err != nil {
+		t.Fatalf("agents table is gone: %v", err)
+	}
+}
+
+// Machines are counted from the agent list, not from reported inventory: a
+// device that has never checked in is still part of the fleet, and leaving it
+// out would under-report exactly the machines someone is looking for.
+func TestMachinesSummaryIncludesDevicesWithoutInventoryIntegration(t *testing.T) {
+	f := newReportFixture(t)
+	site, err := f.st.CreateSite(f.ctx, f.mineClientID, "quiet-"+uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.CreateAgent(f.ctx, "never-reported-"+uuid.NewString(),
+		"linux", "amd64", "1.0.0", "tok-"+uuid.NewString(), &site.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, _, err := f.st.InventorySummary(f.ctx, ReportFilter{ScopeUserID: f.fullUser}, "machines", "os", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, g := range groups {
+		total += g.Machines
+	}
+	if total < 3 {
+		t.Errorf("machines summary counted %d; the device that never reported inventory is missing", total)
 	}
 }

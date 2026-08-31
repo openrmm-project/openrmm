@@ -205,8 +205,31 @@ func TestInventoryReportCannotBeAimedOutsideTheScopeIntegration(t *testing.T) {
 
 	tc := f.scopedContext()
 
-	// Unfiltered: the caller's own fleet, and only that.
-	res := Execute(f.ctx, tc, "inventory_report", json.RawMessage(`{"report_type":"machines"}`))
+	// The default is now a summary, so scope shows up as a COUNT rather than as
+	// a hostname — and a count that quietly included another tenant is worse
+	// than a leaked row, because nothing in it reveals the extra data.
+	summary := Execute(f.ctx, tc, "inventory_report", json.RawMessage(`{"report_type":"machines"}`))
+	if strings.Contains(summary.Output, f.theirHost) {
+		t.Fatalf("the summary leaked an out-of-scope hostname: %s", summary.Output)
+	}
+	var counted struct {
+		Groups []struct {
+			Machines int `json:"machines"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(summary.Output), &counted); err != nil {
+		t.Fatalf("summary is not readable: %v (%s)", err, summary.Output)
+	}
+	totalCounted := 0
+	for _, g := range counted.Groups {
+		totalCounted += g.Machines
+	}
+	if totalCounted != 1 {
+		t.Fatalf("the summary counted %d machines; a caller scoped to one company owns exactly 1", totalCounted)
+	}
+
+	// And the row path, which is what this test originally covered.
+	res := Execute(f.ctx, tc, "inventory_report", json.RawMessage(`{"report_type":"machines","mode":"rows"}`))
 	if strings.Contains(res.Output, f.theirHost) {
 		t.Fatalf("inventory_report leaked an out-of-scope machine: %s", res.Output)
 	}
@@ -218,7 +241,8 @@ func TestInventoryReportCannotBeAimedOutsideTheScopeIntegration(t *testing.T) {
 	// try once it has a client id. The access scope and the requested filter are
 	// ANDed, so the answer is empty rather than someone else's fleet.
 	aimed, _ := json.Marshal(map[string]any{
-		"report_type": "machines", "scope_type": "client", "scope_id": f.theirClient,
+		"report_type": "machines", "mode": "rows",
+		"scope_type": "client", "scope_id": f.theirClient,
 	})
 	res = Execute(f.ctx, tc, "inventory_report", json.RawMessage(aimed))
 	if strings.Contains(res.Output, f.theirHost) {

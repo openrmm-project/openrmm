@@ -92,9 +92,12 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "inventory_report",
-			Description: "Generate a FLEET-WIDE inventory report aggregated across many devices, optionally narrowed to one client, site or department (group). report_type 'software' lists installed packages per machine; 'hardware' lists each machine's hardware profile; 'machines' lists the fleet (parque) with status. Use THIS (not get_inventory) when the user asks for an inventory of a client/site/department or of 'all machines'. Read-only — it never changes anything. For one specific named device, use get_inventory instead.",
+			Description: "Fleet-wide inventory across many devices, optionally narrowed to one client, site or department. report_type 'software' covers installed packages; 'hardware' each machine's profile; 'machines' the fleet with status. DEFAULTS TO COUNTS: mode=\"summary\" groups and counts in the database, which is the right call for \"how many machines have X\", \"what is installed\" or \"what OS mix do we run\" — use match to ask about one item. Only use mode=\"rows\" when you must read individual records, and narrow first; it is capped. For the complete data, call export_inventory and give the operator the link. Read-only. For one named device, use get_inventory instead.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"report_type":{"type":"string","enum":["software","hardware","machines"],"description":"which report to produce"},
+				"mode":{"type":"string","enum":["summary","rows"],"description":"summary (default) returns counts by group; rows returns individual records, capped"},
+				"group_by":{"type":"string","description":"summary only. software: name|version|manufacturer|client. hardware: os|manufacturer|model|platform|client. machines: os|status|client|site|department|version"},
+				"match":{"type":"string","description":"summary only: narrow to groups containing this text, e.g. \"nginx\" to count the machines that have it"},
 				"scope_type":{"type":"string","enum":["client","site","group"],"description":"optional: narrow to one client, site or department (group)"},
 				"scope_id":{"type":"string","description":"id of the client/site/group; required when scope_type is set"}
 			},"required":["report_type"],"additionalProperties":false}`),
@@ -517,6 +520,9 @@ func inventoryReport(ctx context.Context, tc ToolContext, args json.RawMessage) 
 		ReportType string `json:"report_type"`
 		ScopeType  string `json:"scope_type"`
 		ScopeID    string `json:"scope_id"`
+		Mode       string `json:"mode"`
+		GroupBy    string `json:"group_by"`
+		Match      string `json:"match"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
@@ -533,6 +539,40 @@ func inventoryReport(ctx context.Context, tc ToolContext, args json.RawMessage) 
 	default:
 		return nil, fmt.Errorf("unknown scope_type %q", in.ScopeType)
 	}
+	// Counts by default. Rows are the exception, not the norm: most questions
+	// asked of an inventory are "how many" and "which kinds", and answering
+	// those with a thousand rows spends a context window to arrive at a number
+	// the database already had — and one the model may get wrong on the way.
+	if in.Mode == "" || in.Mode == "summary" {
+		groups, more, err := tc.Store.InventorySummary(ctx, f, in.ReportType, in.GroupBy, in.Match)
+		if err != nil {
+			return nil, err
+		}
+		grouped := in.GroupBy
+		if grouped == "" {
+			grouped = store.DefaultGroupBy[in.ReportType]
+		}
+		out := map[string]any{
+			"report":        in.ReportType,
+			"grouped_by":    grouped,
+			"groups":        groups,
+			"group_options": store.GroupOptions(in.ReportType),
+			"note": "counts computed in the database, ordered by how many devices each " +
+				"covers. `machines` is distinct devices; `rows` counts matching records. " +
+				"Use match to ask about one item, mode=\"rows\" to read records, or " +
+				"export_inventory for the full set as a CSV.",
+		}
+		if more > 0 {
+			out["truncated"] = true
+			out["note"] = fmt.Sprintf("showing the %d largest groups; there are more in the tail. "+
+				"Use match to ask about a specific one.", len(groups))
+		}
+		return out, nil
+	}
+	if in.Mode != "rows" {
+		return nil, fmt.Errorf("mode must be \"summary\" or \"rows\"")
+	}
+
 	switch in.ReportType {
 	case "software":
 		rows, err := tc.Store.SoftwareReport(ctx, f)

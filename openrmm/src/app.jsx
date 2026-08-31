@@ -201,26 +201,29 @@ function BrandMark({ size = 32 }) {
 }
 
 /* ------------------------------- Sidebar ---------------------------------- */
+// Labels are translation KEYS, not text. Resolving them here would run t() once
+// at module load and freeze the language for the session; the sidebar calls
+// t(item.label) at render, so switching the picker updates it.
 const NAV = [
   { section: null, items: [
-    { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-    { id: 'chat', label: 'AI Chat', icon: 'chat', accent: true, min: 'ai_chat.use' },
-    { id: 'alerts', label: 'Alerts', icon: 'alert', badge: 'alerts', min: 'alerts.view' },
+    { id: 'dashboard', label: 'nav.dashboard', icon: 'dashboard' },
+    { id: 'chat', label: 'nav.chat', icon: 'chat', accent: true, min: 'ai_chat.use' },
+    { id: 'alerts', label: 'nav.alerts', icon: 'alert', badge: 'alerts', min: 'alerts.view' },
   ] },
-  { section: 'Fleet', items: [
-    { id: 'devices', label: 'Devices', icon: 'devices', min: 'devices.view' },
-    { id: 'jobs', label: 'Jobs', icon: 'flash', badge: 'jobs', min: 'jobs.view' },
-    { id: 'checks', label: 'Checks', icon: 'check', min: 'checks.view' },
-    { id: 'tasks', label: 'Scheduled tasks', icon: 'tasks', min: 'tasks.view' },
-    { id: 'policies', label: 'Policies', icon: 'policy', min: 'policies.view' },
-    { id: 'scripts', label: 'Scripts', icon: 'script', min: 'scripts.view' },
-    { id: 'patches', label: 'Patches', icon: 'shield', min: 'patches.view' },
-    { id: 'reports', label: 'Reports', icon: 'report', min: 'reports.view' },
+  { section: 'nav.section.fleet', items: [
+    { id: 'devices', label: 'nav.devices', icon: 'devices', min: 'devices.view' },
+    { id: 'jobs', label: 'nav.jobs', icon: 'flash', badge: 'jobs', min: 'jobs.view' },
+    { id: 'checks', label: 'nav.checks', icon: 'check', min: 'checks.view' },
+    { id: 'tasks', label: 'nav.tasks', icon: 'tasks', min: 'tasks.view' },
+    { id: 'policies', label: 'nav.policies', icon: 'policy', min: 'policies.view' },
+    { id: 'scripts', label: 'nav.scripts', icon: 'script', min: 'scripts.view' },
+    { id: 'patches', label: 'nav.patches', icon: 'shield', min: 'patches.view' },
+    { id: 'reports', label: 'nav.reports', icon: 'report', min: 'reports.view' },
   ] },
-  { section: 'Organization', items: [
-    { id: 'clients', label: 'Clients & Sites', icon: 'building', min: 'clients.view' },
-    { id: 'audit', label: 'Audit log', icon: 'audit', min: 'audit.view' },
-    { id: 'settings', label: 'Users & Settings', icon: 'settings' },
+  { section: 'nav.section.organization', items: [
+    { id: 'clients', label: 'nav.clients', icon: 'building', min: 'clients.view' },
+    { id: 'audit', label: 'nav.audit', icon: 'audit', min: 'audit.view' },
+    { id: 'settings', label: 'nav.settings', icon: 'settings' },
   ] },
 ];
 
@@ -234,7 +237,7 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
 
   return (
     <>
-    <button aria-label="Close navigation" onClick={onClose} className={cx('fixed inset-0 z-[89] bg-black/60 md:hidden', mobileOpen ? 'block' : 'hidden')} />
+    <button aria-label={t('nav.close')} onClick={onClose} className={cx('fixed inset-0 z-[89] bg-black/60 md:hidden', mobileOpen ? 'block' : 'hidden')} />
     <aside className={cx('fixed inset-y-0 left-0 z-[90] w-[232px] shrink-0 h-full bg-panel border-r border-line flex flex-col transition-transform md:static md:z-auto md:translate-x-0', mobileOpen ? 'translate-x-0' : '-translate-x-full')}>
       <div className="h-14 flex items-center gap-2.5 px-4 border-b border-line">
         <BrandMark size={28} />
@@ -251,7 +254,7 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
           if (!items.length) return null;
           return (
           <div key={gi} className={gi > 0 ? 'mt-5' : ''}>
-            {grp.section && <div className="px-2.5 mb-1.5 text-[10.5px] uppercase tracking-wider text-faint font-semibold">{grp.section}</div>}
+            {grp.section && <div className="px-2.5 mb-1.5 text-[10.5px] uppercase tracking-wider text-faint font-semibold">{t(grp.section)}</div>}
             <div className="space-y-0.5">
               {items.map((it) => {
                 const active = route.name === it.id;
@@ -262,7 +265,7 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
                       active ? 'bg-elevated text-ink' : 'text-muted hover:text-ink hover:bg-elevated/50')}>
                     {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-[3px] rounded-full bg-brand" />}
                     <Icon name={it.icon} size={16} className={cx(active ? (it.accent ? 'text-brandhi' : 'text-ink') : 'text-faint group-hover:text-muted', it.accent && !active && 'text-brandhi/70')} />
-                    <span className="flex-1 text-left truncate">{it.label}</span>
+                    <span className="flex-1 text-left truncate">{t(it.label)}</span>
                     {badge > 0 && (
                       <span className={cx('inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10.5px] font-bold tabular',
                         it.badge === 'alerts' ? 'bg-bad/20 text-bad' : 'bg-warn/20 text-warn', it.badge === 'jobs' && awaiting && 'animate-pulse')}>{badge}</span>
@@ -362,6 +365,10 @@ function Shell() {
 
 /* --------------------------------- Root ----------------------------------- */
 function App() {
+  // Subscribing here re-renders the whole tree when the language changes.
+  // Without it the picker would only take effect on reload, which reads as a
+  // broken control rather than a deliberate one.
+  useLocale();
   // Standalone native-remote tab: ?dev=<id>&host=<name>&os=<os> renders just the
   // viewer, which brokers its own session and auto-reconnects (auth via sessionStorage).
   const params = new URLSearchParams(location.search);

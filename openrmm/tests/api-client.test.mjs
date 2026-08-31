@@ -237,3 +237,56 @@ test('the console marks AI proposals awaiting review', async () => {
   assert.match(rmm2, /awaitingReview\(policy\) &&[\s\S]{0,60}<ProposalBadge \/>/,
     'a proposed policy should be badged on its card');
 });
+
+// i18n. A translation table is the one place where a silent gap is invisible in
+// review: a missing key falls back to English and the screen still looks fine,
+// so nothing prompts anyone to fix it. These assert the shape instead.
+test('every locale carries exactly the keys English defines', async () => {
+  const src = await readFile(path.join(root, 'src', 'i18n-strings.jsx'), 'utf8');
+  const blocks = [...src.matchAll(/const (\w+) = \{([\s\S]*?)\n\};/g)]
+    .reduce((acc, [, name, body]) => {
+      acc[name] = new Set([...body.matchAll(/'([^']+)':/g)].map((m) => m[1]));
+      return acc;
+    }, {});
+
+  assert.ok(blocks.en && blocks.en.size > 20, 'English must be the source table');
+  for (const [name, keys] of Object.entries(blocks)) {
+    if (name === 'en') continue;
+    const missing = [...blocks.en].filter((k) => !keys.has(k));
+    const extra = [...keys].filter((k) => !blocks.en.has(k));
+    assert.deepEqual(missing, [], `${name} is missing keys: ${missing.slice(0, 5)}`);
+    // An extra key is a typo or a string English lost — either way it is dead
+    // weight nobody will ever see.
+    assert.deepEqual(extra, [], `${name} has keys English does not: ${extra.slice(0, 5)}`);
+  }
+});
+
+// A locale offered in the picker with no table behind it would render every
+// label as its own key — the failure the fallback exists to prevent.
+test('every offered locale has a table, and drafts are labelled', async () => {
+  const core = await readFile(path.join(root, 'src', 'i18n.jsx'), 'utf8');
+  const strings = await readFile(path.join(root, 'src', 'i18n-strings.jsx'), 'utf8');
+
+  const offered = [...core.matchAll(/code: '([^']+)'/g)].map((m) => m[1]);
+  assert.ok(offered.includes('en'), 'English must be offered');
+  const registered = strings.match(/window\.LOCALE_STRINGS = \{([^}]+)\}/)[1];
+  for (const code of offered) {
+    assert.ok(registered.includes(`'${code}'`) || registered.includes(code.replace('-', '')),
+      `locale ${code} is offered but has no table`);
+  }
+
+  // Machine-drafted locales must say so, and the picker must render that mark.
+  assert.match(core, /complete: false/, 'unreviewed locales must be flagged');
+  const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
+  assert.match(screens, /l\.complete \? '' :/, 'the picker must mark draft locales');
+});
+
+// The nav labels must stay keys. Resolving them at module load would freeze the
+// language for the session, and the bug looks like "the picker does nothing".
+test('navigation labels are keys resolved at render', async () => {
+  const app = await readFile(path.join(root, 'src', 'app.jsx'), 'utf8');
+  assert.match(app, /label: 'nav\.devices'/, 'NAV should hold keys, not text');
+  assert.match(app, /\{t\(it\.label\)\}/, 'the sidebar must resolve the key at render');
+  assert.match(app, /\{t\(grp\.section\)\}/);
+  assert.match(app, /useLocale\(\)/, 'the root must re-render when the language changes');
+});

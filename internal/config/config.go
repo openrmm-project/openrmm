@@ -109,6 +109,11 @@ type Config struct {
 	AlertRetentionDays        int
 	CheckResultRetentionDays  int
 	NotificationRetentionDays int
+	// AuditRetentionDays bounds only the MACHINE-written audit entries
+	// (job.automated, job.result). Everything a person did is kept regardless of
+	// age — that record is the reason the log exists, and it is small. 0 keeps
+	// even the machine entries forever.
+	AuditRetentionDays int
 }
 
 func env(key, def string) string {
@@ -229,6 +234,7 @@ func Load() (*Config, error) {
 		AlertRetentionDays:         envInt("RMM_ALERT_RETENTION_DAYS", 90),
 		CheckResultRetentionDays:   envInt("RMM_CHECK_RESULT_RETENTION_DAYS", 90),
 		NotificationRetentionDays:  envInt("RMM_NOTIFICATION_RETENTION_DAYS", 90),
+		AuditRetentionDays:         envInt("RMM_AUDIT_RETENTION_DAYS", 90),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -227,4 +228,153 @@ func actionsOf(entries []models.AuditEntry) []string {
 		out = append(out, e.Action)
 	}
 	return out
+}
+
+// Retention here is about what an entry IS, not how old it is. The human record
+// is why the log exists and is small — measured at 550 bytes a row — so it is
+// kept indefinitely. The machine-written entries are telemetry sharing the
+// table, and they scale with the fleet: one row per scheduled task, per device,
+// per run.
+func TestAuditRetentionKeepsTheHumanRecordIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	old := time.Now().AddDate(0, 0, -200)
+
+	write := func(actor, action string, at time.Time) {
+		t.Helper()
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+			 VALUES ($1, $2, $3, '', '{}', $4)`,
+			uuid.NewString(), actor, action, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Machine-written, and old.
+	write("scheduler", "job.automated", old)
+	write("agent", "job.result", old)
+	// Human, equally old. These must survive: the whole point is that age does
+	// not decide, the kind of entry does.
+	write("alice", "job.approve", old)
+	write("alice", "user.scope.update", old)
+	write("bob", "config.smtp.alerts.update", old)
+	// Machine-written but recent: inside the window, so it stays.
+	write("scheduler", "job.automated", time.Now())
+
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want exactly the 2 old machine entries", deleted)
+	}
+
+	survivors := map[string]int{}
+	rows, _, err := st.ListAudit(ctx, AuditFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range rows {
+		survivors[e.Action]++
+	}
+	for _, action := range []string{"job.approve", "user.scope.update", "config.smtp.alerts.update"} {
+		if survivors[action] != 1 {
+			t.Errorf("%s was purged; a 200-day-old human action must be kept", action)
+		}
+	}
+	if survivors["job.automated"] != 1 {
+		t.Errorf("job.automated survivors = %d, want the recent one only", survivors["job.automated"])
+	}
+	if survivors["job.result"] != 0 {
+		t.Errorf("the old job.result should have gone")
+	}
+}
+
+// A gap in the trail must be explained by the trail. Without this entry, purged
+// rows are indistinguishable from edited ones.
+func TestAuditPurgeRecordsItselfIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -200)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.PurgeAuditLog(ctx, time.Now(), 90); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := st.ListAudit(ctx, AuditFilter{Action: "audit.purge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the purge left no record of itself (%d entries)", len(rows))
+	}
+	// Parsed rather than substring-matched: Postgres normalises JSONB, so
+	// `{"deleted":1}` comes back as `{"deleted": 1}` and a literal comparison
+	// fails for a reason that has nothing to do with the behaviour.
+	var recorded struct {
+		Deleted int    `json:"deleted"`
+		Older   string `json:"older_than"`
+	}
+	if err := json.Unmarshal(rows[0].Detail, &recorded); err != nil {
+		t.Fatalf("the purge record is not readable JSON: %v (%s)", err, rows[0].Detail)
+	}
+	if recorded.Deleted != 1 {
+		t.Errorf("recorded deleted = %d, want 1", recorded.Deleted)
+	}
+	if recorded.Older == "" {
+		t.Error("the record should say what cutoff was applied")
+	}
+}
+
+// Zero disables the purge. Unlike the monitoring sweep — which replaces zero
+// with a default — an audit log that deletes nothing is a legitimate choice and
+// has to be reachable.
+func TestAuditRetentionZeroKeepsEverythingIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -3650)); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d with retention disabled; a ten-year-old entry should survive", deleted)
+	}
+}
+
+// A window below the floor is far more likely to be a mistake — or someone
+// shortening the trail deliberately — than a real requirement.
+func TestAuditRetentionEnforcesAFloorIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	// 40 days old: inside the 30-day floor's window, outside a literal 1 day.
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -40)); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d; a 40-day-old entry is outside the 30-day floor", deleted)
+	}
+
+	// And an entry inside the floor survives even when 1 day was asked for.
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -10)); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := st.PurgeAuditLog(ctx, time.Now(), 1); err != nil || deleted != 0 {
+		t.Errorf("deleted = %d (err %v); the floor should have protected a 10-day-old entry", deleted, err)
+	}
 }

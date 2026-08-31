@@ -58,6 +58,7 @@ type Scheduler struct {
 	alertRetentionDays        int
 	checkResultRetentionDays  int
 	notificationRetentionDays int
+	auditRetentionDays        int
 }
 
 type Stats struct {
@@ -77,7 +78,16 @@ func (s *Scheduler) Stats() Stats {
 // New builds the scheduler.
 func New(s *store.Store, h *hub.Hub, j *jobs.Service, p *patches.Service) *Scheduler {
 	return &Scheduler{store: s, hub: h, jobs: j, patches: p,
-		alertRetentionDays: 90, checkResultRetentionDays: 90, notificationRetentionDays: 90}
+		alertRetentionDays: 90, checkResultRetentionDays: 90, notificationRetentionDays: 90,
+		auditRetentionDays: 90}
+}
+
+// WithAuditRetention bounds the machine-written audit entries. Unlike the
+// monitoring knobs, zero is honoured rather than replaced with a default: an
+// audit log that deletes nothing is a reasonable choice and must be reachable.
+func (s *Scheduler) WithAuditRetention(days int) *Scheduler {
+	s.auditRetentionDays = days
+	return s
 }
 
 func (s *Scheduler) WithRetention(alertDays, checkResultDays, notificationDays int) *Scheduler {
@@ -175,6 +185,13 @@ func (s *Scheduler) tick(ctx context.Context) {
 		} else if purged.Alerts+purged.Results+purged.Executions+purged.Notifications+purged.Suppressions > 0 {
 			log.Printf("scheduler: retention purged alerts=%d results=%d executions=%d notifications=%d suppressions=%d",
 				purged.Alerts, purged.Results, purged.Executions, purged.Notifications, purged.Suppressions)
+		}
+		// Only the machine-written entries. What a person did is kept whatever
+		// its age — that record is why the log exists, and it is small.
+		if purged, err := s.store.PurgeAuditLog(ctx, now, s.auditRetentionDays); err != nil {
+			s.recordError("audit retention", err)
+		} else if purged > 0 {
+			log.Printf("scheduler: retention purged %d machine-written audit entries", purged)
 		}
 	}
 	if now.Sub(s.lastPatchTick) >= patchTickEvery {

@@ -102,6 +102,38 @@ byte-identical to a restriction that selected nothing. It was the only user
 mutation that could hand over the entire fleet without leaving a trace of who
 did it.
 
+### Retention
+
+Only the **machine-written** entries are ever purged: `job.automated` and
+`job.result`. Everything a person did is kept regardless of age.
+
+The split is by what an entry *is*, not by when it happened, because the two
+kinds have nothing in common but a table. The human record — who approved a
+script, who changed a scope, who moved mail delivery — is the reason the log
+exists, and it is small: measured on a real instance, an audit row costs 550
+bytes with its index.
+
+The other two are telemetry, and they scale with the fleet rather than with the
+number of people. `job.automated` is one row per scheduled task, per device, per
+run: a tenant with 200 devices and three hourly tasks writes 14,400 a day, about
+2.9 GB a year, and `job.result` doubles it. `job.result` is also duplicative —
+the `jobs` table already holds status, exit code, stdout and stderr.
+
+`RMM_AUDIT_RETENTION_DAYS` (default 90) sets the window. **0 disables the purge
+entirely**, unlike the monitoring knobs which replace zero with a default: an
+audit log that deletes nothing is a legitimate configuration and has to be
+reachable. Values below 30 are raised to 30 — a shorter window is far more
+likely to be a mistake, or someone shortening the trail on purpose, than a real
+requirement.
+
+Every purge writes an `audit.purge` entry recording how many rows went and the
+cutoff applied. Without it a gap in the trail would be indistinguishable from
+tampering; with it, the log explains its own holes.
+
+A failed audit *write* is counted in `rmm_audit_write_failures_total`. Any value
+above zero means entries were lost — the only signal there is, since a trail
+cannot record its own absence.
+
 ## Authentication
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random

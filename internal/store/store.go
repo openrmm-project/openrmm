@@ -768,6 +768,73 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]models.AuditEnt
 	return out, total, rows.Err()
 }
 
+// machineAuditActions are the entries written by the system rather than by a
+// person. They are the only ones retention touches.
+//
+// The distinction matters more than a date does. An audit log's value is the
+// human record — who approved this script, who changed that scope, who moved
+// mail delivery — and that is low-volume enough to keep indefinitely: measured
+// on a real instance, an audit row costs 550 bytes with its index.
+//
+// These two are different. They are telemetry that happens to live in the same
+// table, and they scale with the fleet rather than with the number of people:
+// job.automated is one row per scheduled task, per device, per run. A tenant
+// with 200 devices and three hourly tasks writes 14,400 of them a day — about
+// 2.9 GB a year, and job.result doubles it. That is a quarter of the Basic
+// plan's disk, spent on rows nobody will ever read.
+//
+// job.result is also duplicative: the jobs table already holds status,
+// exit_code, stdout and stderr. Deleting the audit copy loses nothing the
+// system does not still have.
+var machineAuditActions = []string{"job.automated", "job.result"}
+
+// minAuditRetentionDays is a floor, not a default. A configured value below it
+// is far more likely to be a mistake — or someone shortening the window on
+// purpose — than a real requirement, and refusing costs nothing.
+const minAuditRetentionDays = 30
+
+// PurgeAuditLog deletes machine-written audit entries older than the cutoff and
+// records that it did so.
+//
+// Everything a person did is kept, whatever the age. Retention here is about the
+// telemetry that shares the table, not about forgetting who did what.
+//
+// days <= 0 disables the purge entirely: unlike the monitoring sweep, which
+// forces a default when handed zero, an audit log that deletes nothing is a
+// perfectly reasonable configuration and must be reachable.
+func (s *Store) PurgeAuditLog(ctx context.Context, now time.Time, days int) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	if days < minAuditRetentionDays {
+		days = minAuditRetentionDays
+	}
+	cutoff := now.AddDate(0, 0, -days)
+
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM audit_log WHERE action = ANY($1) AND created_at < $2`,
+		machineAuditActions, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	deleted := tag.RowsAffected()
+	if deleted == 0 {
+		return 0, nil
+	}
+
+	// The trail explains its own gaps. Without this, a hole in the log is
+	// indistinguishable from someone having edited it — and this entry is itself
+	// a human-class action, so it is never purged.
+	detail := fmt.Sprintf(`{"deleted":%d,"older_than":%q,"actions":%q}`,
+		deleted, cutoff.UTC().Format(time.RFC3339), strings.Join(machineAuditActions, ","))
+	if err := s.AddAudit(ctx, "system", "audit.purge", "", []byte(detail)); err != nil {
+		// The rows are already gone; failing here would only hide that too. The
+		// AddAudit failure is logged and counted on its own.
+		return deleted, err
+	}
+	return deleted, nil
+}
+
 // AuditActors and AuditActions list the distinct values present, so the console
 // can offer a filter built from what actually happened rather than a free-text
 // box the operator has to guess into.

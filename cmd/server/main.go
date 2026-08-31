@@ -71,7 +71,8 @@ func main() {
 	jobSvc.WithNotifier(notifier)
 	sched := scheduler.New(st, h, jobSvc, patchSvc).
 		WithNotifier(notifier, cfg.PublicURL).
-		WithRetention(cfg.AlertRetentionDays, cfg.CheckResultRetentionDays, cfg.NotificationRetentionDays)
+		WithRetention(cfg.AlertRetentionDays, cfg.CheckResultRetentionDays, cfg.NotificationRetentionDays).
+		WithAuditRetention(cfg.AuditRetentionDays)
 
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()

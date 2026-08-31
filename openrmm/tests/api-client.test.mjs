@@ -290,3 +290,33 @@ test('navigation labels are keys resolved at render', async () => {
   assert.match(app, /\{t\(grp\.section\)\}/);
   assert.match(app, /useLocale\(\)/, 'the root must re-render when the language changes');
 });
+
+// The audit screen must filter and page on the SERVER. Doing it in the browser
+// means every search silently answers "among the rows that happened to be
+// fetched" — which is the opposite of what an audit log is consulted for, and
+// the failure is invisible because the screen still looks like it worked.
+test('the audit screen filters and pages server-side', async () => {
+  const screens = await readFile(path.join(root, 'src', 'screens-jobs.jsx'), 'utf8');
+  const audit = screens.slice(screens.indexOf('function AuditScreen'));
+
+  assert.match(audit, /api\.listAudit\(query\)/, 'the query must go to the API');
+  for (const param of ['limit:', 'offset:', 'actor:', 'action:', 'target:', 'since:', 'until:']) {
+    assert.ok(audit.includes(param), `the query should carry ${param}`);
+  }
+  // No client-side array filtering: that is the bug this replaced.
+  assert.doesNotMatch(audit, /entries\.filter\(/,
+    'entries must not be filtered in the browser — the server has the whole set');
+
+  assert.match(audit, /auditQ\.data\?\.total/, 'paging needs the total from the server');
+  assert.match(audit, /setPage\(page \+ 1\)/, 'there must be a way to reach later pages');
+
+  // An export that stopped at the visible page would be read as the complete
+  // record, so it pages the API and reports when it hits the ceiling.
+  assert.match(audit, /for \(let offset = 0; offset < EXPORT_MAX/,
+    'the export must cover the whole filtered set, not the page on screen');
+  assert.match(audit, /Export truncated/, 'a truncated export has to say so');
+
+  // A date input yields a local day; the end of a range must include that day.
+  assert.match(audit, /next\.setDate\(next\.getDate\(\) \+ 1\)/,
+    '`until` must be the start of the following day, or the chosen day is excluded');
+});

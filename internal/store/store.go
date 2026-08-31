@@ -4,6 +4,10 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -651,6 +655,15 @@ func (s *Store) SetRemoteSessionStatus(ctx context.Context, id, status string) e
 // ---------- Audit ----------
 
 // AddAudit appends an immutable audit record.
+// auditWriteFailures counts audit entries that could not be persisted. It is
+// exported through /metrics because this is the one failure the audit log cannot
+// report about itself: if the insert fails, the trail simply has a hole, and the
+// hole is discovered later by someone who needed it.
+var auditWriteFailures atomic.Uint64
+
+// AuditWriteFailures returns how many audit writes have been lost since start.
+func AuditWriteFailures() uint64 { return auditWriteFailures.Load() }
+
 func (s *Store) AddAudit(ctx context.Context, actor, action, target string, detail []byte) error {
 	if detail == nil {
 		detail = []byte("{}")
@@ -658,29 +671,141 @@ func (s *Store) AddAudit(ctx context.Context, actor, action, target string, deta
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO audit_log (id, actor, action, target, detail) VALUES ($1,$2,$3,$4,$5)`,
 		newID(), actor, action, target, detail)
+	if err != nil {
+		// Logged and counted HERE rather than at the call sites. Of the 49 places
+		// that write an audit entry, 46 discard the error — reasonably, since an
+		// audit failure must not roll back the action it describes. But that left
+		// the trail able to lose entries in complete silence, which for a trail is
+		// the worst failure it can have. One place catches all of them.
+		auditWriteFailures.Add(1)
+		log.Printf("audit: FAILED to record %q by %q on %q: %v", action, actor, target, err)
+	}
 	return err
 }
 
-// ListAudit returns recent audit entries.
-func (s *Store) ListAudit(ctx context.Context, limit int) ([]models.AuditEntry, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
+// AuditFilter narrows the trail.
+//
+// It exists because "the last 200 entries" is not an audit log, it is a
+// dashboard. On an active fleet 200 entries is under a day, so the question an
+// audit log is kept for — who approved that script last week — could not be
+// asked through the API at all.
+//
+// Every field is optional; an empty filter is the previous behaviour.
+type AuditFilter struct {
+	Actor  string    // exact match, case-insensitive
+	Action string    // prefix match, so "job." finds every job event
+	Target string    // exact match: an id, usually
+	Since  time.Time // inclusive
+	Until  time.Time // exclusive
+	Limit  int
+	Offset int
+}
+
+// ListAudit returns audit entries matching the filter, newest first, together
+// with the total number of matches so a caller can page through them.
+func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]models.AuditEntry, int, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 200
 	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+
+	var conds []string
+	var args []any
+	add := func(cond string, value any) {
+		args = append(args, value)
+		conds = append(conds, fmt.Sprintf(cond, len(args)))
+	}
+	if f.Actor != "" {
+		add("lower(actor) = lower($%d)", f.Actor)
+	}
+	if f.Action != "" {
+		// Prefix rather than equality: the actions are dotted namespaces
+		// ("job.approve", "job.reject"), and the useful question is almost always
+		// about the family. Escaped so a filter containing % or _ matches
+		// literally instead of turning into a wildcard.
+		add("action LIKE $%d || '%%'", strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(f.Action))
+	}
+	if f.Target != "" {
+		add("target = $%d", f.Target)
+	}
+	if !f.Since.IsZero() {
+		add("created_at >= $%d", f.Since)
+	}
+	if !f.Until.IsZero() {
+		add("created_at < $%d", f.Until)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	// The total is what makes paging honest: without it the console cannot say
+	// whether "200 results" means 200 or the first 200 of nine thousand.
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, f.Limit, f.Offset)
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, actor, action, target, detail, created_at FROM audit_log ORDER BY created_at DESC LIMIT $1`, limit)
+		`SELECT id, actor, action, target, detail, created_at FROM audit_log`+where+
+			fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)),
+		args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out []models.AuditEntry
 	for rows.Next() {
 		var e models.AuditEntry
 		if err := rows.Scan(&e.ID, &e.Actor, &e.Action, &e.Target, &e.Detail, &e.CreatedAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// AuditActors and AuditActions list the distinct values present, so the console
+// can offer a filter built from what actually happened rather than a free-text
+// box the operator has to guess into.
+func (s *Store) AuditFacets(ctx context.Context) (actors []string, actions []string, err error) {
+	actorRows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT actor FROM audit_log WHERE actor <> '' ORDER BY actor LIMIT 200`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer actorRows.Close()
+	for actorRows.Next() {
+		var a string
+		if err := actorRows.Scan(&a); err != nil {
+			return nil, nil, err
+		}
+		actors = append(actors, a)
+	}
+	if err := actorRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	// The family, not the full action: "job.approve" and "job.reject" both offer
+	// "job", which is the granularity someone filtering actually wants.
+	actionRows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT split_part(action, '.', 1) AS family FROM audit_log
+		 WHERE action <> '' ORDER BY family LIMIT 200`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer actionRows.Close()
+	for actionRows.Next() {
+		var a string
+		if err := actionRows.Scan(&a); err != nil {
+			return nil, nil, err
+		}
+		actions = append(actions, a)
+	}
+	return actors, actions, actionRows.Err()
 }
 
 // ---------- Chat ----------

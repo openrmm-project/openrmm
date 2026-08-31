@@ -68,7 +68,7 @@ func (f *scriptFixture) do(method, target, body string) *httptest.ResponseRecord
 // audit returns the most recent entry with the given action, or nil.
 func (f *scriptFixture) audit(action string) *models.AuditEntry {
 	f.t.Helper()
-	entries, err := f.store.ListAudit(context.Background(), 200)
+	entries, _, err := f.store.ListAudit(context.Background(), store.AuditFilter{Limit: 200})
 	if err != nil {
 		f.t.Fatal(err)
 	}

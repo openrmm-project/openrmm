@@ -301,6 +301,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermAIChatUse)).Post("/chat/sessions/{id}/messages", s.postChatMessage)
 
 		r.With(s.requirePermission(models.PermAuditView)).Get("/audit", s.listAudit)
+		r.With(s.requirePermission(models.PermAuditView)).Get("/audit/facets", s.listAuditFacets)
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config", s.updateConfig)
 		// Two mail transports: the account one carries password resets, the alerts
 		// one carries notifications and falls back to the account transport when it
@@ -1482,13 +1483,66 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "restricted principals cannot read the global audit log")
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, err := s.store.ListAudit(r.Context(), limit)
+	query := r.URL.Query()
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	offset, _ := strconv.Atoi(query.Get("offset"))
+
+	// Times arrive as RFC3339. A malformed one is rejected rather than silently
+	// ignored: quietly widening a filter is how an investigation concludes that
+	// nothing happened that week.
+	parseTime := func(name string) (time.Time, bool) {
+		raw := strings.TrimSpace(query.Get(name))
+		if raw == "" {
+			return time.Time{}, true
+		}
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, false
+		}
+		return parsed, true
+	}
+	since, okSince := parseTime("since")
+	until, okUntil := parseTime("until")
+	if !okSince || !okUntil {
+		writeErr(w, http.StatusBadRequest, "since and until must be RFC3339 timestamps")
+		return
+	}
+
+	entries, total, err := s.store.ListAudit(r.Context(), store.AuditFilter{
+		Actor:  strings.TrimSpace(query.Get("actor")),
+		Action: strings.TrimSpace(query.Get("action")),
+		Target: strings.TrimSpace(query.Get("target")),
+		Since:  since,
+		Until:  until,
+		Limit:  limit,
+		Offset: offset,
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries": entries,
+		"total":   total,
+		"limit":   len(entries),
+		"offset":  offset,
+	})
+}
+
+// listAuditFacets offers the distinct actors and action families present, so the
+// console can build its filter from what happened rather than from a text box
+// the operator has to guess into.
+func (s *Server) listAuditFacets(w http.ResponseWriter, r *http.Request) {
+	if s.scopeUserID(r) != "" {
+		writeErr(w, http.StatusForbidden, "restricted principals cannot read the global audit log")
+		return
+	}
+	actors, actions, err := s.store.AuditFacets(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"actors": actors, "actions": actions})
 }
 
 // ---------- chat ----------

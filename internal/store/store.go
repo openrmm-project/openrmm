@@ -811,13 +811,14 @@ func (s *Store) PurgeAuditLog(ctx context.Context, now time.Time, days int) (int
 	}
 	cutoff := now.AddDate(0, 0, -days)
 
-	tag, err := s.pool.Exec(ctx,
-		`DELETE FROM audit_log WHERE action = ANY($1) AND created_at < $2`,
-		machineAuditActions, cutoff)
-	if err != nil {
+	// Through the function, not a direct DELETE. The table refuses deletes from
+	// anywhere else — and once the server connects as openrmm_app, which holds no
+	// DELETE on audit_log at all, this is the only path that exists. The function
+	// can remove aged machine entries and nothing else.
+	var deleted int64
+	if err := s.pool.QueryRow(ctx, `SELECT purge_machine_audit($1)`, cutoff).Scan(&deleted); err != nil {
 		return 0, err
 	}
-	deleted := tag.RowsAffected()
 	if deleted == 0 {
 		return 0, nil
 	}
@@ -833,6 +834,44 @@ func (s *Store) PurgeAuditLog(ctx context.Context, now time.Time, days int) (int
 		return deleted, err
 	}
 	return deleted, nil
+}
+
+// AuditChainBreak is a point where the trail stopped adding up.
+type AuditChainBreak struct {
+	EntryID string    `json:"entry_id"`
+	At      time.Time `json:"at"`
+	Reason  string    `json:"reason"`
+}
+
+// VerifyAuditChain walks the hashed entries and reports the first that does not
+// follow from its predecessor. Nil means the human record is intact.
+//
+// What this does and does not prove is worth being precise about. Each chained
+// entry carries a hash of its own contents plus the previous entry's hash, so
+// editing or removing one breaks every link after it. That makes tampering
+// evident — it does not prevent it: whoever can write to the table can also
+// recompute the whole chain.
+//
+// It earns its keep alongside the privilege separation, not instead of it. With
+// the application unable to delete, rewriting the chain needs the separate
+// owner credentials, and the chain means even that leaves a trace unless the
+// rewrite is complete and consistent.
+//
+// Only the human record is chained; machine-written entries are excluded
+// because retention deletes them, and a chain a routine purge severs is an
+// alarm nobody keeps.
+func (s *Store) VerifyAuditChain(ctx context.Context) (*AuditChainBreak, error) {
+	var out AuditChainBreak
+	err := s.pool.QueryRow(ctx,
+		`SELECT broken_id, broken_at, reason FROM verify_audit_chain()`).
+		Scan(&out.EntryID, &out.At, &out.Reason)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // intact
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // AuditActors and AuditActions list the distinct values present, so the console

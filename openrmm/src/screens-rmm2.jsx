@@ -977,13 +977,45 @@ function SettingsScreen() {
     <Page>
       <PageHeader title="Users & Settings" subtitle="Manage access and review your instance configuration." />
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={tabs} />
-      {tab === 'users' && <><ChangePasswordCard /><TwoFactorCard /><NotificationsCard />{can('users.manage') && <UsersPanel canAdmin />}</>}
+      {tab === 'users' && <><LanguagePicker /><ChangePasswordCard /><TwoFactorCard /><NotificationsCard />{can('users.manage') && <UsersPanel canAdmin />}</>}
       {tab === 'roles' && can('roles.manage') && <RolesPanel />}
       {tab === 'tokens' && can('api_tokens.manage') && <APITokensPanel />}
       {tab === 'config' && can('settings.manage') && <ConfigPanel />}
       {tab === 'email' && can('settings.manage') && <SMTPPanel />}
       {tab === 'enroll' && can('enrollment.manage') && <EnrollPanel canAdmin={can('enrollment.manage')} />}
     </Page>
+  );
+}
+
+// LanguagePicker sits on the personal tab, next to the password and 2FA cards,
+// because language is a property of the person reading — not of the instance.
+// The choice lives in this browser's localStorage: it follows the operator to
+// every tenant they administer, and does not change what a colleague sees.
+function LanguagePicker() {
+  const current = getLocale();
+  const chosen = LOCALES.find((l) => l.code === current);
+  return (
+    <Card className="p-4 mb-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Icon name="settings" size={15} className="text-muted" />
+        <div className="text-[14px] font-semibold text-ink">{t('lang.label')}</div>
+      </div>
+      <Field hint={t('lang.hint')}>
+        <Select value={current} onChange={(e) => setLocale(e.target.value)}>
+          {LOCALES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.nativeName}{l.complete ? '' : ` — ${t('lang.draft')}`}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {chosen && !chosen.complete && (
+        <div className="mt-2 text-[11.5px] text-faint flex items-start gap-1.5">
+          <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+          {t('lang.draftHint')}
+        </div>
+      )}
+    </Card>
   );
 }
 

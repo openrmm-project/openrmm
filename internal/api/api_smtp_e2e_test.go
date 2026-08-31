@@ -291,7 +291,7 @@ func TestSMTPAuditNamesTheProfileIntegration(t *testing.T) {
 	e := newSMTPE2E(t, accountEnv)
 	e.do(http.MethodPut, "/api/config/smtp/alerts", alertsRelayBody, e.admin)
 
-	rows, err := e.store.ListAudit(e.ctx, 50)
+	rows, _, err := e.store.ListAudit(e.ctx, store.AuditFilter{Limit: 50})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 // readyz is a readiness probe distinct from /healthz (liveness). It reports the
@@ -59,6 +61,13 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		writeCounter("rmm_check_dispatch_failures_total", "Check dispatches rejected by an unavailable agent queue.", stats.DispatchFailures)
 		writeCounter("rmm_check_timeouts_total", "Durable check executions that reached their deadline.", stats.TimedOutChecks)
 	}
+
+	// The audit log cannot report its own gaps: if the insert fails, the trail
+	// just has a hole, discovered later by whoever needed it. This is the only
+	// signal that it happened, so it is worth alerting on at > 0.
+	writeCounter("rmm_audit_write_failures_total",
+		"Audit entries that could not be persisted. Any value above zero means the trail has gaps.",
+		store.AuditWriteFailures())
 
 	if st := s.store.PoolStat(); st != nil {
 		writeGauge("rmm_db_pool_total_conns", "Total database connections in the pool.", float64(st.TotalConns()))

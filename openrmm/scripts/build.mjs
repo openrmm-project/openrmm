@@ -18,6 +18,9 @@ const basePath = ('/' + rawBasePath.replace(/^\/+|\/+$/g, '') + '/').replace(/\/
 const outputRoot = basePath === '/' ? dist : path.join(dist, basePath.slice(1, -1));
 const assetsOut = path.join(outputRoot, 'assets');
 const sources = [
+  // i18n first: everything below it calls t() at render time.
+  'src/i18n.jsx',
+  'src/i18n-strings.jsx',
   'src/icons.jsx',
   'src/mockapi.jsx',
   'src/ui.jsx',

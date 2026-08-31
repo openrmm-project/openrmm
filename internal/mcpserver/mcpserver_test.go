@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
 )
 
@@ -19,7 +20,7 @@ func TestToolCallReevaluatesPermissions(t *testing.T) {
 	defer cancel()
 
 	initial := Identity{Permissions: map[string]bool{models.PermJobsCreate: true}}
-	server := buildServer(nil, nil, nil, initial, func(context.Context) (Identity, error) {
+	server := buildServer(nil, nil, nil, &config.Config{}, initial, func(context.Context) (Identity, error) {
 		return Identity{Permissions: map[string]bool{}}, nil
 	})
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -60,7 +61,7 @@ func TestSessionIsBoundToCredentialPrincipal(t *testing.T) {
 	identify := func(r *http.Request) Identity {
 		return Identity{Principal: r.Header.Get("Authorization"), Permissions: map[string]bool{}}
 	}
-	h := Handler(nil, nil, nil, identify, func(string) AuthorizeFunc {
+	h := Handler(nil, nil, nil, &config.Config{}, identify, func(string) AuthorizeFunc {
 		return func(context.Context) (Identity, error) { return Identity{Permissions: map[string]bool{}}, nil }
 	})
 	initialize := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`)

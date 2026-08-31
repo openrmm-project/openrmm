@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/patches"
@@ -66,11 +67,15 @@ type Engine struct {
 	store   *store.Store
 	jobs    *jobs.Service
 	patches *patches.Service
+	// Carried so a tool can mint a signed download link rather than reading rows
+	// into the conversation.
+	cfg       *config.Config
+	publicURL string
 }
 
 // NewEngine builds the chat engine.
-func NewEngine(c *Client, s *store.Store, j *jobs.Service, p *patches.Service) *Engine {
-	return &Engine{client: c, store: s, jobs: j, patches: p}
+func NewEngine(c *Client, s *store.Store, j *jobs.Service, p *patches.Service, cfg *config.Config) *Engine {
+	return &Engine{client: c, store: s, jobs: j, patches: p, cfg: cfg, publicURL: cfg.PublicURL}
 }
 
 // UpdateProvider swaps model provider settings for future chat requests.
@@ -98,7 +103,7 @@ func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, sco
 		return nil, err
 	}
 
-	tc := ToolContext{Store: e.store, Jobs: e.jobs, Patches: e.patches, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions}
+	tc := ToolContext{Store: e.store, Jobs: e.jobs, Patches: e.patches, Config: e.cfg, PublicURL: e.publicURL, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions}
 	tools := ToolsForPermissions(permissions)
 	var createdJobs []string
 

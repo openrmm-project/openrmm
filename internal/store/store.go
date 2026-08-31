@@ -701,16 +701,10 @@ type AuditFilter struct {
 	Offset int
 }
 
-// ListAudit returns audit entries matching the filter, newest first, together
-// with the total number of matches so a caller can page through them.
-func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]models.AuditEntry, int, error) {
-	if f.Limit <= 0 || f.Limit > 1000 {
-		f.Limit = 200
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-
+// auditWhere builds the shared WHERE fragment and its arguments, so the listing
+// and the summary cannot drift into filtering differently — which would make a
+// count disagree with the rows it supposedly counts.
+func (f AuditFilter) auditWhere() (string, []any) {
 	var conds []string
 	var args []any
 	add := func(cond string, value any) {
@@ -740,6 +734,19 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]models.AuditEnt
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
+	return where, args
+}
+
+// ListAudit returns audit entries matching the filter, newest first, together
+// with the total number of matches so a caller can page through them.
+func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]models.AuditEntry, int, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 200
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	where, args := f.auditWhere()
 
 	// The total is what makes paging honest: without it the console cannot say
 	// whether "200 results" means 200 or the first 200 of nine thousand.
@@ -872,6 +879,51 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (*AuditChainBreak, error) 
 		return nil, err
 	}
 	return &out, nil
+}
+
+// AuditSummary counts matching entries by actor and by action family.
+//
+// This is what most questions asked of an audit log actually want, and it is the
+// difference between an answer that is exact and one that is plausible: counting
+// two hundred rows in a model's head produces a number that looks right. Postgres
+// produces the number.
+func (s *Store) AuditSummary(ctx context.Context, f AuditFilter) (byActor, byAction map[string]int, total int, err error) {
+	where, args := f.auditWhere()
+
+	byActor, err = s.auditCount(ctx, `SELECT actor, count(*) FROM audit_log`+where+
+		` GROUP BY actor ORDER BY count(*) DESC LIMIT 50`, args)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	// The family, not the full action: "job" rather than job.approve and
+	// job.reject separately, which is the granularity a summary is read at.
+	byAction, err = s.auditCount(ctx, `SELECT split_part(action, '.', 1), count(*) FROM audit_log`+where+
+		` GROUP BY 1 ORDER BY count(*) DESC LIMIT 50`, args)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if err = s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`+where, args...).Scan(&total); err != nil {
+		return nil, nil, 0, err
+	}
+	return byActor, byAction, total, nil
+}
+
+func (s *Store) auditCount(ctx context.Context, query string, args []any) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err != nil {
+			return nil, err
+		}
+		out[key] = n
+	}
+	return out, rows.Err()
 }
 
 // AuditActors and AuditActions list the distinct values present, so the console

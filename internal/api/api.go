@@ -133,7 +133,7 @@ func (s *Server) Router() http.Handler {
 	// MCP server (Streamable HTTP) — external AI clients (Claude, ChatGPT, …)
 	// connect here. Same bearer auth as the REST API; requires the MCP permission
 	// since it can propose jobs (which still require human approval).
-	mcpHandler := mcpserver.Handler(s.store, s.jobs, s.patches, func(r *http.Request) mcpserver.Identity {
+	mcpHandler := mcpserver.Handler(s.store, s.jobs, s.patches, s.cfg, func(r *http.Request) mcpserver.Identity {
 		principal := ""
 		if token := bearer(r); token != "" && roleOf(r) != "" {
 			principal = "token:" + auth.Hash(token)
@@ -302,6 +302,9 @@ func (s *Server) Router() http.Handler {
 
 		r.With(s.requirePermission(models.PermAuditView)).Get("/audit", s.listAudit)
 		r.With(s.requirePermission(models.PermAuditView)).Get("/audit/facets", s.listAuditFacets)
+		// Authenticated like everything else: the signed token fixes the query,
+		// it does not replace the session. A leaked link is useless on its own.
+		r.Get("/exports/csv", s.exportCSV)
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config", s.updateConfig)
 		// Two mail transports: the account one carries password resets, the alerts
 		// one carries notifications and falls back to the account transport when it

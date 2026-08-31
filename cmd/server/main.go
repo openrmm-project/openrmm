@@ -59,7 +59,7 @@ func main() {
 	relay := remote.NewRelay()
 	aiClient := ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	patchSvc := patches.New(st, h)
-	chat := ai.NewEngine(aiClient, st, jobSvc, patchSvc)
+	chat := ai.NewEngine(aiClient, st, jobSvc, patchSvc, cfg)
 	// SMTP is resolved per use, not captured here: settings are DB-backed and an
 	// operator fixing a rejected password must not need a restart.
 	// Alerts leave through the alerts profile, which is the account transport

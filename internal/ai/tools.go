@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/patches"
@@ -13,10 +14,14 @@ import (
 
 // ToolContext carries the dependencies and identity a tool needs to run.
 type ToolContext struct {
-	Store       *store.Store
-	Jobs        *jobs.Service
-	Patches     *patches.Service
-	Actor       string // who is driving the chat (recorded as job creator / audit actor)
+	Store   *store.Store
+	Jobs    *jobs.Service
+	Patches *patches.Service
+	Actor   string // who is driving the chat (recorded as job creator / audit actor)
+	// Config and PublicURL let a tool hand back a signed download link instead of
+	// reading rows into the model. See export_audit.
+	Config      *config.Config
+	PublicURL   string
 	ScopeUserID string // restrict tools to this user's access scope ("" = full)
 	Permissions map[string]bool
 }
@@ -176,6 +181,29 @@ func Tools() []Tool {
 			Description: "List the policies visible to the caller, with id and name. Use this to find a policy_id before proposing a task or check against it.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "query_audit",
+			Description: "Search the audit log: who did what, and when. Read-only — there is no tool to edit or purge it. DEFAULTS TO COUNTS: mode=\"summary\" returns totals by actor and by action family, computed in the database, and is the right call for \"what happened this week\" or \"has anyone touched X\". Use mode=\"entries\" only when you need to read individual records, and narrow it first — the trail is large and reading it wholesale produces confident guesses instead of answers. With no date given, it looks at the last 7 days. To hand the operator the full set, use export_audit instead of paging.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"mode":{"type":"string","enum":["summary","entries"],"description":"summary (default) returns counts; entries returns individual records"},
+				"actor":{"type":"string","description":"exact actor, from a summary's by_actor"},
+				"action":{"type":"string","description":"action or family prefix, e.g. \"job\" or \"job.approve\""},
+				"target":{"type":"string","description":"exact id of the device, job or user acted on"},
+				"since":{"type":"string","description":"RFC3339 start, e.g. 2026-08-01T00:00:00Z"},
+				"until":{"type":"string","description":"RFC3339 end, exclusive"}
+			},"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "export_audit",
+			Description: "Produce a CSV of audit entries and return a download link for the operator. Use this whenever they want the DATA rather than an answer about it — the rows stream from the database straight to their disk, so nothing is truncated, nothing enters this conversation, and the file contains what the database holds rather than what you recalled. Takes the same filters as query_audit. The link expires and works only for the account that asked.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"actor":{"type":"string"},
+				"action":{"type":"string","description":"action or family prefix"},
+				"target":{"type":"string"},
+				"since":{"type":"string","description":"RFC3339 start"},
+				"until":{"type":"string","description":"RFC3339 end, exclusive"}
+			},"additionalProperties":false}`),
+		}},
 	}
 	return append(base, highLevelTools()...)
 }
@@ -228,6 +256,8 @@ func toolPermission(name string) string {
 		return models.PermChecksView
 	case "list_policies":
 		return models.PermPoliciesView
+	case "query_audit", "export_audit":
+		return models.PermAuditView
 	default:
 		return ""
 	}
@@ -274,6 +304,10 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(listChecksTool(ctx, tc, args))
 	case "list_policies":
 		return jsonResult(listPoliciesTool(ctx, tc))
+	case "query_audit":
+		return jsonResult(queryAudit(ctx, tc, args))
+	case "export_audit":
+		return jsonResult(exportAudit(ctx, tc, args))
 	default:
 		return ToolResult{Output: fmt.Sprintf(`{"error":"unknown tool %q"}`, name)}
 	}

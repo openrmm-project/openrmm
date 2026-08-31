@@ -17,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/p1ngu/rmm/internal/ai"
+	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/store"
@@ -45,10 +46,10 @@ type AuthorizeFunc func(context.Context) (Identity, error)
 
 // Handler returns an http.Handler serving the MCP endpoint over Streamable HTTP.
 // Mount it behind the same bearer auth as the REST API.
-func Handler(st *store.Store, js *jobs.Service, ps *patches.Service, identify IdentifyFunc, authorize func(string) AuthorizeFunc) http.Handler {
+func Handler(st *store.Store, js *jobs.Service, ps *patches.Service, cfg *config.Config, identify IdentifyFunc, authorize func(string) AuthorizeFunc) http.Handler {
 	h := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		identity := identify(r)
-		return buildServer(st, js, ps, identity, authorize(r.Header.Get("Authorization")))
+		return buildServer(st, js, ps, cfg, identity, authorize(r.Header.Get("Authorization")))
 	}, &mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
 
 	// SDK v1.6.1 binds stateful sessions to TokenInfo.UserID. Use a unique
@@ -63,7 +64,7 @@ func Handler(st *store.Store, js *jobs.Service, ps *patches.Service, identify Id
 }
 
 // buildServer constructs a per-session MCP server bound to one credential.
-func buildServer(st *store.Store, js *jobs.Service, ps *patches.Service, identity Identity, authorize AuthorizeFunc) *mcp.Server {
+func buildServer(st *store.Store, js *jobs.Service, ps *patches.Service, cfg *config.Config, identity Identity, authorize AuthorizeFunc) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "rmm-ai",
 		Title:   "OpenRMM",
@@ -85,7 +86,7 @@ func buildServer(st *store.Store, js *jobs.Service, ps *patches.Service, identit
 					IsError: true,
 				}, nil
 			}
-			tc := ai.ToolContext{Store: st, Jobs: js, Patches: ps, Actor: "mcp:" + current.Actor, ScopeUserID: current.ScopeUser, Permissions: current.Permissions}
+			tc := ai.ToolContext{Store: st, Jobs: js, Patches: ps, Config: cfg, PublicURL: cfg.PublicURL, Actor: "mcp:" + current.Actor, ScopeUserID: current.ScopeUser, Permissions: current.Permissions}
 			res := ai.Execute(ctx, tc, def.Function.Name, req.Params.Arguments)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: res.Output}},

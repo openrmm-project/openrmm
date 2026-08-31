@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,4 +229,358 @@ func actionsOf(entries []models.AuditEntry) []string {
 		out = append(out, e.Action)
 	}
 	return out
+}
+
+// Retention here is about what an entry IS, not how old it is. The human record
+// is why the log exists and is small — measured at 550 bytes a row — so it is
+// kept indefinitely. The machine-written entries are telemetry sharing the
+// table, and they scale with the fleet: one row per scheduled task, per device,
+// per run.
+func TestAuditRetentionKeepsTheHumanRecordIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	old := time.Now().AddDate(0, 0, -200)
+
+	write := func(actor, action string, at time.Time) {
+		t.Helper()
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+			 VALUES ($1, $2, $3, '', '{}', $4)`,
+			uuid.NewString(), actor, action, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Machine-written, and old.
+	write("scheduler", "job.automated", old)
+	write("agent", "job.result", old)
+	// Human, equally old. These must survive: the whole point is that age does
+	// not decide, the kind of entry does.
+	write("alice", "job.approve", old)
+	write("alice", "user.scope.update", old)
+	write("bob", "config.smtp.alerts.update", old)
+	// Machine-written but recent: inside the window, so it stays.
+	write("scheduler", "job.automated", time.Now())
+
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want exactly the 2 old machine entries", deleted)
+	}
+
+	survivors := map[string]int{}
+	rows, _, err := st.ListAudit(ctx, AuditFilter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range rows {
+		survivors[e.Action]++
+	}
+	for _, action := range []string{"job.approve", "user.scope.update", "config.smtp.alerts.update"} {
+		if survivors[action] != 1 {
+			t.Errorf("%s was purged; a 200-day-old human action must be kept", action)
+		}
+	}
+	if survivors["job.automated"] != 1 {
+		t.Errorf("job.automated survivors = %d, want the recent one only", survivors["job.automated"])
+	}
+	if survivors["job.result"] != 0 {
+		t.Errorf("the old job.result should have gone")
+	}
+}
+
+// A gap in the trail must be explained by the trail. Without this entry, purged
+// rows are indistinguishable from edited ones.
+func TestAuditPurgeRecordsItselfIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -200)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.PurgeAuditLog(ctx, time.Now(), 90); err != nil {
+		t.Fatal(err)
+	}
+	rows, _, err := st.ListAudit(ctx, AuditFilter{Action: "audit.purge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the purge left no record of itself (%d entries)", len(rows))
+	}
+	// Parsed rather than substring-matched: Postgres normalises JSONB, so
+	// `{"deleted":1}` comes back as `{"deleted": 1}` and a literal comparison
+	// fails for a reason that has nothing to do with the behaviour.
+	var recorded struct {
+		Deleted int    `json:"deleted"`
+		Older   string `json:"older_than"`
+	}
+	if err := json.Unmarshal(rows[0].Detail, &recorded); err != nil {
+		t.Fatalf("the purge record is not readable JSON: %v (%s)", err, rows[0].Detail)
+	}
+	if recorded.Deleted != 1 {
+		t.Errorf("recorded deleted = %d, want 1", recorded.Deleted)
+	}
+	if recorded.Older == "" {
+		t.Error("the record should say what cutoff was applied")
+	}
+}
+
+// Zero disables the purge. Unlike the monitoring sweep — which replaces zero
+// with a default — an audit log that deletes nothing is a legitimate choice and
+// has to be reachable.
+func TestAuditRetentionZeroKeepsEverythingIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -3650)); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted = %d with retention disabled; a ten-year-old entry should survive", deleted)
+	}
+}
+
+// A window below the floor is far more likely to be a mistake — or someone
+// shortening the trail deliberately — than a real requirement.
+func TestAuditRetentionEnforcesAFloorIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	// 40 days old: inside the 30-day floor's window, outside a literal 1 day.
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -40)); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d; a 40-day-old entry is outside the 30-day floor", deleted)
+	}
+
+	// And an entry inside the floor survives even when 1 day was asked for.
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+		uuid.NewString(), time.Now().AddDate(0, 0, -10)); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := st.PurgeAuditLog(ctx, time.Now(), 1); err != nil || deleted != 0 {
+		t.Errorf("deleted = %d (err %v); the floor should have protected a 10-day-old entry", deleted, err)
+	}
+}
+
+// ---- append-only ----
+//
+// Three layers, and each test says which one it covers, because the layers
+// protect against different things and it is easy to believe you have more than
+// you do.
+
+// Layer 1: the table refuses edits. This stops an application bug and a hurried
+// manual UPDATE. It does NOT stop someone who can disable the trigger — that is
+// what layer 2 is for.
+func TestAuditEntriesCannotBeModifiedIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if err := st.AddAudit(ctx, "alice", "job.approve", "target-1", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := st.pool.Exec(ctx, `UPDATE audit_log SET actor = 'mallory' WHERE actor = 'alice'`)
+	if err == nil {
+		t.Fatal("an audit entry was modified; the table must refuse UPDATE")
+	}
+	if !strings.Contains(err.Error(), "append-only") {
+		t.Errorf("refused, but not for the expected reason: %v", err)
+	}
+
+	_, err = st.pool.Exec(ctx, `DELETE FROM audit_log WHERE actor = 'alice'`)
+	if err == nil {
+		t.Fatal("an audit entry was deleted directly; only the purge may delete")
+	}
+}
+
+// The purge is the one narrow exception, and it may only reach machine entries.
+// A purge that could touch the human record would make the arrangement
+// pointless, so the trigger checks it again inside the exception.
+func TestPurgeCannotReachTheHumanRecordIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	old := time.Now().AddDate(0, 0, -200)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+		 VALUES ($1, 'alice', 'job.approve', '', '{}', $2)`,
+		uuid.NewString(), old); err != nil {
+		t.Fatal(err)
+	}
+
+	// Straight at the function, asking it to delete everything old.
+	var deleted int64
+	if err := st.pool.QueryRow(ctx, `SELECT purge_machine_audit($1)`, time.Now()).Scan(&deleted); err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 {
+		t.Fatalf("the purge removed %d human entries; it must reach only machine ones", deleted)
+	}
+
+	// And the escape hatch cannot be held open by hand to widen it.
+	_, err := st.pool.Exec(ctx, `
+		SELECT set_config('openrmm.audit_purge', 'on', true);
+		DELETE FROM audit_log WHERE action = 'job.approve';`)
+	if err == nil {
+		t.Fatal("setting the purge flag by hand deleted a human entry")
+	}
+}
+
+// Layer 3: the chain. Editing a row breaks it, and verification says where.
+func TestAuditChainDetectsTamperingIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	for _, a := range []string{"job.approve", "user.scope.update", "config.smtp.alerts.update"} {
+		if err := st.AddAudit(ctx, "alice", a, uuid.NewString(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	broken, err := st.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broken != nil {
+		t.Fatalf("a freshly written chain reports a break: %+v", broken)
+	}
+
+	// Tamper the way someone with database access would: disable the trigger
+	// first. This is exactly the attack the chain exists to make visible, since
+	// layer 1 cannot stop it.
+	if _, err := st.pool.Exec(ctx, `
+		ALTER TABLE audit_log DISABLE TRIGGER trg_audit_append_only;
+		UPDATE audit_log SET actor = 'mallory' WHERE action = 'user.scope.update';
+		ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append_only;`); err != nil {
+		t.Fatal(err)
+	}
+
+	broken, err = st.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broken == nil {
+		t.Fatal("an entry was rewritten and the chain still verifies")
+	}
+	if !strings.Contains(broken.Reason, "hash") {
+		t.Errorf("break reported without a useful reason: %q", broken.Reason)
+	}
+}
+
+// A deletion must break the chain too — removing a row is the tampering someone
+// covering their tracks would actually attempt.
+func TestAuditChainDetectsDeletionIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	for i := 0; i < 4; i++ {
+		if err := st.AddAudit(ctx, "alice", "job.approve", uuid.NewString(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.pool.Exec(ctx, `
+		ALTER TABLE audit_log DISABLE TRIGGER trg_audit_append_only;
+		DELETE FROM audit_log WHERE id IN (
+			SELECT id FROM audit_log WHERE entry_hash <> '' ORDER BY created_at LIMIT 1 OFFSET 1);
+		ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append_only;`); err != nil {
+		t.Fatal(err)
+	}
+
+	broken, err := st.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broken == nil {
+		t.Fatal("an entry was removed from the middle and the chain still verifies")
+	}
+}
+
+// The chain and retention have to coexist: purging machine entries is routine,
+// and it must NOT look like tampering. This is the interaction that would
+// otherwise produce an alarm on every housekeeping run — and an alarm that
+// cries wolf daily is one nobody reads.
+func TestRoutinePurgeLeavesTheChainIntactIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if err := st.AddAudit(ctx, "alice", "job.approve", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO audit_log (id, actor, action, target, detail, created_at)
+			 VALUES ($1, 'scheduler', 'job.automated', '', '{}', $2)`,
+			uuid.NewString(), time.Now().AddDate(0, 0, -200)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.AddAudit(ctx, "bob", "user.scope.update", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := st.PurgeAuditLog(ctx, time.Now(), 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 3 {
+		t.Fatalf("purged %d, want the 3 machine entries", deleted)
+	}
+	broken, err := st.VerifyAuditChain(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broken != nil {
+		t.Fatalf("a routine purge broke the chain: %+v — retention would raise a false alarm daily", broken)
+	}
+}
+
+// Layer 2: the role the server is meant to connect as can append and read, and
+// cannot delete. This is what survives the application being compromised, since
+// the credentials that could delete are not the ones the server holds.
+func TestAppRoleCannotDeleteAuditEntriesIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	if err := st.AddAudit(ctx, "alice", "job.approve", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var canDelete bool
+	if err := st.pool.QueryRow(ctx,
+		`SELECT has_table_privilege('openrmm_app', 'audit_log', 'DELETE')`).Scan(&canDelete); err != nil {
+		t.Fatal(err)
+	}
+	if canDelete {
+		t.Error("openrmm_app can DELETE audit_log; layer 2 buys nothing")
+	}
+	var canUpdate bool
+	if err := st.pool.QueryRow(ctx,
+		`SELECT has_table_privilege('openrmm_app', 'audit_log', 'UPDATE')`).Scan(&canUpdate); err != nil {
+		t.Fatal(err)
+	}
+	if canUpdate {
+		t.Error("openrmm_app can UPDATE audit_log")
+	}
+
+	// It must still be able to do its job: append, read, and run the purge.
+	var canInsert, canSelect bool
+	_ = st.pool.QueryRow(ctx, `SELECT has_table_privilege('openrmm_app','audit_log','INSERT')`).Scan(&canInsert)
+	_ = st.pool.QueryRow(ctx, `SELECT has_table_privilege('openrmm_app','audit_log','SELECT')`).Scan(&canSelect)
+	if !canInsert || !canSelect {
+		t.Errorf("openrmm_app must still append and read: insert=%t select=%t", canInsert, canSelect)
+	}
+	var canPurge bool
+	if err := st.pool.QueryRow(ctx,
+		`SELECT has_function_privilege('openrmm_app', 'purge_machine_audit(timestamptz)', 'EXECUTE')`).Scan(&canPurge); err != nil {
+		t.Fatal(err)
+	}
+	if !canPurge {
+		t.Error("openrmm_app cannot run the purge, so retention would fail under layer 2")
+	}
 }

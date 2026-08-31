@@ -603,7 +603,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action      TEXT NOT NULL DEFAULT '',
     target      TEXT NOT NULL DEFAULT '',
     detail      JSONB NOT NULL DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Tamper-evidence over the human record. Machine-written entries
+    -- (job.automated, job.result) carry empty hashes because retention deletes
+    -- them, and a chain that a routine purge severs is an alarm nobody keeps.
+    -- See migration 012.
+    prev_hash   TEXT NOT NULL DEFAULT '',
+    entry_hash  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 

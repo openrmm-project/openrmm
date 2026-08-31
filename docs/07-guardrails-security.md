@@ -102,6 +102,80 @@ byte-identical to a restriction that selected nothing. It was the only user
 mutation that could hand over the entire fleet without leaving a trace of who
 did it.
 
+### Retention
+
+Only the **machine-written** entries are ever purged: `job.automated` and
+`job.result`. Everything a person did is kept regardless of age.
+
+The split is by what an entry *is*, not by when it happened, because the two
+kinds have nothing in common but a table. The human record — who approved a
+script, who changed a scope, who moved mail delivery — is the reason the log
+exists, and it is small: measured on a real instance, an audit row costs 550
+bytes with its index.
+
+The other two are telemetry, and they scale with the fleet rather than with the
+number of people. `job.automated` is one row per scheduled task, per device, per
+run: a tenant with 200 devices and three hourly tasks writes 14,400 a day, about
+2.9 GB a year, and `job.result` doubles it. `job.result` is also duplicative —
+the `jobs` table already holds status, exit code, stdout and stderr.
+
+`RMM_AUDIT_RETENTION_DAYS` (default 90) sets the window. **0 disables the purge
+entirely**, unlike the monitoring knobs which replace zero with a default: an
+audit log that deletes nothing is a legitimate configuration and has to be
+reachable. Values below 30 are raised to 30 — a shorter window is far more
+likely to be a mistake, or someone shortening the trail on purpose, than a real
+requirement.
+
+Every purge writes an `audit.purge` entry recording how many rows went and the
+cutoff applied. Without it a gap in the trail would be indistinguishable from
+tampering; with it, the log explains its own holes.
+
+### Append-only, in three layers
+
+Each covers what the one before it cannot, and the difference is worth being
+precise about — the obvious single measure is much weaker than it looks.
+
+**1. Triggers.** `audit_log` refuses `UPDATE` outright and refuses `DELETE`
+except through `purge_machine_audit()`. This stops an application bug and a
+hurried manual statement. It does **not** stop someone holding the credentials
+the application uses: an owner can `ALTER TABLE ... DISABLE TRIGGER` and then do
+as they please.
+
+**2. Privilege separation.** Migration 012 creates an `openrmm_app` role that can
+append to and read `audit_log`, and cannot update or delete it. Point
+`RMM_DATABASE_URL` at that role and a compromised server *cannot erase what it
+did* — the credentials that could are not in its memory. The purge still works,
+through a `SECURITY DEFINER` function that can only remove aged machine entries.
+
+The role is created without a password, so this migration carries no secret. It
+is inert until an operator grants it a login and switches the connection string:
+
+```sql
+ALTER ROLE openrmm_app WITH LOGIN PASSWORD '…';
+```
+
+Until then layers 1 and 3 are in force and layer 2 is not, because the server
+still connects as an owner.
+
+**3. A hash chain.** Every human-record entry carries a SHA-256 of its contents
+plus the previous entry's hash, so editing or removing one breaks every link
+after it. `verify_audit_chain()` reports the first break.
+
+This makes tampering **evident**; it does not prevent it. Whoever can write to
+the table can recompute the chain. It earns its place next to layer 2 rather
+than instead of it: with the application unable to delete, a rewrite needs the
+separate owner credentials, and even then it has to be complete and consistent
+to go unnoticed. Anchoring the head hash somewhere outside the database would
+close that last gap; that is not done here.
+
+Only the human record is chained. Machine-written entries are excluded because
+retention deletes them, and a chain that a routine purge severs would raise an
+alarm on every housekeeping run — which is an alarm nobody reads.
+
+A failed audit *write* is counted in `rmm_audit_write_failures_total`. Any value
+above zero means entries were lost — the only signal there is, since a trail
+cannot record its own absence.
+
 ## Authentication
 
 - API: bearer tokens. The bootstrap `RMM_ADMIN_TOKEN` should be a long random

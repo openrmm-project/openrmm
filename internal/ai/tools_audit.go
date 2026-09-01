@@ -218,3 +218,61 @@ func exportAudit(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 			"works for the account that asked for it.",
 	}, nil
 }
+
+// exportInventory is export_audit's twin for the fleet reports, and it exists
+// for the same reason: inventory_report caps at 1000 rows and then tells the
+// model to send the operator to the Reports tab — a dead end, since the model
+// cannot follow it and the operator has to rebuild the same filter by hand.
+//
+// Unlike the audit trail, these reports ARE scoped. The token records the
+// caller's scope so a change between minting and downloading is refused, and the
+// query is filtered by whoever is asking at download time regardless.
+func exportInventory(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
+	var in struct {
+		ReportType string `json:"report_type"`
+		ScopeType  string `json:"scope_type"`
+		ScopeID    string `json:"scope_id"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	switch in.ReportType {
+	case "software", "hardware", "machines":
+	default:
+		return nil, fmt.Errorf("report_type must be software, hardware or machines")
+	}
+	switch in.ScopeType {
+	case "client", "site", "group":
+		if in.ScopeID == "" {
+			return nil, fmt.Errorf("scope_id is required when scope_type is set")
+		}
+	case "":
+	default:
+		return nil, fmt.Errorf("unknown scope_type %q", in.ScopeType)
+	}
+	if tc.Config == nil {
+		return nil, fmt.Errorf("exports are not configured on this server")
+	}
+
+	token, err := exports.Mint(tc.Config, exports.Claims{
+		Kind: "inventory",
+		Params: map[string]string{
+			"report_type": in.ReportType,
+			"scope_type":  in.ScopeType,
+			"scope_id":    in.ScopeID,
+		},
+		User:  strings.TrimPrefix(strings.TrimPrefix(tc.Actor, "ai:"), "mcp:"),
+		Scope: tc.ScopeUserID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"report":       in.ReportType,
+		"download_url": fmt.Sprintf("%s/api/exports/csv?token=%s", strings.TrimRight(tc.PublicURL, "/"), token),
+		"expires_in":   exports.TTL.String(),
+		"note": "Give this link to the operator. The full report streams from the database " +
+			"when opened — complete, not capped, and not in this conversation. It covers " +
+			"exactly what the caller is allowed to see.",
+	}, nil
+}

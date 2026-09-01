@@ -12,6 +12,8 @@ import (
 
 	"github.com/p1ngu/rmm/internal/store"
 
+	"github.com/p1ngu/rmm/internal/config"
+	"github.com/p1ngu/rmm/internal/exports"
 	"github.com/p1ngu/rmm/internal/models"
 )
 
@@ -293,5 +295,58 @@ func TestNoPatchApprovalToolExistsIntegration(t *testing.T) {
 		if strings.Contains(name, "approve") {
 			t.Errorf("tool %q exposes approval to the model; approval is a human decision", name)
 		}
+	}
+}
+
+// Exports hand back a link instead of rows. What matters is that the link is
+// scoped and signed, not that a URL comes back — a token a caller could edit
+// would let them widen the query the server then trusts.
+func TestExportsAreScopedAndSignedIntegration(t *testing.T) {
+	f := newProposalFixture(t)
+	tc := f.tc()
+	tc.Config = &config.Config{SettingsEncryptionKey: "0123456789abcdef0123456789abcdef"}
+	tc.PublicURL = "https://acme.openrmm.com"
+	tc.Permissions[models.PermAuditView] = true
+	tc.Permissions[models.PermReportsView] = true
+
+	// The audit trail is instance-wide, so a scoped account is refused outright
+	// rather than shown a filtered view that does not exist.
+	if res := Execute(f.ctx, tc, "export_audit", json.RawMessage(`{}`)); !strings.Contains(res.Output, "scoped account cannot read it") {
+		t.Fatalf("a scoped principal was given an audit export: %s", res.Output)
+	}
+
+	// Inventory IS scoped, so it is allowed — and the token has to carry that
+	// scope so the download cannot quietly become someone else's fleet.
+	res := Execute(f.ctx, tc, "export_inventory", json.RawMessage(`{"report_type":"machines"}`))
+	if strings.Contains(res.Output, `"error"`) {
+		t.Fatalf("export_inventory failed for a scoped principal: %s", res.Output)
+	}
+	var out struct {
+		URL string `json:"download_url"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.URL, "https://acme.openrmm.com/api/exports/csv?token=") {
+		t.Fatalf("download_url = %q; it must be absolute on the tenant's own origin", out.URL)
+	}
+
+	token := out.URL[strings.Index(out.URL, "token=")+len("token="):]
+	claims, err := exports.Verify(tc.Config, token)
+	if err != nil {
+		t.Fatalf("the tool minted a token the server will not accept: %v", err)
+	}
+	if claims.Scope != f.scopedUser {
+		t.Errorf("token scope = %q, want the caller's %q — the download would widen it",
+			claims.Scope, f.scopedUser)
+	}
+	if claims.Params["report_type"] != "machines" {
+		t.Errorf("token lost the report type: %+v", claims.Params)
+	}
+
+	// A report type the server cannot serve is refused when the link is minted,
+	// not discovered as a broken download later.
+	if res := Execute(f.ctx, tc, "export_inventory", json.RawMessage(`{"report_type":"everything"}`)); !strings.Contains(res.Output, "report_type must be") {
+		t.Errorf("an unknown report type produced a link: %s", res.Output)
 	}
 }

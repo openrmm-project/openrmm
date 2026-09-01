@@ -54,6 +54,8 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 	switch claims.Kind {
 	case "audit":
 		s.streamAuditCSV(w, r, claims)
+	case "inventory":
+		s.streamInventoryCSV(w, r, claims)
 	default:
 		writeErr(w, http.StatusBadRequest, "unknown export kind")
 	}
@@ -125,4 +127,79 @@ func (s *Server) streamAuditCSV(w http.ResponseWriter, r *http.Request, claims *
 	}
 	_ = out.Write([]string{"", "", "TRUNCATED", "",
 		fmt.Sprintf("stopped at %d rows; narrow the filter to export the rest", exports.MaxRows)})
+}
+
+func (s *Server) streamInventoryCSV(w http.ResponseWriter, r *http.Request, claims *exports.Claims) {
+	if !hasPermission(r, models.PermReportsView) {
+		writeErr(w, http.StatusForbidden, "reports.view is required")
+		return
+	}
+
+	// The access scope is re-read from the CURRENT request, not taken from the
+	// token. The token records what it was at mint time only so a change can be
+	// detected and refused up front; the query itself is always filtered by who
+	// is asking now.
+	filter := store.ReportFilter{
+		ScopeUserID: s.scopeUserID(r),
+		ScopeType:   claims.Params["scope_type"],
+		ScopeID:     claims.Params["scope_id"],
+	}
+
+	kind := claims.Params["report_type"]
+	out := csvStream(w, fmt.Sprintf("%s-%s.csv", kind, time.Now().UTC().Format("2006-01-02")))
+	defer out.Flush()
+
+	num := func(n int64) string { return fmt.Sprintf("%d", n) }
+	switch kind {
+	case "software":
+		rows, err := s.store.SoftwareReport(r.Context(), filter)
+		if err != nil {
+			_ = out.Write([]string{"EXPORT FAILED", err.Error()})
+			return
+		}
+		_ = out.Write([]string{"name", "version", "manufacturer", "hostname", "client", "site", "department"})
+		for _, x := range rows {
+			_ = out.Write([]string{x.Name, x.Version, x.Manufacturer, x.Hostname, x.Client, x.Site, x.Department})
+		}
+	case "hardware":
+		rows, err := s.store.HardwareReport(r.Context(), filter)
+		if err != nil {
+			_ = out.Write([]string{"EXPORT FAILED", err.Error()})
+			return
+		}
+		_ = out.Write([]string{"hostname", "os", "arch", "manufacturer", "model", "serial_number",
+			"cpu_model", "cpu_cores", "mem_total_bytes", "gpu", "storage", "storage_bytes",
+			"bios", "platform", "platform_version", "kernel_version", "ip", "mac",
+			"client", "site", "department"})
+		for _, x := range rows {
+			_ = out.Write([]string{x.Hostname, x.OS, x.Arch, x.Manufacturer, x.Model, x.Serial,
+				x.CPUModel, num(int64(x.CPUCores)), num(x.MemTotalByte), x.GPU, x.Storage,
+				num(x.StorageBytes), x.BIOS, x.Platform, x.PlatformVer, x.Kernel, x.IP, x.MAC,
+				x.Client, x.Site, x.Department})
+		}
+	case "machines":
+		rows, err := s.store.MachinesReport(r.Context(), filter)
+		if err != nil {
+			_ = out.Write([]string{"EXPORT FAILED", err.Error()})
+			return
+		}
+		_ = out.Write([]string{"hostname", "os", "arch", "status", "agent_version", "cpu_model",
+			"mem_total_bytes", "ip", "mac", "client", "site", "department", "last_seen", "collected_at"})
+		for _, x := range rows {
+			_ = out.Write([]string{x.Hostname, x.OS, x.Arch, x.Status, x.AgentVersion, x.CPUModel,
+				num(x.MemTotalByte), x.IP, x.MAC, x.Client, x.Site, x.Department,
+				timeCell(x.LastSeen), timeCell(x.CollectedAt)})
+		}
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown report_type")
+	}
+}
+
+// timeCell renders a nullable timestamp for a spreadsheet: empty rather than
+// a zero date, which sorts and reads as a real value.
+func timeCell(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

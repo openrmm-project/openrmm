@@ -240,7 +240,7 @@ func toolPermission(name string) string {
 		return models.PermJobsView
 	case "fleet_summary":
 		return models.PermDevicesView
-	case "inventory_report":
+	case "inventory_report", "export_inventory":
 		return models.PermReportsView
 	case "propose_task":
 		return models.PermTasksManage
@@ -308,6 +308,8 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(queryAudit(ctx, tc, args))
 	case "export_audit":
 		return jsonResult(exportAudit(ctx, tc, args))
+	case "export_inventory":
+		return jsonResult(exportInventory(ctx, tc, args))
 	default:
 		return ToolResult{Output: fmt.Sprintf(`{"error":"unknown tool %q"}`, name)}
 	}
@@ -562,7 +564,10 @@ func cappedRows[T any](rows []T) map[string]any {
 	if len(rows) > maxReportRows {
 		out["rows"] = rows[:maxReportRows]
 		out["truncated"] = true
-		out["note"] = fmt.Sprintf("showing the first %d of %d rows; use the Reports tab to export the full CSV", maxReportRows, len(rows))
+		out["note"] = fmt.Sprintf(
+			"showing the first %d of %d rows. Call export_inventory with the same filters "+
+				"for the complete set as a CSV the operator downloads — do not ask for more rows here.",
+			maxReportRows, len(rows))
 	} else {
 		out["rows"] = rows
 	}

@@ -290,3 +290,39 @@ test('navigation labels are keys resolved at render', async () => {
   assert.match(app, /\{t\(grp\.section\)\}/);
   assert.match(app, /useLocale\(\)/, 'the root must re-render when the language changes');
 });
+
+// The chat's "Download CSV" used to be built from the model's own answer —
+// scanning it for a table or a ```csv block and saving that. The file therefore
+// held what the model had RETYPED, capped at whatever it managed to write, and
+// cost tokens twice. At a thousand rows it was not the data the database held.
+test('the chat downloads a server-minted export, not the model output', async () => {
+  const chat = await readFile(path.join(root, 'src', 'screens-chat.jsx'), 'utf8');
+
+  assert.doesNotMatch(chat, /function tabularCSV/,
+    'the model-output scraper must be gone, not merely unused');
+  assert.doesNotMatch(chat, /b\.lang === 'csv'/,
+    'nothing should build a download out of what the assistant wrote');
+
+  assert.match(chat, /\/api\/exports\/csv\?token=/, 'it should look for a minted export link');
+  assert.match(chat, /function ExportDownload/);
+
+  // A plain <a href> would send no Authorization header — this console carries a
+  // bearer token, not a cookie — so the click would come back 401.
+  assert.match(chat, /api\.downloadExport\(path\)/,
+    'the export must be fetched with credentials, not linked');
+
+  // Only the path is kept from the matched URL. Following the origin a message
+  // carries would let a model, or something that reached its context, point a
+  // click somewhere else.
+  assert.match(chat, /url\.pathname \+ url\.search/,
+    'the origin in the message must be discarded');
+});
+
+test('downloadExport sends the bearer token', async () => {
+  const api = await readFile(path.join(root, 'src', 'mockapi.jsx'), 'utf8');
+  const fn = api.slice(api.indexOf('async downloadExport'));
+  assert.match(fn.slice(0, 600), /headers\.Authorization = 'Bearer ' \+ session\.token/,
+    'the export request must carry the session token');
+  assert.match(fn.slice(0, 900), /content-disposition/i,
+    'the filename should come from the server, not be invented here');
+});

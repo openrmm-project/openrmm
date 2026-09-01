@@ -881,6 +881,36 @@ func (s *Store) VerifyAuditChain(ctx context.Context) (*AuditChainBreak, error) 
 	return &out, nil
 }
 
+// AuditProtectionStatus describes which of the append-only layers are actually
+// in force for this connection.
+type AuditProtectionStatus struct {
+	TriggersInstalled bool
+	CanDeleteDirectly bool // true when the connected role could bypass them
+	Role              string
+	Superuser         bool
+}
+
+// AuditProtection reports whether the audit log's protections hold for the role
+// the server is connected as.
+//
+// It exists because two of the three layers are invisible when absent. The
+// triggers and the hash chain announce themselves by refusing a write; the
+// privilege separation announces nothing at all — a server connected as the
+// table's owner behaves exactly like one connected as openrmm_app, right up
+// until the day something with those credentials decides to delete. A guarantee
+// nobody can tell is missing is one nobody will notice is missing.
+func (s *Store) AuditProtection(ctx context.Context) (AuditProtectionStatus, error) {
+	var out AuditProtectionStatus
+	err := s.pool.QueryRow(ctx, `
+		SELECT current_user,
+		       COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false),
+		       EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+		               WHERE c.relname = 'audit_log' AND t.tgname = 'trg_audit_append_only'),
+		       has_table_privilege(current_user, 'audit_log', 'DELETE')`).
+		Scan(&out.Role, &out.Superuser, &out.TriggersInstalled, &out.CanDeleteDirectly)
+	return out, err
+}
+
 // AuditSummary counts matching entries by actor and by action family.
 //
 // This is what most questions asked of an audit log actually want, and it is the

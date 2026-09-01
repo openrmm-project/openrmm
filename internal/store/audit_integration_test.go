@@ -584,3 +584,27 @@ func TestAppRoleCannotDeleteAuditEntriesIntegration(t *testing.T) {
 		t.Error("openrmm_app cannot run the purge, so retention would fail under layer 2")
 	}
 }
+
+// The status the server logs at startup. It exists because privilege separation
+// is the one layer that is invisible when absent: a server connected as the
+// table's owner behaves exactly like one that cannot delete, right up until
+// something with those credentials does.
+func TestAuditProtectionReportsWhatIsActuallyInForceIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+
+	status, err := st.AuditProtection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.TriggersInstalled {
+		t.Error("the append-only triggers should be installed by migration 012")
+	}
+	if status.Role == "" {
+		t.Error("the report should name the connected role")
+	}
+	// The test connects as the owner, so it must report that the triggers are
+	// bypassable — a status that claimed otherwise would be worse than none.
+	if !status.CanDeleteDirectly && !status.Superuser {
+		t.Error("connected as the owner, yet the status claims the triggers cannot be bypassed")
+	}
+}

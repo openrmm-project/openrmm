@@ -7,11 +7,24 @@ designed defense-first. This summarizes the posture; details live in
 
 ## Core guarantees (enforced in code)
 
-- **AI proposes, humans dispose.** The AI and the MCP surface can only create
+- **AI proposes, humans dispose.** The AI and the MCP surface create
   approval-gated job proposals (`propose_script`, bulk deploy, or high-level
-  proposal tools). They have **no** direct execute or delete tool. Nothing reaches
-  a machine from an AI proposal without a human approval. Scheduled tasks and
-  patch policies are separate, explicitly preconfigured automation paths.
+  proposal tools). They have **no** execute-a-script tool and **no** delete tool.
+  Nothing reaches a machine from an AI proposal without a human approval.
+- **Configuration is proposed too.** `propose_task`, `propose_check` and
+  `propose_policy` write the row **disabled** and stamped `proposed_by`; the
+  scheduler only ever selects `WHERE enabled`, and a database CHECK constraint
+  refuses to enable a proposal nobody has reviewed. This matters because a task is
+  a script with a schedule that the scheduler runs pre-approved — an AI able to
+  create an enabled one would have been more powerful than one able to propose a
+  script.
+- **The one tool that acts is bounded by a human decision.** `install_patches`
+  installs, but `ClaimApprovedPatches` limits it to identifiers a person already
+  approved; an unapproved one installs nothing. There is deliberately **no tool to
+  approve a patch** — an assistant that could approve and then install would make
+  that bound circular.
+- Scheduled tasks and patch policies remain separate, explicitly preconfigured
+  automation paths.
 - **Destructive actions are permission-gated**, deliberate, and audited
   (device/group deletion never via AI/MCP).
 - **Approval is mandatory by default** for every ad-hoc/AI script run (bypass

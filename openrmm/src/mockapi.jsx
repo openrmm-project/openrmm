@@ -240,7 +240,11 @@ const api = {
   completeJob(id, success = true) { return POST('/api/jobs/' + id + '/complete', { success }); },
 
   /* ---- audit ---- */
-  listAudit(limit = 100) { return GET('/api/audit' + qs({ limit })); },
+  // The audit log filters and pages SERVER-side. Filtering a fetched page in
+  // the browser would only ever search what happened to be on it, which is the
+  // opposite of what an audit search is for.
+  listAudit(params = {}) { return GET('/api/audit' + qs(params)); },
+  listAuditFacets() { return GET('/api/audit/facets'); },
 
   // Exports are authenticated like every other call, so they cannot be a plain
   // link: this console carries a bearer token, not a cookie, and a click would

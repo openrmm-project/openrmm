@@ -258,13 +258,55 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
 /* ================================= AUDIT ================================== */
 function AuditScreen() {
   const { can } = useAuth();
-  const auditQ = useQuery(['audit'], () => api.listAudit(200), { invalidateOn: ['audit'], poll: 6000 });
-  const [q, setQ] = useState('');
-  const [actorF, setActorF] = useState('all');
+
+  // Filtering and paging happen on the SERVER. The previous version fetched 200
+  // rows and filtered them in the browser, which quietly meant every search
+  // answered "among the 200 most recent" — under a day on an active fleet, and
+  // exactly the wrong answer for the question an audit log is kept for.
+  const PAGE = 50;
+  const [page, setPage] = useState(0);
+  const [actorF, setActorF] = useState('');
+  const [actionF, setActionF] = useState('');
+  const [targetF, setTargetF] = useState('');
+  const [since, setSince] = useState('');
+  const [until, setUntil] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const toast = useToast();
+
+  // A date input gives a local calendar day; the API wants an instant. `until`
+  // becomes the START of the following day so the chosen day is included —
+  // otherwise "1st to 1st" silently matches nothing, which reads as "nothing
+  // happened" rather than as a mistake.
+  const dayStart = (d) => (d ? new Date(d + 'T00:00:00').toISOString() : '');
+  const dayAfter = (d) => {
+    if (!d) return '';
+    const next = new Date(d + 'T00:00:00');
+    next.setDate(next.getDate() + 1);
+    return next.toISOString();
+  };
+
+  const query = {
+    limit: PAGE,
+    offset: page * PAGE,
+    ...(actorF ? { actor: actorF } : {}),
+    ...(actionF ? { action: actionF + '.' } : {}),
+    ...(targetF.trim() ? { target: targetF.trim() } : {}),
+    ...(since ? { since: dayStart(since) } : {}),
+    ...(until ? { until: dayAfter(until) } : {}),
+  };
+  const key = ['audit', JSON.stringify(query)];
+  // Polling only on the first page with no filters: refreshing under someone
+  // who is paging through an investigation moves the rows they are reading.
+  const live = page === 0 && !actorF && !actionF && !targetF && !since && !until;
+  const auditQ = useQuery(key, () => api.listAudit(query), {
+    invalidateOn: ['audit'], poll: live ? 6000 : 0,
+  });
+  const facetsQ = useQuery(['audit-facets'], () => api.listAuditFacets(), { invalidateOn: ['audit'] });
+
   const entries = auditQ.data?.entries || [];
-  const actors = Array.from(new Set(entries.map((e) => e.actor)));
-  // The audit log stores the actor's user id (stable); resolve it to a username
-  // for display (non-user actors like "scheduler"/"agent"/"api" stay as-is).
+  const total = auditQ.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / PAGE));
+
   const usersQ = useQuery(['users'], () => can('users.manage') ? api.listUsers() : Promise.resolve({ users: [] }), { invalidateOn: ['users'] });
   const userMap = {};
   (usersQ.data?.users || []).forEach((u) => { userMap[u.id] = u.username; });
@@ -273,6 +315,7 @@ function AuditScreen() {
     if (a.startsWith('ai:')) { const u = userMap[a.slice(3)]; return u ? 'AI · ' + u : 'AI assistant'; }
     return userMap[a] || a;
   };
+
   // target is the id of whatever the action acted on (device, job, batch, user…).
   // For a faithful audit report we prefer the label snapshotted into detail at
   // write time (survives device deletion/rename), then fall back to live
@@ -282,40 +325,82 @@ function AuditScreen() {
   const displayTarget = (e) => {
     const t = e.target;
     const d = e.detail || {};
-    const snap = d.hostname || d.host || d.name;            // captured at event time
-    const live = t && (devMap[t]?.hostname || userMap[t]);  // resolve if still exists
-    const byAgent = d.agent && devMap[d.agent]?.hostname;   // job/patch -> its device
-    return snap || live || byAgent || t;
+    const snap = d.hostname || d.host || d.name;
+    const live2 = t && (devMap[t]?.hostname || userMap[t]);
+    const byAgent = d.agent && devMap[d.agent]?.hostname;
+    return snap || live2 || byAgent || t;
   };
 
-  const filtered = entries.filter((e) => {
-    if (actorF !== 'all' && e.actor !== actorF) return false;
-    if (q) { const blob = (e.actor + ' ' + e.action + ' ' + e.target + ' ' + JSON.stringify(e.detail)).toLowerCase(); if (!blob.includes(q.toLowerCase())) return false; }
-    return true;
-  });
-
-  // Export the currently filtered entries to CSV (resolved names + raw ids).
-  const exportCSV = () => {
-    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
-    const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
-    const rows = filtered.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e), e.target, detailStr(e.detail)]);
-    const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
-    downloadText('audit-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv');
+  const resetFilters = () => {
+    setActorF(''); setActionF(''); setTargetF(''); setSince(''); setUntil(''); setPage(0);
   };
+  const onFilter = (setter) => (e) => { setter(e.target.value); setPage(0); };
+
+  // Export covers the WHOLE filtered set, not the page on screen — an export
+  // that silently stops at 50 rows would be read as the complete record. It
+  // pages the API to collect them, and says so if it hits the ceiling.
+  const EXPORT_MAX = 5000;
+  const exportCSV = async () => {
+    setExporting(true);
+    try {
+      const collected = [];
+      for (let offset = 0; offset < EXPORT_MAX; offset += 500) {
+        const batch = await api.listAudit({ ...query, limit: 500, offset });
+        const rows = batch.entries || [];
+        collected.push(...rows);
+        if (rows.length < 500 || collected.length >= (batch.total ?? 0)) break;
+      }
+      const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+      const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
+      const rows = collected.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e), e.target, detailStr(e.detail)]);
+      const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+      downloadText('audit-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv');
+      if (total > collected.length) {
+        toast.info('Export truncated',
+          `${collected.length} of ${total} entries. Narrow the date range to export the rest.`);
+      }
+    } catch (err) {
+      toast.error('Export failed', err.message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const hasFilters = actorF || actionF || targetF || since || until;
 
   return (
     <Page>
       <PageHeader title="Audit log" subtitle="An immutable record of who did what. Read-only." />
-      <Card className="mb-4"><div className="flex flex-wrap items-center gap-2 p-2.5">
-        <div className="relative flex-1 min-w-[220px]">
-          <Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search actor, action, target…" className={cx(inputCls, 'pl-9')} />
-        </div>
-        <Select value={actorF} onChange={(e) => setActorF(e.target.value)} className="w-auto min-w-[160px]">
-          <option value="all">All actors</option>{actors.map((a) => <option key={a} value={a}>{displayActor(a)}</option>)}
-        </Select>
-        <Button variant="secondary" icon="download" onClick={exportCSV} disabled={!filtered.length}>Export CSV ({filtered.length})</Button>
+
+      <Card className="mb-4"><div className="flex flex-wrap items-end gap-2 p-2.5">
+        <Field label="From" className="w-[150px]">
+          <Input type="date" value={since} onChange={onFilter(setSince)} max={until || undefined} />
+        </Field>
+        <Field label="To" className="w-[150px]">
+          <Input type="date" value={until} onChange={onFilter(setUntil)} min={since || undefined} />
+        </Field>
+        <Field label="Actor" className="w-auto min-w-[170px]">
+          <Select value={actorF} onChange={onFilter(setActorF)}>
+            <option value="">All actors</option>
+            {(facetsQ.data?.actors || []).map((a) => <option key={a} value={a}>{displayActor(a)}</option>)}
+          </Select>
+        </Field>
+        <Field label="Action" className="w-auto min-w-[150px]">
+          <Select value={actionF} onChange={onFilter(setActionF)}>
+            <option value="">All actions</option>
+            {(facetsQ.data?.actions || []).map((a) => <option key={a} value={a}>{a}</option>)}
+          </Select>
+        </Field>
+        <Field label="Target ID" className="flex-1 min-w-[200px]"
+          hint="Exact id of the device, job or user acted on">
+          <Input className="mono" value={targetF} onChange={onFilter(setTargetF)} placeholder="uuid…" />
+        </Field>
+        {hasFilters && <Button variant="ghost" onClick={resetFilters}>Clear</Button>}
+        <Button variant="secondary" icon="download" onClick={exportCSV}
+          disabled={!total || exporting}>
+          {exporting ? 'Exporting…' : `Export CSV (${total})`}
+        </Button>
       </div></Card>
 
       <Card className="overflow-hidden">
@@ -326,23 +411,38 @@ function AuditScreen() {
             <th className="font-semibold px-4 py-2.5">Detail</th>
           </tr></thead>
           <tbody className="divide-y divide-line">
-            {filtered.map((e) => {
+            {entries.map((e) => {
               const m = ACTION_META[e.action] || { icon: 'dot', c: 'text-faint' };
-              const ai = (e.actor || '').startsWith('ai:');
               return (
                 <tr key={e.id} className="hover:bg-elevated/40 transition align-top">
-                  <td className="px-4 py-2.5 text-[12px] text-muted whitespace-nowrap tabular">{fmtTime(e.created_at)}</td>
-                  <td className="px-3 py-2.5"><span className={cx('text-[12.5px] font-medium', ai ? 'text-brandhi' : 'text-ink')} title={e.actor}>{displayActor(e.actor)}</span></td>
-                  <td className="px-3 py-2.5"><span className={cx('inline-flex items-center gap-1.5 text-[12px]', m.c)}><Icon name={m.icon} size={13} /><span className="mono text-muted">{e.action}</span></span></td>
-                  <td className="px-3 py-2.5 text-[12px] mono text-faint" title={e.target}>{displayTarget(e)}</td>
-                  <td className="px-4 py-2.5 text-[12px] text-muted max-w-[360px]"><span className="line-clamp-2">{Object.entries(e.detail || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') || '—'}</span></td>
+                  <td className="px-4 py-3 text-[12.5px] text-muted whitespace-nowrap" title={e.created_at}>{fmtTime(e.created_at)}</td>
+                  <td className="px-3 py-3 text-[13px] text-ink" title={e.actor}>{displayActor(e.actor)}</td>
+                  <td className="px-3 py-3"><span className={cx('inline-flex items-center gap-1.5 text-[12.5px]', m.c)}><Icon name={m.icon} size={13} />{e.action}</span></td>
+                  <td className="px-3 py-3 text-[12.5px] text-muted" title={e.target}>{displayTarget(e)}</td>
+                  <td className="px-4 py-3 text-[12px] text-faint">{Object.entries(e.detail || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-        {filtered.length === 0 && <EmptyState icon="audit" title="No entries" msg="Nothing matches your filters." />}
+        {!auditQ.loading && !entries.length && (
+          <EmptyState icon="audit" title="No entries"
+            msg={hasFilters ? 'Nothing matches these filters.' : 'Nothing has been recorded yet.'} />
+        )}
       </Card>
+
+      {total > PAGE && (
+        <div className="flex items-center justify-between mt-3 text-[12.5px] text-muted">
+          <span>
+            {page * PAGE + 1}–{Math.min((page + 1) * PAGE, total)} of {total}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>
+            <span className="text-faint">Page {page + 1} of {pages}</span>
+            <Button size="sm" variant="ghost" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>Next</Button>
+          </div>
+        </div>
+      )}
     </Page>
   );
 }

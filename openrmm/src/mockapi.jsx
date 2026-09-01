@@ -246,6 +246,24 @@ const api = {
   listAudit(params = {}) { return GET('/api/audit' + qs(params)); },
   listAuditFacets() { return GET('/api/audit/facets'); },
 
+  // Exports are authenticated like every other call, so they cannot be a plain
+  // link: this console carries a bearer token, not a cookie, and a click would
+  // send no Authorization header. Fetched here and handed back as text for the
+  // browser to save.
+  async downloadExport(path) {
+    const headers = {};
+    if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
+    const res = await fetch(API_BASE + path, { headers });
+    if (!res.ok) {
+      let message = `download failed (${res.status})`;
+      try { message = (await res.json()).error || message; } catch (_) {}
+      throw new Error(message);
+    }
+    const disposition = res.headers.get('content-disposition') || '';
+    const named = disposition.match(/filename="?([^"]+)"?/);
+    return { text: await res.text(), filename: named ? named[1] : 'export.csv' };
+  },
+
   /* ---- enroll ---- */
   // body: { description, uses, ttl_hours, site_id, group_id? } — group_id makes
   // the agent enrol straight into a department instead of landing on the site.

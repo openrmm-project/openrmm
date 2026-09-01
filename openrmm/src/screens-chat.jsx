@@ -52,14 +52,31 @@ function parseBlocks(text) {
   return blocks;
 }
 
-// tabularCSV returns a downloadable CSV from the first table or ```csv block, or null.
-function tabularCSV(blocks) {
-  const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-  for (const b of blocks) {
-    if (b.type === 'code' && b.lang === 'csv' && b.content.trim()) return b.content.trim();
-    if (b.type === 'table') return [b.headers, ...b.rows].map((r) => r.map(esc).join(',')).join('\r\n');
+// exportLink finds a download the SERVER minted, in a message the assistant wrote.
+//
+// It replaces a "Download CSV" button that used to be built from the model's own
+// answer — scanning it for a table or a ```csv block and saving that. Which meant
+// the file contained what the model had RETYPED, capped at whatever it managed
+// to write out, and paid for in tokens twice. At a thousand rows it was not the
+// same data as the database held.
+//
+// The assistant now calls export_audit / export_inventory, which return a signed
+// URL, and the rows stream from Postgres to disk without passing through the
+// model at all.
+const EXPORT_PATH = '/api/exports/csv?token=';
+function exportLink(text) {
+  const match = String(text || '').match(/https?:\/\/[^\s)\]]*\/api\/exports\/csv\?token=[A-Za-z0-9._~-]+/);
+  if (!match) return null;
+  // Only the path and query are kept. The origin in the message is whatever the
+  // server was configured to advertise, and following it blindly would let a
+  // model — or something that reached its context — point a click elsewhere.
+  try {
+    const url = new URL(match[0]);
+    if (!url.pathname.startsWith('/api/exports/csv')) return null;
+    return url.pathname + url.search;
+  } catch (_) {
+    return null;
   }
-  return null;
 }
 
 // downloadText saves text as a file from the browser — no server/endpoint write.
@@ -242,19 +259,55 @@ function ChatMessage({ m, navigate }) {
   if (m.role === 'tool') return <ToolStep m={m} />;
   // assistant
   const jobIds = m.tool_calls?.created_job_ids || [];
-  const csv = tabularCSV(parseBlocks(m.content));
+  const download = exportLink(m.content);
   return (
     <div className="flex items-start gap-3 animate-fade-in">
       <div className="h-7 w-7 rounded-lg bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0 mt-0.5"><Icon name="sparkle" size={14} /></div>
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] text-ink space-y-0.5">{renderRich(m.content)}</div>
-        {csv && (
-          <button onClick={() => downloadText('report-' + (m.id || 'export') + '.csv', csv, 'text/csv')} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line bg-card hover:border-line2 hover:bg-elevated/60 transition px-2.5 py-1.5 text-[12px] text-muted hover:text-ink">
-            <Icon name="download" size={13} className="text-brandhi" />Download CSV
-          </button>
-        )}
+        {download && <ExportDownload path={download} />}
         {jobIds.map((id) => <ProposedJob key={id} jobId={id} navigate={navigate} />)}
       </div>
+    </div>
+  );
+}
+
+
+// ExportDownload fetches a minted export with the caller's credentials.
+//
+// A plain link would not work: the export route requires authentication, and
+// this console authenticates with a bearer token held in sessionStorage rather
+// than a cookie — so a click would send no Authorization header and come back
+// 401. Fetching it here and saving the blob is what makes the link the assistant
+// hands over actually openable.
+function ExportDownload({ path }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+
+  const save = async () => {
+    setBusy(true);
+    setFailed('');
+    try {
+      const res = await api.downloadExport(path);
+      const name = (res.filename || 'export.csv');
+      downloadText(name, res.text, 'text/csv');
+    } catch (err) {
+      // The link expires, and the account has to still be allowed to see the
+      // data — saying which is more useful than "download failed".
+      setFailed(err.message || 'could not download');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-2">
+      <button onClick={save} disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-card hover:border-line2 hover:bg-elevated/60 transition px-2.5 py-1.5 text-[12px] text-muted hover:text-ink disabled:opacity-50">
+        <Icon name="download" size={13} className="text-brandhi" />
+        {busy ? 'Downloading…' : 'Download CSV'}
+      </button>
+      {failed && <div className="mt-1.5 text-[11.5px] text-bad">{failed}</div>}
     </div>
   );
 }

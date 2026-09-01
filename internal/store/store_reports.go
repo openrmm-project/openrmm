@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -243,4 +244,156 @@ func (s *Store) MachinesReport(ctx context.Context, f ReportFilter) ([]MachineRo
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ===================== Aggregation =====================
+//
+// Counting in the database, rather than handing rows to something that will
+// count them badly.
+//
+// "How many machines have nginx" does not need a row per install. Answered here
+// it costs one query and is exact; answered by a model reading a thousand rows
+// it costs a large slice of a context window and produces a number that looks
+// right. The second failure is the dangerous one, because nothing about the
+// answer reveals it.
+//
+// This is also what makes the row cap tolerable: with a summary available, the
+// cases that need rows are the narrow ones, and narrow ones fit.
+
+// SummaryRow is one group and how much of the fleet it covers.
+type SummaryRow struct {
+	Key      string `json:"key"`
+	Machines int    `json:"machines"` // distinct devices in this group
+	Rows     int    `json:"rows"`     // matching rows; for software, installs
+}
+
+// groupExpr whitelists what may be grouped on, per report. A caller-supplied
+// column name reaching SQL is how a report endpoint becomes an injection point,
+// so the parameter selects from this map and can never contribute text to the
+// query.
+var groupExpr = map[string]map[string]string{
+	"software": {
+		"name":         `sw->>'name'`,
+		"version":      `COALESCE(sw->>'name','') || ' ' || COALESCE(sw->>'version','')`,
+		"manufacturer": `COALESCE(sw->>'manufacturer', sw->>'publisher', sw->>'vendor', '')`,
+		"client":       `COALESCE(cl.name,'')`,
+	},
+	"hardware": {
+		"os":           `a.os`,
+		"manufacturer": `COALESCE(inv.data->'hardware'->>'manufacturer','')`,
+		"model":        `COALESCE(inv.data->'hardware'->>'model','')`,
+		"platform":     `COALESCE(inv.data->>'platform','')`,
+		"client":       `COALESCE(cl.name,'')`,
+	},
+	"machines": {
+		"os":         `a.os`,
+		"status":     `a.status`,
+		"client":     `COALESCE(cl.name,'')`,
+		"site":       `COALESCE(s.name,'')`,
+		"department": `COALESCE(g.name,'')`,
+		"version":    `a.version`,
+	},
+}
+
+// DefaultGroupBy is what a report groups on when the caller does not say.
+var DefaultGroupBy = map[string]string{
+	"software": "name", "hardware": "os", "machines": "os",
+}
+
+// GroupOptions lists what a report can be grouped by, for an error message that
+// tells the caller what to do instead of only what went wrong.
+func GroupOptions(reportType string) []string {
+	out := make([]string, 0, len(groupExpr[reportType]))
+	for k := range groupExpr[reportType] {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// maxSummaryGroups caps the groups returned. Ordered by size, so the cap keeps
+// what matters: a fleet with 9,000 distinct packages has a long tail nobody
+// reads, and the answer to "what is installed" is the head of it.
+const maxSummaryGroups = 50
+
+// InventorySummary counts the fleet by one dimension.
+//
+// `match` narrows before grouping — the direct form of "how many machines have
+// nginx", which grouping alone cannot answer when the package sits outside the
+// top of a long tail.
+func (s *Store) InventorySummary(ctx context.Context, f ReportFilter, reportType, groupBy, match string) ([]SummaryRow, int, error) {
+	exprs, ok := groupExpr[reportType]
+	if !ok {
+		return nil, 0, fmt.Errorf("unknown report_type %q", reportType)
+	}
+	if groupBy == "" {
+		groupBy = DefaultGroupBy[reportType]
+	}
+	expr, ok := exprs[groupBy]
+	if !ok {
+		return nil, 0, fmt.Errorf("cannot group %s by %q; try one of: %s",
+			reportType, groupBy, strings.Join(GroupOptions(reportType), ", "))
+	}
+
+	where, args := f.where()
+	from := `FROM inventory inv JOIN agents a ON a.id = inv.agent_id` + reportJoins
+	if reportType == "software" {
+		from += `
+		CROSS JOIN LATERAL jsonb_array_elements(
+			CASE WHEN jsonb_typeof(inv.data->'software')='array'
+			     THEN inv.data->'software' ELSE '[]'::jsonb END) AS sw`
+	}
+	if reportType == "machines" {
+		// Machines are counted from the agent list, not from reported inventory:
+		// a device that has never checked in is still part of the fleet, and
+		// leaving it out would quietly under-report exactly the machines an
+		// operator is looking for.
+		from = `FROM agents a` + reportJoins + ` LEFT JOIN inventory inv ON inv.agent_id = a.id`
+	}
+
+	if strings.TrimSpace(match) != "" {
+		args = append(args, "%"+strings.TrimSpace(match)+"%")
+		clause := fmt.Sprintf("(%s) ILIKE $%d", expr, len(args))
+		if where == "" {
+			where = " WHERE " + clause
+		} else {
+			where += " AND " + clause
+		}
+	}
+
+	// Distinct devices as well as rows: for software the two differ, and
+	// "installs" is rarely the number anyone wants.
+	query := fmt.Sprintf(
+		`SELECT %s AS grp, count(DISTINCT a.id) AS machines, count(*) AS rows_ %s%s
+		 GROUP BY grp ORDER BY machines DESC, rows_ DESC, grp LIMIT %d`,
+		expr, from, where, maxSummaryGroups+1)
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []SummaryRow
+	for rows.Next() {
+		var r SummaryRow
+		var key *string
+		if err := rows.Scan(&key, &r.Machines, &r.Rows); err != nil {
+			return nil, 0, err
+		}
+		if key != nil {
+			r.Key = *key
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	// One extra was fetched to detect a longer tail without a second count.
+	truncated := 0
+	if len(out) > maxSummaryGroups {
+		out = out[:maxSummaryGroups]
+		truncated = 1
+	}
+	return out, truncated, nil
 }

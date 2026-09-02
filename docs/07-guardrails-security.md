@@ -147,15 +147,29 @@ append to and read `audit_log`, and cannot update or delete it. Point
 did* — the credentials that could are not in its memory. The purge still works,
 through a `SECURITY DEFINER` function that can only remove aged machine entries.
 
-The role is created without a password, so this migration carries no secret. It
-is inert until an operator grants it a login and switches the connection string:
+The role is created without a password, so the migration carries no secret.
 
-```sql
-ALTER ROLE openrmm_app WITH LOGIN PASSWORD '…';
+**Migrations must run separately.** Applying one needs ownership of the tables;
+serving does not — and if the serving process held the owner credential it could
+drop the triggers and delete the trail, which is the whole thing this prevents.
+So the owner credential is used for a few seconds and never enters the process
+that serves HTTP:
+
+```sh
+RMM_DATABASE_URL=<owner dsn> rmm-server -migrate-only   # applies and exits
+RMM_DATABASE_URL=<app dsn>   rmm-server                 # serves
 ```
 
-Until then layers 1 and 3 are in force and layer 2 is not, because the server
-still connects as an owner.
+The Helm chart does this with init containers — `migrate` with the owner's
+credentials, then `grant-app-login` to set the restricted role's password, then
+the server. Each install generates its own password, never shared between
+tenants: one leaked value would otherwise reach every customer's database.
+
+Starting the server as the restricted role with a migration outstanding fails
+with the command to run, rather than an opaque permission error.
+
+Until layer 2 is switched on, layers 1 and 3 are in force and the server says so
+at every start.
 
 **3. A hash chain.** Every human-record entry carries a SHA-256 of its contents
 plus the previous entry's hash, so editing or removing one breaks every link

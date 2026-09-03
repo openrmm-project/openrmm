@@ -664,6 +664,25 @@ var auditWriteFailures atomic.Uint64
 // AuditWriteFailures returns how many audit writes have been lost since start.
 func AuditWriteFailures() uint64 { return auditWriteFailures.Load() }
 
+// AddAuditAt writes an entry with an explicit timestamp. Only tests use it: the
+// alternative is reaching into audit_log with raw SQL from another package,
+// which would bypass the same append-only trigger the production path runs
+// through — and a test that writes differently from production tests something
+// else.
+func (s *Store) AddAuditAt(ctx context.Context, actor, action, target string, detail []byte, at time.Time) error {
+	if detail == nil {
+		detail = []byte("{}")
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO audit_log (id, actor, action, target, detail, created_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+		newID(), actor, action, target, detail, at)
+	if err != nil {
+		auditWriteFailures.Add(1)
+		log.Printf("audit: FAILED to record %q by %q on %q: %v", action, actor, target, err)
+	}
+	return err
+}
+
 func (s *Store) AddAudit(ctx context.Context, actor, action, target string, detail []byte) error {
 	if detail == nil {
 		detail = []byte("{}")
@@ -699,6 +718,18 @@ type AuditFilter struct {
 	Until  time.Time // exclusive
 	Limit  int
 	Offset int
+	// Cursor pages by position instead of by count.
+	//
+	// Offset is wrong for this table and the reason is structural: the trail is
+	// append-only and ordered newest-first, so entries arrive at the TOP. If five
+	// are written between fetching page 1 and page 2, offset 50 now points five
+	// rows earlier than where the reader stopped, and they see five entries
+	// twice. In an investigation that reads as "this happened more than once".
+	//
+	// Anchoring on the last row seen has no such drift: rows added above it do
+	// not move it.
+	CursorTime time.Time
+	CursorID   string
 }
 
 // auditWhere builds the shared WHERE fragment and its arguments, so the listing
@@ -729,6 +760,14 @@ func (f AuditFilter) auditWhere() (string, []any) {
 	}
 	if !f.Until.IsZero() {
 		add("created_at < $%d", f.Until)
+	}
+	if !f.CursorTime.IsZero() && f.CursorID != "" {
+		// Row-value comparison, matching ORDER BY created_at DESC, id DESC:
+		// strictly older, and among equal timestamps strictly lower id. Written
+		// as a tuple so it stays consistent with the ordering by construction
+		// rather than by two conditions someone must keep in step.
+		args = append(args, f.CursorTime, f.CursorID)
+		conds = append(conds, fmt.Sprintf("(created_at, id) < ($%d, $%d)", len(args)-1, len(args)))
 	}
 	where := ""
 	if len(conds) > 0 {

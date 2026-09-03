@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -1511,7 +1512,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, total, err := s.store.ListAudit(r.Context(), store.AuditFilter{
+	filter := store.AuditFilter{
 		Actor:  strings.TrimSpace(query.Get("actor")),
 		Action: strings.TrimSpace(query.Get("action")),
 		Target: strings.TrimSpace(query.Get("target")),
@@ -1519,17 +1520,60 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		Until:  until,
 		Limit:  limit,
 		Offset: offset,
-	})
+	}
+	// A cursor, when given, replaces the offset. Both are accepted because the
+	// trail is append-only and ordered newest-first: entries arrive at the top,
+	// so an offset drifts under a reader who is paging while others work. The
+	// cursor anchors on the last row seen and cannot drift.
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
+		at, id, ok := decodeAuditCursor(raw)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "malformed cursor")
+			return
+		}
+		filter.CursorTime, filter.CursorID, filter.Offset = at, id, 0
+	}
+
+	entries, total, err := s.store.ListAudit(r.Context(), filter)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"entries": entries,
 		"total":   total,
 		"limit":   len(entries),
 		"offset":  offset,
-	})
+	}
+	// Handed back only when there is more to fetch, so an empty next_cursor is
+	// an unambiguous end rather than one more request that returns nothing.
+	if len(entries) > 0 && len(entries) == filter.Limit {
+		last := entries[len(entries)-1]
+		out["next_cursor"] = encodeAuditCursor(last.CreatedAt, last.ID)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// The cursor is opaque to the caller on purpose: it is a position, not a filter,
+// and anything that reads it as data will eventually try to construct one.
+func encodeAuditCursor(at time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(at.UTC().Format(time.RFC3339Nano) + "|" + id))
+}
+
+func decodeAuditCursor(raw string) (time.Time, string, bool) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	stamp, id, found := strings.Cut(string(decoded), "|")
+	if !found || id == "" {
+		return time.Time{}, "", false
+	}
+	at, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	return at, id, true
 }
 
 // listAuditFacets offers the distinct actors and action families present, so the

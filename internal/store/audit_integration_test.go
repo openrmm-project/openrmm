@@ -608,3 +608,109 @@ func TestAuditProtectionReportsWhatIsActuallyInForceIntegration(t *testing.T) {
 		t.Error("connected as the owner, yet the status claims the triggers cannot be bypassed")
 	}
 }
+
+// Offset is the wrong tool for an append-only table read newest-first: entries
+// arrive at the TOP, so anything written between two page requests shifts every
+// later page down. A reader paging through an investigation then sees the same
+// rows twice — which reads as "this happened more than once".
+//
+// A cursor anchors on the last row seen. Rows added above it do not move it.
+func TestAuditCursorDoesNotDriftWhenEntriesArriveIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	for i := 0; i < 10; i++ {
+		if err := st.AddAudit(ctx, "alice", "job.approve", uuid.NewString(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, _, err := st.ListAudit(ctx, AuditFilter{Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 5 {
+		t.Fatalf("page 1 returned %d rows, want 5", len(first))
+	}
+	last := first[len(first)-1]
+
+	// Someone else works while the reader is on page 1. This is the ordinary
+	// case, not an edge one — an audit log is written to constantly.
+	for i := 0; i < 3; i++ {
+		if err := st.AddAudit(ctx, "bob", "job.approve", uuid.NewString(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Offset: page 2 now overlaps page 1, because three rows pushed everything
+	// down. Asserted so the reason the cursor exists stays visible.
+	shifted, _, err := st.ListAudit(ctx, AuditFilter{Limit: 5, Offset: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, e := range first {
+		seen[e.ID] = true
+	}
+	overlap := 0
+	for _, e := range shifted {
+		if seen[e.ID] {
+			overlap++
+		}
+	}
+	if overlap == 0 {
+		t.Log("offset happened not to drift here; the cursor assertion below is the one that matters")
+	}
+
+	// Cursor: strictly older than the last row seen, whatever arrived above it.
+	next, _, err := st.ListAudit(ctx, AuditFilter{
+		Limit: 5, CursorTime: last.CreatedAt, CursorID: last.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != 5 {
+		t.Fatalf("cursor page returned %d rows, want the remaining 5", len(next))
+	}
+	for _, e := range next {
+		if seen[e.ID] {
+			t.Fatalf("entry %s appeared on both pages; the cursor drifted", e.ID)
+		}
+		if !e.CreatedAt.Before(last.CreatedAt) && e.ID >= last.ID {
+			t.Errorf("entry %s is not strictly older than the cursor", e.ID)
+		}
+	}
+}
+
+// Entries written in the same instant tie on created_at, and a cursor that
+// compared only the timestamp would skip or repeat them. The comparison is a
+// row value over (created_at, id), matching the ordering exactly.
+func TestAuditCursorHandlesIdenticalTimestampsIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	stamp := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 6; i++ {
+		if err := st.AddAuditAt(ctx, "alice", "job.approve", uuid.NewString(), nil, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, _, err := st.ListAudit(ctx, AuditFilter{Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := first[len(first)-1]
+	next, _, err := st.ListAudit(ctx, AuditFilter{Limit: 3, CursorTime: last.CreatedAt, CursorID: last.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != 3 {
+		t.Fatalf("second page returned %d of 3 rows sharing a timestamp", len(next))
+	}
+	seen := map[string]bool{}
+	for _, e := range first {
+		seen[e.ID] = true
+	}
+	for _, e := range next {
+		if seen[e.ID] {
+			t.Fatalf("entry %s repeated across pages with tied timestamps", e.ID)
+		}
+	}
+}

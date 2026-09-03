@@ -265,6 +265,12 @@ function AuditScreen() {
   // exactly the wrong answer for the question an audit log is kept for.
   const PAGE = 50;
   const [page, setPage] = useState(0);
+  // A stack of the cursors that led here, so Previous is a step back rather
+  // than a recomputed offset. Offset is wrong for this table: the trail is
+  // append-only and read newest-first, so entries arrive at the TOP and every
+  // later page shifts under a reader who is paging while others work — showing
+  // the same rows twice, which reads as "this happened more than once".
+  const [cursors, setCursors] = useState([]);
   const [actorF, setActorF] = useState('');
   const [actionF, setActionF] = useState('');
   const [targetF, setTargetF] = useState('');
@@ -287,7 +293,7 @@ function AuditScreen() {
 
   const query = {
     limit: PAGE,
-    offset: page * PAGE,
+    ...(cursors.length ? { cursor: cursors[cursors.length - 1] } : {}),
     ...(actorF ? { actor: actorF } : {}),
     ...(actionF ? { action: actionF + '.' } : {}),
     ...(targetF.trim() ? { target: targetF.trim() } : {}),
@@ -306,6 +312,7 @@ function AuditScreen() {
   const entries = auditQ.data?.entries || [];
   const total = auditQ.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE));
+  const nextCursor = auditQ.data?.next_cursor;
 
   const usersQ = useQuery(['users'], () => can('users.manage') ? api.listUsers() : Promise.resolve({ users: [] }), { invalidateOn: ['users'] });
   const userMap = {};
@@ -332,9 +339,12 @@ function AuditScreen() {
   };
 
   const resetFilters = () => {
-    setActorF(''); setActionF(''); setTargetF(''); setSince(''); setUntil(''); setPage(0);
+    setActorF(''); setActionF(''); setTargetF(''); setSince(''); setUntil('');
+    setPage(0); setCursors([]);
   };
-  const onFilter = (setter) => (e) => { setter(e.target.value); setPage(0); };
+  // Changing a filter invalidates the cursors: they point into the previous
+  // result set, and following one would page through the wrong query.
+  const onFilter = (setter) => (e) => { setter(e.target.value); setPage(0); setCursors([]); };
 
   // Export covers the WHOLE filtered set, not the page on screen — an export
   // that silently stops at 50 rows would be read as the complete record. It
@@ -431,15 +441,15 @@ function AuditScreen() {
         )}
       </Card>
 
-      {total > PAGE && (
+      {(total > PAGE || page > 0) && (
         <div className="flex items-center justify-between mt-3 text-[12.5px] text-muted">
-          <span>
-            {page * PAGE + 1}–{Math.min((page + 1) * PAGE, total)} of {total}
-          </span>
+          <span>{entries.length} shown of {total}</span>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>
+            <Button size="sm" variant="ghost" disabled={page === 0}
+              onClick={() => { setCursors(cursors.slice(0, -1)); setPage(page - 1); }}>Previous</Button>
             <span className="text-faint">Page {page + 1} of {pages}</span>
-            <Button size="sm" variant="ghost" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>Next</Button>
+            <Button size="sm" variant="ghost" disabled={!nextCursor}
+              onClick={() => { setCursors([...cursors, nextCursor]); setPage(page + 1); }}>Next</Button>
           </div>
         </div>
       )}

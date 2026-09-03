@@ -336,9 +336,22 @@ test('the audit screen filters and pages server-side', async () => {
   const audit = screens.slice(screens.indexOf('function AuditScreen'));
 
   assert.match(audit, /api\.listAudit\(query\)/, 'the query must go to the API');
-  for (const param of ['limit:', 'offset:', 'actor:', 'action:', 'target:', 'since:', 'until:']) {
+  for (const param of ['limit:', 'cursor:', 'actor:', 'action:', 'target:', 'since:', 'until:']) {
     assert.ok(audit.includes(param), `the query should carry ${param}`);
   }
+  // Offset drifts on an append-only table read newest-first: entries arrive at
+  // the top, so every later page shifts under a reader who is paging while
+  // others work, and the same rows appear twice.
+  assert.doesNotMatch(audit, /offset: page \* PAGE/,
+    'paging must anchor on a cursor, not on a computed offset');
+  assert.match(audit, /setCursors\(\[\.\.\.cursors, nextCursor\]\)/,
+    'Next should follow the cursor the server handed back');
+  assert.match(audit, /setCursors\(cursors\.slice\(0, -1\)\)/,
+    'Previous should step back through the cursors already followed');
+  // A cursor points into the previous result set; following one after a filter
+  // change would page through the wrong query.
+  assert.match(audit, /setPage\(0\); setCursors\(\[\]\)/,
+    'changing a filter must discard the cursors');
   // No client-side array filtering: that is the bug this replaced.
   assert.doesNotMatch(audit, /entries\.filter\(/,
     'entries must not be filtered in the browser — the server has the whole set');

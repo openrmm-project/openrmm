@@ -4,13 +4,17 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/p1ngu/rmm/internal/ai"
 	"github.com/p1ngu/rmm/internal/api"
 	"github.com/p1ngu/rmm/internal/config"
@@ -24,7 +28,24 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
+// migrateOnly runs the pending migrations and exits.
+//
+// It exists so the credential that can change the schema never has to live in
+// the process that serves HTTP. Applying migrations needs ownership of the
+// tables; serving does not — and the audit log's append-only guarantee rests on
+// the serving role being unable to delete from it, which it cannot be if it also
+// owns the table.
+//
+// So the deployment runs this first, with the owner's credentials, and then
+// starts the server with the restricted ones. In Kubernetes that is an init
+// container or a Job; in Compose, a one-shot service. Either way the owner
+// credential exists for a few seconds and is gone.
+var migrateOnly = flag.Bool("migrate-only", false,
+	"apply pending database migrations and exit, without starting the server")
+
 func main() {
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -42,10 +63,27 @@ func main() {
 	migrationCtx, migrationCancel := context.WithTimeout(ctx, migrationStartupTimeout)
 	if err := st.Migrate(migrationCtx); err != nil {
 		migrationCancel()
+		// A permission failure here means the serving role cannot change the
+		// schema — which is the intended arrangement, not a misconfiguration.
+		// Saying so turns a confusing deploy failure into an instruction.
+		if isPermissionError(err) && !*migrateOnly {
+			log.Fatalf("database migrations failed: %v\n\n"+
+				"This role cannot change the schema, which is expected when the server runs as a\n"+
+				"restricted user. Run the migrations first with the owner's credentials:\n"+
+				"    RMM_DATABASE_URL=<owner dsn> rmm-server -migrate-only\n"+
+				"then start the server again.", err)
+		}
 		log.Fatalf("database migrations failed: %v", err)
 	}
 	migrationCancel()
 	log.Println("database migrations complete")
+	if *migrateOnly {
+		// Nothing else is touched: no settings are read, no listener opened, no
+		// scheduler started. The point is to hold the owner credential for the
+		// shortest possible time.
+		log.Println("migrate-only: done")
+		return
+	}
 	if eff, err := settings.Effective(ctx, st, cfg); err != nil {
 		log.Fatalf("settings: %v", err)
 	} else {
@@ -133,4 +171,17 @@ func superSuffix(super bool) string {
 		return ", a superuser"
 	}
 	return ""
+}
+
+// isPermissionError reports whether a migration failed because the role lacks
+// the rights, rather than because the migration itself is wrong.
+func isPermissionError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// 42501 insufficient_privilege, 42P01 undefined_table — the latter shows
+		// up when a restricted role cannot even see what it is not allowed to
+		// create.
+		return pgErr.Code == "42501" || pgErr.Code == "42P01"
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "permission denied")
 }

@@ -10,4 +10,4 @@ Add yourself in the pull request that signs it, in the form:
 
 ---
 
-- Miqueias Gonçalves (GitHub: @P1N-GU) — project owner
+- Miquéias Gonçalves (GitHub: @P1N-GU) — project owner

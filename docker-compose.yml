@@ -3,7 +3,10 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: rmm
-      POSTGRES_PASSWORD: rmm
+      # Overridable from .env, so changing it does not mean editing a tracked
+      # file. The default is deliberately weak: it is a development password and
+      # exists only on a developer's machine.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-rmm}"
       POSTGRES_DB: rmm
     volumes:
       - rmm_pgdata:/var/lib/postgresql/data
@@ -29,7 +32,18 @@ services:
       RMM_MCP_PUBLIC_URL: "${RMM_MCP_PUBLIC_URL:-http://localhost:3005}"
       RMM_MCP_OAUTH_ENABLED: "${RMM_MCP_OAUTH_ENABLED:-false}"
       RMM_MCP_ALLOWED_IPS: "${RMM_MCP_ALLOWED_IPS:-}"
-      RMM_DATABASE_URL: "postgres://rmm:rmm@postgres:5432/rmm?sslmode=disable"
+      # The restricted role: it can append to and read audit_log and cannot
+      # delete from it, so a compromised server cannot erase what it did.
+      #
+      # Migrations need the OWNER and therefore run separately, before this
+      # starts:
+      #   docker compose run --rm --no-deps \
+      #     -e RMM_DATABASE_URL="postgres://rmm:rmm@postgres:5432/rmm?sslmode=disable" \
+      #     server -migrate-only
+      #
+      # Skipping that on a version with a new migration is not silent: the
+      # server refuses to start and prints the command.
+      RMM_DATABASE_URL: "postgres://openrmm_app:${APP_DB_PASSWORD}@postgres:5432/rmm?sslmode=disable"
       RMM_ADMIN_TOKEN: "${RMM_ADMIN_TOKEN:-change-me-to-a-long-random-string-min32}"
       RMM_AI_BASE_URL: "${RMM_AI_BASE_URL:-https://api.openai.com/v1}"
       RMM_AI_API_KEY: "${RMM_AI_API_KEY:-}"

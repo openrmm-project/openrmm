@@ -122,6 +122,32 @@ vet:
 tidy:
 	$(GO) mod tidy
 
+# Applies pending migrations with the database OWNER's credentials.
+#
+# The server cannot do this itself any more, and that is the point: it connects
+# as a restricted role that cannot alter the schema, which is what stops a
+# compromised server from deleting the audit trail. So the owner credential is
+# used here, for a few seconds, in a container that never serves a request.
+#
+# Only needed when a new version brings a migration. Forgetting is not silent —
+# the server refuses to start and prints what to run.
+#
+# The DSN is not hardcoded on purpose. It differs per installation, and baking a
+# development password into a tracked file would work here and fail for everyone
+# who set their own, with an authentication error that reads like a broken
+# Makefile rather than missing configuration.
+migrate:
+	@test -n "$$RMM_MIGRATE_DATABASE_URL" || { \
+	  echo "RMM_MIGRATE_DATABASE_URL is not set."; \
+	  echo ""; \
+	  echo "It must point at the database OWNER — the role the server does NOT use."; \
+	  echo "Set it in .env; see .env.example for the development value."; \
+	  exit 1; }
+	@echo "Applying migrations to $${RMM_MIGRATE_DATABASE_URL%%\?*}"
+	@docker compose run --rm --no-deps \
+	  -e RMM_DATABASE_URL="$$RMM_MIGRATE_DATABASE_URL" \
+	  server -migrate-only
+
 test:
 	$(GO) test -buildvcs=false ./...
 

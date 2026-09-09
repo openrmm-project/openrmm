@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -327,5 +328,64 @@ func TestDiscoverRequiresIssuerAndClient(t *testing.T) {
 	}
 	if _, err := Discover(context.Background(), Config{Issuer: "https://x"}); err == nil {
 		t.Error("discovery without a client id was accepted")
+	}
+}
+
+func TestAuthenticationContextPolicy(t *testing.T) {
+	idp := newFakeIDP(t)
+	p := discover(t, idp, "email")
+	p.cfg.ACRValues = []string{"urn:openrmm:acr:mfa"}
+	p.cfg.RequiredAMR = []string{"otp", "mfa"}
+	u, _ := url.Parse(p.AuthCodeURL("s", "n", "v"))
+	if u.Query().Get("acr_values") != "urn:openrmm:acr:mfa" {
+		t.Fatal("ACR policy not requested")
+	}
+	for _, tc := range []struct {
+		name    string
+		acr     any
+		amr     any
+		allowed bool
+	}{
+		{"missing", nil, nil, false},
+		{"single factor", "urn:openrmm:acr:single-factor", []string{"pwd"}, false},
+		{"ACR only", "urn:openrmm:acr:mfa", nil, false},
+		{"recovery is not OTP", "urn:openrmm:acr:mfa", []string{"pwd", "recovery", "mfa"}, false},
+		{"malformed methods", "urn:openrmm:acr:mfa", "otp mfa", false},
+		{"OTP proof", "urn:openrmm:acr:mfa", []string{"pwd", "otp", "mfa"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idp.claims = func(c map[string]any) map[string]any { c["acr"] = tc.acr; c["amr"] = tc.amr; return c }
+			id, err := p.Exchange(context.Background(), "n", "v", "n")
+			if (err == nil) != tc.allowed {
+				t.Fatalf("allowed=%v, error=%v", tc.allowed, err)
+			}
+			if tc.allowed && (id.ACR != tc.acr || !contains(id.AMR, "otp")) {
+				t.Fatal("verified evidence was dropped")
+			}
+		})
+	}
+}
+
+// Invoked by the Cloud checkout's real Worker integration suite, with an
+// authorization code obtained through its portal, TOTP and consent endpoints.
+func TestCloudProviderInterop(t *testing.T) {
+	issuer := os.Getenv("RMM_TEST_OIDC_ISSUER")
+	if issuer == "" {
+		t.Skip("run Cloud test:oidc:e2e with RMM_INTEROP_DIR")
+	}
+	p, err := Discover(context.Background(), Config{
+		Issuer: issuer, ClientID: "instance-a", ClientSecret: os.Getenv("RMM_TEST_OIDC_SECRET"),
+		RedirectURL: "https://instance.example.test/api/auth/oidc/callback",
+		ACRValues:   []string{"urn:openrmm:acr:mfa"}, RequiredAMR: []string{"otp", "mfa"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := p.Exchange(context.Background(), os.Getenv("RMM_TEST_OIDC_CODE"), os.Getenv("RMM_TEST_OIDC_VERIFIER"), "nonce-e2e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Subject != "customer-a" || id.Email != "a@example.test" || !contains(id.AMR, "otp") {
+		t.Fatalf("unexpected identity: %+v", id)
 	}
 }

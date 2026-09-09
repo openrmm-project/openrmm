@@ -42,6 +42,8 @@ Everything else has a working default:
 | `RMM_OIDC_AUTO_PROVISION` | `false` | create an account on first successful sign-in |
 | `RMM_OIDC_DEFAULT_ROLE` | `readonly` | the role such an account is created with |
 | `RMM_OIDC_BUTTON_LABEL` | `Single sign-on` | so the button can read "Sign in with Okta" |
+| `RMM_OIDC_ACR_VALUES` | empty | comma-separated acceptable authentication contexts; sent as `acr_values` and checked against the signed `acr` claim (any match) |
+| `RMM_OIDC_REQUIRED_AMR` | empty | comma-separated authentication methods; every entry must occur in the signed `amr` array |
 
 Register `https://<your console>/api/auth/oidc/callback` as a redirect URI at
 the provider, as a **confidential** client using the **authorization code** flow
@@ -50,6 +52,40 @@ with PKCE.
 The issuer must be `https://`. Discovery, the token exchange and the JWKS fetch
 all go over it; plain HTTP would put the client secret and the authorization
 code on the wire, so the server refuses to start rather than doing it.
+
+## Requiring MFA from the Cloud portal
+
+Register a separate confidential client for each single-tenant instance in the
+Cloud provider (`site2-rmm/docs/oidc-provider.md`). The registration binds an exact
+callback and a unique credential to an active, provisioned subscription. Only its
+owning portal customer may authorize that client; this does not grant an RMM role.
+
+For an authenticator-backed sign-in:
+
+```bash
+RMM_OIDC_ACR_VALUES=urn:openrmm:acr:mfa
+RMM_OIDC_REQUIRED_AMR=otp,mfa
+```
+
+The provider reports `pwd` or `email` for the initial proof and `otp,mfa` after
+the authenticator challenge. A recovery code reports `recovery,mfa`, **not**
+`otp`. To permit recovery-code login, require only `mfa` instead of `otp,mfa`.
+Merely enabling TOTP on the account does not prove MFA in an existing session.
+
+An `acr_values` request alone is not enforcement: providers may return a weaker
+context. RMM rejects missing, malformed or insufficient claims **before** linking,
+provisioning or creating a console session. Empty settings preserve compatibility
+with providers that do not emit these claims. Match values to the actual provider;
+the OpenRMM ACR URNs are not universal provider names.
+
+These controls apply to new SSO logins, not existing console sessions or local
+password login. Local TOTP and account permissions remain separate. Provider
+logout/suspension blocks new grants but does not revoke an already-created RMM
+session; revoke/disable it in the instance when immediate termination is needed.
+
+Pass these variables into the **server process/container**, not only the host
+shell. Compose deployments need explicit `environment` entries or an `env_file`
+in the server service; restart the server after changing the configuration.
 
 ## Who gets an account
 

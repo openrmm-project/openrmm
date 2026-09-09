@@ -8,6 +8,12 @@ tag.
 
 ### Added
 
+- **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and
+  validates acceptable signed `acr` values; `RMM_OIDC_REQUIRED_AMR` requires
+  every configured authentication method before SSO account resolution. Includes
+  downgrade/recovery-code tests and optional interoperability tests with the
+  Cloud portal provider. Existing local sign-in and role assignment are unchanged.
+
 - **An agent can enrol straight into a department.** The enrolment token has
   always carried where the agent lands — `enroll_tokens.site_id` is read at
   registration and written to the agent — but departments were never part of it,

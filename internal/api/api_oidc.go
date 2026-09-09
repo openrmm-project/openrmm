@@ -75,6 +75,8 @@ func (s *Server) InitOIDC(ctx context.Context) {
 		RedirectURL:   s.cfg.OIDCRedirectURL,
 		Scopes:        s.cfg.OIDCScopes,
 		UsernameClaim: s.cfg.OIDCUsernameClaim,
+		ACRValues:     s.cfg.OIDCACRValues,
+		RequiredAMR:   s.cfg.OIDCRequiredAMR,
 	})
 	if err != nil {
 		log.Printf("oidc: single sign-on is configured but unavailable: %v", err)

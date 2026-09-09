@@ -49,6 +49,8 @@ type Identity struct {
 	// it: some omit it entirely for a directory where every address is by
 	// definition verified. The caller decides.
 	EmailVerified bool
+	ACR           string
+	AMR           []string
 }
 
 // Config is the resolved provider configuration.
@@ -59,6 +61,8 @@ type Config struct {
 	RedirectURL   string
 	Scopes        []string
 	UsernameClaim string
+	ACRValues     []string
+	RequiredAMR   []string
 }
 
 // Provider is a discovered OIDC provider, ready to sign people in. Build it
@@ -116,10 +120,14 @@ func Discover(ctx context.Context, cfg Config) (*Provider, error) {
 //	PKCE      the authorization code is redeemed by whoever asked for it, even
 //	          if the code leaks from a log or a referrer header
 func (p *Provider) AuthCodeURL(state, nonce, codeVerifier string) string {
-	return p.oauth.AuthCodeURL(state,
+	opts := []oauth2.AuthCodeOption{
 		coreoidc.Nonce(nonce),
 		oauth2.S256ChallengeOption(codeVerifier),
-	)
+	}
+	if len(p.cfg.ACRValues) > 0 {
+		opts = append(opts, oauth2.SetAuthURLParam("acr_values", strings.Join(p.cfg.ACRValues, " ")))
+	}
+	return p.oauth.AuthCodeURL(state, opts...)
 }
 
 // Exchange redeems the authorization code and verifies the ID token that comes
@@ -149,7 +157,43 @@ func (p *Provider) Exchange(ctx context.Context, code, codeVerifier, expectedNon
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("oidc: could not read claims: %w", err)
 	}
+	// acr_values is only a request to the provider. Enforce the local policy
+	// against signed claims before resolving or provisioning any account.
+	if len(p.cfg.ACRValues) > 0 && !contains(p.cfg.ACRValues, stringClaim(claims, "acr")) {
+		return nil, errors.New("oidc: authentication context does not satisfy policy")
+	}
+	methods := stringListClaim(claims, "amr")
+	for _, required := range p.cfg.RequiredAMR {
+		if !contains(methods, required) {
+			return nil, errors.New("oidc: authentication methods do not satisfy policy")
+		}
+	}
 	return p.identityFrom(idToken.Issuer, idToken.Subject, claims)
+}
+
+func contains(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+
+func stringListClaim(claims map[string]any, key string) []string {
+	values, ok := claims[key].([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		v, ok := value.(string)
+		if !ok {
+			return nil
+		}
+		result = append(result, v)
+	}
+	return result
 }
 
 // identityFrom maps a verified token's claims onto an Identity. Split out from
@@ -165,6 +209,8 @@ func (p *Provider) identityFrom(issuer, subject string, claims map[string]any) (
 		Email:         stringClaim(claims, "email"),
 		Name:          stringClaim(claims, "name"),
 		EmailVerified: boolClaim(claims, "email_verified"),
+		ACR:           stringClaim(claims, "acr"),
+		AMR:           stringListClaim(claims, "amr"),
 	}
 
 	claimName := p.cfg.UsernameClaim

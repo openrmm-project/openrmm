@@ -140,6 +140,23 @@ func TestOIDCAlwaysRequestsTheOpenIDScope(t *testing.T) {
 	}
 }
 
+func TestOIDCAuthenticationContextSettings(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_OIDC_ENABLED", "false")
+	t.Setenv("RMM_OIDC_ACR_VALUES", " urn:openrmm:acr:mfa, another-context ,")
+	t.Setenv("RMM_OIDC_REQUIRED_AMR", " otp, mfa ,")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.OIDCACRValues, "|"); got != "urn:openrmm:acr:mfa|another-context" {
+		t.Fatalf("ACR = %q", got)
+	}
+	if got := strings.Join(cfg.OIDCRequiredAMR, "|"); got != "otp|mfa" {
+		t.Fatalf("AMR = %q", got)
+	}
+}
+
 // Auto-provisioning plus an admin default would make everyone the provider will
 // authenticate an administrator here — for a Google Workspace or Entra tenant,
 // the whole company. Refuse the combination rather than log a warning nobody

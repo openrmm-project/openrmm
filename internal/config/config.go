@@ -132,6 +132,8 @@ type Config struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	OIDCScopes       []string
+	OIDCACRValues    []string
+	OIDCRequiredAMR  []string
 	// Where the provider sends the browser back. Defaults to PublicURL +
 	// /api/auth/oidc/callback, and must be registered with the provider.
 	OIDCRedirectURL string
@@ -281,6 +283,8 @@ func Load() (*Config, error) {
 		OIDCClientID:      os.Getenv("RMM_OIDC_CLIENT_ID"),
 		OIDCClientSecret:  oidcSecret,
 		OIDCScopes:        splitCSV(env("RMM_OIDC_SCOPES", "openid,profile,email")),
+		OIDCACRValues:     splitCSV(os.Getenv("RMM_OIDC_ACR_VALUES")),
+		OIDCRequiredAMR:   splitCSV(os.Getenv("RMM_OIDC_REQUIRED_AMR")),
 		OIDCRedirectURL:   os.Getenv("RMM_OIDC_REDIRECT_URL"),
 		OIDCUsernameClaim: env("RMM_OIDC_USERNAME_CLAIM", "email"),
 		OIDCAutoProvision: os.Getenv("RMM_OIDC_AUTO_PROVISION") == "true",

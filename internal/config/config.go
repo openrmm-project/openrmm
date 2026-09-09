@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -114,6 +115,39 @@ type Config struct {
 	// age — that record is the reason the log exists, and it is small. 0 keeps
 	// even the machine entries forever.
 	AuditRetentionDays int
+
+	// Sign in through an external identity provider (OpenID Connect). Off by
+	// default: a console that suddenly accepts a third party's word about who
+	// someone is should do so because an operator said to.
+	//
+	// It answers "who is this" and never "what may they do". Roles and access
+	// scope stay in this database, so a provider cannot promote itself to admin
+	// — which is also what makes it safe to point a hosted control plane at a
+	// customer's instance.
+	OIDCEnabled bool
+	// Issuer URL, exactly as the provider publishes it. Discovery appends
+	// /.well-known/openid-configuration; the value in that document must match
+	// this string or the tokens are rejected.
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCScopes       []string
+	// Where the provider sends the browser back. Defaults to PublicURL +
+	// /api/auth/oidc/callback, and must be registered with the provider.
+	OIDCRedirectURL string
+	// Which claim becomes the console username. 'email' for most providers;
+	// 'preferred_username' where addresses are not stable.
+	OIDCUsernameClaim string
+	// Create a console account the first time someone authenticates
+	// successfully. Off by default, and that default is the security-relevant
+	// one: with it on, everyone your provider will authenticate has an account
+	// here, which for a Google Workspace or Entra tenant is the whole company.
+	OIDCAutoProvision bool
+	// The role such an account is created with. Never taken from a claim.
+	OIDCDefaultRole string
+	// Label on the console's sign-in button, so it reads "Sign in with Okta"
+	// rather than something generic.
+	OIDCButtonLabel string
 }
 
 func env(key, def string) string {
@@ -184,6 +218,12 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// _FILE-capable, like every other secret here: a client secret in a
+	// container's environment is a client secret in `docker inspect`.
+	oidcSecret, err := secretEnv("RMM_OIDC_CLIENT_SECRET")
+	if err != nil {
+		return nil, err
+	}
 	smtpPassword, err := secretEnv("RMM_SMTP_PASSWORD")
 	if err != nil {
 		return nil, err
@@ -235,6 +275,17 @@ func Load() (*Config, error) {
 		CheckResultRetentionDays:   envInt("RMM_CHECK_RESULT_RETENTION_DAYS", 90),
 		NotificationRetentionDays:  envInt("RMM_NOTIFICATION_RETENTION_DAYS", 90),
 		AuditRetentionDays:         envInt("RMM_AUDIT_RETENTION_DAYS", 90),
+
+		OIDCEnabled:       os.Getenv("RMM_OIDC_ENABLED") == "true",
+		OIDCIssuer:        strings.TrimRight(os.Getenv("RMM_OIDC_ISSUER"), "/"),
+		OIDCClientID:      os.Getenv("RMM_OIDC_CLIENT_ID"),
+		OIDCClientSecret:  oidcSecret,
+		OIDCScopes:        splitCSV(env("RMM_OIDC_SCOPES", "openid,profile,email")),
+		OIDCRedirectURL:   os.Getenv("RMM_OIDC_REDIRECT_URL"),
+		OIDCUsernameClaim: env("RMM_OIDC_USERNAME_CLAIM", "email"),
+		OIDCAutoProvision: os.Getenv("RMM_OIDC_AUTO_PROVISION") == "true",
+		OIDCDefaultRole:   env("RMM_OIDC_DEFAULT_ROLE", "readonly"),
+		OIDCButtonLabel:   env("RMM_OIDC_BUTTON_LABEL", "Single sign-on"),
 	}
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")
@@ -251,6 +302,36 @@ func Load() (*Config, error) {
 		}
 		if !strings.HasPrefix(strings.ToLower(c.MCPPublicURL), "https://") {
 			return nil, fmt.Errorf("RMM_MCP_PUBLIC_URL must use https:// when RMM_MCP_OAUTH_ENABLED=true")
+		}
+	}
+	if c.OIDCEnabled {
+		if c.OIDCIssuer == "" || c.OIDCClientID == "" {
+			return nil, fmt.Errorf("RMM_OIDC_ISSUER and RMM_OIDC_CLIENT_ID are required when RMM_OIDC_ENABLED=true")
+		}
+		// Discovery, the token exchange and the JWKS fetch all run over this
+		// URL. Plain HTTP would put the client secret and the code on the wire.
+		if !strings.HasPrefix(strings.ToLower(c.OIDCIssuer), "https://") {
+			return nil, fmt.Errorf("RMM_OIDC_ISSUER must use https://")
+		}
+		if c.OIDCRedirectURL == "" {
+			if c.PublicURL == "" {
+				return nil, fmt.Errorf("RMM_OIDC_REDIRECT_URL is required when RMM_PUBLIC_URL is not set")
+			}
+			c.OIDCRedirectURL = strings.TrimRight(c.PublicURL, "/") + "/api/auth/oidc/callback"
+		}
+		if u, err := url.Parse(c.OIDCRedirectURL); err != nil || !u.IsAbs() {
+			return nil, fmt.Errorf("RMM_OIDC_REDIRECT_URL must be an absolute URL")
+		}
+		// 'openid' is what makes it OIDC rather than plain OAuth: without it a
+		// provider returns no ID token and there is nothing to verify.
+		if !slices.Contains(c.OIDCScopes, "openid") {
+			c.OIDCScopes = append([]string{"openid"}, c.OIDCScopes...)
+		}
+		// A role arriving from configuration is one thing; a role arriving from
+		// the provider is another, and is never read. Refuse a default that
+		// would silently hand out more than intended.
+		if c.OIDCAutoProvision && c.OIDCDefaultRole == "admin" {
+			return nil, fmt.Errorf("RMM_OIDC_DEFAULT_ROLE=admin with RMM_OIDC_AUTO_PROVISION=true would make every account your provider authenticates an administrator here; create the first admins by hand")
 		}
 	}
 	if c.EnforceConsoleRelayIngress && !c.TrustProxyHeaders {

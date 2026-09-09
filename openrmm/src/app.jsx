@@ -24,6 +24,32 @@ function LoginScreen({ onAuthed, onForgot }) {
   const [need2fa, setNeed2fa] = useState(false);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Whether an identity provider is configured is the server's answer, not a
+  // build flag: one bundle serves an install with no provider and one behind
+  // Entra. Until it replies there is no button, which is the right default —
+  // an SSO button that fails is worse than none.
+  const [sso, setSso] = useState({ enabled: false, label: '' });
+
+  uE(() => {
+    let live = true;
+    api.ssoStatus().then((r) => { if (live) setSso(r || { enabled: false }); });
+    return () => { live = false; };
+  }, []);
+
+  // The callback sends the browser back with the outcome in the fragment.
+  // Fragments are never sent to a server, so a token in one stays out of proxy
+  // logs, access logs and Referer headers.
+  uE(() => {
+    const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const reason = hash.get('sso_error');
+    if (!reason) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    setErr({
+      sso_denied: 'Your identity provider declined the sign-in.',
+      sso_expired: 'That sign-in took too long. Try again.',
+      sso_no_account: 'This console has no account for you yet. Ask an administrator to create one.',
+    }[reason] || 'Single sign-on failed.');
+  }, []);
 
   const doLogin = async () => {
     if (busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)) return;
@@ -74,6 +100,19 @@ function LoginScreen({ onAuthed, onForgot }) {
             {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)}>Sign in</Button>
           </form>
+          {sso.enabled && (
+            <>
+              <div className="flex items-center gap-3 my-4">
+                <div className="h-px flex-1 bg-line" />
+                <div className="text-[11px] text-faint uppercase tracking-wider">or</div>
+                <div className="h-px flex-1 bg-line" />
+              </div>
+              <Button type="button" variant="ghost" size="lg" className="w-full"
+                      onClick={() => api.ssoStart(location.pathname + location.search)}>
+                <Icon name="shield" size={14} />{sso.label || 'Single sign-on'}
+              </Button>
+            </>
+          )}
           {mode === 'password' && (
             <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">Forgot your password?</button>
           )}
@@ -405,6 +444,23 @@ function App() {
   }, []);
 
   uE(() => {
+    // A single sign-on that just landed wins over whatever this tab had: the
+    // person deliberately signed in again, possibly as someone else. Read it
+    // before the stored session, and strip it from the address bar so a
+    // refresh or a shared link cannot replay it.
+    const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const ssoToken = hash.get('sso_token');
+    if (ssoToken) {
+      history.replaceState(null, '', location.pathname + location.search);
+      api.loginWithToken(ssoToken)
+        .then((res) => {
+          sessionStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] }));
+          setAuth(res);
+        })
+        .catch(() => setAuth(null));
+      return;
+    }
+
     const raw = sessionStorage.getItem(AUTH_KEY);
     if (!raw) { setAuth(null); return; }
     try {

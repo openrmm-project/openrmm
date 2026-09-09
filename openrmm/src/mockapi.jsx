@@ -189,6 +189,20 @@ const api = {
     setSession(normalizeSession(r.token, r));
     return r;
   },
+  // Single sign-on.
+  //
+  // Whether the button appears is the server's call, not a build-time flag: the
+  // same console bundle serves an install with no identity provider and one
+  // behind Entra. Unauthenticated by necessity — the login screen asks it.
+  async ssoStatus() {
+    try { return await GET('/api/auth/oidc'); } catch (e) { return { enabled: false }; }
+  },
+  // A full page navigation, not a fetch: the provider needs to see the browser
+  // to show its own login and consent, and it will not answer an XHR.
+  ssoStart(redirectTo) {
+    const q = redirectTo ? '?redirect_to=' + encodeURIComponent(redirectTo) : '';
+    location.assign(API_BASE + '/api/auth/oidc/start' + q);
+  },
   async loginWithToken(token) {
     setSession({ token, user: { id: '', username: '', role: 'readonly', created_at: '', permissions: [] }, role: 'readonly', permissions: [] });
     try {

@@ -27,6 +27,7 @@ import (
 	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/mcpserver"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/oidc"
 	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/scheduler"
@@ -70,6 +71,12 @@ type Server struct {
 	chat    *ai.Engine
 	sched   *scheduler.Scheduler
 	patches *patches.Service
+
+	// oidc is the discovered identity provider, or nil when single sign-on is
+	// off or discovery failed. Guarded because InitOIDC runs after New and a
+	// request can arrive in between.
+	oidc   *oidc.Provider
+	oidcMu sync.RWMutex
 
 	// agentLifecycle stores one stable lock per agent. It linearizes that agent's
 	// authentication, lease attachment, frames, revocation, and credential
@@ -120,6 +127,12 @@ func (s *Server) Router() http.Handler {
 	// an enumeration target and a way to use the instance as a mail relay.
 	r.With(authLimiter, maxBody).Post("/api/auth/password-reset", s.requestPasswordReset)
 	r.With(authLimiter, maxBody).Post("/api/auth/password-reset/confirm", s.confirmPasswordReset)
+	// Single sign-on. Unauthenticated by definition — nobody has a session yet.
+	// The status endpoint is what the login screen reads to decide whether to
+	// draw the button at all.
+	r.With(authLimiter).Get("/api/auth/oidc", s.oidcStatus)
+	r.With(authLimiter).Get("/api/auth/oidc/start", s.oidcStart)
+	r.With(authLimiter).Get("/api/auth/oidc/callback", s.oidcCallback)
 
 	// MCP OAuth 2.1 flow (register / authorize+consent / token). Public clients +
 	// PKCE; the authorize POST verifies user credentials, so it's rate-limited like

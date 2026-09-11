@@ -221,6 +221,14 @@ func (s *Server) resolveOIDCUser(ctx context.Context, id *oidc.Identity) (*model
 	if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
+	// Linking by an email-shaped username is account recovery by another name:
+	// only an address the provider says it verified may claim a pre-existing
+	// local account. Already-linked identities use issuer+subject and reach the
+	// return above, so a provider later omitting this optional claim cannot lock
+	// them out.
+	if err := oidcFirstLinkAllowed(id); err != nil {
+		return nil, err
+	}
 
 	// A local account with this username: adopt it rather than creating a
 	// duplicate. It keeps the role and scope an operator already set.
@@ -246,6 +254,13 @@ func (s *Server) resolveOIDCUser(ctx context.Context, id *oidc.Identity) (*model
 	_ = s.store.AddAudit(ctx, id.Username, "user.sso.provisioned", created.ID,
 		auditDetail(map[string]string{"issuer": id.Issuer, "role": s.cfg.OIDCDefaultRole}))
 	return created, nil
+}
+
+func oidcFirstLinkAllowed(id *oidc.Identity) error {
+	if strings.Contains(id.Username, "@") && (!id.EmailVerified || !strings.EqualFold(id.Username, id.Email)) {
+		return errors.New("an email username must be a verified email claim")
+	}
+	return nil
 }
 
 // oidcFail sends the browser back to the console with a code the login screen

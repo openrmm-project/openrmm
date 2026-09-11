@@ -13,6 +13,11 @@ tag.
   every configured authentication method before SSO account resolution. Includes
   downgrade/recovery-code tests and optional interoperability tests with the
   Cloud portal provider. Existing local sign-in and role assignment are unchanged.
+  First-time linking of an email-shaped username now also requires the provider's
+  matching, signed `email_verified=true` claim.
+
+- **Security toolchain patch level.** Local builds, CI, releases and production
+  images now converge on Go 1.26.6, including its standard-library security fixes.
 
 - **An agent can enrol straight into a department.** The enrolment token has
   always carried where the agent lands — `enroll_tokens.site_id` is read at

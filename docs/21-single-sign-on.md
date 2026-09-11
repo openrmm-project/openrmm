@@ -108,6 +108,11 @@ with it on, **everyone your provider will authenticate has an account here**,
 which for a Google Workspace or Entra tenant is the whole company. Leave it off
 unless the provider only holds people who should be in this console.
 
+When the username is email-shaped, the first link or automatic provisioning is
+accepted only when the token carries the same `email` with
+`email_verified=true`. Identities already linked by `(issuer, sub)` do not depend
+on the provider continuing to send that optional claim.
+
 `RMM_OIDC_AUTO_PROVISION=true` together with `RMM_OIDC_DEFAULT_ROLE=admin` is
 refused at startup rather than warned about.
 

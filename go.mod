@@ -2,6 +2,8 @@ module github.com/p1ngu/rmm
 
 go 1.25.0
 
+toolchain go1.26.6
+
 require (
 	github.com/UserExistsError/conpty v0.1.4
 	github.com/creack/pty v1.1.24

@@ -82,3 +82,25 @@ test('the signed-out screens are translated in every locale', () => {
     }
   }
 });
+
+// Not i18n, but the same shape of failure and the same place to catch it: a
+// table lookup that assumes the server only ever sends values this build knows.
+//
+// CHECK_TYPES[c.type].icon threw during render for any unrecognised type, and a
+// throw during render unmounts the console — the whole screen goes white. The
+// fix is checkType(), which falls back; the rule is that nothing reads the table
+// directly, because the next direct read brings the crash back.
+test('no screen reads CHECK_TYPES without the fallback', async () => {
+  const files = ['screens-rmm.jsx', 'screens-rmm2.jsx', 'screens-core.jsx', 'app.jsx'];
+  for (const name of files) {
+    const source = await readFile(path.join(root, 'src', name), 'utf8');
+    const direct = source
+      .split('\n')
+      .map((line, i) => [i + 1, line])
+      .filter(([, line]) => /CHECK_TYPES\s*\[/.test(line))
+      // The helper itself, and the comment explaining why it exists.
+      .filter(([, line]) => !/return CHECK_TYPES\[type\] \|\|/.test(line) && !/^\s*\/\//.test(line));
+    assert.deepEqual(direct.map(([n]) => n), [],
+      `${name}: use checkType() instead of indexing CHECK_TYPES at line(s) ${direct.map(([n]) => n).join(', ')}`);
+  }
+});

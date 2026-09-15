@@ -87,6 +87,16 @@ isolated lab. The installer validates the signed checksum manifest and selected
 artifact, rejects downgrades, and rolls back if the installed service does not
 become healthy. See [13-security-rollout](13-security-rollout.md).
 
+**Windows — Microsoft Defender.** Add `-DefenderExclusion` to exclude
+`C:\ProgramData\rmm-agent` from Defender at install time. It is **opt-in**: an
+antivirus exclusion is a security decision an operator makes, not something an
+installer does behind their back. Without it, remote-desktop sessions on some
+hosts fail with a black screen, because Defender quarantines the sidecar the
+agent downloads — see
+[08-remote-access](08-remote-access.md#when-no-screen-arrives-at-all) for why,
+and [`scripts/windows-defender-exclusion.ps1`](../scripts/windows-defender-exclusion.ps1)
+to apply or revert it on endpoints that are already installed.
+
 ## Updating agents (self-update)
 
 Agents **upgrade themselves**. Each connected agent periodically HEADs

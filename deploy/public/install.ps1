@@ -6,7 +6,8 @@ param(
     [string]$UpdatePublicKey,
     [switch]$RequireTls,
     [switch]$LabMode,
-    [switch]$ResetIdentity
+    [switch]$ResetIdentity,
+    [switch]$DefenderExclusion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -412,6 +413,35 @@ try {
 
     $committed = $true
     Remove-Item -Force -ErrorAction SilentlyContinue $Backup, $SignatureBackup, $StateBackup, $OutboxBackup
+
+    # Opt-in, never silent: the agent downloads its remote-desktop sidecar to
+    # rmm-remote.exe.new and runs it once to validate it, which Defender treats
+    # as a service dropping and executing an unsigned binary. It quarantines the
+    # download on every retry, and remote sessions then show a black screen with
+    # no explanation. Excluding one directory is an operator's security decision,
+    # so the installer states the trade-off and only acts when asked.
+    if ($DefenderExclusion) {
+        if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
+            try {
+                if (@((Get-MpPreference).ExclusionPath) -contains $Dir) {
+                    Write-Host "Defender: $Dir is already excluded."
+                } else {
+                    Add-MpPreference -ExclusionPath $Dir
+                    Write-Host "Defender: excluded $Dir."
+                }
+            } catch {
+                # Managed by Intune/Group Policy, or refused by Tamper Protection.
+                Write-Warning "Defender exclusion refused: $($_.Exception.Message)"
+                Write-Warning 'Add it through Intune or Group Policy instead, or remote sessions may fail.'
+            }
+        } else {
+            Write-Host 'Defender: not present on this host; no exclusion needed.'
+        }
+    } else {
+        Write-Host 'Defender: no exclusion added. If remote sessions show a black screen, see docs/08-remote-access.md'
+        Write-Host '          or run scripts/windows-defender-exclusion.ps1 on the endpoint.'
+    }
+
     Write-Host 'Agent installed, connected, and healthy.'
 } catch {
     if ($transactionStarted -and -not $committed) { Restore-Install }

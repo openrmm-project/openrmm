@@ -178,9 +178,9 @@ func (s *session) setInputLock(on bool) {
 	s.sendJSON(map[string]any{"t": "inputlocked", "enabled": on})
 	if s.chat != nil {
 		if on {
-			s.chat.append("⚠ O técnico bloqueou seu teclado e mouse durante a sessão.")
+			s.chat.append("⚠ The technician locked your keyboard and mouse for this session.")
 		} else {
-			s.chat.append("✓ Seu teclado e mouse foram liberados.")
+			s.chat.append("✓ Your keyboard and mouse have been released.")
 		}
 	}
 }

@@ -63,6 +63,23 @@ test('mobile navigation and pointer input are present', async () => {
   assert.match(devices, /pointercancel/);
 });
 
+test('native remote viewer exposes operator display controls and distinct chat roles', async () => {
+  const devices = await readFile(path.join(root, 'src/screens-devices.jsx'), 'utf8');
+  assert.match(devices, /Ctrl\+Alt\+Delete/);
+  assert.match(devices, /⌘⌥Esc/);
+  assert.match(devices, /isWin && <Button[^\n]+>UAC/);
+  assert.match(devices, /disabled=\{status !== 'streaming' \|\| !cad.available\}/);
+  assert.match(devices, /requestFullscreen/);
+  assert.match(devices, /Fit to window/);
+  assert.match(devices, /Remote screen resolution/);
+  assert.match(devices, /Technician · You/);
+  assert.match(devices, /monitors\.list\.length > 1/);
+  assert.match(devices, /All displays/);
+  assert.match(devices, /t: 'mon', id/);
+  assert.match(devices, /bg-brand text-white/);
+  assert.match(devices, /bg-elevated text-ink border border-line2/);
+});
+
 test('bearer session is not persisted in localStorage', async () => {
   for (const name of ['src/mockapi.jsx', 'src/app.jsx', 'src/screens-devices.jsx']) {
     const source = await readFile(path.join(root, name), 'utf8');

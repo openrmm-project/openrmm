@@ -24,8 +24,7 @@ package main
 //   - Retina displays report points vs pixels; CGImage gives pixels and CGEvent
 //     takes points — the capturer sizes the frame from the image and scales
 //     pointer coordinates from the same image dims (validate on a Retina Mac).
-//   - In-session chat (the Win32/X11 chat window) is NOT yet ported to macOS;
-//     it needs a Cocoa window. Tracked as follow-up.
+//   - In-session chat uses Cocoa on the application's main thread.
 
 /*
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation
@@ -50,6 +49,18 @@ static CGEventRef rmmCreateKeyboardEvent(CGKeyCode key, bool down) {
 }
 static int rmmImageIsNull(CGImageRef img) { return img == NULL; }
 static int rmmDataIsNull(CFDataRef data) { return data == NULL; }
+static int rmmForceQuit(void) {
+    if (!CGPreflightPostEventAccess()) return 0;
+    CGEventRef down = CGEventCreateKeyboardEvent(NULL, 53, true);
+    CGEventRef up = CGEventCreateKeyboardEvent(NULL, 53, false);
+    if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return 0; }
+    CGEventSetFlags(down, kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate);
+    CGEventSetFlags(up, kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate);
+    CGEventPost(kCGHIDEventTap, down);
+    CGEventPost(kCGHIDEventTap, up);
+    CFRelease(down); CFRelease(up);
+    return 1;
+}
 */
 import "C"
 
@@ -255,7 +266,21 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		}
 	})
 
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles}); e == nil {
+	sendJSON := func(v any) {
+		b, _ := json.Marshal(v)
+		select {
+		case out <- omsg{websocket.TextMessage, b}:
+		case <-done:
+		}
+	}
+	openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) })
+	defer closeMacChat()
+	cadAvailable := bool(C.CGPreflightPostEventAccess())
+	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
+	if !cadAvailable {
+		hello["cad_error"] = "Enable Accessibility for rmm-remote in macOS System Settings → Privacy & Security, then reopen the session."
+	}
+	if b, e := json.Marshal(hello); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
@@ -283,6 +308,19 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				continue
 			}
 			switch e.T {
+			case "chat":
+				var message struct {
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(data, &message) == nil && message.Text != "" {
+					appendMacChat(message.Text, true)
+				}
+			case "cad":
+				select {
+				case inputCh <- data:
+				case <-done:
+					return
+				}
 			case "m", "b", "w", "k":
 				select {
 				case inputCh <- data:
@@ -313,10 +351,20 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	var buttons int
 	for {
 		select {
-		case <-done:
-			return <-errc
+		case err := <-errc:
+			return err
 		case data := <-inputCh:
 			pace.markActivity()
+			var command macInput
+			if json.Unmarshal(data, &command) == nil && command.T == "cad" {
+				ok := C.rmmForceQuit() != 0
+				response := map[string]any{"t": "cad", "ok": ok}
+				if !ok {
+					response["err"] = "macOS Accessibility permission is required for ⌘⌥Esc."
+				}
+				sendJSON(response)
+				continue
+			}
 			injectMacInput(data, cap.w, cap.h, &buttons)
 		case <-ticker.C:
 			if len(out) >= videoBacklog {

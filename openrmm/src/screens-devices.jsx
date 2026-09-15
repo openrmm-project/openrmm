@@ -424,7 +424,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const can = auth.can;
   const allowFiles = filesOnly || can('devices.files');
   const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
+  const isMac = /darwin|macos|mac os/i.test(os || '');
+  const shortcutLabel = isMac ? '⌘⌥Esc' : 'Ctrl+Alt+Delete';
   const canLock = isWin || /linux/i.test(os || ''); // input lock: Windows + Linux (not macOS)
+  const viewerRef = useRef(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const dlRef = useRef({});   // active downloads: id -> { name, chunks: [] }
@@ -442,14 +445,35 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [locked, setLocked] = useState(false); // host's physical keyboard/mouse blocked (Windows)
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
+  const [cad, setCad] = useState({ available: false, reason: 'Waiting for the remote module…' });
+  const [monitors, setMonitors] = useState({ list: [], selected: 0 }); // host displays; empty unless there are two or more
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
+  const [scale, setScale] = useState('fit');
+  const [fullscreen, setFullscreen] = useState(false);
   const [notice, setNotice] = useState(null); // host-side notice (e.g. Wayland can't be captured)
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
+  const noticeRef = useRef(null); // last notice toasted, so a reconnect loop doesn't repeat it
   useEffect(() => { openRef.current = chatOpen; if (chatOpen) setUnread(0); }, [chatOpen]);
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
   const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+  useEffect(() => {
+    const changed = () => setFullscreen(document.fullscreenElement === viewerRef.current);
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === viewerRef.current) await document.exitFullscreen();
+      else if (viewerRef.current?.requestFullscreen) await viewerRef.current.requestFullscreen();
+    } catch (e) {
+      toast.error('Full screen failed', e.message || 'The browser denied full-screen mode.');
+    }
+  };
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -458,9 +482,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const onMsg = (ev) => {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
-        if (m.t === 'hello') setVer(m.v);
-        else if (m.t === 'notice') { if (m.text) { setNotice(m.text); toast.info('Remote notice', m.text); } else setNotice(null); }
+        if (m.t === 'hello') {
+          setVer(m.v);
+          setCad({ available: !!m.cad, reason: m.cad_error || (m.cad ? '' : 'Update the remote module to use this shortcut.') });
+        }
+        else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
+        else if (m.t === 'cad') { if (m.ok) toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
+        else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0 })
         else if (allowFiles && m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'inputlocked') { setLocked(!!m.enabled); if (m.err) toast.error('Input lock failed', m.err); }
@@ -509,7 +538,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       drawChain = drawChain.then(() => decoded).then((tiles) => {
         const cv2 = canvasRef.current;
         if (!cv2) return;
-        if (cv2.width !== fw || cv2.height !== fh) { cv2.width = fw; cv2.height = fh; }
+        if (cv2.width !== fw || cv2.height !== fh) {
+          cv2.width = fw; cv2.height = fh;
+        }
+        setFrameSize((old) => old.width === fw && old.height === fh ? old : { width: fw, height: fh });
         const ctx = cv2.getContext('2d');
         for (const t of tiles) { if (t) { ctx.drawImage(t.bmp, t.x, t.y); if (t.bmp.close) t.bmp.close(); } }
       }).catch(() => {});
@@ -519,6 +551,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     // down) re-broker and reconnect — the agent re-spawns the SYSTEM sidecar into
     // the now-active session (login screen included).
     const connect = async () => {
+      setCad({ available: false, reason: 'Waiting for the remote module…' });
+      setMonitors({ list: [], selected: 0 });
+      setVer(null);
       if (stopped) return;
       setStatus(retries ? 'reconnecting' : 'connecting');
       let wsUrl, viewerTicket;
@@ -557,7 +592,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
 
     const send = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
     const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
-    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
+    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.tagName === 'BUTTON'); };
     let lastMove = 0;
     const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
     // preventDefault() cancels the browser's default focus, so clicking the
@@ -568,8 +603,17 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
     const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
     const onCtx = (e) => e.preventDefault();
-    const kd = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
-    const ku = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
+    let skipFullscreenEscapeUp = false;
+    const kd = (e) => {
+      if (typing()) return;
+      if (e.key === 'Escape' && document.fullscreenElement === viewerRef.current) { skipFullscreenEscapeUp = true; return; }
+      e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true });
+    };
+    const ku = (e) => {
+      if (typing()) return;
+      if (e.key === 'Escape' && skipFullscreenEscapeUp) { skipFullscreenEscapeUp = false; return; }
+      e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false });
+    };
     // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
     if (!filesOnly && cv) {
       cv.addEventListener('pointermove', onMove);
@@ -599,6 +643,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   }, [deviceId, filesOnly, allowFiles]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
+  const sendCtrlAltDelete = () => {
+    if (!cad.available) { toast.error('Shortcut unavailable', cad.reason); return; }
+    sendJSON({ t: 'cad' });
+  };
   // Remote file browser: navigate folders, download a file, or
   // upload into the current folder — no path typing. Path semantics follow the
   // host OS: Windows uses "\\" + a drive list at the root; POSIX uses "/".
@@ -647,8 +695,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   };
 
   const statusCls = status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
+  const zoom = Number(scale);
+  const canvasStyle = scale === 'fit' || !frameSize.width ? undefined : {
+    width: Math.round(frameSize.width * zoom / 100) + 'px',
+    height: Math.round(frameSize.height * zoom / 100) + 'px',
+    maxWidth: 'none', maxHeight: 'none',
+  };
   return (
-    <div className="fixed inset-0 z-[80] bg-black flex flex-col">
+    <div ref={viewerRef} className="fixed inset-0 z-[80] bg-black flex flex-col">
       <div className="flex items-center gap-2 px-2 sm:px-4 min-h-11 bg-elevated border-b border-line shrink-0 overflow-x-auto scroll-area">
         <Icon name={filesOnly ? 'devices' : 'remote'} size={15} className="text-muted" />
         <span className="text-[13px] font-semibold text-ink whitespace-nowrap">{filesOnly ? `File transfer · ${hostname}` : hostname}</span>
@@ -657,10 +711,24 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         <div className="ml-auto flex items-center gap-1 sm:gap-2 whitespace-nowrap">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           {!filesOnly && <>
-            <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
+            <Button variant="ghost" size="sm" icon="key" onClick={sendCtrlAltDelete} disabled={status !== 'streaming' || !cad.available} title={!cad.available ? cad.reason : isMac ? 'Open Force Quit Applications (requires Accessibility permission)' : isWin ? 'Request the Windows security screen' : 'Send Ctrl+Alt+Delete; action depends on the Linux desktop settings'}>{shortcutLabel}</Button>
+            {isWin && <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>}
             {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title="Block the host's physical keyboard & mouse (user + login screen)">{locked ? 'Locked' : 'Lock input'}</Button>}
             {allowFiles && <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>}
             <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
+            {monitors.list.length > 1 && (
+              <Select value={String(monitors.selected)} onChange={(e) => { const id = Number(e.target.value); setMonitors((m) => ({ ...m, selected: id })); sendJSON({ t: 'mon', id }); }}
+                aria-label="Host display" title="Choose which of the host's displays to stream" className="h-7 w-[150px] bg-card py-0 text-[12px]">
+                <option value="0">All displays</option>
+                {monitors.list.map((m) => <option key={m.id} value={String(m.id)}>{`Display ${m.id} · ${m.w}×${m.h}${m.primary ? ' (main)' : ''}`}</option>)}
+              </Select>
+            )}
+            <span className="text-[10.5px] text-faint tabular" title="Remote screen resolution">{frameSize.width ? `${frameSize.width}×${frameSize.height}` : '—×—'}</span>
+            <Select value={scale} onChange={(e) => setScale(e.target.value)} aria-label="Screen scale" title="Adjust remote screen scale" className="h-7 w-[132px] bg-card py-0 text-[12px]">
+              <option value="fit">Fit to window</option>
+              <option value="50">50%</option><option value="75">75%</option><option value="100">100% (native)</option><option value="125">125%</option>
+            </Select>
+            <Button variant={fullscreen ? 'primary' : 'ghost'} size="sm" icon={fullscreen ? 'fullscreenexit' : 'fullscreen'} onClick={toggleFullscreen} disabled={!document.fullscreenEnabled} title={fullscreen ? 'Exit full screen' : 'Open full screen'}>{fullscreen ? 'Exit full screen' : 'Full screen'}</Button>
           </>}
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
@@ -719,8 +787,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
             {fb ? 'File transfer session' : 'Opening file browser…'}
           </div>
         ) : (<>
-        <div className="relative flex-1 flex items-center justify-center overflow-hidden p-2">
-          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none remote-canvas" />
+        <div className="relative flex-1 overflow-auto p-2 scroll-area">
+          <canvas ref={canvasRef} tabIndex={0} style={canvasStyle} className={cx('outline-none remote-canvas', scale === 'fit' ? 'absolute inset-0 m-auto max-w-full max-h-full' : 'block mx-auto')} />
           {notice && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
               <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
@@ -734,8 +802,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}
             {chat.map((m, i) => (
-              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand/15 text-ink' : 'bg-elevated text-ink')}>
-                <div className="text-[10px] text-faint mb-0.5">{m.from === 'tech' ? 'You' : hostname}</div>{m.text}
+              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand text-white shadow-sm shadow-brand/20' : 'mr-auto bg-elevated text-ink border border-line2')}>
+                <div className={cx('text-[10px] mb-0.5 font-semibold', m.from === 'tech' ? 'text-white/75' : 'text-run')}>{m.from === 'tech' ? 'Technician · You' : hostname}</div>{m.text}
               </div>
             ))}
           </div>

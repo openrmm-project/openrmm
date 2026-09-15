@@ -33,6 +33,8 @@ const ICON_PATHS = {
   file: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v4a2 2 0 0 0 2 2h4',
   scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12',
   remote: 'M5 3h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 21h8M12 17v4',
+  fullscreen: 'M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5',
+  fullscreenexit: 'M3 8h5V3M21 8h-5V3M21 16h-5v5M3 16h5v5',
   terminal: 'M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM7 9l3 3-3 3M13 15h4',
   cpu: 'M6 6h12v12H6zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4',
   disk: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0zM12 12h.01M12 8a4 4 0 0 1 0 8',

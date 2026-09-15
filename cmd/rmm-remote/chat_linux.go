@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"io"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -33,10 +34,10 @@ const (
 	opClearArea       = 61
 	opImageText8      = 76
 
-	xaWMName    = 39 // predefined atom WM_NAME
-	xaString    = 31 // predefined atom STRING
-	xaAtom      = 4  // predefined atom ATOM
-	xaCardinal  = 6  // predefined atom CARDINAL
+	xaWMName         = 39 // predefined atom WM_NAME
+	xaString         = 31 // predefined atom STRING
+	xaAtom           = 4  // predefined atom ATOM
+	xaCardinal       = 6  // predefined atom CARDINAL
 	evtKeyPress      = 2
 	evtButtonPress   = 4
 	evtButtonRelease = 5
@@ -73,9 +74,9 @@ type chatLinux struct {
 
 	// Drag state: click-and-drag anywhere on the window moves it (many WMs give
 	// this utility window no title bar, so there's no other way to reposition it).
-	dragging   bool
-	dragX      int16 // pointer offset within the window at grab time
-	dragY      int16
+	dragging bool
+	dragX    int16 // pointer offset within the window at grab time
+	dragY    int16
 }
 
 // newChatWindowLinux opens and maps a chat window on the given display/auth.
@@ -415,10 +416,30 @@ func (c *chatLinux) redraw() {
 	}
 	y := chatPad + chatLineH
 	for _, m := range c.msgs[start:] {
+		color := c.black
+		if strings.HasPrefix(m, "Tech: ") {
+			color = 0x7135a8
+			m = "Technician: " + strings.TrimPrefix(m, "Tech: ")
+		}
+		if strings.HasPrefix(m, "You: ") {
+			color = 0x146b38
+		}
+		c.foreground(color)
 		c.imageText(chatPad, y, clip(m, 68))
 		y += chatLineH
 	}
-	c.imageText(chatPad, chatH-chatPad, clip("> "+string(c.input), 68))
+	c.foreground(0x146b38)
+	c.imageText(chatPad, chatH-chatPad, clip("You > "+string(c.input), 68))
+}
+
+func (c *chatLinux) foreground(color uint32) {
+	req := make([]byte, 16)
+	req[0] = 56 // ChangeGC
+	le.PutUint16(req[2:], 4)
+	le.PutUint32(req[4:], c.gc)
+	le.PutUint32(req[8:], 0x0004) // GCForeground
+	le.PutUint32(req[12:], color)
+	c.write(req)
 }
 
 // latin1 maps a UTF-8 string to ISO-8859-1 bytes, which is what core-X text

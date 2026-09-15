@@ -22,6 +22,7 @@
 //	    {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
 //	    {"t":"w","dy":120}                        wheel (browser deltaY)
 //	    {"t":"k","code":65,"down":true}           key (browser keyCode ~= VK)
+//	    {"t":"cad"}                                   Windows secure attention sequence
 package main
 
 import (
@@ -84,9 +85,9 @@ func main() {
 	if *filesOnly {
 		allowFiles = true
 	}
-	if err := run(conn, allowFiles); err != nil {
+	if err := runPlatformUI(!*filesOnly, func() error { return run(conn, allowFiles) }); err != nil {
 		log.Printf("rmm-remote: session ended: %v", err)
 	}
 }
 
-const remoteVersion = "0.9.0"
+const remoteVersion = "0.12.0"

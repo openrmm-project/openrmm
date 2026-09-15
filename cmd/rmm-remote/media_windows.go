@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"log"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -34,6 +36,8 @@ var (
 	procSetThreadDesktop  = user32.NewProc("SetThreadDesktop")
 	procCloseDesktop      = user32.NewProc("CloseDesktop")
 	procGetUserObjectInfo = user32.NewProc("GetUserObjectInformationW")
+	procEnumDisplayMons   = user32.NewProc("EnumDisplayMonitors")
+	procGetMonitorInfo    = user32.NewProc("GetMonitorInfoW")
 	procCreateDC          = gdi32.NewProc("CreateCompatibleDC")
 	procCreateDIB         = gdi32.NewProc("CreateDIBSection")
 	procSelectObject      = gdi32.NewProc("SelectObject")
@@ -132,11 +136,92 @@ type keybdInput struct {
 	dwExtraInfo uintptr
 }
 
+// ---- monitors ----
+
+// monitorInfo is one physical display, in virtual-desktop coordinates.
+type monitorInfo struct {
+	X, Y, W, H int32
+	Primary    bool
+	Name       string
+}
+
+type monitorInfoEx struct {
+	cbSize    uint32
+	rcMonitor winRect
+	rcWork    winRect
+	dwFlags   uint32
+	szDevice  [32]uint16
+}
+
+type winRect struct{ Left, Top, Right, Bottom int32 }
+
+// The callback is created once: syscall.NewCallback allocates from a small
+// process-wide pool that is never reclaimed, and monitors are re-enumerated on
+// every desktop switch.
+var (
+	monitorMu   sync.Mutex
+	monitorList []monitorInfo
+	monitorCB   = syscall.NewCallback(monitorEnumProc)
+)
+
+func monitorEnumProc(h, _, _, _ uintptr) uintptr {
+	mi := monitorInfoEx{}
+	mi.cbSize = uint32(unsafe.Sizeof(mi))
+	if r, _, _ := procGetMonitorInfo.Call(h, uintptr(unsafe.Pointer(&mi))); r != 0 {
+		monitorList = append(monitorList, monitorInfo{
+			X: mi.rcMonitor.Left, Y: mi.rcMonitor.Top,
+			W:       mi.rcMonitor.Right - mi.rcMonitor.Left,
+			H:       mi.rcMonitor.Bottom - mi.rcMonitor.Top,
+			Primary: mi.dwFlags&1 != 0, // MONITORINFOF_PRIMARY
+			Name:    syscall.UTF16ToString(mi.szDevice[:]),
+		})
+	}
+	return 1 // keep enumerating
+}
+
+// listMonitors returns the displays ordered left to right, then top to bottom,
+// so that selection index N means the same display to the viewer and to the
+// capturer even though Windows enumerates in an arbitrary order.
+func listMonitors() []monitorInfo {
+	monitorMu.Lock()
+	defer monitorMu.Unlock()
+	monitorList = nil
+	procEnumDisplayMons.Call(0, 0, monitorCB, 0)
+	out := append([]monitorInfo(nil), monitorList...)
+	monitorList = nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].X != out[j].X {
+			return out[i].X < out[j].X
+		}
+		return out[i].Y < out[j].Y
+	})
+	return out
+}
+
+// describeMonitors is the hello payload: one entry per display, in the same
+// order the capturer indexes them (selection 1..N), so the viewer's choice and
+// the captured region can never disagree.
+func describeMonitors() []map[string]any {
+	mons := listMonitors()
+	if len(mons) < 2 {
+		return nil // a single display needs no selector
+	}
+	out := make([]map[string]any, 0, len(mons))
+	for i, m := range mons {
+		out = append(out, map[string]any{
+			"id": i + 1, "w": m.W, "h": m.H, "primary": m.Primary, "name": m.Name,
+		})
+	}
+	return out
+}
+
 // ---- screen capture ----
 
 type capturer struct {
 	w, h   int
-	vx, vy int32 // virtual-desktop origin (top-left can be negative on multi-monitor)
+	vx, vy int32 // captured region origin, in virtual-desktop coordinates
+	dx, dy int32 // virtual-desktop origin (top-left can be negative)
+	dw, dh int32 // virtual-desktop size — SendInput's absolute space
 	screen uintptr
 	mem    uintptr
 	bitmap uintptr
@@ -144,14 +229,38 @@ type capturer struct {
 	img    *image.RGBA
 }
 
-func newCapturer() (*capturer, error) {
+// toVirtual maps a viewer coordinate — normalized against the captured region —
+// onto the whole virtual desktop, which is the space MOUSEEVENTF_VIRTUALDESK
+// uses. Capturing one monitor changes what 0..1 means; injection must not move
+// with it, or clicks land on the wrong display.
+func (c *capturer) toVirtual(x, y float64) (float64, float64) {
+	if c == nil || c.dw <= 0 || c.dh <= 0 {
+		return x, y
+	}
+	vx := (float64(c.vx-c.dx) + x*float64(c.w)) / float64(c.dw)
+	vy := (float64(c.vy-c.dy) + y*float64(c.h)) / float64(c.dh)
+	return vx, vy
+}
+
+// newCapturer captures the whole virtual desktop (all monitors stitched into one
+// image) when sel is 0, or a single display when sel is 1..N. An out-of-range
+// selection falls back to the whole desktop rather than failing the session: the
+// display may have been unplugged since the viewer listed it.
+func newCapturer(sel int32) (*capturer, error) {
 	procSetDPIAware.Call()
-	// Capture the whole virtual desktop (all monitors stitched into one image).
-	vx, _, _ := procGetSystemMetrics.Call(smXVirtualScreen)
-	vy, _, _ := procGetSystemMetrics.Call(smYVirtualScreen)
-	w, _, _ := procGetSystemMetrics.Call(smCXVirtualScreen)
-	h, _, _ := procGetSystemMetrics.Call(smCYVirtualScreen)
-	if w == 0 || h == 0 {
+	rdx, _, _ := procGetSystemMetrics.Call(smXVirtualScreen)
+	rdy, _, _ := procGetSystemMetrics.Call(smYVirtualScreen)
+	rdw, _, _ := procGetSystemMetrics.Call(smCXVirtualScreen)
+	rdh, _, _ := procGetSystemMetrics.Call(smCYVirtualScreen)
+	dx, dy, dw, dh := int32(rdx), int32(rdy), int32(rdw), int32(rdh)
+	vx, vy, w, h := dx, dy, dw, dh
+	if sel > 0 {
+		if mons := listMonitors(); int(sel) <= len(mons) {
+			m := mons[sel-1]
+			vx, vy, w, h = m.X, m.Y, m.W, m.H
+		}
+	}
+	if w <= 0 || h <= 0 {
 		return nil, fmt.Errorf("could not read screen size (running in session 0?)")
 	}
 	screen, _, _ := procGetDC.Call(0)
@@ -177,7 +286,8 @@ func newCapturer() (*capturer, error) {
 	procSelectObject.Call(mem, bitmap)
 
 	c := &capturer{
-		w: int(w), h: int(h), vx: int32(vx), vy: int32(vy),
+		w: int(w), h: int(h), vx: vx, vy: vy,
+		dx: dx, dy: dy, dw: dw, dh: dh,
 		screen: screen, mem: mem, bitmap: bitmap,
 		pixels: unsafe.Slice(bits, int(w)*int(h)*4),
 		img:    image.NewRGBA(image.Rect(0, 0, int(w), int(h))),
@@ -281,14 +391,18 @@ type inputEvent struct {
 	Code   int     `json:"code"`
 }
 
-func handleInput(data []byte) {
+// handleInput injects one viewer event. Pointer coordinates arrive normalized
+// against whatever region is being captured, so they go through the capturer
+// before reaching SendInput's virtual-desktop space.
+func handleInput(data []byte, c *capturer) {
 	var e inputEvent
 	if json.Unmarshal(data, &e) != nil {
 		return
 	}
+	x, y := c.toVirtual(e.X, e.Y)
 	switch e.T {
 	case "m":
-		sendMouse(mvMove|mvAbsolute, e.X, e.Y, 0)
+		sendMouse(mvMove|mvAbsolute, x, y, 0)
 	case "b":
 		var f uint32 = mvMove | mvAbsolute
 		switch e.Button {
@@ -299,7 +413,7 @@ func handleInput(data []byte) {
 		case 2:
 			f |= map[bool]uint32{true: mvRightDown, false: mvRightUp}[e.Down]
 		}
-		sendMouse(f, e.X, e.Y, 0)
+		sendMouse(f, x, y, 0)
 	case "w":
 		sendMouse(mvWheel, 0, 0, int32(-e.DY))
 	case "k":
@@ -328,6 +442,8 @@ type session struct {
 	uacOff     bool               // true while we've moved UAC prompts off the secure desktop
 	kfReq      atomic.Bool        // a viewer asked for a full keyframe (e.g. on reconnect)
 	lockWanted atomic.Bool        // a viewer asked to block the host's physical input
+	monitor    atomic.Int32       // 0 = whole virtual desktop, 1..N = one display
+	monReq     atomic.Bool        // the selection changed; rebuild the capturer
 	allowFiles bool
 }
 
@@ -374,8 +490,20 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			}
 		}
 	}()
-	// announce the running sidecar version so the viewer can surface staleness
-	s.sendJSON(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles})
+	// Announce optional capabilities as well as the version. Ctrl+Alt+Delete is
+	// a Windows Secure Attention Sequence, not an injectable keyboard chord, so
+	// the viewer only enables its button when SendSAS and the local policy allow it.
+	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "chat": s.chat != nil && s.chat.hwnd != 0}
+	if err := secureAttentionAvailable(); err != nil {
+		// Announced once per session and never revised, so when the button comes
+		// up greyed this line is the only record of why.
+		log.Printf("cad: secure attention unavailable: %v", err)
+		hello["cad"] = false
+		hello["cad_error"] = err.Error()
+	} else {
+		hello["cad"] = true
+	}
+	s.sendJSON(hello)
 	// Auto-enable UAC control so elevation prompts are visible/clickable without
 	// a manual click; restored to the secure default on disconnect. The viewer
 	// toggle can still turn it back off mid-session.
@@ -443,10 +571,11 @@ func (s *session) desktopWorker() {
 			cap.close()
 			cap = nil
 		}
-		if nc, e := newCapturer(); e == nil {
+		if nc, e := newCapturer(s.monitor.Load()); e == nil {
 			cap = nc
 		}
 		enc.reset() // new desktop/resolution → next frame is a full keyframe
+		s.sendJSON(map[string]any{"t": "monitors", "list": describeMonitors(), "selected": s.monitor.Load()})
 		if curDesk != 0 {
 			procCloseDesktop.Call(curDesk)
 		}
@@ -463,7 +592,7 @@ func (s *session) desktopWorker() {
 		case data := <-s.inputCh:
 			pace.markActivity()
 			ensure(false)
-			handleInput(data)
+			handleInput(data, cap)
 		case <-ticker.C:
 			// Backpressure: skip the tick before capture/encode when the writer
 			// hasn't drained the queue — the tile diff folds the change into the
@@ -474,6 +603,9 @@ func (s *session) desktopWorker() {
 			ensure(false)
 			if cap == nil {
 				continue
+			}
+			if s.monReq.Swap(false) {
+				ensure(true) // different region: rebuild the DIB and re-keyframe
 			}
 			if s.kfReq.Swap(false) {
 				pace.markActivity() // viewer (re)connected — resume the active rate
@@ -530,6 +662,10 @@ func (s *session) onMessage(mt int, data []byte) {
 	if json.Unmarshal(data, &e) != nil {
 		return
 	}
+	// File-transfer-only sessions must never invoke desktop controls.
+	if s.inputCh == nil && (e.T == "cad" || e.T == "uac" || e.T == "lockinput" || e.T == "chat" || e.T == "mon") {
+		return
+	}
 	switch e.T {
 	case "m", "b", "w", "k":
 		// hand to the desktop worker so injection runs on the active desktop;
@@ -549,6 +685,22 @@ func (s *session) onMessage(mt int, data []byte) {
 		go s.setUAC(e.Enable)
 	case "lockinput":
 		go s.setInputLock(e.Enable)
+	case "mon":
+		// Clamp here: the desktop worker falls back to the whole desktop for an
+		// unknown index, but storing it would make the viewer and host disagree.
+		if e.ID <= uint8(len(listMonitors())) {
+			s.monitor.Store(int32(e.ID))
+			s.monReq.Store(true)
+		}
+	case "cad":
+		// The named-pipe round-trip can wait on the broker; don't stall input.
+		go func() {
+			if err := sendSecureAttention(); err != nil {
+				s.sendJSON(map[string]any{"t": "cad", "ok": false, "err": err.Error()})
+			} else {
+				s.sendJSON(map[string]any{"t": "cad", "ok": true})
+			}
+		}()
 	case "fls":
 		if s.allowFiles {
 			go s.onList(data)

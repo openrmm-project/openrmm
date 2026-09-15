@@ -143,8 +143,9 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   requires CGO (see *macOS engine* below). The viewer is
   a plain browser client (`openrmm/src/screens-devices.jsx`, also openable in a new
   tab). A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
-  `0x02`=file chunk; JSON text for input, chat, file ops, and `{t:"kf"}` (the
-  viewer asks for a keyframe on (re)connect).
+  `0x02`=file chunk; JSON text for input, chat, file ops, `{t:"kf"}` (the
+  viewer asks for a keyframe on (re)connect), and `{t:"cad"}` (Windows secure
+  attention sequence).
 - **Codec — tile-delta (CGO-free, OS-agnostic):** `encoder.go` splits each
   captured RGBA frame into a grid of 64-px tiles and JPEG-encodes only the tiles
   that changed since the previous frame; a keyframe sends the whole screen as
@@ -179,7 +180,23 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   browser file browser is path-aware per host OS (Windows `\`+drive list vs POSIX
   `/`). Open it from **Remote ▸ File transfer** or the **Files** button in the
   viewer; both require `devices.files`.
-- **Windows extras:** multi-monitor selection, **in-session chat** (native dark
+- **Viewer controls:** the browser shows the received screen resolution, offers
+  fit-to-window and 50/75/100/125% display scaling, and can enter the browser's
+  real full-screen mode. Scaling is viewer-only and never changes the endpoint's
+  display settings.
+- **Windows extras:** a dedicated **Ctrl+Alt+Delete** button uses Windows
+  `SendSAS` **inside the agent service**, through a local SYSTEM-only named-pipe
+  broker. Calling it from the sidecar directly does not satisfy the
+  service/UIAccess requirement. The broker impersonates the pipe client only to
+  authenticate it, and **reverts before sending**: `SendSAS(FALSE)` is the
+  documented service path and Windows judges "is this a LocalSystem service" by
+  the calling thread, so sending while impersonating a token from the
+  interactive session produces nothing at all — acknowledged request, no
+  security screen. The agent configures software SAS for services only when the
+  policy is absent; explicit administrator choices are preserved. An
+  acknowledgment means the request was dispatched, not that Windows confirmed
+  the screen switch (the API returns void). Capability/error details are sent in
+  the sidecar `hello` message. Also included: **in-session chat** (native dark
   Win32 window on the host, rounded/minimizable), **UAC handling** (sidecar runs
   as SYSTEM in the active console session via `CreateProcessAsUser`;
   `PromptOnSecureDesktop=0`),
@@ -201,6 +218,14 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   Win32 chat window. The host user submits a reply with **Enter** (Windows and
   Linux); the Linux window is **drag-to-move** from anywhere (many WMs give it no
   title bar).
+- **Linux shortcut:** Ctrl+Alt+Delete is dispatched as an ordered key chord on
+  the input worker. Its action depends on the desktop's shortcut configuration;
+  it is not the Windows security screen and may open a logout dialog.
+- **Chat roles:** the console and native Windows, Linux and macOS windows label
+  technician/user messages separately and use purple/green native text. Windows
+  uses Unicode RichEdit history and a UI-thread message queue; reply text has
+  heap-owned storage across Win32 callbacks. Linux/macOS refresh the sidecar
+  before launch, just like Windows, so the first new session uses the update.
 - **Input lock (Windows):** the **Lock input** button in the viewer blocks the
   host's **physical** keyboard and mouse for the duration of the session, so the
   person at the machine can't fight the technician. It uses system-wide
@@ -211,9 +236,11 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   desktop, the UAC/secure desktop and the Winlogon login screen**. The host is
   told via the chat window (transparency), and the lock is always released on
   release/disconnect/session-end (and reset to off on reconnect). **Not covered:**
-  `Ctrl+Alt+Del` (the Secure Attention Sequence) is a kernel trusted path no
-  user-mode hook can intercept — suppressing it would need the Enterprise/IoT
-  Keyboard Filter driver and is intentionally out of scope.
+  a **locally typed** `Ctrl+Alt+Del` (the Secure Attention Sequence) is a kernel
+  trusted path no user-mode hook can intercept — suppressing it would need the
+  Enterprise/IoT Keyboard Filter driver and is intentionally out of scope. This
+  is separate from the technician's viewer button, which sends SAS through the
+  OS-supported `SendSAS` path.
 - **Input lock (Linux):** same **Lock input** button; the sidecar grabs every
   physical keyboard/pointer via the evdev **`EVIOCGRAB`** ioctl
   (`inputlock_linux.go`), making itself the exclusive consumer so the local user
@@ -234,6 +261,38 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   encryption is still open (today the relay is the trust boundary; terminate
   WSS — see `07`).
 
+### Multiple monitors
+
+Windows and Linux stream **every monitor at once**, as one image. Windows
+captures the virtual desktop (`SM_XVIRTUALSCREEN` … `SM_CYVIRTUALSCREEN`) and
+Linux the X screen, which RandR has already stitched. Pointer input matches:
+coordinates are normalized across that whole rectangle and injected with
+`MOUSEEVENTF_VIRTUALDESK`, so clicks land on the right monitor.
+
+**Picking one display.** The sidecar announces the host's displays with
+`{"t":"monitors","list":[{id,w,h,primary}],"selected":N}` — sent once the
+capture geometry is known and again whenever it changes, so a desktop switch or
+a hot-plug refreshes it. The list is omitted for a single display, and the
+viewer only shows its selector when there are two or more. `{"t":"mon","id":N}`
+selects one: `0` is the stitched whole desktop, `1..N` a display, ordered left
+to right so the viewer's index and the captured region cannot disagree.
+
+Switching rebuilds the capture buffer and forces a keyframe, because the frame
+size changes and the encoder keys its tile diff on it. Pointer coordinates stay
+normalized against whatever is being captured, so each capturer maps them back
+before injection — Windows onto `MOUSEEVENTF_VIRTUALDESK`'s virtual-desktop
+space, Linux onto the X screen. Getting that wrong sends clicks to the wrong
+display, which is why the Linux path is verified against a pixel comparison of
+the region capture with the corresponding half of a full-screen frame.
+
+An index that no longer exists (display unplugged mid-session) falls back to the
+whole desktop rather than failing the session.
+
+**macOS captures the main display only** (`CGMainDisplayID`): secondary monitors
+are not visible at all, not even stitched, and selection is not implemented
+there. The darwin capturer is CGO and cannot be compiled or exercised outside a
+Mac, so it is left for a session that can verify it.
+
 ### macOS engine (experimental, CGO)
 
 Unlike Windows (GDI) and Linux (X11), macOS has **no CGO-free capture path** —
@@ -249,13 +308,23 @@ and shares the POSIX file transfer (`transfer_posix.go`).
 - **Permissions** (TCC, enforced even for root): the binary needs **Screen
   Recording** (capture) and **Accessibility** (input) granted in System Settings ▸
   Privacy & Security. Without them, capture is blank / input is dropped.
-- **Not yet covered**: login-window capture (needs entitlements), and the
-  in-session **chat window** (needs a Cocoa window — Win32/X11 only for now).
+- **Chat and shortcut (sidecar 0.11.0+):** Cocoa chat supports Unicode, replies via
+  Enter/Send, and distinct technician/user colors. AppKit runs on the initial
+  process thread; a LaunchDaemon launches desktop mode in the console user's
+  Aqua session and identity. File-only sessions remain non-graphical. The viewer
+  offers **⌘⌥Esc** (Force Quit Applications), gated on Accessibility permission,
+  rather than a Windows-specific CAD/UAC action. Full screen and viewer scaling
+  are shared with the other platforms.
+- **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.
-- Release CI builds both macOS architectures, but does not Apple-code-sign,
+- Release CI currently builds the arm64 sidecar on macos-14, but does not Apple-code-sign,
   notarize or staple the sidecar. Gatekeeper/TCC approval remains an operator
   concern; OpenRMM's Ed25519 update signature is a separate trust mechanism.
+- macOS source/native CI changes do not update an existing `/dl/` binary by
+  themselves. Compile on a Mac with the compatible SDK, verify on a logged-in
+  device, then publish the binary and detached signature together. A Linux-only
+  test deployment must not claim that the old macOS sidecar includes new chat.
 
 ### Linux requires Xorg (not Wayland)
 
@@ -277,6 +346,58 @@ with `echo $XDG_SESSION_TYPE` → `x11`.
 **VirtualBox note:** GNOME-on-Xorg can black-screen in a VirtualBox guest unless
 the graphics are right — set **Graphics Controller = VMSVGA**, **3D Acceleration
 OFF**, and install the guest X driver (`virtualbox-guest-x11`/`-utils`).
+
+### When no screen arrives at all
+
+The sidecar is the only peer that ever reaches the relay, so if the agent cannot
+prepare or launch it, nothing connects: the viewer opens, reports *streaming*
+(that is only its own socket), and shows a black canvas until the relay's
+pairing timeout. Two things make that diagnosable:
+
+- The agent **tells the viewer why**, taking the sidecar's place on the relay
+  for a single `{"t":"notice"}` message — "this endpoint could not prepare the
+  remote module: …". The console shows it as a banner plus one toast (repeated
+  reconnects don't re-toast the same text).
+- On **Windows** the agent keeps `agent.log` next to `rmm-agent.exe`
+  (`C:\ProgramData\rmm-agent`), rotating once at 4 MB. A Windows service has no
+  stderr, so before this every `log.Printf` — including the reason a session
+  never started — was discarded. systemd and launchd already capture the
+  daemon's output on the other platforms.
+
+The sidecar keeps its own `rmm-remote.log` in the same directory; the agent
+re-downloads `rmm-remote` from `/dl/` whenever it is missing or its ETag moved,
+so deleting the binary is a safe way to force a clean copy.
+
+**Antivirus quarantine (the usual Windows cause).** The agent downloads the
+module to `rmm-remote.exe.new` and runs it once (`-print-version`) to validate
+it. An unsigned executable written by a service and then executed is a textbook
+heuristic trigger: Windows Defender's cloud verdict arrives *after* the first
+copy has already run, so the first session works and every later one has its
+download deleted mid-flight. The agent now says so instead of failing with a
+bare "file not found". Confirm it on the endpoint with
+
+```powershell
+Get-MpThreatDetection | Select-Object -Last 5 InitialDetectionTime,Resources
+```
+
+and clear it with the bundled, idempotent
+[`scripts/windows-defender-exclusion.ps1`](../scripts/windows-defender-exclusion.ps1)
+— it excludes only the agent directory (no process exclusion, and it never
+disables real-time protection), prints every action, reverts with `-Remove`, and
+says so plainly when Intune or Group Policy owns the exclusion list. Push it
+through the RMM as a Script-library job to cover the fleet. On a new endpoint,
+`install.ps1 -DefenderExclusion` does the same at install time; it is opt-in,
+because an antivirus exclusion is the operator's decision to make.
+
+A copy already quarantined is cleared with `Remove-MpThreat` or from Defender's
+protection history; the agent re-downloads the sidecar on the next remote
+session, with no service restart.
+
+The durable fix is **Authenticode-signing** the Windows binaries — OpenRMM's
+Ed25519 update signature protects the update channel but means nothing to
+Defender, which reads the PE signature, reputation and behaviour. Signing is
+tracked separately; the exclusion is what makes the current, Ed25519-signed
+distribution work.
 
 ## The "own remote tool" plan
 

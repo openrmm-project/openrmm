@@ -337,6 +337,22 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   Measured on 15.8, seconds apart, same binary and same user: through
   `launchctl asuser` it connects; through `launchctl asuser` + `sudo` it does
   not.
+- **A server on the local network needs Local Network permission, and a
+  command-line tool cannot be given it.** macOS 15 gates access to private
+  address ranges behind a per-app grant. The list is populated only by attributed
+  requests, and a bare executable never appears there — measured with a
+  `CFBundleIdentifier` and `NSLocalNetworkUsageDescription` embedded in
+  `__TEXT,__info_plist` and an ad-hoc signature, which is as much identity as a
+  non-bundle can carry. The denial surfaces as `connect: no route to host`, which
+  reads like a routing fault and is not one.
+
+  This is **specific to a server on a private address**. Through the same
+  LaunchAgent, seconds apart, the sidecar reaches a public host and is refused by
+  a `10.x` one, so a deployment whose server is on the internet is unaffected: it
+  is lab and LAN-hosted installs that hit this. The way out for those is either a
+  routable hostname for the server, or packaging the sidecar as a real `.app`
+  bundle — which changes the published artifact, the installer and the
+  self-update path, and is not done.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.

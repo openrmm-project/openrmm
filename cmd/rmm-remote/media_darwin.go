@@ -49,6 +49,13 @@ static CGEventRef rmmCreateKeyboardEvent(CGKeyCode key, bool down) {
 }
 static int rmmImageIsNull(CGImageRef img) { return img == NULL; }
 static int rmmDataIsNull(CFDataRef data) { return data == NULL; }
+// CGGetActiveDisplayList is called twice in the usual idiom; a fixed cap keeps
+// the Go side allocation-free and no Mac has sixteen displays.
+static unsigned int rmmDisplays(unsigned int max, CGDirectDisplayID *out) {
+    uint32_t n = 0;
+    if (CGGetActiveDisplayList(max, out, &n) != kCGErrorSuccess) return 0;
+    return (unsigned int)n;
+}
 static int rmmForceQuit(void) {
     if (!CGPreflightPostEventAccess()) return 0;
     CGEventRef down = CGEventCreateKeyboardEvent(NULL, 53, true);
@@ -69,6 +76,7 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"sort"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -76,17 +84,98 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// cgCapturer captures the main display via CoreGraphics. The frame buffer is
-// reused across calls and reallocated only when the resolution changes.
+// macDisplay is one active display. Bounds are in POINTS, the space CGEvent
+// works in; the captured image is in PIXELS, which is twice that on Retina.
+// Conflating the two is why pointer input needs the bounds and not the image.
+type macDisplay struct {
+	id         C.CGDirectDisplayID
+	x, y, w, h float64
+	main       bool
+}
+
+// macDisplays lists the active displays left to right, then top to bottom — the
+// same ordering the other platforms use, so a selection index means the same
+// display everywhere.
+func macDisplays() []macDisplay {
+	var ids [16]C.CGDirectDisplayID
+	n := int(C.rmmDisplays(C.uint(len(ids)), &ids[0]))
+	if n == 0 {
+		return nil
+	}
+	main := C.CGMainDisplayID()
+	out := make([]macDisplay, 0, n)
+	for _, id := range ids[:n] {
+		b := C.CGDisplayBounds(id)
+		out = append(out, macDisplay{
+			id: id,
+			x:  float64(b.origin.x), y: float64(b.origin.y),
+			w: float64(b.size.width), h: float64(b.size.height),
+			main: id == main,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].x != out[j].x {
+			return out[i].x < out[j].x
+		}
+		return out[i].y < out[j].y
+	})
+	return out
+}
+
+// describeMacDisplays is the hello-independent monitors payload. all=false says
+// this host cannot stitch every display into one frame: CGDisplayCreateImage is
+// per-display, so the viewer must not offer "All displays" here.
+func describeMacDisplays(selected int32) map[string]any {
+	var list []map[string]any
+	displays := macDisplays()
+	if len(displays) > 1 {
+		for i, d := range displays {
+			list = append(list, map[string]any{
+				"id": i + 1, "w": int(d.w), "h": int(d.h), "primary": d.main,
+			})
+		}
+	}
+	return map[string]any{"t": "monitors", "list": list, "selected": selected, "all": false}
+}
+
+// cgCapturer captures one display via CoreGraphics. The frame buffer is reused
+// across calls and reallocated only when the resolution changes.
 type cgCapturer struct {
 	display C.CGDirectDisplayID
-	w, h    int
+	x, y    float64 // display origin in global points
+	pw, ph  float64 // display size in points
+	w, h    int     // captured image size in pixels
 	img     *image.RGBA
 }
 
-func newCGCapturer() (*cgCapturer, error) {
-	d := C.CGMainDisplayID()
-	return &cgCapturer{display: d}, nil
+// newCGCapturer picks display 1..N, falling back to the main one — including
+// when sel is 0, which on the other platforms means "all of them stitched" and
+// here cannot.
+func newCGCapturer(sel int32) (*cgCapturer, error) {
+	displays := macDisplays()
+	pick := -1
+	for i, d := range displays {
+		if d.main {
+			pick = i
+		}
+	}
+	if sel > 0 && int(sel) <= len(displays) {
+		pick = int(sel) - 1
+	}
+	if pick < 0 {
+		return nil, fmt.Errorf("no active display")
+	}
+	d := displays[pick]
+	return &cgCapturer{display: d.id, x: d.x, y: d.y, pw: d.w, ph: d.h}, nil
+}
+
+// toPoint maps a viewer coordinate, normalized against the captured display,
+// into the global point space CGEventPost expects.
+func (c *cgCapturer) toPoint(x, y float64) (float64, float64) {
+	if c == nil || c.pw <= 0 || c.ph <= 0 {
+		return x, y
+	}
+	return c.x + x*c.pw, c.y + y*c.ph
 }
 
 // frame grabs the current screen into an RGBA image. CGImage pixels are BGRA
@@ -142,8 +231,8 @@ func (c *cgCapturer) frame() (*image.RGBA, error) {
 
 // ---- input injection (CGEvent) ----
 
-func postMouseMoveDrag(x, y float64, w, h int, buttonsDown int) {
-	pt := C.CGPointMake(C.double(x*float64(w)), C.double(y*float64(h)))
+func postMouseMoveDrag(px, py float64, buttonsDown int) {
+	pt := C.CGPointMake(C.double(px), C.double(py))
 	typ := C.kCGEventMouseMoved
 	btn := C.kCGMouseButtonLeft
 	if buttonsDown&1 != 0 {
@@ -157,8 +246,8 @@ func postMouseMoveDrag(x, y float64, w, h int, buttonsDown int) {
 	C.CFRelease(C.CFTypeRef(e))
 }
 
-func postMouseButton(x, y float64, w, h, button int, down bool) {
-	pt := C.CGPointMake(C.double(x*float64(w)), C.double(y*float64(h)))
+func postMouseButton(px, py float64, button int, down bool) {
+	pt := C.CGPointMake(C.double(px), C.double(py))
 	var typ C.CGEventType
 	var btn C.CGMouseButton
 	switch button {
@@ -266,6 +355,12 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		}
 	})
 
+	// Display selection: 1..N, applied by the capture goroutine that owns the
+	// capturer. There is no 0 here — CGDisplayCreateImage is per-display, so
+	// this host cannot stitch them the way Windows and Linux do.
+	var monSel atomic.Int32
+	var monReq atomic.Bool
+
 	sendJSON := func(v any) {
 		b, _ := json.Marshal(v)
 		select {
@@ -283,6 +378,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	if b, e := json.Marshal(hello); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
+	sendJSON(describeMacDisplays(monSel.Load()))
 
 	// reader / dispatcher
 	go func() {
@@ -315,6 +411,14 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				if json.Unmarshal(data, &message) == nil && message.Text != "" {
 					appendMacChat(message.Text, true)
 				}
+			case "mon":
+				var mm struct {
+					ID int32 `json:"id"`
+				}
+				if json.Unmarshal(data, &mm) == nil && mm.ID > 0 {
+					monSel.Store(mm.ID)
+					monReq.Store(true)
+				}
 			case "cad":
 				select {
 				case inputCh <- data:
@@ -337,7 +441,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		}
 	}()
 
-	cap, err := newCGCapturer()
+	cap, err := newCGCapturer(monSel.Load())
 	if err != nil {
 		return err
 	}
@@ -365,10 +469,20 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				sendJSON(response)
 				continue
 			}
-			injectMacInput(data, cap.w, cap.h, &buttons)
+			injectMacInput(data, cap, &buttons)
 		case <-ticker.C:
 			if len(out) >= videoBacklog {
 				continue
+			}
+			// Applied here, on the goroutine that owns the capturer.
+			if monReq.Swap(false) {
+				if nc, nerr := newCGCapturer(monSel.Load()); nerr == nil {
+					cap = nc
+					enc.reset() // different display, different frame size
+					sendJSON(describeMacDisplays(monSel.Load()))
+				} else {
+					log.Printf("rmm-remote: display %d unavailable: %v", monSel.Load(), nerr)
+				}
 			}
 			if kfReq.Swap(false) {
 				enc.forceKeyframe()
@@ -407,14 +521,19 @@ type macInput struct {
 	Code   int     `json:"code"`
 }
 
-func injectMacInput(data []byte, w, h int, buttons *int) {
+// injectMacInput delivers one viewer event. Pointer coordinates arrive
+// normalized against the captured display and are mapped to global points
+// first: the image is in pixels, which differs from points on Retina, and a
+// non-main display does not start at the origin.
+func injectMacInput(data []byte, c *cgCapturer, buttons *int) {
 	var e macInput
 	if json.Unmarshal(data, &e) != nil {
 		return
 	}
+	px, py := c.toPoint(e.X, e.Y)
 	switch e.T {
 	case "m":
-		postMouseMoveDrag(e.X, e.Y, w, h, *buttons)
+		postMouseMoveDrag(px, py, *buttons)
 	case "b":
 		mask := 1 << uint(min(e.Button, 2))
 		if e.Down {
@@ -422,7 +541,7 @@ func injectMacInput(data []byte, w, h int, buttons *int) {
 		} else {
 			*buttons &^= mask
 		}
-		postMouseButton(e.X, e.Y, w, h, e.Button, e.Down)
+		postMouseButton(px, py, e.Button, e.Down)
 	case "w":
 		postScroll(e.DY)
 	case "k":

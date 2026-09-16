@@ -74,7 +74,7 @@ test('native remote viewer exposes operator display controls and distinct chat r
   assert.match(devices, /Remote screen resolution/);
   assert.match(devices, /Technician · You/);
   assert.match(devices, /monitors\.list\.length > 1/);
-  assert.match(devices, /All displays/);
+  assert.match(devices, /monitors\.all !== false && <option value="0">All displays/);
   assert.match(devices, /t: 'mon', id/);
   assert.match(devices, /bg-brand text-white/);
   assert.match(devices, /bg-elevated text-ink border border-line2/);

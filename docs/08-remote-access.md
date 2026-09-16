@@ -288,10 +288,21 @@ the region capture with the corresponding half of a full-screen frame.
 An index that no longer exists (display unplugged mid-session) falls back to the
 whole desktop rather than failing the session.
 
-**macOS captures the main display only** (`CGMainDisplayID`): secondary monitors
-are not visible at all, not even stitched, and selection is not implemented
-there. The darwin capturer is CGO and cannot be compiled or exercised outside a
-Mac, so it is left for a session that can verify it.
+**macOS selects, but never stitches.** `CGDisplayCreateImage` works one display
+at a time, so there is no equivalent of the whole-desktop frame: the host sends
+`"all": false` with its list and the viewer drops the *All displays* option
+rather than offering something the endpoint cannot do. Selection itself works
+the same way, over `CGGetActiveDisplayList`.
+
+Pointer input there goes through the display's bounds rather than the captured
+image, which also settles the points-vs-pixels question the capturer carried as
+a to-do: `CGEventPost` works in points, a Retina display reports twice as many
+pixels as points, and a second display does not start at the origin. Multiplying
+the normalized coordinate by the image size was right only for a non-Retina main
+display.
+
+The darwin engine is CGO and compiles only on a Mac; the macOS CI job is where
+it is built.
 
 ### macOS engine (experimental, CGO)
 

@@ -446,7 +446,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const [locked, setLocked] = useState(false); // host's physical keyboard/mouse blocked (Windows)
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
   const [cad, setCad] = useState({ available: false, reason: 'Waiting for the remote module…' });
-  const [monitors, setMonitors] = useState({ list: [], selected: 0 }); // host displays; empty unless there are two or more
+  const [monitors, setMonitors] = useState({ list: [], selected: 0, all: true }); // host displays; empty unless there are two or more
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
   const [scale, setScale] = useState('fit');
   const [fullscreen, setFullscreen] = useState(false);
@@ -489,7 +489,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'cad') { if (m.ok) toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
-        else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0 })
+        else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0, all: m.all !== false })
         else if (allowFiles && m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'inputlocked') { setLocked(!!m.enabled); if (m.err) toast.error('Input lock failed', m.err); }
@@ -552,7 +552,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     // the now-active session (login screen included).
     const connect = async () => {
       setCad({ available: false, reason: 'Waiting for the remote module…' });
-      setMonitors({ list: [], selected: 0 });
+      setMonitors({ list: [], selected: 0, all: true });
       setVer(null);
       if (stopped) return;
       setStatus(retries ? 'reconnecting' : 'connecting');
@@ -719,7 +719,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
             {monitors.list.length > 1 && (
               <Select value={String(monitors.selected)} onChange={(e) => { const id = Number(e.target.value); setMonitors((m) => ({ ...m, selected: id })); sendJSON({ t: 'mon', id }); }}
                 aria-label="Host display" title="Choose which of the host's displays to stream" className="h-7 w-[150px] bg-card py-0 text-[12px]">
-                <option value="0">All displays</option>
+                {monitors.all !== false && <option value="0">All displays</option>}
                 {monitors.list.map((m) => <option key={m.id} value={String(m.id)}>{`Display ${m.id} · ${m.w}×${m.h}${m.primary ? ' (main)' : ''}`}</option>)}
               </Select>
             )}

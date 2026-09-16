@@ -26,6 +26,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -42,6 +43,7 @@ func main() {
 	printVer := flag.Bool("print-version", false, "print the sidecar version and exit")
 	filesOnly := flag.Bool("files", false, "file-transfer-only mode: no screen capture/streaming")
 	noFiles := flag.Bool("no-files", false, "disable in-band file transfer in desktop mode")
+	session := flag.String("session", "", "read the session parameters from this file and delete it (macOS LaunchAgent)")
 	flag.Parse()
 	if *printVer {
 		fmt.Println(remoteVersion)
@@ -52,15 +54,23 @@ func main() {
 	// Microsecond timestamps make the startup breakdown (dial → X11 attach →
 	// first frame) legible when chasing "time to first frame".
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	if exe, err := os.Executable(); err == nil {
-		if f, e := os.OpenFile(filepath.Join(filepath.Dir(exe), "rmm-remote.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); e == nil {
-			log.SetOutput(f)
-		}
-	}
+	openLog()
 	if *relay == "" {
 		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
 	}
 	log.Printf("rmm-remote %s starting", remoteVersion)
+
+	// A LaunchAgent's plist is static, but a relay URL and a single-use ticket
+	// are not. The agent leaves them in a file owned by the session user and
+	// kickstarts the job; reading them here keeps the ticket out of the process
+	// arguments, where `ps` shows it to every user on the machine.
+	if *session != "" {
+		p, err := readSessionFile(*session)
+		if err != nil {
+			log.Fatalf("rmm-remote: session file: %v", err)
+		}
+		*relay, *ticket, *filesOnly, *noFiles = p.Relay, p.Ticket, p.FilesOnly, p.NoFiles
+	}
 
 	var headers http.Header
 	if *ticket != "" {
@@ -90,4 +100,54 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.12.0"
+const remoteVersion = "0.12.1"
+
+// sessionParams is what the agent hands to a LaunchAgent-started sidecar.
+type sessionParams struct {
+	Relay     string `json:"relay"`
+	Ticket    string `json:"ticket"`
+	FilesOnly bool   `json:"files_only"`
+	NoFiles   bool   `json:"no_files"`
+}
+
+// readSessionFile consumes the file: the ticket is single-use, and leaving it on
+// disk after the session starts would widen the window in which it is stealable
+// beyond the moment it is actually needed.
+func readSessionFile(path string) (sessionParams, error) {
+	var p sessionParams
+	b, err := os.ReadFile(path)
+	_ = os.Remove(path)
+	if err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal(b, &p); err != nil {
+		return p, err
+	}
+	if p.Relay == "" {
+		return p, fmt.Errorf("no relay URL")
+	}
+	return p, nil
+}
+
+// openLog points the logger at a file, because the sidecar is started with no
+// console: on Windows with CREATE_NO_WINDOW, and by launchd or a service with
+// stdout on /dev/null.
+//
+// The fallback is not decoration. The same binary runs as root for a
+// file-transfer session and as the console user for a desktop one, so a log
+// created by the first is unwritable by the second — which is how a macOS
+// session came to leave no trace at all, not even its first line, while we were
+// looking for a capture problem that did not exist.
+func openLog() {
+	paths := []string{}
+	if exe, err := os.Executable(); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), "rmm-remote.log"))
+	}
+	paths = append(paths, filepath.Join(os.TempDir(), "rmm-remote.log"))
+	for _, p := range paths {
+		if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666); err == nil {
+			log.SetOutput(f)
+			return
+		}
+	}
+}

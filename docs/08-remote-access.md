@@ -321,11 +321,22 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   Privacy & Security. Without them, capture is blank / input is dropped.
 - **Chat and shortcut (sidecar 0.11.0+):** Cocoa chat supports Unicode, replies via
   Enter/Send, and distinct technician/user colors. AppKit runs on the initial
-  process thread; a LaunchDaemon launches desktop mode in the console user's
-  Aqua session and identity. File-only sessions remain non-graphical. The viewer
+  process thread; a LaunchDaemon launches desktop mode into the console user's
+  Aqua session with `launchctl asuser`, staying root — **not** through `sudo`.
+  File-only sessions remain non-graphical. The viewer
   offers **⌘⌥Esc** (Force Quit Applications), gated on Accessibility permission,
   rather than a Windows-specific CAD/UAC action. Full screen and viewer scaling
   are shared with the other platforms.
+- **Never put `sudo` in that chain.** TCC judges a request by its *responsible*
+  process, and `sudo` is an Apple-signed platform binary: `tccd` then refuses to
+  prompt at all — `Platform binary prompting is 'Deny' because: is Platform
+  Binary` — so the sidecar is denied and never appears in any Privacy list for
+  an operator to allow. On macOS 15 the first thing that fails is not capture
+  but **local networking**: the sidecar cannot reach the relay and reports
+  `connect: no route to host`, which reads like a routing fault and is not one.
+  Measured on 15.8, seconds apart, same binary and same user: through
+  `launchctl asuser` it connects; through `launchctl asuser` + `sudo` it does
+  not.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.

@@ -55,15 +55,11 @@ func main() {
 	// first frame) legible when chasing "time to first frame".
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	openLog()
-	if *relay == "" {
-		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
-	}
-	log.Printf("rmm-remote %s starting", remoteVersion)
-
-	// A LaunchAgent's plist is static, but a relay URL and a single-use ticket
-	// are not. The agent leaves them in a file owned by the session user and
-	// kickstarts the job; reading them here keeps the ticket out of the process
-	// arguments, where `ps` shows it to every user on the machine.
+	// Before the check below, not after: this is what supplies the relay URL.
+	// A LaunchAgent's plist is static while a relay URL and a single-use ticket
+	// are not, so the agent leaves them in a file owned by the session user and
+	// kickstarts the job. Reading them here also keeps the ticket out of the
+	// process arguments, where `ps` shows it to every user on the machine.
 	if *session != "" {
 		p, err := readSessionFile(*session)
 		if err != nil {
@@ -71,6 +67,10 @@ func main() {
 		}
 		*relay, *ticket, *filesOnly, *noFiles = p.Relay, p.Ticket, p.FilesOnly, p.NoFiles
 	}
+	if *relay == "" {
+		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
+	}
+	log.Printf("rmm-remote %s starting", remoteVersion)
 
 	var headers http.Header
 	if *ticket != "" {

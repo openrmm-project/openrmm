@@ -56,9 +56,14 @@ remote-all-darwin:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o bin/rmm-remote-darwin-arm64 ./cmd/rmm-remote
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o bin/rmm-remote-darwin-amd64 ./cmd/rmm-remote
 
+# The embedded Info.plist and the ad-hoc signature are what let macOS attribute
+# a privacy request to this binary at all; see cmd/rmm-remote/Info.darwin.plist.
+DARWIN_PLIST_LDFLAGS := -extldflags -Wl,-sectcreate,__TEXT,__info_plist,cmd/rmm-remote/Info.darwin.plist
+
 remote-dist-darwin:
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-darwin-arm64 ./cmd/rmm-remote
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-arm64 ./cmd/rmm-remote
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CC="clang -arch x86_64" $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+	for b in deploy/public/rmm-remote-darwin-*; do codesign --sign - --force --identifier com.openrmm.remote "$$b"; done
 
 # Publish the agent binaries to deploy/public/ so the server serves them at /dl/
 # for the agent's ETag-based SELF-UPDATE (and the install scripts). Republish here

@@ -29,7 +29,10 @@ if [ "$LAB_MODE" = "0" ]; then
 fi
 command -v curl >/dev/null || { echo "error: curl is required"; exit 1; }
 command -v openssl >/dev/null || { echo "error: OpenSSL is required for checksum/signature verification"; exit 1; }
-openssl version | grep -qE '^OpenSSL ([3-9]|[1-9][0-9])\.' || { echo "error: OpenSSL 3.x or newer is required for Ed25519 verification"; exit 1; }
+# Checked before anything is written. Without it the install failed halfway
+# through with a bare "mkdir: /etc/rmm-agent: Permission denied"; install.ps1
+# has always refused up front, and this is the same contract.
+[ "$(id -u)" = "0" ] || { echo "error: run as root (e.g. sudo bash $0 ...)"; exit 1; }
 
 # --update-public-key may be given several times (or comma/space separated). During
 # a key rotation an operator pins the new key alongside the old one; a signature is
@@ -43,6 +46,20 @@ if [ -n "$UPDATE_PUBLIC_KEY" ]; then
   for _k in $UPDATE_PUBLIC_KEY; do [ -n "$_k" ] && PUBLIC_KEYS+=("$_k"); done
   set +f
   IFS="$_oldifs"
+fi
+
+# Ed25519 verification needs OpenSSL 3; SHA-256 does not. Requiring it up front
+# refused to run on a stock macOS, which ships LibreSSL as /usr/bin/openssl —
+# even in lab mode, where no key is pinned and no signature is ever checked. A
+# production install always pins a key, so this still cannot be skipped there.
+# Tested through the variable rather than ${#PUBLIC_KEYS[@]}: macOS ships bash
+# 3.2, where an empty array expansion under `set -u` is an unbound variable.
+if [ -n "$UPDATE_PUBLIC_KEY" ]; then
+  openssl version | grep -qE '^OpenSSL ([3-9]|[1-9][0-9])\.' || {
+    echo "error: OpenSSL 3.x or newer is required to verify the update signature"
+    echo "       (found: $(openssl version)); install it, or omit --update-public-key in a lab"
+    exit 1
+  }
 fi
 
 # write_pubkey_der <base64-key> <out-file>: wrap a raw Ed25519 key in DER SPKI.
@@ -150,6 +167,10 @@ rollback() {
 trap rollback EXIT
 
 mkdir -p "$STATE_DIR"
+# A clean macOS has no /usr/local/bin — it is Homebrew that usually creates it.
+# Without this the transactional swap failed at the very last step, with mv
+# reporting "No such file or directory" about a source file that plainly existed.
+mkdir -p "$(dirname "$DEST")"
 [ ! -e "$BACKUP" ] || { echo "error: unresolved installer backup exists at $BACKUP"; exit 1; }
 [ ! -e "$SIGNATURE_BACKUP" ] || { echo "error: unresolved signature backup exists at $SIGNATURE_BACKUP"; exit 1; }
 [ ! -e "$STATE_BACKUP" ] || { echo "error: unresolved state backup exists at $STATE_BACKUP"; exit 1; }
@@ -271,4 +292,44 @@ done
 
 COMMITTED=1
 rm -f "$BACKUP" "$SIGNATURE_BACKUP" "$STATE_BACKUP" "$OUTBOX_BACKUP"
+# macOS: desktop sessions run from a per-user LaunchAgent, not from the daemon.
+# TCC grants are per user, so the sidecar must run AS the console user for an
+# operator's "Allow" to mean anything; and TCC judges by the RESPONSIBLE process,
+# so no Apple-signed helper (sudo, su) may sit in between, or tccd refuses to
+# prompt at all. launchd starting the job in the user's session is the only way
+# to satisfy both. The daemon fills in the relay URL and ticket through
+# remote-session.json and kickstarts this label.
+if [ "$OS" = "darwin" ]; then
+  REMOTE_AGENT_PLIST=/Library/LaunchAgents/com.openrmm.remote.plist
+  cat > "$REMOTE_AGENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.openrmm.remote</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${DEST%/*}/rmm-remote</string>
+    <string>-session</string>
+    <string>${STATE_DIR}/remote-session.json</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+PLIST
+  chown root:wheel "$REMOTE_AGENT_PLIST"
+  chmod 644 "$REMOTE_AGENT_PLIST"
+  # Load it into the console user's session now; it is loaded automatically at
+  # every later login. Failure is not fatal: nobody may be logged in yet.
+  CONSOLE_UID="$(stat -f "%u" /dev/console 2>/dev/null || echo 0)"
+  if [ "$CONSOLE_UID" != "0" ]; then
+    launchctl bootout "gui/$CONSOLE_UID/com.openrmm.remote" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$CONSOLE_UID" "$REMOTE_AGENT_PLIST" >/dev/null 2>&1 ||
+      echo "note: could not load the remote LaunchAgent now; it loads at the next login"
+  fi
+  echo "Remote desktop LaunchAgent installed at $REMOTE_AGENT_PLIST"
+fi
+
 echo "Agent installed, connected, and healthy."

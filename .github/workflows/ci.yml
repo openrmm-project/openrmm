@@ -126,8 +126,19 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
       - run: CGO_ENABLED=1 go test ./cmd/rmm-remote
-      - run: CGO_ENABLED=1 go build -buildvcs=false -o /tmp/rmm-remote ./cmd/rmm-remote
-      - run: /tmp/rmm-remote -print-version
+      - run: CGO_ENABLED=1 go build -buildvcs=false -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
+      - run: dist/rmm-remote-darwin-arm64 -print-version
+      # The runner is arm64; Xcode's SDK is universal, so -arch x86_64 produces
+      # the Intel sidecar that no CI job built before. It cannot be run here,
+      # but it is the only build of it that exists — /dl/ has never carried one.
+      - name: Cross-build the Intel sidecar
+        run: CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -buildvcs=false -o dist/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+      - run: file dist/rmm-remote-darwin-amd64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rmm-remote-darwin
+          path: dist/rmm-remote-darwin-*
+          retention-days: 7
 
   installers-linux:
     name: Linux installer validation

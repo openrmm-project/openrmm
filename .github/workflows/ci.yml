@@ -164,8 +164,12 @@ jobs:
             if ($errors.Count) { Write-Host $script; $errors | Format-List; exit 1 }
           }
           Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
-          $findings = Invoke-ScriptAnalyzer $scripts -Severity Error
-          if ($findings) { $findings | Format-Table; exit 1 }
+          # One path at a time: the positional parameter is -ScriptDefinition, so
+          # an array binds to it as a string and the call fails before analysing.
+          foreach ($script in $scripts) {
+            $findings = Invoke-ScriptAnalyzer -Path $script -Severity Error
+            if ($findings) { Write-Host $script; $findings | Format-Table; exit 1 }
+          }
 
   installer-windows:
     name: Windows installer verification
@@ -192,8 +196,12 @@ jobs:
             if ($errors.Count) { Write-Host $script; $errors | Format-List; exit 1 }
           }
           Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
-          $findings = Invoke-ScriptAnalyzer $scripts -Severity Error
-          if ($findings) { $findings | Format-Table; exit 1 }
+          # One path at a time: the positional parameter is -ScriptDefinition, so
+          # an array binds to it as a string and the call fails before analysing.
+          foreach ($script in $scripts) {
+            $findings = Invoke-ScriptAnalyzer -Path $script -Severity Error
+            if ($findings) { Write-Host $script; $findings | Format-Table; exit 1 }
+          }
       - name: Build rmm-sign
         shell: pwsh
         run: go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign

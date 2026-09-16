@@ -1,7 +1,7 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package main
 
-// setupServiceLog is a no-op away from Windows: systemd and launchd already
-// capture the daemon's stderr.
+// setupServiceLog is a no-op on Linux: systemd already captures the unit's
+// stderr into the journal.
 func setupServiceLog() {}

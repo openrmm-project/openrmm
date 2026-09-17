@@ -134,25 +134,40 @@ jobs:
       # plist in __TEXT,__info_plist is Apple's answer for tools that are not
       # bundles, and the ad-hoc signature gives it the stable code identity that
       # TCC anchors a grant to. Neither requires a certificate.
-      - name: Build and ad-hoc sign the darwin sidecars
+      - name: Build, bundle and sign the darwin sidecars
         run: |
           set -eux
-          PLIST_LDFLAGS="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,cmd/rmm-remote/Info.darwin.plist"
-          CGO_ENABLED=1 go build -buildvcs=false -ldflags "$PLIST_LDFLAGS" -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
+          PLIST=cmd/rmm-remote/macapp/Info.plist
+          LD="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$PLIST"
+          CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # The runner is arm64; Xcode's SDK is universal, so -arch x86_64 gives
           # the Intel build that /dl/ has never carried. It cannot run here.
-          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -buildvcs=false -ldflags "$PLIST_LDFLAGS" -o dist/rmm-remote-darwin-amd64 ./cmd/rmm-remote
-          for b in dist/rmm-remote-darwin-*; do
-            codesign --sign - --force --identifier com.openrmm.remote "$b"
-            codesign --display --verbose=2 "$b" 2>&1 | grep -E "Identifier|Signature|CDHash" || true
-            otool -s __TEXT __info_plist "$b" >/dev/null && echo "$b carries an embedded Info.plist"
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+          # Privacy lists are keyed to bundles: a bare executable never appears
+          # in Local Network, so an operator with a LAN server has nothing to
+          # allow. Signing the bundle (not just the binary) seals Info.plist,
+          # which is what carries the identity and the purpose string.
+          # Built under a per-arch directory so the bundle inside the archive is
+          # always RMMRemote.app: BSD tar has no --transform to rename on the fly.
+          for arch in arm64 amd64; do
+            app="dist/$arch/RMMRemote.app"
+            rm -rf "dist/$arch"
+            mkdir -p "$app/Contents/MacOS"
+            cp "$PLIST" "$app/Contents/Info.plist"
+            cp "dist/rmm-remote-darwin-$arch" "$app/Contents/MacOS/rmm-remote"
+            codesign --sign - --force "$app"
+            codesign --verify --verbose=2 "$app"
+            tar -czf "dist/rmm-remote-darwin-$arch.app.tar.gz" -C "dist/$arch" RMMRemote.app
+            rm -rf "dist/$arch"
           done
+          ls -la dist/
       - run: dist/rmm-remote-darwin-arm64 -print-version
       - run: file dist/rmm-remote-darwin-amd64
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rmm-remote-darwin
           path: dist/rmm-remote-darwin-*
+
           retention-days: 7
 
   installers-linux:

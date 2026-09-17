@@ -57,8 +57,8 @@ remote-all-darwin:
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o bin/rmm-remote-darwin-amd64 ./cmd/rmm-remote
 
 # The embedded Info.plist and the ad-hoc signature are what let macOS attribute
-# a privacy request to this binary at all; see cmd/rmm-remote/Info.darwin.plist.
-DARWIN_PLIST_LDFLAGS := -extldflags -Wl,-sectcreate,__TEXT,__info_plist,cmd/rmm-remote/Info.darwin.plist
+# a privacy request to this binary at all; see cmd/rmm-remote/macapp/Info.plist.
+DARWIN_PLIST_LDFLAGS := -extldflags -Wl,-sectcreate,__TEXT,__info_plist,cmd/rmm-remote/macapp/Info.plist
 
 remote-dist-darwin:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-arm64 ./cmd/rmm-remote

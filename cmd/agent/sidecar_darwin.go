@@ -38,7 +38,10 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		_ = os.Remove(artifact)
 	}
 	// --strip-components keeps the archive's own top-level name from mattering.
-	cmd := exec.Command("/usr/bin/tar", "-xzf", artifact, "-C", stage, "--strip-components", "1")
+	// --no-same-owner: the archive carries the CI runner's numeric uid, and
+	// restoring it would leave the bundle owned by whichever local account
+	// happens to share that number.
+	cmd := exec.Command("/usr/bin/tar", "-xzf", artifact, "-C", stage, "--strip-components", "1", "--no-same-owner")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		cleanup()
 		return "", nil, nil, fmt.Errorf("unpack sidecar bundle: %w: %s", err, out)

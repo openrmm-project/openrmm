@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -100,7 +101,7 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.12.1"
+const remoteVersion = "0.13.0"
 
 // sessionParams is what the agent hands to a LaunchAgent-started sidecar.
 type sessionParams struct {
@@ -141,7 +142,22 @@ func readSessionFile(path string) (sessionParams, error) {
 func openLog() {
 	paths := []string{}
 	if exe, err := os.Executable(); err == nil {
-		paths = append(paths, filepath.Join(filepath.Dir(exe), "rmm-remote.log"))
+		dir := filepath.Dir(exe)
+		// Never inside an .app. A signed bundle seals its contents, so adding a
+		// file invalidates the signature — and on macOS an invalid signature
+		// costs every privacy grant the bundle holds. Writing one log line there
+		// turned a working session back into a black screen.
+		if !strings.Contains(filepath.ToSlash(dir), ".app/Contents/") {
+			paths = append(paths, filepath.Join(dir, "rmm-remote.log"))
+		}
+	}
+	// Exists on macOS only, which is the platform that needs somewhere better
+	// than the temp directory; elsewhere the check simply fails and is skipped.
+	if home, err := os.UserHomeDir(); err == nil {
+		logs := filepath.Join(home, "Library", "Logs")
+		if info, err := os.Stat(logs); err == nil && info.IsDir() {
+			paths = append(paths, filepath.Join(logs, "rmm-remote.log"))
+		}
 	}
 	paths = append(paths, filepath.Join(os.TempDir(), "rmm-remote.log"))
 	for _, p := range paths {

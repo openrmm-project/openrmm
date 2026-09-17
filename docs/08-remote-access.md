@@ -361,6 +361,13 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   embedded in `__TEXT,__info_plist` were both measured and both still left the
   tool absent from the list.
 
+  **Nothing may be written inside the bundle.** A signed bundle seals its
+  contents, so a single added file invalidates the signature and with it every
+  privacy grant the bundle holds — the sidecar's own log, written next to its
+  executable, was enough to put the black screen back after an update. The log
+  goes to `~/Library/Logs/rmm-remote.log` on macOS, and the unpack step does not
+  restore the archive's numeric ownership.
+
   **Updates and the Designated Requirement.** macOS records the app's DR when a
   permission is granted and, on update, checks whether the new version satisfies
   the same DR before treating it as the same app. Unsigned code has no DR, and an

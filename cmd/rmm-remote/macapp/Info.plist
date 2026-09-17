@@ -20,6 +20,7 @@
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>OpenRMM Remote</string>
   <key>CFBundleExecutable</key><string>rmm-remote</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSUIElement</key><true/>
   <key>NSLocalNetworkUsageDescription</key>
   <string>OpenRMM connects to your organisation's RMM server to stream this Mac's screen to an authorised technician.</string>

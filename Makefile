@@ -66,53 +66,9 @@ remote-dist-darwin:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-arm64 ./cmd/rmm-remote
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CC="clang -arch x86_64" $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-amd64 ./cmd/rmm-remote
 	@set -e; for arch in arm64 amd64; do \
-	  app="build/darwin-$$arch/RMMRemote.app"; \
-	  rm -rf "build/darwin-$$arch"; mkdir -p "$$app/Contents/MacOS"; \
-	  cp cmd/rmm-remote/macapp/Info.plist "$$app/Contents/Info.plist"; \
-	  cp "deploy/public/rmm-remote-darwin-$$arch" "$$app/Contents/MacOS/rmm-remote"; \
-	  codesign --sign - --force "$$app"; \
-	  codesign --verify "$$app"; \
-	  tar -czf "deploy/public/rmm-remote-darwin-$$arch.app.tar.gz" -C "build/darwin-$$arch" RMMRemote.app; \
-	  rm -rf "build/darwin-$$arch"; \
+	  ./scripts/build-macos-bundle.sh "$$arch" "deploy/public/rmm-remote-darwin-$$arch" "deploy/public/rmm-remote-darwin-$$arch.app.tar.gz"; \
 	  codesign --sign - --force --identifier com.openrmm.remote "deploy/public/rmm-remote-darwin-$$arch"; \
 	done
-
-# Publish the agent binaries to deploy/public/ so the server serves them at /dl/
-# for the agent's ETag-based SELF-UPDATE (and the install scripts). Republish here
-# and connected agents upgrade themselves within RMM_UPDATE_INTERVAL (default 30m).
-# Names must match agentDownloadName(): rmm-agent-<os>-<arch>[.exe].
-agent-dist:
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-windows-amd64.exe ./cmd/agent
-	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-windows-arm64.exe ./cmd/agent
-	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-linux-amd64        ./cmd/agent
-	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-linux-arm64        ./cmd/agent
-	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-darwin-amd64       ./cmd/agent
-	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(AGENT_BUILD_FLAGS) -o deploy/public/rmm-agent-darwin-arm64       ./cmd/agent
-
-sign-dist: require-release-config
-	@test -f deploy/public/SHA256SUMS || (echo "deploy/public/SHA256SUMS is required; run make checksums" && exit 1)
-	@set -e; files=""; for file in deploy/public/rmm-agent-* deploy/public/rmm-remote-*; do case "$$file" in *.sig) continue;; esac; test ! -f "$$file" || files="$$files $$file"; done; test -n "$$files"; ./bin/rmm-sign $$files deploy/public/SHA256SUMS
-
-require-release-config: signer
-	@case "$(origin VERSION)" in "command line"|environment) ;; *) echo "VERSION=vX.Y.Z must be set explicitly for a signed release"; exit 1;; esac
-	@printf '%s\n' '$(VERSION)' | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$$' || (echo "VERSION must be semantic (vX.Y.Z)"; exit 1)
-	@test -n "$$RMM_SIGNING_KEY" || (echo "RMM_SIGNING_KEY is required"; exit 1)
-	@test -n "$$RMM_UPDATE_PUBLIC_KEY" || (echo "RMM_UPDATE_PUBLIC_KEY is required"; exit 1)
-	@test "$$($(CURDIR)/bin/rmm-sign -print-public-key)" = "$$RMM_UPDATE_PUBLIC_KEY" || (echo "signing key does not match RMM_UPDATE_PUBLIC_KEY"; exit 1)
-
-agent-dist-signed:
-	@$(MAKE) require-release-config
-	@$(MAKE) dist-clean
-	@$(MAKE) agent-dist
-	@$(MAKE) checksums
-	@$(MAKE) sign-dist
-
-remote-dist-signed:
-	@$(MAKE) require-release-config
-	@$(MAKE) dist-clean
-	@$(MAKE) remote-dist
-	@$(MAKE) checksums
-	@$(MAKE) sign-dist
 
 dist-clean:
 	rm -f deploy/public/rmm-agent-* deploy/public/rmm-remote-* deploy/public/SHA256SUMS deploy/public/SHA256SUMS.new deploy/public/SHA256SUMS.sig deploy/public/SBOM.* deploy/public/*.intoto.jsonl

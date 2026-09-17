@@ -372,10 +372,16 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   permission is granted and, on update, checks whether the new version satisfies
   the same DR before treating it as the same app. Unsigned code has no DR, and an
   ad-hoc signature produces one tied to that build — so a rebuilt sidecar is a
-  different application as far as TCC is concerned, and the operator is asked
-  again. A **Developer ID** signature is how a DR becomes stable across versions,
-  which is what makes an auto-updating sidecar and macOS privacy compatible. Until
-  then, expect a re-prompt after a sidecar update.
+  different application as far as TCC is concerned. A **Developer ID** signature
+  is how a DR becomes stable across versions, which is what makes an
+  auto-updating sidecar and macOS privacy compatible.
+
+  Measured, not assumed: after the first auto-update the endpoint prompted again
+  while Privacy & Security still showed the entry as allowed — the list matches
+  by path and name, the decision by DR, and the two disagree after a rebuild.
+  Toggling the switch off and on re-grants it (`tccutil reset <service>
+  com.openrmm.remote` does the same), and that is the recurring cost of shipping
+  without Developer ID.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.

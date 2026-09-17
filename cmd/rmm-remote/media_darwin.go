@@ -56,17 +56,36 @@ static unsigned int rmmDisplays(unsigned int max, CGDirectDisplayID *out) {
     if (CGGetActiveDisplayList(max, out, &n) != kCGErrorSuccess) return 0;
     return (unsigned int)n;
 }
+static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFlags flags) {
+    CGEventRef e = CGEventCreateKeyboardEvent(src, key, down);
+    if (!e) return 0;
+    CGEventSetFlags(e, flags);
+    CGEventPost(kCGHIDEventTap, e);
+    CFRelease(e);
+    return 1;
+}
+
+// Command-Option-Escape opens Force Quit Applications. The shortcut is matched
+// against the modifier state the WindowServer maintains, and that state is fed
+// by the modifier keys' OWN events: decorating Escape with flags leaves it
+// untouched, so the shortcut never fires while the call still reports success.
+// Press and release them for real, in order.
 static int rmmForceQuit(void) {
     if (!CGPreflightPostEventAccess()) return 0;
-    CGEventRef down = CGEventCreateKeyboardEvent(NULL, 53, true);
-    CGEventRef up = CGEventCreateKeyboardEvent(NULL, 53, false);
-    if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return 0; }
-    CGEventSetFlags(down, kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate);
-    CGEventSetFlags(up, kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate);
-    CGEventPost(kCGHIDEventTap, down);
-    CGEventPost(kCGHIDEventTap, up);
-    CFRelease(down); CFRelease(up);
-    return 1;
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    const CGEventFlags cmd = kCGEventFlagMaskCommand;
+    const CGEventFlags both = kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate;
+    int ok = 1;
+    ok &= rmmPostKey(src, 55, true, cmd);   // kVK_Command down
+    ok &= rmmPostKey(src, 58, true, both);  // kVK_Option down
+    ok &= rmmPostKey(src, 53, true, both);  // kVK_Escape down
+    ok &= rmmPostKey(src, 53, false, both);
+    // Released unconditionally, never behind an early return: giving up midway
+    // would leave Command and Option stuck down on the host user's keyboard.
+    ok &= rmmPostKey(src, 58, false, cmd);
+    ok &= rmmPostKey(src, 55, false, 0);
+    if (src) CFRelease(src);
+    return ok;
 }
 */
 import "C"

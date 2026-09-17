@@ -348,11 +348,27 @@ and shares the POSIX file transfer (`transfer_posix.go`).
 
   This is **specific to a server on a private address**. Through the same
   LaunchAgent, seconds apart, the sidecar reaches a public host and is refused by
-  a `10.x` one, so a deployment whose server is on the internet is unaffected: it
-  is lab and LAN-hosted installs that hit this. The way out for those is either a
-  routable hostname for the server, or packaging the sidecar as a real `.app`
-  bundle — which changes the published artifact, the installer and the
-  self-update path, and is not done.
+  a `10.x` one, so a deployment whose server is on the internet was never
+  affected.
+
+  **Fixed by shipping the sidecar as a bundle.** macOS publishes
+  `rmm-remote-darwin-<arch>.app.tar.gz`; the agent verifies its signature,
+  unpacks it and installs `RMMRemote.app` under
+  `/Library/Application Support/OpenRMM`, and the LaunchAgent runs the executable
+  inside it. Once bundled, the sidecar appears in Privacy & Security as *OpenRMM
+  Remote*, the operator allows it once, and a LAN-hosted server works. Nothing
+  short of a bundle achieved this: an ad-hoc signature and the same plist
+  embedded in `__TEXT,__info_plist` were both measured and both still left the
+  tool absent from the list.
+
+  **Updates and the Designated Requirement.** macOS records the app's DR when a
+  permission is granted and, on update, checks whether the new version satisfies
+  the same DR before treating it as the same app. Unsigned code has no DR, and an
+  ad-hoc signature produces one tied to that build — so a rebuilt sidecar is a
+  different application as far as TCC is concerned, and the operator is asked
+  again. A **Developer ID** signature is how a DR becomes stable across versions,
+  which is what makes an auto-updating sidecar and macOS privacy compatible. Until
+  then, expect a re-prompt after a sidecar update.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.

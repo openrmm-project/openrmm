@@ -166,13 +166,11 @@ func (a *agent) ensureSidecar() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(filepath.Dir(exe), sidecarName())
-	dlName := fmt.Sprintf("rmm-remote-%s-%s", runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
-		dlName += ".exe"
-	}
-	src := a.httpBase() + "/dl/" + dlName
-	etagPath := path + ".etag"
+	path := sidecarExePath(filepath.Dir(exe))
+	src := a.httpBase() + "/dl/" + sidecarDownloadName()
+	// Kept beside the agent even when the sidecar is not: on macOS the bundle is
+	// replaced wholesale, and a marker inside it would go with the old copy.
+	etagPath := filepath.Join(filepath.Dir(exe), sidecarName()+".etag")
 
 	if _, err := os.Stat(path); err == nil {
 		// All platforms: a newly opened session must use the published build.
@@ -197,37 +195,44 @@ func (a *agent) ensureSidecar() (string, error) {
 // fetchSidecar downloads, signature-verifies, and atomically installs the
 // sidecar, recording its ETag for the cache comparison above.
 func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
-	tmp := path + ".new"
+	exeDir, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(exeDir), sidecarName()+".new")
 	_ = os.Remove(tmp)
 	if err := download(src, tmp); err != nil {
 		return err
 	}
+	// Verified before anything is unpacked: untrusted archives are never opened.
 	if err := enforceArtifactSignature(src, tmp); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(tmp, 0o755)
-	}
-	candidateVersion, err := binaryVersion(tmp)
+	candidate, commit, cleanup, err := stageSidecar(tmp)
 	if err != nil {
-		if quarantined(tmp) {
-			return errQuarantined(tmp)
-		}
 		_ = os.Remove(tmp)
+		return err
+	}
+	candidateVersion, err := binaryVersion(candidate)
+	if err != nil {
+		if quarantined(candidate) {
+			return errQuarantined(candidate)
+		}
+		cleanup()
 		return fmt.Errorf("sidecar validation failed: %w", err)
 	}
 	if currentVersion, err := binaryVersion(path); err == nil {
 		if err := validateUpgradeVersion(currentVersion, candidateVersion); err != nil {
-			_ = os.Remove(tmp)
+			cleanup()
 			return fmt.Errorf("sidecar update refused: %w", err)
 		}
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		if quarantined(tmp) {
-			return errQuarantined(tmp)
+	if err := commit(path); err != nil {
+		if quarantined(candidate) {
+			return errQuarantined(candidate)
 		}
-		_ = os.Remove(tmp)
+		cleanup()
 		return err
 	}
 	if remoteTag != "" {

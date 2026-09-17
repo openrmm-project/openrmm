@@ -309,7 +309,7 @@ if [ "$OS" = "darwin" ]; then
   <key>Label</key><string>com.openrmm.remote</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${DEST%/*}/rmm-remote</string>
+    <string>/Library/Application Support/OpenRMM/RMMRemote.app/Contents/MacOS/rmm-remote</string>
     <string>-session</string>
     <string>${STATE_DIR}/remote-session.json</string>
   </array>

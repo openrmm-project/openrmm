@@ -7,6 +7,9 @@
 # bundle holds, not just the new file.
 #
 # Usage: build-macos-bundle.sh <arch> <built-binary> <output.tar.gz>
+# RMM_MACOS_CODESIGN_IDENTITY selects a persistent keychain identity when set.
+# The default ad-hoc signature is suitable for builds that do not need to retain
+# privacy grants across versions.
 set -euo pipefail
 
 arch="$1"; binary="$2"; out="$3"
@@ -36,8 +39,15 @@ else
   echo "warning: sips/iconutil unavailable — bundling without an icon" >&2
 fi
 
-codesign --sign - --force "$app"
-codesign --verify --verbose=2 "$app"
+# The agent clears the endpoint's stale privacy grants after an update, because
+# an ad-hoc signature makes every build a new application to macOS. This marker
+# tells it not to, and it has to exist before signing to stay inside the seal.
+if [ -n "${RMM_MACOS_CODESIGN_IDENTITY:-}" ] && [ "$RMM_MACOS_CODESIGN_IDENTITY" != "-" ]; then
+  printf '%s\n' "$RMM_MACOS_CODESIGN_IDENTITY" > "$app/Contents/Resources/StableCodeIdentity"
+fi
+
+codesign --sign "${RMM_MACOS_CODESIGN_IDENTITY:--}" --force --identifier io.openrmm.remote "$app"
+codesign --verify --deep --strict --verbose=2 "$app"
 
 mkdir -p "$(dirname "$out")"
 tar -czf "$out" -C "$stage" RMMRemote.app

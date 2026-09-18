@@ -369,25 +369,69 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   restore the archive's numeric ownership.
 
   **Updates and the Designated Requirement.** macOS records the app's DR when a
-  permission is granted and, on update, checks whether the new version satisfies
-  the same DR before treating it as the same app. Unsigned code has no DR, and an
-  ad-hoc signature produces one tied to that build — so a rebuilt sidecar is a
-  different application as far as TCC is concerned. A **Developer ID** signature
-  is how a DR becomes stable across versions, which is what makes an
-  auto-updating sidecar and macOS privacy compatible.
+  permission is granted and checks whether a new version satisfies it. The
+  default ad-hoc DR is tied to one build. Before replacing the bundle, the
+  updater compares the staged bundle against the installed one's DR and writes
+  the outcome to `agent.log`: an identity change means the operator has to grant
+  the permissions again. **The update still goes through** — refusing it would
+  freeze the module at the installed version for as long as builds keep changing
+  identity, which is a worse trade than one re-grant. The comparison needs
+  `codesign`, which ships with the Xcode Command Line Tools rather than with
+  macOS, so on a stock Mac it is skipped; the archive's Ed25519 signature is the
+  integrity check in every case.
+
+  **Stale grants are cleared, not left to mislead.** A privacy row is keyed by
+  bundle identifier, so it outlives the build it was granted to: after an update
+  the panes still list the sidecar as allowed while macOS denies it, which looks
+  like a broken permission rather than one that has to be granted again. After
+  replacing the bundle the agent therefore runs `tccutil reset All
+  io.openrmm.remote`, once as root for the system-wide rows (Accessibility) and
+  once through `launchctl asuser` for the console user's (Screen Recording), and
+  logs it. The rows disappear, and the next session prompts properly. To do it by
+  hand on an endpoint:
+
+  ```sh
+  sudo tccutil reset All io.openrmm.remote   # system-wide rows
+  tccutil reset All io.openrmm.remote        # the logged-in user's rows
+  ```
+
+  The reset is skipped when the bundle carries
+  `Contents/Resources/StableCodeIdentity`, which the builder writes only when
+  `RMM_MACOS_CODESIGN_IDENTITY` signed it — with a persistent identity the
+  existing grants stay valid and must not be thrown away.
+
+  For internal testing without Developer ID, the bundle builder accepts a
+  persistent keychain identity through `RMM_MACOS_CODESIGN_IDENTITY`. Use the
+  same identity for every build, then verify two real updates on a Mac. A
+  self-signed identity can provide a stable DR, but it does not make the app
+  eligible for notarization or normal Gatekeeper distribution. Apple recommends
+  an Apple-issued identity for reliable Local Network privacy tracking. A
+  Developer ID signature remains the intended path for public distribution.
+  Changing from the old ad-hoc identity may require one new permission grant.
 
   Measured, not assumed: after the first auto-update the endpoint prompted again
   while Privacy & Security still showed the entry as allowed — the list matches
   by path and name, the decision by DR, and the two disagree after a rebuild.
   Toggling the switch off and on re-grants it (`tccutil reset <service>
-  com.openrmm.remote` does the same), and that is the recurring cost of shipping
-  without Developer ID.
+  io.openrmm.remote` does the same). That is why the updater clears the rows
+  itself: the operator is asked once, instead of being shown a permission that
+  is already on and still denied.
+
+  **The bundle identifier is `io.openrmm.remote`.** Reverse-DNS names a domain
+  the project controls, and the earlier `com.openrmm.remote` did not. The
+  identifier is the privacy identity and the LaunchAgent label, so endpoints
+  installed under the old name are migrated: the agent (and a reinstall) boots
+  out the old job, deletes `/Library/LaunchAgents/com.openrmm.remote.plist` and
+  resets its privacy rows. The agent also rewrites its own LaunchAgent plist
+  whenever it no longer matches, because agents update themselves and installers
+  do not re-run.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.
-- Release CI currently builds the arm64 sidecar on macos-14, but does not Apple-code-sign,
-  notarize or staple the sidecar. Gatekeeper/TCC approval remains an operator
-  concern; OpenRMM's Ed25519 update signature is a separate trust mechanism.
+- Release CI builds the arm64 sidecar on macos-14, packages and ad-hoc signs its
+  `.app.tar.gz`, but does not sign with Developer ID, notarize or staple it.
+  Gatekeeper/TCC approval remains an operator concern; OpenRMM's Ed25519 update
+  signature is a separate trust mechanism.
 - macOS source/native CI changes do not update an existing `/dl/` binary by
   themselves. Compile on a Mac with the compatible SDK, verify on a logged-in
   device, then publish the binary and detached signature together. A Linux-only

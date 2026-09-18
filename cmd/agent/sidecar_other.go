@@ -23,6 +23,8 @@ func sidecarExePath(agentDir string) string {
 	return filepath.Join(agentDir, sidecarName())
 }
 
+func validateSidecarCandidate(_, _ string) error { return nil }
+
 // stageSidecar prepares a downloaded artifact for validation. Everywhere except
 // macOS the artifact is the executable itself, so there is nothing to unpack.
 func stageSidecar(artifact string) (exe string, commit func(dest string) error, cleanup func(), err error) {

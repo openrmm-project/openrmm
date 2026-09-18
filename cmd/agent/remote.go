@@ -180,6 +180,12 @@ func (a *agent) ensureSidecar() (string, error) {
 		}
 		log.Printf("remote: sidecar changed on server; refreshing")
 		if err := a.fetchSidecar(src, path, etagPath, remoteTag); err != nil {
+			// A failed update must not take away working remote access. Keep the
+			// published ETag unmatched so the next session can retry the update.
+			if _, statErr := os.Stat(path); statErr == nil {
+				log.Printf("remote: update refused; keeping installed sidecar: %v", err)
+				return path, nil
+			}
 			return "", err
 		}
 		return path, nil
@@ -213,6 +219,12 @@ func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
 	if err != nil {
 		_ = os.Remove(tmp)
 		return err
+	}
+	// Reported, not enforced: an identity change costs the operator one re-grant,
+	// while refusing the update would freeze the module at the installed version
+	// for as long as the build identity keeps changing.
+	if err := validateSidecarCandidate(path, candidate); err != nil {
+		log.Printf("remote: %v; macOS privacy permissions may have to be granted again", err)
 	}
 	candidateVersion, err := binaryVersion(candidate)
 	if err != nil {

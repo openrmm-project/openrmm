@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,9 +15,80 @@ import (
 	"time"
 )
 
-// remoteAgentLabel is the per-user LaunchAgent that owns desktop sessions. The
-// installer writes its plist; the daemon only ever kickstarts it.
-const remoteAgentLabel = "com.openrmm.remote"
+// remoteAgentLabel is the per-user LaunchAgent that owns desktop sessions, and
+// the bundle identifier macOS keys the sidecar's privacy grants to. Reverse-DNS
+// of a domain the project controls: the earlier com.openrmm.remote named a
+// domain it does not own.
+const remoteAgentLabel = "io.openrmm.remote"
+
+// legacyRemoteAgentLabel is what endpoints installed before that rename carry.
+const legacyRemoteAgentLabel = "com.openrmm.remote"
+
+func remoteAgentPlistPath(label string) string {
+	return filepath.Join("/Library/LaunchAgents", label+".plist")
+}
+
+func remoteAgentPlist() string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>%s</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>%s</string>
+    <string>-session</string>
+    <string>%s</string>
+  </array>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+`, remoteAgentLabel, sidecarExePath(""), sessionFilePath())
+}
+
+// ensureRemoteAgent keeps the LaunchAgent in step with the running agent. The
+// installer writes it too, but agents update themselves and installers do not
+// re-run: a label or a path that changes between versions would otherwise leave
+// the endpoint with a job the daemon can no longer start.
+func ensureRemoteAgent(uid string) error {
+	retireLegacyRemoteAgent(uid)
+	path := remoteAgentPlistPath(remoteAgentLabel)
+	want := remoteAgentPlist()
+	if current, err := os.ReadFile(path); err == nil && string(current) == want {
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	_ = os.Chown(path, 0, 0)
+	// Reloaded rather than only written: launchd holds the definition it read at
+	// login, so a session started now would still use the previous one.
+	_, _ = exec.Command("/bin/launchctl", "bootout", "gui/"+uid+"/"+remoteAgentLabel).CombinedOutput()
+	if out, err := exec.Command("/bin/launchctl", "bootstrap", "gui/"+uid, path).CombinedOutput(); err != nil {
+		return fmt.Errorf("launchctl bootstrap %s: %w: %s", remoteAgentLabel, err, strings.TrimSpace(string(out)))
+	}
+	log.Printf("remote: installed the %s LaunchAgent", remoteAgentLabel)
+	return nil
+}
+
+// retireLegacyRemoteAgent removes what the previous bundle identifier left on
+// the endpoint. Its privacy rows are cleared with it: left behind, they keep
+// showing an allowed application that nothing runs under any more.
+func retireLegacyRemoteAgent(uid string) {
+	path := remoteAgentPlistPath(legacyRemoteAgentLabel)
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	_, _ = exec.Command("/bin/launchctl", "bootout", "gui/"+uid+"/"+legacyRemoteAgentLabel).CombinedOutput()
+	if err := os.Remove(path); err != nil {
+		log.Printf("remote: remove %s: %v", path, err)
+		return
+	}
+	resetStalePrivacyGrants(legacyRemoteAgentLabel)
+	log.Printf("remote: retired the %s LaunchAgent", legacyRemoteAgentLabel)
+}
 
 // launchSidecar starts the media sidecar. A file-transfer session has no UI and
 // runs straight from the daemon, as root; a desktop session cannot.
@@ -52,6 +124,9 @@ func launchSidecar(bin, relay, ticket string, extra ...string) error {
 
 	uid, err := consoleUID()
 	if err != nil {
+		return err
+	}
+	if err := ensureRemoteAgent(uid); err != nil {
 		return err
 	}
 	if err := writeSessionFile(uid, relay, ticket, filesOnly, noFiles); err != nil {

@@ -101,7 +101,7 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.13.0"
+const remoteVersion = "0.13.1"
 
 // sessionParams is what the agent hands to a LaunchAgent-started sidecar.
 type sessionParams struct {

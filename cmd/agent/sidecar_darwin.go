@@ -180,12 +180,10 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		// leaves something to fall back to rather than nothing.
 		old := bundle + ".old"
 		_ = os.RemoveAll(old)
-		replacing := false
 		if _, err := os.Stat(bundle); err == nil {
 			if err := os.Rename(bundle, old); err != nil {
 				return err
 			}
-			replacing = true
 		}
 		if err := os.Rename(stage, bundle); err != nil {
 			_ = os.Rename(old, bundle) // put the working one back
@@ -193,11 +191,13 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		}
 		_ = os.RemoveAll(old)
 		_ = os.Remove(artifact)
-		// Only when a grant could have been left behind, and only while the
-		// signature is build-bound: a persistent identity keeps grants valid.
-		if _, err := os.Stat(filepath.Join(bundle, macStableIdentityMarker)); replacing && os.IsNotExist(err) {
-			resetStalePrivacyGrants(remoteAgentLabel)
-		}
+		// Deliberately NOT resetting the privacy grants here. Doing that on every
+		// update destroyed grants that were still good: the operator allowed the
+		// new bundle, the next published build replaced it, and the allowance
+		// went with it. The sidecar asks macOS for what it needs at startup, and
+		// a request is the supported way to recover from a grant that no longer
+		// applies. The reset remains for the one case a request cannot fix —
+		// rows left under a bundle identifier nothing runs under any more.
 		return nil
 	}
 	return exe, commit, cleanup, nil

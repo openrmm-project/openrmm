@@ -425,6 +425,31 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   resets its privacy rows. The agent also rewrites its own LaunchAgent plist
   whenever it no longer matches, because agents update themselves and installers
   do not re-run.
+#### Clipboard
+
+The technician's clipboard reaches the endpoint on their own paste keystroke.
+The viewer listens for the browser's `paste` event, which carries the text with
+it — nothing asks for clipboard *read* permission — and sends
+`{"t":"clip","text":"…","paste":true}`. The sidecar replaces the endpoint's
+clipboard and then presses the paste shortcut **its own platform uses**: ⌘V on
+macOS, Ctrl+V on Windows and Linux. Forwarding the technician's raw Ctrl+V as
+keystrokes would paste nothing on a Mac, which is the bug this replaces.
+
+Text only, capped at 256 KB: the message shares the session's socket with the
+video stream.
+
+**One direction only.** The endpoint's clipboard is never read back. Collecting
+what somebody copied on their own machine, silently, is surveillance rather than
+support; a technician who needs content from the endpoint can use file transfer,
+which the user can see.
+
+On Linux the text is handed to `wl-copy`, `xclip` or `xsel`, whichever is
+installed — Wayland first, since the X11 tools reach Xwayland's clipboard rather
+than the one the compositor's applications read. Owning the X11 CLIPBOARD
+selection directly would mean answering selection requests for as long as the
+content should live, and the capture loop owns that connection. If none of the
+three is installed the paste is refused and logged, not silently dropped.
+
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.

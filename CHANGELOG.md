@@ -118,6 +118,16 @@ tag.
   counts, which is the honest answer when there is nothing to deduplicate
   against.
 
+### Added
+
+- **Paste into a remote session.** The technician's clipboard follows their own
+  paste keystroke: the viewer catches the browser's `paste` event, which carries
+  the text, so no clipboard-read permission is involved, and the sidecar applies
+  the paste shortcut the endpoint's platform uses — ⌘V on macOS, Ctrl+V
+  elsewhere. Forwarding a raw Ctrl+V pasted nothing on a Mac. Text only, 256 KB
+  cap, and strictly one direction: the endpoint's clipboard is never read back.
+  Sidecar 0.14.0.
+
 ### Fixed
 
 - **A root service no longer runs from a directory another account can own.**

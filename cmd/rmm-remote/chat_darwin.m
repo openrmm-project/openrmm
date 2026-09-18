@@ -100,3 +100,18 @@ void rmmChatAppend(const char *text, int technician) {
 void rmmChatClose(void) {
     dispatch_async(dispatch_get_main_queue(), ^{ [chat.window orderOut:nil]; [chat release]; chat = nil; });
 }
+
+// The technician's clipboard, pushed into this Mac's pasteboard so a paste in
+// the remote session produces what they copied on their own machine. Declaring
+// a new owner is required before writing: a pasteboard's contents belong to
+// whoever cleared it last, and writing without clearing is ignored.
+void rmmSetClipboard(const char *text) {
+    NSString *value = [[NSString alloc] initWithUTF8String:text];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!value) return;
+        NSPasteboard *board = [NSPasteboard generalPasteboard];
+        [board clearContents];
+        [board setString:value forType:NSPasteboardTypeString];
+    });
+    [value release];
+}

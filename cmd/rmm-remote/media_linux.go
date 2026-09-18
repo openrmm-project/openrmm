@@ -169,6 +169,27 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				continue
 			}
 			switch e.T {
+			case "clip":
+				var cm struct {
+					Text  string `json:"text"`
+					Paste bool   `json:"paste"`
+				}
+				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+					if err := setClipboard(cm.Text); err != nil {
+						log.Printf("rmm-remote: clipboard: %v", err)
+					} else if cm.Paste {
+						// Sent as ordinary key events so the paste travels
+						// through whichever backend is injecting input —
+						// uinput or XTEST — instead of a second code path.
+						for _, event := range pasteKeyEvents {
+							select {
+							case inputCh <- event:
+							case <-done:
+								return
+							}
+						}
+					}
+				}
 			case "mon":
 				var mm struct {
 					ID int32 `json:"id"`
@@ -572,4 +593,13 @@ func allBlack(pix []byte) bool {
 		}
 	}
 	return true
+}
+
+// Control-V as the viewer would send it: browser key codes, which both input
+// backends already map.
+var pasteKeyEvents = [][]byte{
+	[]byte(`{"t":"k","code":17,"down":true}`),
+	[]byte(`{"t":"k","code":86,"down":true}`),
+	[]byte(`{"t":"k","code":86,"down":false}`),
+	[]byte(`{"t":"k","code":17,"down":false}`),
 }

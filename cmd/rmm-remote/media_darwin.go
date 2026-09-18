@@ -87,6 +87,24 @@ static int rmmForceQuit(void) {
     if (src) CFRelease(src);
     return ok;
 }
+
+// Command-V after the pasteboard is replaced. The technician presses whatever
+// paste shortcut their own machine uses; what has to arrive here is the one
+// this platform understands, so the viewer never guesses the endpoint's OS.
+static int rmmPasteShortcut(void) {
+    if (!CGPreflightPostEventAccess()) return 0;
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    const CGEventFlags cmd = kCGEventFlagMaskCommand;
+    int ok = 1;
+    ok &= rmmPostKey(src, 55, true, cmd);  // kVK_Command down
+    ok &= rmmPostKey(src, 9, true, cmd);   // kVK_ANSI_V down
+    ok &= rmmPostKey(src, 9, false, cmd);
+    // Released unconditionally: an early return would leave Command stuck down
+    // on the user's own keyboard.
+    ok &= rmmPostKey(src, 55, false, 0);
+    if (src) CFRelease(src);
+    return ok;
+}
 */
 import "C"
 
@@ -437,6 +455,23 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				if json.Unmarshal(data, &mm) == nil && mm.ID > 0 {
 					monSel.Store(mm.ID)
 					monReq.Store(true)
+				}
+			case "clip":
+				var cm struct {
+					Text  string `json:"text"`
+					Paste bool   `json:"paste"`
+				}
+				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+					setMacClipboard(cm.Text)
+					if cm.Paste {
+						// The pasteboard write is dispatched to the main queue,
+						// so the shortcut waits for it: pasting first would
+						// paste whatever the Mac held before.
+						go func() {
+							time.Sleep(120 * time.Millisecond)
+							C.rmmPasteShortcut()
+						}()
+					}
 				}
 			case "cad":
 				select {

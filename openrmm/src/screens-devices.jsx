@@ -614,6 +614,22 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       if (e.key === 'Escape' && skipFullscreenEscapeUp) { skipFullscreenEscapeUp = false; return; }
       e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false });
     };
+    // The technician's clipboard, on their own paste keystroke. The paste event
+    // carries the text with it, so nothing has to ask the browser for clipboard
+    // read permission, and the endpoint applies the paste shortcut its own
+    // platform uses — Command-V on a Mac, Control-V elsewhere — which a raw
+    // Ctrl+V forwarded as keystrokes would get wrong. Only this direction: the
+    // endpoint's clipboard is never read back, because silently collecting what
+    // somebody copied on their own machine is surveillance, not support.
+    const onPaste = (e) => {
+      if (typing()) return;
+      const text = e.clipboardData && e.clipboardData.getData('text/plain');
+      if (!text) return;
+      e.preventDefault();
+      // Bounded: a pasted file listing or log can be megabytes, and this shares
+      // the session's socket with the video stream.
+      send({ t: 'clip', text: text.slice(0, 256 * 1024), paste: true });
+    };
     // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
     if (!filesOnly && cv) {
       cv.addEventListener('pointermove', onMove);
@@ -624,6 +640,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       cv.addEventListener('contextmenu', onCtx);
       window.addEventListener('keydown', kd);
       window.addEventListener('keyup', ku);
+      window.addEventListener('paste', onPaste);
     }
     connect();
     return () => {
@@ -637,6 +654,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         cv.removeEventListener('wheel', onWheel);
         cv.removeEventListener('contextmenu', onCtx);
       }
+      window.removeEventListener('paste', onPaste);
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
     };

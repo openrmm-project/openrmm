@@ -692,6 +692,18 @@ func (s *session) onMessage(mt int, data []byte) {
 			s.monitor.Store(int32(e.ID))
 			s.monReq.Store(true)
 		}
+	case "clip":
+		var cm struct {
+			Text  string `json:"text"`
+			Paste bool   `json:"paste"`
+		}
+		if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+			if err := setClipboard(cm.Text); err != nil {
+				log.Printf("rmm-remote: clipboard: %v", err)
+			} else if cm.Paste {
+				pasteShortcut()
+			}
+		}
 	case "cad":
 		// The named-pipe round-trip can wait on the broker; don't stall input.
 		go func() {

@@ -120,6 +120,16 @@ tag.
 
 ### Added
 
+- **macOS asks for the permissions it needs, and keeps the answers.** The sidecar
+  never requested Screen Recording or Accessibility — it only checked them, and
+  macOS neither prompts nor lists an app that does not ask, so every Mac needed
+  someone to add it by hand. It now requests both, and the viewer explains what
+  is missing instead of showing a black screen or a session that ignores clicks.
+  The agent also stopped clearing privacy grants when it replaces the bundle:
+  that was discarding allowances given minutes earlier. Docs cover what signing
+  the sidecar yourself changes for a self-hosted install, and why official builds
+  are not self-signed.
+
 - **Paste into a remote session.** The technician's clipboard follows their own
   paste keystroke: the viewer catches the browser's `paste` event, which carries
   the text, so no clipboard-read permission is involved, and the sidecar applies

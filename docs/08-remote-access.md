@@ -400,14 +400,53 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   `RMM_MACOS_CODESIGN_IDENTITY` signed it — with a persistent identity the
   existing grants stay valid and must not be thrown away.
 
-  For internal testing without Developer ID, the bundle builder accepts a
-  persistent keychain identity through `RMM_MACOS_CODESIGN_IDENTITY`. Use the
-  same identity for every build, then verify two real updates on a Mac. A
-  self-signed identity can provide a stable DR, but it does not make the app
-  eligible for notarization or normal Gatekeeper distribution. Apple recommends
-  an Apple-issued identity for reliable Local Network privacy tracking. A
-  Developer ID signature remains the intended path for public distribution.
-  Changing from the old ad-hoc identity may require one new permission grant.
+  **What this costs, and who pays it.** Official builds are ad-hoc signed, so
+  every published sidecar is a new application to macOS and the operator is asked
+  for Screen Recording and Accessibility again. In steady state a sidecar release
+  is rare, which makes this an occasional prompt rather than a routine — but it
+  is the behaviour to expect, and the viewer says so instead of showing a black
+  screen. Nothing the agent does removes a grant on an update any more: the
+  sidecar requests what it needs at startup and macOS decides.
+
+##### Signing the macOS sidecar yourself
+
+A self-hosted install downloads the sidecar from **its own** `/dl/`, so whoever
+signed that artifact decides the code identity the endpoints record. Three cases,
+with different consequences:
+
+1. **You publish the official artifact unchanged.** Its identity is whatever the
+   project signed it with — today ad-hoc, so the prompt returns on each sidecar
+   upgrade.
+2. **You build the sidecar yourself** (rebranding, auditing, or a patched
+   build). Set `RMM_MACOS_CODESIGN_IDENTITY` to a persistent signing identity and
+   the grants survive your upgrades, because the DR then follows the certificate
+   instead of the build. `scripts/build-macos-bundle.sh` reads that variable and
+   records `Contents/Resources/StableCodeIdentity` inside the bundle.
+3. **Developer ID**, which only the entity that owns it can use. It is the only
+   option that also gives notarization, so a bundle downloaded through a browser
+   is not blocked by Gatekeeper.
+
+To create an identity for case 2, on a Mac: Keychain Access ▸ Certificate
+Assistant ▸ *Create a Certificate…*, a **self-signed root** of type **Code
+Signing**; tick *Let me override defaults* and give it a validity of years —
+expiry costs every endpoint a fresh grant. `security find-identity -v -p
+codesigning` prints the name to pass in the variable. Export it as a `.p12` and
+guard it the way you guard the update-signing key: **losing it re-prompts every
+Mac in your fleet**, and unlike the Ed25519 key there is no two-key rotation that
+would hide the change from users. Building where the certificate lives is part of
+the deal — a CI runner needs the `.p12` as a secret and imports it into a
+temporary keychain.
+
+Note what a self-signed identity does **not** buy: no notarization, no Gatekeeper
+clearance for a browser download, and no verified publisher name — the Privacy
+panes still say the app is from an unidentified developer. It buys exactly one
+thing, which is that an update stops looking like a different application.
+
+**The project deliberately does not sign official builds with a self-signed
+certificate.** It would spare operators the prompt, but it would put a key whose
+loss re-prompts every macOS endpoint of every self-hosted install under the
+project's custody, and it would do nothing for anyone building from source. The
+intended path for official builds is Developer ID.
 
   Measured, not assumed: after the first auto-update the endpoint prompted again
   while Privacy & Security still showed the entry as allowed — the list matches

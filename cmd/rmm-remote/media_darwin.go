@@ -115,6 +115,15 @@ static int rmmRequestScreenCapture(void) {
     if (CGPreflightScreenCaptureAccess()) return 1;
     return CGRequestScreenCaptureAccess() ? 1 : 0;
 }
+
+// The same applies to Accessibility, which is what synthetic input needs — the
+// whole keyboard and mouse, not only the Ctrl-Alt-Del chord. Preflight only
+// reports the answer; it never asks, and an app that never asks is not offered
+// in the list for an operator to allow.
+static int rmmRequestPostEvents(void) {
+    if (CGPreflightPostEventAccess()) return 1;
+    return CGRequestPostEventAccess() ? 1 : 0;
+}
 */
 import "C"
 
@@ -424,13 +433,17 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	if !screenOK {
 		log.Printf("rmm-remote: screen recording not granted; the session will show a black screen until it is allowed")
 	}
-	cadAvailable := bool(C.CGPreflightPostEventAccess())
+	inputAllowed := C.rmmRequestPostEvents() != 0
+	if !inputAllowed {
+		log.Printf("rmm-remote: accessibility not granted; keyboard and mouse will not reach this Mac")
+	}
+	cadAvailable := inputAllowed
 	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
 	if !screenOK {
 		hello["capture_error"] = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session."
 	}
 	if !cadAvailable {
-		hello["cad_error"] = "Enable Accessibility for rmm-remote in macOS System Settings → Privacy & Security, then reopen the session."
+		hello["cad_error"] = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security, then reopen the session. Without it no keyboard or mouse input reaches this Mac."
 	}
 	if b, e := json.Marshal(hello); e == nil {
 		out <- omsg{websocket.TextMessage, b}

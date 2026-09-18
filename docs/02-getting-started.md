@@ -97,6 +97,51 @@ agent downloads — see
 and [`scripts/windows-defender-exclusion.ps1`](../scripts/windows-defender-exclusion.ps1)
 to apply or revert it on endpoints that are already installed.
 
+**Windows — Programs and Features.** The installer registers the agent under
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent`, so it
+appears as *OpenRMM Agent* in Programs and Features, in Settings ▸ Apps and to
+inventory tools. Registering a Windows service alone leaves no such entry, and
+software nobody can see on a managed endpoint is a support and audit problem. It
+is not a tamper control either way: a local administrator can stop the service
+regardless, so omitting the entry buys friction rather than protection. The
+entry is written only after the install reports healthy, refreshed on every run
+so the version stays honest, and its `UninstallString` runs
+`C:\ProgramData\rmm-agent\uninstall.ps1`, which stops and deletes the service,
+removes the binaries and enrolment state, drops the Defender exclusion if the
+installer added one, and removes the registry entry itself. `-action uninstall`
+on its own only removes the service.
+
+**Where the agent is installed, and why the directory matters.** Linux keeps
+`/usr/local/bin/rmm-agent`; **macOS uses `/usr/local/libexec/openrmm/`**, because
+Homebrew hands `/usr/local` to the logged-in administrator, and a service running
+as root must not execute from a directory another account can write to — a
+signature is checked at download and says nothing about a swap afterwards. The
+installer takes ownership of its directory, refuses to run if the target is not
+root-owned or is group/world-writable, and moves an endpoint installed at the old
+macOS path over on the next run. On Windows the same reasoning applies to
+`C:\ProgramData\rmm-agent`: a standard user may create folders under
+`C:\ProgramData` and owns what they create, so the installer breaks ACL
+inheritance and rewrites the entry list (SYSTEM and Administrators full control,
+Users read and execute) on every run, which is also what repairs an endpoint
+installed by an older installer.
+
+## Removing an agent
+
+Run [`uninstall.sh`](../deploy/public/uninstall.sh) (Linux/macOS, served at
+`/uninstall.sh`) or `C:\ProgramData\rmm-agent\uninstall.ps1` (Windows). Both stop
+and remove the service, the binaries and `/etc/rmm-agent` (Windows:
+`C:\ProgramData\rmm-agent`) — which holds credentials that still authenticate to
+the server — and on macOS also the remote-desktop bundle, its LaunchAgent and the
+privacy grants recorded for it. `--keep-state` keeps the enrolment so a reinstall
+returns as the same device.
+
+```sh
+curl -fsSL https://agents.rmm.example.com/uninstall.sh | sudo bash
+```
+
+**Removal is local only.** It revokes nothing: delete the device in the console
+so its credentials stop being accepted.
+
 ## Updating agents (self-update)
 
 Agents **upgrade themselves**. Each connected agent periodically HEADs

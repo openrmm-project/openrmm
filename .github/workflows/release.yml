@@ -204,11 +204,19 @@ jobs:
           # Go baked into the runner image, which is how CI kept building on a
           # release that already had published security fixes.
           check-latest: true
-      - run: GOOS=darwin GOARCH=${{ matrix.arch }} CGO_ENABLED=1 go build -buildvcs=false -o rmm-remote-darwin-${{ matrix.arch }} ./cmd/rmm-remote
+      - name: Build and package macOS remote module
+        run: |
+          arch="${{ matrix.arch }}"
+          plist=cmd/rmm-remote/macapp/Info.plist
+          ldflags="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$plist"
+          GOOS=darwin GOARCH="$arch" CGO_ENABLED=1 go build -buildvcs=false -ldflags "$ldflags" -o "rmm-remote-darwin-$arch" ./cmd/rmm-remote
+          scripts/build-macos-bundle.sh "$arch" "rmm-remote-darwin-$arch" "rmm-remote-darwin-$arch.app.tar.gz"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-sidecar-${{ matrix.arch }}
-          path: rmm-remote-darwin-${{ matrix.arch }}
+          path: |
+            rmm-remote-darwin-${{ matrix.arch }}
+            rmm-remote-darwin-${{ matrix.arch }}.app.tar.gz
 
   publish:
     name: Sign, attest and publish
@@ -248,13 +256,13 @@ jobs:
       - name: Assemble unsigned release
         run: |
           test -n "$RMM_UPDATE_PUBLIC_KEY"
-          cp deploy/public/install.sh deploy/public/install.ps1 release/
+          cp deploy/public/install.sh deploy/public/install.ps1 deploy/public/uninstall.sh release/
           go build -buildvcs=false -o rmm-sign ./cmd/rmm-sign
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
       - name: Generate SBOM and checksums
         run: |
           syft dir:release -o spdx-json=release/SBOM.spdx.json
-          (cd release && sha256sum rmm-agent-* rmm-remote-* install.sh install.ps1 SBOM.spdx.json > SHA256SUMS)
+          (cd release && sha256sum rmm-agent-* rmm-remote-* install.sh install.ps1 uninstall.sh SBOM.spdx.json > SHA256SUMS)
       - name: Sign release artifacts
         env:
           RMM_SIGNING_KEY: ${{ secrets.RMM_SIGNING_KEY }}

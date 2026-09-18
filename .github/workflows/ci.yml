@@ -131,9 +131,9 @@ jobs:
       # prompts nor lists the tool, and the operator has nothing to allow. On
       # macOS 15 that surfaces as a denied LOCAL NETWORK access: the sidecar
       # cannot reach the relay and reports "no route to host". Embedding the
-      # plist in __TEXT,__info_plist is Apple's answer for tools that are not
-      # bundles, and the ad-hoc signature gives it the stable code identity that
-      # TCC anchors a grant to. Neither requires a certificate.
+      # plist in __TEXT,__info_plist helps identify a bare tool, but privacy
+      # grants for the shipped sidecar rely on the application bundle. Ad-hoc
+      # signing changes identity on rebuild and cannot preserve those grants.
       - name: Build, bundle and sign the darwin sidecars
         run: |
           set -eux
@@ -167,9 +167,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Shell syntax and lint
         run: |
-          bash -n deploy/public/install.sh
-          shellcheck -x deploy/public/install.sh deploy/ops/*.sh
+          bash -n deploy/public/install.sh deploy/public/uninstall.sh scripts/test-install-migration.sh
+          shellcheck -x deploy/public/install.sh deploy/public/uninstall.sh deploy/ops/*.sh
           for script in deploy/ops/*.sh; do bash -n "$script"; done
+      # Installs into the runner's real system paths, which is why it only runs
+      # on a throwaway machine. It covers the installer's transaction, the
+      # directory-ownership refusal and uninstall.sh; the agent is a stand-in,
+      # since CI has no server for a real one to enrol against.
+      - name: Installer transaction and uninstall
+        run: sudo bash scripts/test-install-migration.sh
       - name: PowerShell static validation
         shell: pwsh
         run: |
@@ -254,8 +260,8 @@ jobs:
         run: |
           export PATH="$(brew --prefix openssl@3)/bin:$PATH"
           openssl version | grep -E '^OpenSSL ([3-9]|[1-9][0-9])\.'
-          bash -n deploy/public/install.sh
-          shellcheck deploy/public/install.sh
+          bash -n deploy/public/install.sh deploy/public/uninstall.sh
+          shellcheck deploy/public/install.sh deploy/public/uninstall.sh
           tmp="$(mktemp -d)"
           go build -buildvcs=false -o "$tmp/rmm-sign" ./cmd/rmm-sign
           keys="$("$tmp/rmm-sign" -gen-key)"
@@ -272,6 +278,10 @@ jobs:
           printf '%s' "$signature" | openssl base64 -d -A > "$tmp/signature.bin"
           openssl dgst -sha256 -binary "$tmp/artifact" > "$tmp/artifact.digest"
           openssl pkeyutl -verify -pubin -inkey "$tmp/public.der" -keyform DER -rawin -in "$tmp/artifact.digest" -sigfile "$tmp/signature.bin"
+      # The one platform where the agent moves out of /usr/local/bin, and the
+      # only place the installer's BSD stat syntax is exercised.
+      - name: Installer migration and uninstall
+        run: sudo bash scripts/test-install-migration.sh
 
   frontend:
     name: Frontend npm validation

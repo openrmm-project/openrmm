@@ -11,8 +11,8 @@ tag.
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and
   validates acceptable signed `acr` values; `RMM_OIDC_REQUIRED_AMR` requires
   every configured authentication method before SSO account resolution. Includes
-  downgrade/recovery-code tests and optional interoperability tests with the
-  Cloud portal provider. Existing local sign-in and role assignment are unchanged.
+  downgrade/recovery-code tests and optional OIDC interoperability tests.
+  Existing local sign-in and role assignment are unchanged.
   First-time linking of an email-shaped username now also requires the provider's
   matching, signed `email_verified=true` claim.
 
@@ -120,6 +120,53 @@ tag.
 
 ### Fixed
 
+- **A root service no longer runs from a directory another account can own.**
+  On Windows a standard user may create folders under `C:\ProgramData` and owns
+  what they create, so pre-creating `C:\ProgramData\rmm-agent` left the
+  directory of a SYSTEM service — and of the script an administrator runs to
+  uninstall it — under their control. The installer now breaks ACL inheritance
+  and writes the entries explicitly (SYSTEM and Administrators full control,
+  Users read and execute), on every run, which also repairs endpoints installed
+  earlier. On macOS the agent moved to `/usr/local/libexec/openrmm/`, because
+  Homebrew gives `/usr/local` to the logged-in administrator; existing installs
+  are migrated on the next run and the installer refuses a target directory that
+  is not root-owned. The update signature is checked at download and says
+  nothing about a binary swapped afterwards, which is what these directories
+  allowed. The macOS remote-desktop bundle's parent directory is taken over the
+  same way: it lives under `/Library/Application Support`, which is
+  group-writable by administrators, and the bundle holds Screen Recording and
+  Accessibility.
+
+- **Linux and macOS can be uninstalled.** `deploy/public/uninstall.sh` (served at
+  `/uninstall.sh`) stops and removes the service, the binaries, the enrolment
+  state and, on macOS, the remote-desktop bundle, its LaunchAgent and the privacy
+  grants. `-action uninstall` only ever removed the service definition, so a
+  decommissioned endpoint kept credentials that still authenticated to the
+  server. `--keep-state` preserves the enrolment. Removal is local and revokes
+  nothing: the device still has to be deleted in the console.
+
+- **macOS remote access stopped claiming a permission it did not have.** A
+  privacy grant is keyed to the bundle identifier, so it outlived the build it
+  was given to: after a sidecar update the Privacy panes still listed OpenRMM as
+  allowed while macOS denied the capture. The agent now clears those rows when it
+  replaces the bundle, so the operator is asked once instead of chasing a switch
+  that is already on. The identity comparison that detects this needs `codesign`,
+  which ships with the Xcode Command Line Tools and not with macOS; where it is
+  missing the update proceeds, as the archive's Ed25519 signature is the
+  integrity check either way. Updates are never refused over identity — a frozen
+  module is worse than one re-grant.
+
+- **The macOS sidecar's bundle identifier is `io.openrmm.remote`.** Reverse-DNS
+  should name a domain the project controls, and `com.openrmm.remote` did not.
+  Endpoints installed under the old name are migrated: the old LaunchAgent is
+  booted out, its plist removed and its privacy rows reset. The agent also
+  rewrites its LaunchAgent plist whenever it drifts, because agents update
+  themselves and installers do not re-run. Sidecar 0.13.1.
+
+- **A refused or failed macOS sidecar update no longer takes remote access with
+  it.** When an update cannot be installed and a working module is present, the
+  session uses the installed one and the update is retried later.
+
 - **The Windows enrollment command had to be scrolled to be read.** It is a
   single line carrying the server URL and the token, and the code block scrolls
   long lines sideways rather than wrapping them — right for a script, wrong for a
@@ -212,8 +259,8 @@ tag.
   audited; the one mutation that could hand over the entire fleet left no trace
   of who did it.
 
-- **Accented characters were destroyed in script output.** `Olá, Miquéias!`
-  reached the database as `Ol<?>, Miqu<?>ias!`. A redirected child on Windows
+- **Accented characters were destroyed in script output.** `Olá, café!`
+  reached the database as `Ol<?>, caf<?>!`. A redirected child on Windows
   writes the system code page, not UTF-8 — Python uses cp1252 on a pt-BR
   install — so each accented byte was invalid UTF-8 on its own, and marshalling
   it replaced the byte with U+FFFD. That substitution is **lossy**: nothing

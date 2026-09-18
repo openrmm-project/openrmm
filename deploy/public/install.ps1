@@ -206,6 +206,116 @@ function Invoke-Agent {
     }
 }
 
+# Windows lists installed software from the Uninstall registry keys, and nothing
+# else. Registering a service leaves no entry, so the agent was invisible in
+# Programs and Features, to inventory tools and to whoever has to audit the
+# endpoint. The entry is not a security boundary either way: a local admin can
+# stop the service regardless, so hiding it buys friction, not protection.
+$UninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent'
+
+# A directory under C:\ProgramData inherits an ACL that lets standard users
+# create things, and whoever creates a folder there owns it with full control.
+# A user who pre-creates C:\ProgramData\rmm-agent therefore controls the
+# directory a SYSTEM service runs from — and the one an administrator runs
+# uninstall.ps1 out of. Inheritance is broken and the ACL written explicitly,
+# which also strips whatever a squatter granted itself. Well-known SIDs, not
+# names: "Administrators" is localised.
+function Set-AgentDirectoryAcl {
+    param([string]$Path)
+    $system = New-Object Security.Principal.SecurityIdentifier(
+        [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    $admins = New-Object Security.Principal.SecurityIdentifier(
+        [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+    $users = New-Object Security.Principal.SecurityIdentifier(
+        [Security.Principal.WellKnownSidType]::BuiltinUsersSid, $null)
+
+    $acl = Get-Acl -Path $Path
+    $acl.SetAccessRuleProtection($true, $false)   # break inheritance, keep nothing
+    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $none = [Security.AccessControl.PropagationFlags]::None
+    foreach ($grant in @(@($system, 'FullControl'), @($admins, 'FullControl'), @($users, 'ReadAndExecute'))) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            $grant[0], $grant[1], $inherit, $none, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    Set-Acl -Path $Path -AclObject $acl
+
+    # Ownership carries an implicit right to rewrite the ACL, so it cannot stay
+    # with whoever created the directory. Taking it needs a privilege that is not
+    # always enabled in the token, so it is attempted after the entries are
+    # already restrictive and never fails the install on its own.
+    try {
+        $owner = Get-Acl -Path $Path
+        $owner.SetOwner($admins)
+        Set-Acl -Path $Path -AclObject $owner
+    } catch {
+        Write-Warning "Could not take ownership of ${Path}: $($_.Exception.Message)"
+        Write-Warning 'Its permissions were restricted, but the previous owner may still change them.'
+    }
+}
+
+function Write-UninstallEntry {
+    param([string]$Version)
+    # -action uninstall only removes the service. A real uninstall also has to
+    # take the binaries, the enrolment state, the Defender exclusion and this
+    # entry with it, so the installer ships the script the entry points at.
+    $uninstallScript = Join-Path $Dir 'uninstall.ps1'
+    $body = @'
+#Requires -RunAsAdministrator
+# Removes the OpenRMM agent from this endpoint. Written by install.ps1.
+$ErrorActionPreference = 'Stop'
+$dir = Join-Path $Env:ProgramData 'rmm-agent'
+$exe = Join-Path $dir 'rmm-agent.exe'
+
+if (Get-Service -Name 'rmm-agent' -ErrorAction SilentlyContinue) {
+    Stop-Service -Name 'rmm-agent' -Force -ErrorAction SilentlyContinue
+    if (Test-Path $exe) { & $exe -action uninstall | Out-Null }
+    & sc.exe delete rmm-agent | Out-Null   # in case the service outlives the binary
+}
+
+# An exclusion for a directory that no longer exists is a standing hole.
+if (Get-Command Get-MpPreference -ErrorAction SilentlyContinue) {
+    try {
+        if (@((Get-MpPreference).ExclusionPath) -contains $dir) {
+            Remove-MpPreference -ExclusionPath $dir -ErrorAction Stop
+            Write-Host "Defender: removed the exclusion for $dir."
+        }
+    } catch { Write-Warning "Could not remove the Defender exclusion: $($_.Exception.Message)" }
+}
+
+Remove-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent' `
+    -Recurse -Force -ErrorAction SilentlyContinue
+
+# This script lives in the directory it deletes, so the removal is handed to a
+# detached shell that outlives it.
+$removal = '/c timeout /t 3 /nobreak >nul & rmdir /s /q "' + $dir + '"'
+Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList $removal
+Write-Host 'OpenRMM agent removed.'
+'@
+    Set-Content -Path $uninstallScript -Value $body -Encoding UTF8
+
+    $size = 0
+    if (Test-Path $Exe) { $size = [int]((Get-Item $Exe).Length / 1024) }
+    New-Item -Path $UninstallKey -Force | Out-Null
+    $command = "`"$PSHome\powershell.exe`" -NoProfile -ExecutionPolicy Bypass -File `"$uninstallScript`""
+    $values = @{
+        DisplayName     = 'OpenRMM Agent'
+        DisplayVersion  = $Version
+        Publisher       = 'OpenRMM'
+        InstallLocation = $Dir
+        DisplayIcon     = "$Exe,0"
+        UninstallString = $command
+        QuietUninstallString = $command
+    }
+    foreach ($name in $values.Keys) {
+        New-ItemProperty -Path $UninstallKey -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null
+    }
+    foreach ($name in @('NoModify', 'NoRepair')) {
+        New-ItemProperty -Path $UninstallKey -Name $name -Value 1 -PropertyType DWord -Force | Out-Null
+    }
+    New-ItemProperty -Path $UninstallKey -Name 'EstimatedSize' -Value $size -PropertyType DWord -Force | Out-Null
+}
+
 function Restore-Install {
     Write-Warning 'Install did not become healthy; rolling back.'
     if ($serviceExisted) {
@@ -221,6 +331,9 @@ function Restore-Install {
         Move-Item -Force $Backup $Exe
     } elseif (-not $hadOld -and $swapped) {
         Remove-Item -Force -ErrorAction SilentlyContinue $Exe
+        # Nothing of this install survives, so neither should an entry from an
+        # earlier attempt that would now point at a missing agent.
+        Remove-Item -Path $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -Force -ErrorAction SilentlyContinue $SignaturePath
     if (Test-Path $SignatureBackup) { Move-Item -Force $SignatureBackup $SignaturePath }
@@ -272,6 +385,9 @@ function Test-Ed25519AnyKey {
 
 try {
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+    # Before anything is written into it, and on every run: an upgrade of an
+    # endpoint installed by an older installer is where the weak ACL gets fixed.
+    Set-AgentDirectoryAcl -Path $Dir
     if (Test-Path $Backup) { throw "Unresolved installer backup exists at $Backup" }
     if (Test-Path $SignatureBackup) { throw "Unresolved signature backup exists at $SignatureBackup" }
     if (Test-Path $StateBackup) { throw "Unresolved state backup exists at $StateBackup" }
@@ -440,6 +556,16 @@ try {
     } else {
         Write-Host 'Defender: no exclusion added. If remote sessions show a black screen, see docs/08-remote-access.md'
         Write-Host '          or run scripts/windows-defender-exclusion.ps1 on the endpoint.'
+    }
+
+    # After the health check, so a rolled-back install never leaves an entry for
+    # software that is not there. Rewritten on every run, which is what keeps
+    # DisplayVersion honest across upgrades.
+    try {
+        Write-UninstallEntry -Version $candidateVersion
+        Write-Host 'Registered in Programs and Features as "OpenRMM Agent".'
+    } catch {
+        Write-Warning "Could not register the uninstall entry: $($_.Exception.Message)"
     }
 
     Write-Host 'Agent installed, connected, and healthy.'

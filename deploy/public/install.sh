@@ -87,12 +87,57 @@ ARCH="$(uname -m)"
 case "$ARCH" in x86_64|amd64) ARCH=amd64;; aarch64|arm64) ARCH=arm64;; *) echo "error: unsupported architecture: $ARCH"; exit 1;; esac
 BIN="rmm-agent-${OS}-${ARCH}"
 WS="$(printf '%s' "$SERVER" | sed -e 's#^https#wss#' -e 's#^http#ws#')"
-DEST="/usr/local/bin/rmm-agent"
+# A service running as root must not execute a binary from a directory somebody
+# else can write to. On macOS /usr/local is routinely handed to the logged-in
+# admin by Homebrew, which would let a process without root replace the agent
+# launchd runs as root — so the agent lives in a directory this installer owns.
+# Linux keeps /usr/local/bin, which is root-owned there; the guard below checks
+# it rather than assuming it.
+LEGACY_DEST=""
+if [ "$OS" = "darwin" ]; then
+  DEST_DIR="/usr/local/libexec/openrmm"
+  LEGACY_DEST="/usr/local/bin/rmm-agent"
+else
+  DEST_DIR="/usr/local/bin"
+fi
+DEST="${DEST_DIR}/rmm-agent"
+MIGRATE_FROM=""
 STATE_DIR="/etc/rmm-agent"; STATE="${STATE_DIR}/state.json"; HEALTH="${STATE_DIR}/health.json"
 BACKUP="${DEST}.install-old"; SIGNATURE_PATH="${DEST}.sig"; SIGNATURE_BACKUP="${SIGNATURE_PATH}.install-old"
 STATE_BACKUP="${STATE}.install-old"; OUTBOX_BACKUP="${STATE}.outbox.install-old"
 TMP_DIR=""; TRANSACTION_STARTED=0; SWAPPED=0; COMMITTED=0; HAD_OLD=0; HAD_STATE=0; HAD_OUTBOX=0
 SERVICE_EXISTED=0; SERVICE_KIND=""; SERVICE_PATH=""; SERVICE_BACKUP_DIR=""; SERVICE_WAS_ENABLED=0
+
+# assert_root_owned refuses a directory that is not root's, or that root's group
+# or anyone else can write to. Either would let a non-root account replace a
+# binary that runs as root, which no signature check can catch: verification
+# happens at download, and this is a swap afterwards.
+assert_root_owned() {
+  dir="$1"
+  # BSD and GNU stat share no format flags, and GNU's -f means something else
+  # entirely (filesystem info), so the platform picks the syntax.
+  if [ "$OS" = "darwin" ]; then
+    owner="$(stat -f '%u' "$dir")" && perms="$(stat -f '%Lp' "$dir")" || {
+      echo "error: cannot read ownership of $dir"; exit 1;
+    }
+  else
+    owner="$(stat -c '%u' "$dir")" && perms="$(stat -c '%a' "$dir")" || {
+      echo "error: cannot read ownership of $dir"; exit 1;
+    }
+  fi
+  if [ "$owner" != "0" ]; then
+    echo "error: $dir is owned by uid $owner, not root."
+    echo "       The agent runs as root and must not execute from a directory"
+    echo "       another account controls. Fix it with:"
+    echo "         sudo chown root \"$dir\" && sudo chmod 755 \"$dir\""
+    exit 1
+  fi
+  if [ $(( 8#$perms & 8#022 )) -ne 0 ]; then
+    echo "error: $dir is writable by group or others (mode $perms)."
+    echo "       Fix it with: sudo chmod 755 \"$dir\""
+    exit 1
+  fi
+}
 
 detect_service_config() {
   for path in /etc/systemd/system/rmm-agent.service /lib/systemd/system/rmm-agent.service /usr/lib/systemd/system/rmm-agent.service; do
@@ -156,6 +201,11 @@ rollback() {
     if [ "$SERVICE_EXISTED" = "1" ] && [ -x "$DEST" ]; then
       restore_service_config
       "$DEST" -action start >/dev/null 2>&1 || true
+    elif [ -n "$MIGRATE_FROM" ] && [ -x "$MIGRATE_FROM" ]; then
+      # The move never completed: the previous install is still on disk, so its
+      # service definition goes back and it takes the endpoint over again.
+      [ "$SERVICE_EXISTED" = "0" ] || restore_service_config
+      "$MIGRATE_FROM" -action start >/dev/null 2>&1 || true
     fi
   fi
   [ -z "$TMP_DIR" ] || rm -rf "$TMP_DIR"
@@ -170,7 +220,13 @@ mkdir -p "$STATE_DIR"
 # A clean macOS has no /usr/local/bin — it is Homebrew that usually creates it.
 # Without this the transactional swap failed at the very last step, with mv
 # reporting "No such file or directory" about a source file that plainly existed.
-mkdir -p "$(dirname "$DEST")"
+mkdir -p "$DEST_DIR"
+# Created by root, but an existing directory keeps whatever ownership it had —
+# including a directory somebody pre-created to sit in the agent's path.
+chown 0 "$DEST_DIR" 2>/dev/null || true
+chmod 755 "$DEST_DIR" 2>/dev/null || true
+assert_root_owned "$DEST_DIR"
+assert_root_owned "$STATE_DIR"
 [ ! -e "$BACKUP" ] || { echo "error: unresolved installer backup exists at $BACKUP"; exit 1; }
 [ ! -e "$SIGNATURE_BACKUP" ] || { echo "error: unresolved signature backup exists at $SIGNATURE_BACKUP"; exit 1; }
 [ ! -e "$STATE_BACKUP" ] || { echo "error: unresolved state backup exists at $STATE_BACKUP"; exit 1; }
@@ -229,6 +285,19 @@ if [ -x "$DEST" ]; then
   current_version="$($DEST -print-version)" || { echo "error: installed agent version could not be read"; exit 1; }
   "$CANDIDATE" -check-upgrade-from "$current_version" || { echo "error: refusing agent downgrade"; exit 1; }
   HAD_OLD=1
+elif [ -n "$LEGACY_DEST" ] && [ -x "$LEGACY_DEST" ]; then
+  # An endpoint installed before the agent moved out of /usr/local/bin. Its
+  # service is stopped now and its definition is only removed once the new
+  # install is healthy, so a failure here leaves the old one to be restarted.
+  current_version="$("$LEGACY_DEST" -print-version)" || { echo "error: installed agent version could not be read"; exit 1; }
+  "$CANDIDATE" -check-upgrade-from "$current_version" || { echo "error: refusing agent downgrade"; exit 1; }
+  MIGRATE_FROM="$LEGACY_DEST"
+  echo "Moving the agent from $LEGACY_DEST to $DEST..."
+  if detect_service_config; then
+    SERVICE_EXISTED=1
+    "$MIGRATE_FROM" -action stop >/dev/null 2>&1 || true
+    snapshot_service_config
+  fi
 fi
 
 echo "Installing agent transactionally..."
@@ -275,6 +344,12 @@ if [ ! -f "$STATE" ]; then
 fi
 
 rm -f "$HEALTH"
+# The legacy service is removed only here, right before its replacement is
+# written: until this point a failure can still hand the endpoint back to it.
+if [ -n "$MIGRATE_FROM" ] && [ "$SERVICE_EXISTED" = "1" ]; then
+  "$MIGRATE_FROM" -action uninstall >/dev/null 2>&1 ||
+    { echo "error: could not remove the previous service definition"; exit 1; }
+fi
 install_args=(-server "${WS}/ws/agent" -state "$STATE" -health-file "$HEALTH" "${security_args[@]}")
 "$DEST" "${install_args[@]}" -action install
 "$DEST" -action start
@@ -292,6 +367,10 @@ done
 
 COMMITTED=1
 rm -f "$BACKUP" "$SIGNATURE_BACKUP" "$STATE_BACKUP" "$OUTBOX_BACKUP"
+if [ -n "$MIGRATE_FROM" ]; then
+  rm -f "$MIGRATE_FROM" "${MIGRATE_FROM}.sig" "${MIGRATE_FROM}.update-etag"
+  echo "Removed the previous agent at $MIGRATE_FROM."
+fi
 # macOS: desktop sessions run from a per-user LaunchAgent, not from the daemon.
 # TCC grants are per user, so the sidecar must run AS the console user for an
 # operator's "Allow" to mean anything; and TCC judges by the RESPONSIBLE process,
@@ -300,13 +379,26 @@ rm -f "$BACKUP" "$SIGNATURE_BACKUP" "$STATE_BACKUP" "$OUTBOX_BACKUP"
 # to satisfy both. The daemon fills in the relay URL and ticket through
 # remote-session.json and kickstarts this label.
 if [ "$OS" = "darwin" ]; then
-  REMOTE_AGENT_PLIST=/Library/LaunchAgents/com.openrmm.remote.plist
+  REMOTE_AGENT_PLIST=/Library/LaunchAgents/io.openrmm.remote.plist
+  # Reinstall over a build that used the previous bundle identifier: drop its
+  # job and its privacy rows, which would otherwise keep listing an allowed
+  # application that nothing runs under any more.
+  LEGACY_AGENT_PLIST=/Library/LaunchAgents/com.openrmm.remote.plist
+  if [ -f "$LEGACY_AGENT_PLIST" ]; then
+    LEGACY_UID="$(stat -f "%u" /dev/console 2>/dev/null || echo 0)"
+    [ "$LEGACY_UID" != "0" ] &&
+      launchctl bootout "gui/$LEGACY_UID/com.openrmm.remote" >/dev/null 2>&1 || true
+    rm -f "$LEGACY_AGENT_PLIST"
+    tccutil reset All com.openrmm.remote >/dev/null 2>&1 || true
+    [ "$LEGACY_UID" != "0" ] &&
+      launchctl asuser "$LEGACY_UID" tccutil reset All com.openrmm.remote >/dev/null 2>&1 || true
+  fi
   cat > "$REMOTE_AGENT_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.openrmm.remote</string>
+  <key>Label</key><string>io.openrmm.remote</string>
   <key>ProgramArguments</key>
   <array>
     <string>/Library/Application Support/OpenRMM/RMMRemote.app/Contents/MacOS/rmm-remote</string>
@@ -325,7 +417,7 @@ PLIST
   # every later login. Failure is not fatal: nobody may be logged in yet.
   CONSOLE_UID="$(stat -f "%u" /dev/console 2>/dev/null || echo 0)"
   if [ "$CONSOLE_UID" != "0" ]; then
-    launchctl bootout "gui/$CONSOLE_UID/com.openrmm.remote" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$CONSOLE_UID/io.openrmm.remote" >/dev/null 2>&1 || true
     launchctl bootstrap "gui/$CONSOLE_UID" "$REMOTE_AGENT_PLIST" >/dev/null 2>&1 ||
       echo "note: could not load the remote LaunchAgent now; it loads at the next login"
   fi

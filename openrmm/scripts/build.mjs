@@ -23,6 +23,7 @@ const sources = [
   'src/i18n-strings.jsx',
   'src/icons.jsx',
   'src/mockapi.jsx',
+  'src/remote-input.jsx',
   'src/ui.jsx',
   'src/screens-core.jsx',
   'src/screens-devices.jsx',

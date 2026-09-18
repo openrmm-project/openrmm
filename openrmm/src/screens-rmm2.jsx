@@ -1870,10 +1870,9 @@ function ConfigPanel() {
 // the whole point, and it should not wait on an unrelated form.
 //
 // Only one transport is editable here. Account mail — password resets — is set
-// with RMM_SMTP_* in the server environment and has no form, because on a hosted
-// instance the reset sender belongs to the operator's domain and a tenant admin
-// must not be able to repoint it. Alerts are the tenant's own choice, so they
-// stay editable; leaving the host blank sends them through the account transport.
+// with RMM_SMTP_* in the server environment and has no form, so a settings
+// administrator cannot repoint authentication mail. Alerts stay editable;
+// leaving the host blank sends them through the account transport.
 function SMTPPanel() {
   return <SMTPProfilePanel />;
 }

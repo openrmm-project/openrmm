@@ -65,14 +65,23 @@ static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFla
     return 1;
 }
 
+// How far the chord got. The viewer only ever learns "sent", and a chord that
+// posts cleanly without opening Force Quit looks exactly like one that worked,
+// so the log keeps the difference: 5 means every event was accepted.
+static int rmmForceQuitStep = 0;
+
 // Command-Option-Escape opens Force Quit Applications. The shortcut is matched
 // against the modifier state the WindowServer maintains, and that state is fed
 // by the modifier keys' OWN events: decorating Escape with flags leaves it
 // untouched, so the shortcut never fires while the call still reports success.
 // Press and release them for real, in order.
 static int rmmForceQuit(void) {
+    rmmForceQuitStep = 1;
     if (!CGPreflightPostEventAccess()) return 0;
+    rmmForceQuitStep = 2;
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (!src) return 0;
+    rmmForceQuitStep = 3;
     const CGEventFlags cmd = kCGEventFlagMaskCommand;
     const CGEventFlags both = kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate;
     int ok = 1;
@@ -85,6 +94,7 @@ static int rmmForceQuit(void) {
     ok &= rmmPostKey(src, 58, false, cmd);
     ok &= rmmPostKey(src, 55, false, 0);
     if (src) CFRelease(src);
+    rmmForceQuitStep = ok ? 5 : 4;
     return ok;
 }
 
@@ -549,6 +559,12 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			var command macInput
 			if json.Unmarshal(data, &command) == nil && command.T == "cad" {
 				ok := C.rmmForceQuit() != 0
+				// Logged on both outcomes: the chord can post cleanly and still
+				// not open Force Quit, and from the viewer that is
+				// indistinguishable from success. Step 5 means every event was
+				// accepted, so anything wrong after it is the WindowServer's
+				// handling of the shortcut, not ours.
+				log.Printf("rmm-remote: force quit chord posted=%t (step %d)", ok, int(C.rmmForceQuitStep))
 				response := map[string]any{"t": "cad", "ok": ok}
 				if !ok {
 					response["err"] = "macOS Accessibility permission is required for ⌘⌥Esc."

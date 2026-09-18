@@ -595,7 +595,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
 
     const send = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
     const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
-    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.tagName === 'BUTTON'); };
+    const typing = () => window.RemoteInput.isTypingTarget(document.activeElement);
     let lastMove = 0;
     const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
     // preventDefault() cancels the browser's default focus, so clicking the
@@ -610,11 +610,16 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const kd = (e) => {
       if (typing()) return;
       if (e.key === 'Escape' && document.fullscreenElement === viewerRef.current) { skipFullscreenEscapeUp = true; return; }
+      // Not forwarded and, above all, not preventDefault()ed: that is what lets
+      // the browser raise the paste event the clipboard text arrives on. The
+      // endpoint presses its own paste shortcut when the text gets there.
+      if (window.RemoteInput.isPasteShortcut(e)) return;
       e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true });
     };
     const ku = (e) => {
       if (typing()) return;
       if (e.key === 'Escape' && skipFullscreenEscapeUp) { skipFullscreenEscapeUp = false; return; }
+      if (window.RemoteInput.isPasteShortcut(e)) return;
       e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false });
     };
     // The technician's clipboard, on their own paste keystroke. The paste event
@@ -626,12 +631,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     // somebody copied on their own machine is surveillance, not support.
     const onPaste = (e) => {
       if (typing()) return;
-      const text = e.clipboardData && e.clipboardData.getData('text/plain');
-      if (!text) return;
+      const message = window.RemoteInput.clipMessage(e.clipboardData && e.clipboardData.getData('text/plain'));
+      if (!message) return;
       e.preventDefault();
-      // Bounded: a pasted file listing or log can be megabytes, and this shares
-      // the session's socket with the video stream.
-      send({ t: 'clip', text: text.slice(0, 256 * 1024), paste: true });
+      send(message);
     };
     // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
     if (!filesOnly && cv) {

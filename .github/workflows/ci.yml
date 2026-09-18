@@ -168,7 +168,7 @@ jobs:
       - name: Shell syntax and lint
         run: |
           bash -n deploy/public/install.sh deploy/public/uninstall.sh scripts/test-install-migration.sh
-          shellcheck -x deploy/public/install.sh deploy/public/uninstall.sh deploy/ops/*.sh
+          shellcheck -x deploy/public/install.sh deploy/public/uninstall.sh scripts/test-install-migration.sh deploy/ops/*.sh
           for script in deploy/ops/*.sh; do bash -n "$script"; done
       # Installs into the runner's real system paths, which is why it only runs
       # on a throwaway machine. It covers the installer's transaction, the

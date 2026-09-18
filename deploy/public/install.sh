@@ -117,14 +117,12 @@ assert_root_owned() {
   # BSD and GNU stat share no format flags, and GNU's -f means something else
   # entirely (filesystem info), so the platform picks the syntax.
   if [ "$OS" = "darwin" ]; then
-    owner="$(stat -f '%u' "$dir")" && perms="$(stat -f '%Lp' "$dir")" || {
-      echo "error: cannot read ownership of $dir"; exit 1;
-    }
+    owner_fmt='-f%u'; perms_fmt='-f%Lp'
   else
-    owner="$(stat -c '%u' "$dir")" && perms="$(stat -c '%a' "$dir")" || {
-      echo "error: cannot read ownership of $dir"; exit 1;
-    }
+    owner_fmt='-c%u'; perms_fmt='-c%a'
   fi
+  owner="$(stat "$owner_fmt" "$dir")" || { echo "error: cannot read ownership of $dir"; exit 1; }
+  perms="$(stat "$perms_fmt" "$dir")" || { echo "error: cannot read permissions of $dir"; exit 1; }
   if [ "$owner" != "0" ]; then
     echo "error: $dir is owned by uid $owner, not root."
     echo "       The agent runs as root and must not execute from a directory"

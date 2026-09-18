@@ -107,18 +107,27 @@ bash "${REPO_ROOT}/deploy/public/install.sh" \
 
 echo "== checking the result =="
 fail=0
-check() { if [ "$1" = "0" ]; then echo "  ok: $2"; else echo "  FAIL: $2"; fail=1; fi; }
+# check <description> <command...>: the command decides, so no $? is carried
+# between statements where a later one could overwrite it.
+check() {
+  description="$1"; shift
+  if "$@"; then echo "  ok: $description"; else echo "  FAIL: $description"; fail=1; fi
+}
+published_version_installed() { "$NEW_DEST" -print-version | grep -qx '9.9.9'; }
+enrolment_survived() { grep -q 'stub-device' "${STATE_DIR}/state.json"; }
+install_dir_owner() {
+  if [ "$OS" = darwin ]; then stat -f%u "$(dirname "$NEW_DEST")"; else stat -c%u "$(dirname "$NEW_DEST")"; fi
+}
+install_dir_is_root() { [ "$(install_dir_owner)" = "0" ]; }
 
-[ -x "$NEW_DEST" ]; check $? "agent installed at $NEW_DEST"
-"$NEW_DEST" -print-version | grep -qx '9.9.9'; check $? "the published version is the one installed"
-grep -q 'stub-device' "${STATE_DIR}/state.json"; check $? "enrolment state survived the install"
-[ -f "$SERVICE_PATH" ]; check $? "service definition written"
+check "agent installed at $NEW_DEST" test -x "$NEW_DEST"
+check "the published version is the one installed" published_version_installed
+check "enrolment state survived the install" enrolment_survived
+check "service definition written" test -f "$SERVICE_PATH"
 if [ -n "$LEGACY_DEST" ]; then
-  [ ! -e "$LEGACY_DEST" ]; check $? "the binary at the previous location is gone"
+  check "the binary at the previous location is gone" test ! -e "$LEGACY_DEST"
 fi
-
-owner="$(if [ "$OS" = darwin ]; then stat -f '%u' "$(dirname "$NEW_DEST")"; else stat -c '%u' "$(dirname "$NEW_DEST")"; fi)"
-[ "$owner" = "0" ]; check $? "the install directory belongs to root"
+check "the install directory belongs to root" install_dir_is_root
 
 echo "== the installer must refuse a directory somebody else owns =="
 # Only meaningful where the installer owns its directory outright; on Linux it
@@ -131,16 +140,16 @@ if [ "$OS" = "darwin" ]; then
     echo "  FAIL: the installer accepted a directory owned by uid $nobody_uid"
     fail=1
   else
-    grep -q 'not root' "${WORK}/refused.log"; check $? "refused with an ownership error"
+    check "refused with an ownership error" grep -q 'not root' "${WORK}/refused.log"
   fi
   chown 0 "$(dirname "$NEW_DEST")"
 fi
 
 echo "== uninstalling =="
 bash "${REPO_ROOT}/deploy/public/uninstall.sh" >/dev/null
-[ ! -e "$NEW_DEST" ]; check $? "uninstall removed the agent"
-[ ! -e "$SERVICE_PATH" ]; check $? "uninstall removed the service definition"
-[ ! -e "$STATE_DIR" ]; check $? "uninstall removed the enrolment state"
+check "uninstall removed the agent" test ! -e "$NEW_DEST"
+check "uninstall removed the service definition" test ! -e "$SERVICE_PATH"
+check "uninstall removed the enrolment state" test ! -e "$STATE_DIR"
 
 [ "$fail" = "0" ] || { echo "installer migration test FAILED"; exit 1; }
 echo "installer migration test passed"

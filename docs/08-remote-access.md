@@ -425,6 +425,15 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   resets its privacy rows. The agent also rewrites its own LaunchAgent plist
   whenever it no longer matches, because agents update themselves and installers
   do not re-run.
+  **A Terminal window at every login is not the installer's doing.** macOS runs a
+  Unix executable added to Login Items inside Terminal.app, so a bare
+  `rmm-agent` or `rmm-remote` listed under *General ▸ Login Items ▸ Open at
+  Login* opens a terminal showing its log on every sign-in. Nothing here adds
+  login items — the agent is started by launchd from its LaunchDaemon — so an
+  entry there was added by hand while debugging and should be removed with the
+  **−** button. The separate *Allow in the Background* list is where the real
+  daemon and LaunchAgent appear, and both must stay enabled.
+
 #### Clipboard
 
 The technician's clipboard reaches the endpoint on their own paste keystroke.

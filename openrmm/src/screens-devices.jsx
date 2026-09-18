@@ -485,6 +485,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         if (m.t === 'hello') {
           setVer(m.v);
           setCad({ available: !!m.cad, reason: m.cad_error || (m.cad ? '' : 'Update the remote module to use this shortcut.') });
+          // A capture the endpoint cannot perform is the black screen this
+          // viewer would otherwise show without explanation.
+          if (m.capture_error) { setNotice(m.capture_error); if (noticeRef.current !== m.capture_error) { noticeRef.current = m.capture_error; toast.error('Screen capture blocked', m.capture_error); } }
         }
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }

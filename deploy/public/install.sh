@@ -345,7 +345,11 @@ rm -f "$HEALTH"
 # The legacy service is removed only here, right before its replacement is
 # written: until this point a failure can still hand the endpoint back to it.
 if [ -n "$MIGRATE_FROM" ] && [ "$SERVICE_EXISTED" = "1" ]; then
-  "$MIGRATE_FROM" -action uninstall >/dev/null 2>&1 ||
+  "$MIGRATE_FROM" -action uninstall >/dev/null 2>&1 || true
+  # Judged by the end state, not the exit code. A definition that is already
+  # gone makes uninstall report failure, and aborting on that would leave the
+  # endpoint with no service at all over a step that had nothing left to do.
+  [ ! -f "$SERVICE_PATH" ] ||
     { echo "error: could not remove the previous service definition"; exit 1; }
 fi
 install_args=(-server "${WS}/ws/agent" -state "$STATE" -health-file "$HEALTH" "${security_args[@]}")
@@ -384,12 +388,15 @@ if [ "$OS" = "darwin" ]; then
   LEGACY_AGENT_PLIST=/Library/LaunchAgents/com.openrmm.remote.plist
   if [ -f "$LEGACY_AGENT_PLIST" ]; then
     LEGACY_UID="$(stat -f "%u" /dev/console 2>/dev/null || echo 0)"
-    [ "$LEGACY_UID" != "0" ] &&
+    if [ "$LEGACY_UID" != "0" ]; then
       launchctl bootout "gui/$LEGACY_UID/com.openrmm.remote" >/dev/null 2>&1 || true
+    fi
     rm -f "$LEGACY_AGENT_PLIST"
+    # Accessibility is recorded system-wide, Screen Recording per user.
     tccutil reset All com.openrmm.remote >/dev/null 2>&1 || true
-    [ "$LEGACY_UID" != "0" ] &&
+    if [ "$LEGACY_UID" != "0" ]; then
       launchctl asuser "$LEGACY_UID" tccutil reset All com.openrmm.remote >/dev/null 2>&1 || true
+    fi
   fi
   cat > "$REMOTE_AGENT_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -129,6 +129,26 @@ if [ -n "$LEGACY_DEST" ]; then
 fi
 check "the install directory belongs to root" install_dir_is_root
 
+echo "== a failed install must hand the endpoint back =="
+# The failure that matters in practice: the replacement is in place and the
+# previous service definition has already been removed when something goes
+# wrong. What the endpoint must not be left with is no agent and no service.
+write_stub_agent "${SERVED}/${BIN}" "9.9.10"
+# A start that fails is the realistic form of "never became healthy" without
+# waiting out the installer's health timeout.
+sed -i.bak 's/^  start)$/  start) exit 1;;\nstart_unused)/' "${SERVED}/${BIN}"
+(cd "$SERVED" && (sha256sum "$BIN" 2>/dev/null || shasum -a 256 "$BIN") > SHA256SUMS)
+if bash "${REPO_ROOT}/deploy/public/install.sh" \
+    --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/failed.log" 2>&1; then
+  echo "  FAIL: an install whose agent cannot start reported success"
+  fail=1
+else
+  check "the previous agent is still installed" test -x "$NEW_DEST"
+  check "it is the version that was working" published_version_installed
+  check "the service definition is back" test -f "$SERVICE_PATH"
+  check "the enrolment state is intact" enrolment_survived
+fi
+
 echo "== the installer must refuse a directory somebody else owns =="
 # Only meaningful where the installer owns its directory outright; on Linux it
 # installs into /usr/local/bin, which is shared with everything else on the host.

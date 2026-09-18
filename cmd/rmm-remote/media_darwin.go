@@ -105,6 +105,16 @@ static int rmmPasteShortcut(void) {
     if (src) CFRelease(src);
     return ok;
 }
+
+// Screen Recording is never granted by a user who was never asked. macOS only
+// raises that prompt when the process calls for it — capture APIs themselves
+// return desktop-only images instead, which is the black screen — and until
+// then the app is not even listed for the operator to allow. Preflight first so
+// an already-granted endpoint is not asked again on every session.
+static int rmmRequestScreenCapture(void) {
+    if (CGPreflightScreenCaptureAccess()) return 1;
+    return CGRequestScreenCaptureAccess() ? 1 : 0;
+}
 */
 import "C"
 
@@ -407,8 +417,18 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	}
 	openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) })
 	defer closeMacChat()
+	// Asked before the first frame is captured: a grant given now applies to the
+	// next session, since macOS does not hand capture rights to a process that
+	// has already been refused them.
+	screenOK := C.rmmRequestScreenCapture() != 0
+	if !screenOK {
+		log.Printf("rmm-remote: screen recording not granted; the session will show a black screen until it is allowed")
+	}
 	cadAvailable := bool(C.CGPreflightPostEventAccess())
 	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
+	if !screenOK {
+		hello["capture_error"] = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session."
+	}
 	if !cadAvailable {
 		hello["cad_error"] = "Enable Accessibility for rmm-remote in macOS System Settings → Privacy & Security, then reopen the session."
 	}

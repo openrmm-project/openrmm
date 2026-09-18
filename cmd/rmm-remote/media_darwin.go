@@ -68,7 +68,12 @@ static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFla
 // How far the chord got. The viewer only ever learns "sent", and a chord that
 // posts cleanly without opening Force Quit looks exactly like one that worked,
 // so the log keeps the difference: 5 means every event was accepted.
+//
+// Read through a function, not directly: a static in the cgo preamble is local
+// to its translation unit, and referencing the variable from Go asks the linker
+// for a symbol that was never exported.
 static int rmmForceQuitStep = 0;
+static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
 
 // Command-Option-Escape opens Force Quit Applications. The shortcut is matched
 // against the modifier state the WindowServer maintains, and that state is fed
@@ -564,7 +569,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				// indistinguishable from success. Step 5 means every event was
 				// accepted, so anything wrong after it is the WindowServer's
 				// handling of the shortcut, not ours.
-				log.Printf("rmm-remote: force quit chord posted=%t (step %d)", ok, int(C.rmmForceQuitStep))
+				log.Printf("rmm-remote: force quit chord posted=%t (step %d)", ok, int(C.rmmForceQuitProgress()))
 				response := map[string]any{"t": "cad", "ok": ok}
 				if !ok {
 					response["err"] = "macOS Accessibility permission is required for ⌘⌥Esc."

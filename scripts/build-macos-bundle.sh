@@ -39,14 +39,23 @@ else
   echo "warning: sips/iconutil unavailable — bundling without an icon" >&2
 fi
 
-# The agent clears the endpoint's stale privacy grants after an update, because
-# an ad-hoc signature makes every build a new application to macOS. This marker
-# tells it not to, and it has to exist before signing to stay inside the seal.
-if [ -n "${RMM_MACOS_CODESIGN_IDENTITY:-}" ] && [ "$RMM_MACOS_CODESIGN_IDENTITY" != "-" ]; then
-  printf '%s\n' "$RMM_MACOS_CODESIGN_IDENTITY" > "$app/Contents/Resources/StableCodeIdentity"
+identity="${RMM_MACOS_CODESIGN_IDENTITY:--}"
+# Record the actual designated requirement, rather than only the certificate's
+# display name. That lets the updater preserve grants for the same identity and
+# clear stale rows when a certificate is rotated under the same name. The first
+# signature is temporary; adding the marker invalidates it, then the final sign
+# seals the complete bundle.
+if [ "$identity" != "-" ]; then
+  codesign --sign "$identity" --force --identifier io.openrmm.remote "$app"
+  requirement="$(codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p' | head -n 1)"
+  if [ -z "$requirement" ]; then
+    echo "could not read the designated requirement for $identity" >&2
+    exit 1
+  fi
+  printf '%s\n' "$requirement" > "$app/Contents/Resources/StableCodeIdentity"
 fi
 
-codesign --sign "${RMM_MACOS_CODESIGN_IDENTITY:--}" --force --identifier io.openrmm.remote "$app"
+codesign --sign "$identity" --force --identifier io.openrmm.remote "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 
 mkdir -p "$(dirname "$out")"

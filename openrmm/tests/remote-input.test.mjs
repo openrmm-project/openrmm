@@ -40,6 +40,14 @@ test('other keystrokes keep being forwarded', async () => {
   assert.equal(policy.isPasteShortcut(null), false);
 });
 
+test('Control shortcuts become Command shortcuts for a Mac endpoint', async () => {
+  const policy = await loadPolicy();
+  assert.equal(policy.endpointKeyCode(17, true), 91, 'Control becomes Command');
+  assert.equal(policy.endpointKeyCode(93, true), 91, 'right Command is normalized');
+  assert.equal(policy.endpointKeyCode(17, false), 17, 'Windows and Linux keep Control');
+  assert.equal(policy.endpointKeyCode(67, true), 67, 'the shortcut key itself is unchanged');
+});
+
 test('the clipboard message carries the text and asks the endpoint to paste', async () => {
   const policy = await loadPolicy();
   const message = policy.clipMessage('hello');

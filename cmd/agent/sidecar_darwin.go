@@ -111,6 +111,22 @@ func verifyMacBundle(bundle string) error {
 // build as a different application.
 const macStableIdentityMarker = "Contents/Resources/StableCodeIdentity"
 
+func macStableIdentity(bundle string) (string, bool) {
+	b, err := os.ReadFile(filepath.Join(bundle, macStableIdentityMarker))
+	if err != nil {
+		return "", false
+	}
+	identity := strings.TrimSpace(string(b))
+	return identity, identity != ""
+}
+
+// macPrivacyIdentityChanged is deliberately conservative. An ad-hoc build has
+// no identity that a later build can satisfy, and moving either to or from a
+// persistent identity also invalidates the rows already stored by TCC.
+func macPrivacyIdentityChanged(current string, currentStable bool, candidate string, candidateStable bool) bool {
+	return !currentStable || !candidateStable || current != candidate
+}
+
 // resetStalePrivacyGrants drops the privacy rows macOS recorded for the bundle
 // identifier. Those rows outlive the build they were granted to: the Privacy
 // panes keep listing the sidecar as allowed while macOS denies it, which reads
@@ -160,6 +176,7 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 	commit := func(dest string) error {
 		// dest is the executable inside the bundle; install the bundle itself.
 		bundle := macBundleForExe(dest)
+		candidateIdentity, candidateStable := macStableIdentity(stage)
 		parent := filepath.Dir(bundle)
 		if err := os.MkdirAll(parent, 0o755); err != nil {
 			return err
@@ -180,10 +197,15 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		// leaves something to fall back to rather than nothing.
 		old := bundle + ".old"
 		_ = os.RemoveAll(old)
+		replacing := false
+		resetPrivacy := false
 		if _, err := os.Stat(bundle); err == nil {
+			currentIdentity, currentStable := macStableIdentity(bundle)
+			resetPrivacy = macPrivacyIdentityChanged(currentIdentity, currentStable, candidateIdentity, candidateStable)
 			if err := os.Rename(bundle, old); err != nil {
 				return err
 			}
+			replacing = true
 		}
 		if err := os.Rename(stage, bundle); err != nil {
 			_ = os.Rename(old, bundle) // put the working one back
@@ -191,13 +213,13 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		}
 		_ = os.RemoveAll(old)
 		_ = os.Remove(artifact)
-		// Deliberately NOT resetting the privacy grants here. Doing that on every
-		// update destroyed grants that were still good: the operator allowed the
-		// new bundle, the next published build replaced it, and the allowance
-		// went with it. The sidecar asks macOS for what it needs at startup, and
-		// a request is the supported way to recover from a grant that no longer
-		// applies. The reset remains for the one case a request cannot fix —
-		// rows left under a bundle identifier nothing runs under any more.
+		// TCC keeps showing an old ad-hoc build as enabled after replacing it even
+		// though the new build cannot satisfy the stored designated requirement.
+		// Clear only rows that cannot apply to the candidate. A persistent signing
+		// identity with the same DR keeps valid grants intact across updates.
+		if replacing && resetPrivacy {
+			resetStalePrivacyGrants(remoteAgentLabel)
+		}
 		return nil
 	}
 	return exe, commit, cleanup, nil

@@ -10,7 +10,7 @@ void rmmUIStop(void);
 void rmmChatOpen(void);
 void rmmChatAppend(const char *text, int technician);
 void rmmChatClose(void);
-void rmmSetClipboard(const char *text);
+int rmmSetClipboard(const char *text);
 */
 import "C"
 
@@ -79,8 +79,8 @@ func rmmChatSend(value *C.char) {
 }
 
 // setMacClipboard replaces this Mac's pasteboard with the technician's text.
-func setMacClipboard(text string) {
+func setMacClipboard(text string) bool {
 	c := C.CString(text)
 	defer C.free(unsafe.Pointer(c))
-	C.rmmSetClipboard(c)
+	return C.rmmSetClipboard(c) != 0
 }

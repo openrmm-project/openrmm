@@ -492,6 +492,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'cad') { if (m.ok) toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
+        else if (m.t === 'paste' && !m.ok) toast.error('Paste failed', m.err || 'The device rejected the paste shortcut.');
         else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0, all: m.all !== false })
         else if (allowFiles && m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
@@ -607,20 +608,45 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
     const onCtx = (e) => e.preventDefault();
     let skipFullscreenEscapeUp = false;
+    const heldKeys = new Map();
+    const releasedForPaste = new Set();
+    const releasePasteModifiers = () => {
+      for (const sourceCode of [17, 91, 93]) {
+        const remoteCode = heldKeys.get(sourceCode);
+        if (remoteCode == null) continue;
+        send({ t: 'k', code: remoteCode, down: false });
+        heldKeys.delete(sourceCode);
+        releasedForPaste.add(sourceCode);
+      }
+    };
+    const releaseHeldKeys = () => {
+      for (const remoteCode of heldKeys.values()) send({ t: 'k', code: remoteCode, down: false });
+      heldKeys.clear();
+      releasedForPaste.clear();
+    };
     const kd = (e) => {
       if (typing()) return;
       if (e.key === 'Escape' && document.fullscreenElement === viewerRef.current) { skipFullscreenEscapeUp = true; return; }
       // Not forwarded and, above all, not preventDefault()ed: that is what lets
       // the browser raise the paste event the clipboard text arrives on. The
       // endpoint presses its own paste shortcut when the text gets there.
-      if (window.RemoteInput.isPasteShortcut(e)) return;
-      e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true });
+      if (window.RemoteInput.isPasteShortcut(e)) { releasePasteModifiers(); return; }
+      const code = window.RemoteInput.endpointKeyCode(e.keyCode, isMac);
+      e.preventDefault();
+      heldKeys.set(e.keyCode, code);
+      send({ t: 'k', code, down: true });
     };
     const ku = (e) => {
-      if (typing()) return;
+      // A key may have gone down on the canvas just before focus moved to chat.
+      // Still release that key remotely so the endpoint never keeps it held.
+      if (typing() && !heldKeys.has(e.keyCode) && !releasedForPaste.has(e.keyCode)) return;
       if (e.key === 'Escape' && skipFullscreenEscapeUp) { skipFullscreenEscapeUp = false; return; }
       if (window.RemoteInput.isPasteShortcut(e)) return;
-      e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false });
+      e.preventDefault();
+      if (releasedForPaste.delete(e.keyCode)) return;
+      const code = heldKeys.get(e.keyCode) ?? window.RemoteInput.endpointKeyCode(e.keyCode, isMac);
+      heldKeys.delete(e.keyCode);
+      send({ t: 'k', code, down: false });
     };
     // The technician's clipboard, on their own paste keystroke. The paste event
     // carries the text with it, so nothing has to ask the browser for clipboard
@@ -647,10 +673,12 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       window.addEventListener('keydown', kd);
       window.addEventListener('keyup', ku);
       window.addEventListener('paste', onPaste);
+      window.addEventListener('blur', releaseHeldKeys);
     }
     connect();
     return () => {
       stopped = true;
+      releaseHeldKeys();
       if (wsRef.current) wsRef.current.close();
       if (cv) {
         cv.removeEventListener('pointermove', onMove);
@@ -663,8 +691,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
+      window.removeEventListener('blur', releaseHeldKeys);
     };
-  }, [deviceId, filesOnly, allowFiles]);
+  }, [deviceId, filesOnly, allowFiles, isMac]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
   const sendCtrlAltDelete = () => {

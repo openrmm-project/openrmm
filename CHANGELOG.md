@@ -125,10 +125,10 @@ tag.
   macOS neither prompts nor lists an app that does not ask, so every Mac needed
   someone to add it by hand. It now requests both, and the viewer explains what
   is missing instead of showing a black screen or a session that ignores clicks.
-  The agent also stopped clearing privacy grants when it replaces the bundle:
-  that was discarding allowances given minutes earlier. Docs cover what signing
-  the sidecar yourself changes for a self-hosted install, and why official builds
-  are not self-signed.
+  The agent preserves privacy grants while the bundle keeps the same sealed code
+  identity and clears stale rows when that identity changes. Docs cover what
+  signing the sidecar yourself changes for a self-hosted install, and why
+  official builds are not self-signed.
 
 - **Paste into a remote session.** The technician's clipboard follows their own
   paste keystroke: the viewer catches the browser's `paste` event, which carries
@@ -166,15 +166,20 @@ tag.
   nothing: the device still has to be deleted in the console.
 
 - **macOS remote access stopped claiming a permission it did not have.** A
-  privacy grant is keyed to the bundle identifier, so it outlived the build it
-  was given to: after a sidecar update the Privacy panes still listed OpenRMM as
-  allowed while macOS denied the capture. The agent now clears those rows when it
-  replaces the bundle, so the operator is asked once instead of chasing a switch
-  that is already on. The identity comparison that detects this needs `codesign`,
-  which ships with the Xcode Command Line Tools and not with macOS; where it is
-  missing the update proceeds, as the archive's Ed25519 signature is the
-  integrity check either way. Updates are never refused over identity — a frozen
-  module is worse than one re-grant.
+  privacy grant includes the bundle's code identity: after an ad-hoc-signed
+  sidecar update the Privacy panes could still list OpenRMM as allowed while
+  macOS denied capture and input to the new build. The archive now carries the
+  sealed designated requirement when a persistent signing identity is used. The
+  agent keeps grants only when that marker matches and otherwise clears the stale
+  rows after a successful replacement, so System Settings can ask for the new
+  build instead of showing a switch that no longer authorizes it.
+
+- **macOS remote keyboard shortcuts use the endpoint's conventions.** Control is
+  translated to Command for a Mac endpoint, so Ctrl+C from a Windows or Linux
+  technician reaches the Mac as ⌘C. Paste releases locally-held modifiers,
+  writes the Mac pasteboard synchronously and queues ⌘V with the rest of the
+  input stream. The Force Quit button (the Mac equivalent of Ctrl+Alt+Delete)
+  continues to send ⌘⌥Esc and reports stale Accessibility grants explicitly.
 
 - **The macOS sidecar's bundle identifier is `io.openrmm.remote`.** Reverse-DNS
   should name a domain the project controls, and `com.openrmm.remote` did not.

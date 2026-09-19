@@ -109,6 +109,7 @@ static int rmmForceQuit(void) {
 static int rmmPasteShortcut(void) {
     if (!CGPreflightPostEventAccess()) return 0;
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (!src) return 0;
     const CGEventFlags cmd = kCGEventFlagMaskCommand;
     int ok = 1;
     ok &= rmmPostKey(src, 55, true, cmd);  // kVK_Command down
@@ -455,10 +456,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	cadAvailable := inputAllowed
 	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
 	if !screenOK {
-		hello["capture_error"] = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session."
+		hello["capture_error"] = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant."
 	}
 	if !cadAvailable {
-		hello["cad_error"] = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security, then reopen the session. Without it no keyboard or mouse input reaches this Mac."
+		hello["cad_error"] = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant. Without it no keyboard, mouse, paste, or Force Quit shortcut reaches this Mac."
 	}
 	if b, e := json.Marshal(hello); e == nil {
 		out <- omsg{websocket.TextMessage, b}
@@ -510,15 +511,18 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 					Paste bool   `json:"paste"`
 				}
 				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
-					setMacClipboard(cm.Text)
+					if !setMacClipboard(cm.Text) {
+						sendJSON(map[string]any{"t": "paste", "ok": false, "err": "Could not write the macOS clipboard."})
+						continue
+					}
 					if cm.Paste {
-						// The pasteboard write is dispatched to the main queue,
-						// so the shortcut waits for it: pasting first would
-						// paste whatever the Mac held before.
-						go func() {
-							time.Sleep(120 * time.Millisecond)
-							C.rmmPasteShortcut()
-						}()
+						// Clipboard write is synchronous; serialize Command-V with
+						// every other input event instead of racing a fixed delay.
+						select {
+						case inputCh <- []byte(`{"t":"paste"}`):
+						case <-done:
+							return
+						}
 					}
 				}
 			case "cad":
@@ -562,7 +566,16 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		case data := <-inputCh:
 			pace.markActivity()
 			var command macInput
-			if json.Unmarshal(data, &command) == nil && command.T == "cad" {
+			if json.Unmarshal(data, &command) == nil && command.T == "paste" {
+				ok := C.rmmPasteShortcut() != 0
+				response := map[string]any{"t": "paste", "ok": ok}
+				if !ok {
+					response["err"] = "macOS Accessibility permission is required for Command-V."
+				}
+				sendJSON(response)
+				continue
+			}
+			if command.T == "cad" {
 				ok := C.rmmForceQuit() != 0
 				// Logged on both outcomes: the chord can post cleanly and still
 				// not open Force Quit, and from the viewer that is

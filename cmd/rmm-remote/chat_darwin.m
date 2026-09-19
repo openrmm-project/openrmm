@@ -105,13 +105,17 @@ void rmmChatClose(void) {
 // the remote session produces what they copied on their own machine. Declaring
 // a new owner is required before writing: a pasteboard's contents belong to
 // whoever cleared it last, and writing without clearing is ignored.
-void rmmSetClipboard(const char *text) {
+int rmmSetClipboard(const char *text) {
     NSString *value = [[NSString alloc] initWithUTF8String:text];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (!value) return;
+    if (!value) return 0;
+    __block BOOL written = NO;
+    void (^writeClipboard)(void) = ^{
         NSPasteboard *board = [NSPasteboard generalPasteboard];
         [board clearContents];
-        [board setString:value forType:NSPasteboardTypeString];
-    });
+        written = [board setString:value forType:NSPasteboardTypeString];
+    };
+    if ([NSThread isMainThread]) writeClipboard();
+    else dispatch_sync(dispatch_get_main_queue(), writeClipboard);
     [value release];
+    return written ? 1 : 0;
 }

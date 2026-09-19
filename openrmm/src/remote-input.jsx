@@ -15,6 +15,14 @@ const RemoteInput = {
     return key === 'v' || (key === '' && event.keyCode === 86);
   },
 
+  // Operators naturally use Ctrl shortcuts even when the endpoint is a Mac.
+  // Convert that modifier to Command at the protocol boundary; the native
+  // sidecar still receives ordinary DOM keyCode-shaped messages.
+  endpointKeyCode(code, macEndpoint) {
+    if (macEndpoint && (code === 17 || code === 93)) return 91;
+    return code;
+  },
+
   // Bounded: a pasted log or file listing can be megabytes, and this message
   // shares the session's socket with the video stream.
   CLIP_LIMIT: 256 * 1024,

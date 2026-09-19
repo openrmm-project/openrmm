@@ -395,18 +395,19 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   tccutil reset All io.openrmm.remote        # the logged-in user's rows
   ```
 
-  The reset is skipped when the bundle carries
-  `Contents/Resources/StableCodeIdentity`, which the builder writes only when
-  `RMM_MACOS_CODESIGN_IDENTITY` signed it — with a persistent identity the
-  existing grants stay valid and must not be thrown away.
+  The reset is skipped only when both bundles carry the same
+  `Contents/Resources/StableCodeIdentity`. The builder writes the actual DR into
+  that sealed marker when `RMM_MACOS_CODESIGN_IDENTITY` signs the bundle. Moving
+  to a different certificate, moving to or from ad-hoc signing, or replacing one
+  ad-hoc build with another clears the stale rows.
 
   **What this costs, and who pays it.** Official builds are ad-hoc signed, so
   every published sidecar is a new application to macOS and the operator is asked
   for Screen Recording and Accessibility again. In steady state a sidecar release
   is rare, which makes this an occasional prompt rather than a routine — but it
-  is the behaviour to expect, and the viewer says so instead of showing a black
-  screen. Nothing the agent does removes a grant on an update any more: the
-  sidecar requests what it needs at startup and macOS decides.
+  is the behaviour to expect. The updater removes only rows whose recorded code
+  identity cannot apply to the new bundle, and the viewer explains how to repair
+  a row that macOS still displays as enabled.
 
 ##### Signing the macOS sidecar yourself
 
@@ -482,6 +483,12 @@ it — nothing asks for clipboard *read* permission — and sends
 clipboard and then presses the paste shortcut **its own platform uses**: ⌘V on
 macOS, Ctrl+V on Windows and Linux. Forwarding the technician's raw Ctrl+V as
 keystrokes would paste nothing on a Mac, which is the bug this replaces.
+
+For ordinary keyboard shortcuts, the viewer maps the technician's Control key
+to Command when the endpoint is macOS. Thus Ctrl+C reaches the Mac as ⌘C. Before
+the special paste path runs it releases any forwarded modifier, so ⌘V is not
+accidentally posted as Control+Command+V. The macOS pasteboard write completes on
+the AppKit thread before ⌘V is serialized with the remaining input events.
 
 Text only, capped at 256 KB: the message shares the session's socket with the
 video stream.

@@ -22,7 +22,7 @@
 //	    {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
 //	    {"t":"w","dy":120}                        wheel (browser deltaY)
 //	    {"t":"k","code":65,"down":true}           key (browser keyCode ~= VK)
-//	    {"t":"cad"}                                   Windows secure attention sequence
+//	    {"t":"cad"}                                   secure-attention equivalent (⌘⌥Esc on macOS)
 package main
 
 import (
@@ -101,7 +101,7 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.15.0"
+const remoteVersion = "0.15.1"
 
 // sessionParams is what the agent hands to a LaunchAgent-started sidecar.
 type sessionParams struct {

@@ -180,6 +180,10 @@ tag.
   writes the Mac pasteboard synchronously and queues ⌘V with the rest of the
   input stream. The Force Quit button (the Mac equivalent of Ctrl+Alt+Delete)
   continues to send ⌘⌥Esc and reports stale Accessibility grants explicitly.
+  Permission requests now run on AppKit's main thread, and a host-side alert
+  links directly to Screen Recording and Accessibility when macOS suppresses
+  its own consent sheet. The Force Quit button can retry after Accessibility is
+  granted during an open session instead of staying disabled until reconnect.
 
 - **The macOS sidecar's bundle identifier is `io.openrmm.remote`.** Reverse-DNS
   should name a domain the project controls, and `com.openrmm.remote` did not.

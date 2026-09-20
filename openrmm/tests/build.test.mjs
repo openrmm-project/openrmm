@@ -68,7 +68,7 @@ test('native remote viewer exposes operator display controls and distinct chat r
   assert.match(devices, /Ctrl\+Alt\+Delete/);
   assert.match(devices, /⌘⌥Esc/);
   assert.match(devices, /isWin && <Button[^\n]+>UAC/);
-  assert.match(devices, /disabled=\{status !== 'streaming' \|\| !cad.available\}/);
+  assert.match(devices, /disabled=\{status !== 'streaming' \|\| !shortcutAvailable\}/);
   assert.match(devices, /requestFullscreen/);
   assert.match(devices, /Fit to window/);
   assert.match(devices, /Remote screen resolution/);

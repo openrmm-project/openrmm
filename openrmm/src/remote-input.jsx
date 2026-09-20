@@ -23,6 +23,14 @@ const RemoteInput = {
     return code;
   },
 
+  // On macOS the sidecar supports the Force Quit chord even when Accessibility
+  // was denied at session start. Keep the button clickable so a permission
+  // granted while the session is open can take effect immediately; the sidecar
+  // rechecks TCC and returns a precise error when it is still denied.
+  shortcutAvailable(macEndpoint, advertisedAvailable) {
+    return !!macEndpoint || !!advertisedAvailable;
+  },
+
   // Bounded: a pasted log or file listing can be megabytes, and this message
   // shares the session's socket with the video stream.
   CLIP_LIMIT: 256 * 1024,

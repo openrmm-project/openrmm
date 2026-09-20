@@ -48,6 +48,13 @@ test('Control shortcuts become Command shortcuts for a Mac endpoint', async () =
   assert.equal(policy.endpointKeyCode(67, true), 67, 'the shortcut key itself is unchanged');
 });
 
+test('the Mac Force Quit button can retry after Accessibility is granted', async () => {
+  const policy = await loadPolicy();
+  assert.equal(policy.shortcutAvailable(true, false), true, 'macOS rechecks the permission when clicked');
+  assert.equal(policy.shortcutAvailable(false, false), false, 'other endpoints keep their advertised capability gate');
+  assert.equal(policy.shortcutAvailable(false, true), true);
+});
+
 test('the clipboard message carries the text and asks the endpoint to paste', async () => {
   const policy = await loadPolicy();
   const message = policy.clipMessage('hello');

@@ -491,8 +491,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         }
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
-        else if (m.t === 'cad') { if (m.ok) toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
-        else if (m.t === 'paste' && !m.ok) toast.error('Paste failed', m.err || 'The device rejected the paste shortcut.');
+        else if (m.t === 'cad') { if (m.ok) { if (isMac) setCad({ available: true, reason: '' }); toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); } else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
+        else if (m.t === 'paste') { if (m.ok && isMac) setCad({ available: true, reason: '' }); else if (!m.ok) toast.error('Paste failed', m.err || 'The device rejected the paste shortcut.'); }
         else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0, all: m.all !== false })
         else if (allowFiles && m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
@@ -696,8 +696,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   }, [deviceId, filesOnly, allowFiles, isMac]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
+  const shortcutAvailable = window.RemoteInput.shortcutAvailable(isMac, cad.available);
   const sendCtrlAltDelete = () => {
-    if (!cad.available) { toast.error('Shortcut unavailable', cad.reason); return; }
+    if (!shortcutAvailable) { toast.error('Shortcut unavailable', cad.reason); return; }
     sendJSON({ t: 'cad' });
   };
   // Remote file browser: navigate folders, download a file, or
@@ -764,7 +765,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         <div className="ml-auto flex items-center gap-1 sm:gap-2 whitespace-nowrap">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           {!filesOnly && <>
-            <Button variant="ghost" size="sm" icon="key" onClick={sendCtrlAltDelete} disabled={status !== 'streaming' || !cad.available} title={!cad.available ? cad.reason : isMac ? 'Open Force Quit Applications (requires Accessibility permission)' : isWin ? 'Request the Windows security screen' : 'Send Ctrl+Alt+Delete; action depends on the Linux desktop settings'}>{shortcutLabel}</Button>
+            <Button variant="ghost" size="sm" icon="key" onClick={sendCtrlAltDelete} disabled={status !== 'streaming' || !shortcutAvailable} title={isMac ? (cad.available ? 'Open Force Quit Applications' : `${cad.reason} Click to retry after granting it.`) : !cad.available ? cad.reason : isWin ? 'Request the Windows security screen' : 'Send Ctrl+Alt+Delete; action depends on the Linux desktop settings'}>{shortcutLabel}</Button>
             {isWin && <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>}
             {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title="Block the host's physical keyboard & mouse (user + login screen)">{locked ? 'Locked' : 'Lock input'}</Button>}
             {allowFiles && <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>}

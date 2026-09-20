@@ -122,24 +122,11 @@ static int rmmPasteShortcut(void) {
     return ok;
 }
 
-// Screen Recording is never granted by a user who was never asked. macOS only
-// raises that prompt when the process calls for it — capture APIs themselves
-// return desktop-only images instead, which is the black screen — and until
-// then the app is not even listed for the operator to allow. Preflight first so
-// an already-granted endpoint is not asked again on every session.
-static int rmmRequestScreenCapture(void) {
-    if (CGPreflightScreenCaptureAccess()) return 1;
-    return CGRequestScreenCaptureAccess() ? 1 : 0;
-}
-
-// The same applies to Accessibility, which is what synthetic input needs — the
-// whole keyboard and mouse, not only the Ctrl-Alt-Del chord. Preflight only
-// reports the answer; it never asks, and an app that never asks is not offered
-// in the list for an operator to allow.
-static int rmmRequestPostEvents(void) {
-    if (CGPreflightPostEventAccess()) return 1;
-    return CGRequestPostEventAccess() ? 1 : 0;
-}
+// Implemented in chat_darwin.m so both permission requests run on AppKit's
+// initial process thread. Calling them from this media goroutine can update TCC
+// without putting a consent prompt on the logged-in user's desktop.
+int rmmRequestScreenCapture(void);
+int rmmRequestPostEvents(void);
 */
 import "C"
 
@@ -453,6 +440,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	if !inputAllowed {
 		log.Printf("rmm-remote: accessibility not granted; keyboard and mouse will not reach this Mac")
 	}
+	showMacPermissionNotice(screenOK, inputAllowed)
 	cadAvailable := inputAllowed
 	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
 	if !screenOK {

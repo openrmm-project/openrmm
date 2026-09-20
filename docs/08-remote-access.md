@@ -318,7 +318,11 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   no longer cross-builds darwin.
 - **Permissions** (TCC, enforced even for root): the binary needs **Screen
   Recording** (capture) and **Accessibility** (input) granted in System Settings ▸
-  Privacy & Security. Without them, capture is blank / input is dropped.
+  Privacy & Security. Without them, capture is blank / input is dropped. The
+  request runs on AppKit's main thread so the native consent sheet belongs to
+  the logged-in desktop. When macOS does not show that sheet again after a
+  denial, OpenRMM displays its own host-side alert with buttons that open the
+  exact Screen Recording and Accessibility panes.
 - **Chat and shortcut (sidecar 0.11.0+):** Cocoa chat supports Unicode, replies via
   Enter/Send, and distinct technician/user colors. AppKit runs on the initial
   process thread; a LaunchDaemon launches desktop mode into the console user's

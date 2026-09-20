@@ -11,6 +11,7 @@ void rmmChatOpen(void);
 void rmmChatAppend(const char *text, int technician);
 void rmmChatClose(void);
 int rmmSetClipboard(const char *text);
+void rmmPermissionNotice(int screenAllowed, int accessibilityAllowed);
 */
 import "C"
 
@@ -62,6 +63,20 @@ func closeMacChat() {
 	macChat.send = nil
 	macChat.Unlock()
 	C.rmmChatClose()
+}
+
+// The native TCC sheet is not guaranteed to reappear after a denial. Keep a
+// host-side explanation with direct links as a reliable fallback.
+func showMacPermissionNotice(screenAllowed, accessibilityAllowed bool) {
+	screen := C.int(0)
+	if screenAllowed {
+		screen = 1
+	}
+	accessibility := C.int(0)
+	if accessibilityAllowed {
+		accessibility = 1
+	}
+	C.rmmPermissionNotice(screen, accessibility)
 }
 
 //export rmmChatSend

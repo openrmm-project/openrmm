@@ -1,6 +1,7 @@
 //go:build darwin && cgo
 
 #import <Cocoa/Cocoa.h>
+#import <CoreGraphics/CoreGraphics.h>
 extern void rmmChatSend(char *text);
 
 @interface RMMChatController : NSObject <NSWindowDelegate>
@@ -73,6 +74,83 @@ extern void rmmChatSend(char *text);
 @end
 
 static RMMChatController *chat;
+static NSAlert *permissionAlert;
+
+// TCC request functions can be called from any thread, but a LaunchAgent's
+// consent sheet is only reliable when the request originates on the AppKit main
+// thread that owns the host UI.
+int rmmRequestScreenCapture(void) {
+    __block BOOL allowed = NO;
+    void (^request)(void) = ^{
+        allowed = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess();
+    };
+    if ([NSThread isMainThread]) request();
+    else dispatch_sync(dispatch_get_main_queue(), request);
+    return allowed ? 1 : 0;
+}
+
+int rmmRequestPostEvents(void) {
+    __block BOOL allowed = NO;
+    void (^request)(void) = ^{
+        allowed = CGPreflightPostEventAccess() || CGRequestPostEventAccess();
+    };
+    if ([NSThread isMainThread]) request();
+    else dispatch_sync(dispatch_get_main_queue(), request);
+    return allowed ? 1 : 0;
+}
+
+static void rmmOpenPrivacyPane(NSString *pane) {
+    NSString *value = [NSString stringWithFormat:@"x-apple.systempreferences:com.apple.preference.security?%@", pane];
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:value]];
+}
+
+// macOS normally presents its own consent sheet on the first request. It does
+// not promise to present it again after a denial, so follow up with an OpenRMM
+// alert that tells the person at the Mac what is missing and opens the exact
+// Privacy & Security pane. Recheck first in case the native sheet was accepted.
+void rmmPermissionNotice(int screenAllowed, int accessibilityAllowed) {
+    if (screenAllowed && accessibilityAllowed) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        BOOL screenMissing = !CGPreflightScreenCaptureAccess();
+        BOOL accessibilityMissing = !CGPreflightPostEventAccess();
+        if (!screenMissing && !accessibilityMissing) return;
+
+        if (!chat || !chat.window || permissionAlert) return;
+        NSAlert *alert = [[NSAlert alloc] init];
+        permissionAlert = alert;
+        alert.alertStyle = NSAlertStyleWarning;
+        alert.messageText = @"OpenRMM Remote needs permission";
+        if (screenMissing && accessibilityMissing) {
+            alert.informativeText = @"Allow Screen & System Audio Recording to share the display and Accessibility to control the keyboard and mouse. Reopen the remote session after enabling them.";
+        } else if (screenMissing) {
+            alert.informativeText = @"Allow Screen & System Audio Recording for OpenRMM Remote, then reopen the remote session.";
+        } else {
+            alert.informativeText = @"Allow Accessibility for OpenRMM Remote to use the keyboard, mouse, paste shortcut and Force Quit shortcut.";
+        }
+
+        NSMutableArray *panes = [NSMutableArray array];
+        if (screenMissing) {
+            [alert addButtonWithTitle:@"Screen Recording…"];
+            [panes addObject:@"Privacy_ScreenCapture"];
+        }
+        if (accessibilityMissing) {
+            [alert addButtonWithTitle:@"Accessibility…"];
+            [panes addObject:@"Privacy_Accessibility"];
+        }
+        [alert addButtonWithTitle:@"Later"];
+        NSArray *paneChoices = [[panes copy] autorelease];
+        [NSApp activateIgnoringOtherApps:YES];
+        [chat.window makeKeyAndOrderFront:nil];
+        [alert beginSheetModalForWindow:chat.window completionHandler:^(NSModalResponse response) {
+            NSInteger index = response - NSAlertFirstButtonReturn;
+            if (index >= 0 && index < (NSInteger)paneChoices.count) {
+                rmmOpenPrivacyPane([paneChoices objectAtIndex:(NSUInteger)index]);
+            }
+            [permissionAlert release];
+            permissionAlert = nil;
+        }];
+    });
+}
 
 void rmmUIRun(void) {
     @autoreleasepool {
@@ -98,7 +176,14 @@ void rmmChatAppend(const char *text, int technician) {
     [value release];
 }
 void rmmChatClose(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{ [chat.window orderOut:nil]; [chat release]; chat = nil; });
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (permissionAlert && chat.window.attachedSheet) {
+            [chat.window endSheet:chat.window.attachedSheet returnCode:NSModalResponseCancel];
+        }
+        [chat.window orderOut:nil];
+        [chat release];
+        chat = nil;
+    });
 }
 
 // The technician's clipboard, pushed into this Mac's pasteboard so a paste in

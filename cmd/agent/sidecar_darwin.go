@@ -18,7 +18,16 @@ import (
 var codesignExe = "/usr/bin/codesign"
 
 func codesignUsable() bool {
-	return exec.Command(codesignExe, "--version").Run() == nil
+	if _, err := os.Stat(codesignExe); err != nil {
+		return false
+	}
+	// codesign has no --version (and its help command exits non-zero). xcrun is
+	// the supported way to check that the Command Line Tools behind the system
+	// shim are selected and usable.
+	if codesignExe == "/usr/bin/codesign" {
+		return exec.Command("/usr/bin/xcrun", "--find", "codesign").Run() == nil
+	}
+	return true
 }
 
 // macOS ships the sidecar as a signed application bundle, not a bare binary.

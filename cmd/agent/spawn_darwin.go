@@ -56,20 +56,21 @@ func ensureRemoteAgent(uid string) error {
 	retireLegacyRemoteAgent(uid)
 	path := remoteAgentPlistPath(remoteAgentLabel)
 	want := remoteAgentPlist()
-	if current, err := os.ReadFile(path); err == nil && string(current) == want {
-		return nil
+	if current, err := os.ReadFile(path); err != nil || string(current) != want {
+		if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+		_ = os.Chown(path, 0, 0)
 	}
-	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	_ = os.Chown(path, 0, 0)
-	// Reloaded rather than only written: launchd holds the definition it read at
-	// login, so a session started now would still use the previous one.
+	// Reload even when the plist did not change. launchd caches the executable's
+	// Lightweight Code Requirement when the job is bootstrapped. Replacing an
+	// ad-hoc signed bundle leaves that cache pointing at the previous CDHash and
+	// kickstart then fails with OS_REASON_CODESIGNING ("needs LWCR update").
 	_, _ = exec.Command("/bin/launchctl", "bootout", "gui/"+uid+"/"+remoteAgentLabel).CombinedOutput()
 	if out, err := exec.Command("/bin/launchctl", "bootstrap", "gui/"+uid, path).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl bootstrap %s: %w: %s", remoteAgentLabel, err, strings.TrimSpace(string(out)))
 	}
-	log.Printf("remote: installed the %s LaunchAgent", remoteAgentLabel)
+	log.Printf("remote: refreshed the %s LaunchAgent", remoteAgentLabel)
 	return nil
 }
 

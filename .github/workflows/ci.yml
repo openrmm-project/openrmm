@@ -181,7 +181,7 @@ jobs:
         run: |
           $tokens = $null
           $errors = $null
-          $scripts = @('deploy/public/install.ps1') + (Get-ChildItem scripts/*.ps1 | ForEach-Object { $_.FullName })
+          $scripts = @('deploy/public/install.ps1', 'cmd/agent/uninstall_windows.ps1') + (Get-ChildItem scripts/*.ps1 | ForEach-Object { $_.FullName })
           foreach ($script in $scripts) {
             [System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
@@ -213,7 +213,7 @@ jobs:
         shell: pwsh
         run: |
           $tokens = $null; $errors = $null
-          $scripts = @('deploy/public/install.ps1') + (Get-ChildItem scripts/*.ps1 | ForEach-Object { $_.FullName })
+          $scripts = @('deploy/public/install.ps1', 'cmd/agent/uninstall_windows.ps1') + (Get-ChildItem scripts/*.ps1 | ForEach-Object { $_.FullName })
           foreach ($script in $scripts) {
             [System.Management.Automation.Language.Parser]::ParseFile(
               (Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null

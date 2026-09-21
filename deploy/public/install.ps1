@@ -254,68 +254,6 @@ function Set-AgentDirectoryAcl {
     }
 }
 
-function Write-UninstallEntry {
-    param([string]$Version)
-    # -action uninstall only removes the service. A real uninstall also has to
-    # take the binaries, the enrolment state, the Defender exclusion and this
-    # entry with it, so the installer ships the script the entry points at.
-    $uninstallScript = Join-Path $Dir 'uninstall.ps1'
-    $body = @'
-#Requires -RunAsAdministrator
-# Removes the OpenRMM agent from this endpoint. Written by install.ps1.
-$ErrorActionPreference = 'Stop'
-$dir = Join-Path $Env:ProgramData 'rmm-agent'
-$exe = Join-Path $dir 'rmm-agent.exe'
-
-if (Get-Service -Name 'rmm-agent' -ErrorAction SilentlyContinue) {
-    Stop-Service -Name 'rmm-agent' -Force -ErrorAction SilentlyContinue
-    if (Test-Path $exe) { & $exe -action uninstall | Out-Null }
-    & sc.exe delete rmm-agent | Out-Null   # in case the service outlives the binary
-}
-
-# An exclusion for a directory that no longer exists is a standing hole.
-if (Get-Command Get-MpPreference -ErrorAction SilentlyContinue) {
-    try {
-        if (@((Get-MpPreference).ExclusionPath) -contains $dir) {
-            Remove-MpPreference -ExclusionPath $dir -ErrorAction Stop
-            Write-Host "Defender: removed the exclusion for $dir."
-        }
-    } catch { Write-Warning "Could not remove the Defender exclusion: $($_.Exception.Message)" }
-}
-
-Remove-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent' `
-    -Recurse -Force -ErrorAction SilentlyContinue
-
-# This script lives in the directory it deletes, so the removal is handed to a
-# detached shell that outlives it.
-$removal = '/c timeout /t 3 /nobreak >nul & rmdir /s /q "' + $dir + '"'
-Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList $removal
-Write-Host 'OpenRMM agent removed.'
-'@
-    Set-Content -Path $uninstallScript -Value $body -Encoding UTF8
-
-    $size = 0
-    if (Test-Path $Exe) { $size = [int]((Get-Item $Exe).Length / 1024) }
-    New-Item -Path $UninstallKey -Force | Out-Null
-    $command = "`"$PSHome\powershell.exe`" -NoProfile -ExecutionPolicy Bypass -File `"$uninstallScript`""
-    $values = @{
-        DisplayName     = 'OpenRMM Agent'
-        DisplayVersion  = $Version
-        Publisher       = 'OpenRMM'
-        InstallLocation = $Dir
-        DisplayIcon     = "$Exe,0"
-        UninstallString = $command
-        QuietUninstallString = $command
-    }
-    foreach ($name in $values.Keys) {
-        New-ItemProperty -Path $UninstallKey -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null
-    }
-    foreach ($name in @('NoModify', 'NoRepair')) {
-        New-ItemProperty -Path $UninstallKey -Name $name -Value 1 -PropertyType DWord -Force | Out-Null
-    }
-    New-ItemProperty -Path $UninstallKey -Name 'EstimatedSize' -Value $size -PropertyType DWord -Force | Out-Null
-}
-
 function Restore-Install {
     Write-Warning 'Install did not become healthy; rolling back.'
     if ($serviceExisted) {
@@ -558,15 +496,10 @@ try {
         Write-Host '          or run scripts/windows-defender-exclusion.ps1 on the endpoint.'
     }
 
-    # After the health check, so a rolled-back install never leaves an entry for
-    # software that is not there. Rewritten on every run, which is what keeps
-    # DisplayVersion honest across upgrades.
-    try {
-        Write-UninstallEntry -Version $candidateVersion
-        Write-Host 'Registered in Programs and Features as "OpenRMM Agent".'
-    } catch {
-        Write-Warning "Could not register the uninstall entry: $($_.Exception.Message)"
-    }
+    # Programs and Features is registered by the AGENT, at service start, not
+    # here: installers do not re-run, so an endpoint installed before that entry
+    # existed would never get one and its version would freeze at whatever first
+    # wrote it. The service has already started and reported healthy by now.
 
     Write-Host 'Agent installed, connected, and healthy.'
 } catch {

@@ -120,6 +120,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: macos-14
+    # The same signing identity the release uses, so the bundle this job
+    # publishes as an artifact is the one operators can actually install without
+    # re-granting permissions. Absent — on a fork, or before one exists — the
+    # bundle stays ad-hoc signed and everything still builds.
+    env:
+      APPLE_SIGNING_P12: ${{ secrets.APPLE_SIGNING_P12 }}
+      APPLE_SIGNING_P12_PASSWORD: ${{ secrets.APPLE_SIGNING_P12_PASSWORD }}
+      RMM_MACOS_CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -134,6 +142,23 @@ jobs:
       # plist in __TEXT,__info_plist helps identify a bare tool, but privacy
       # grants for the shipped sidecar rely on the application bundle. Ad-hoc
       # signing changes identity on rebuild and cannot preserve those grants.
+      - name: Import the signing identity
+        if: env.APPLE_SIGNING_P12 != ''
+        run: |
+          set -eu
+          keychain="$RUNNER_TEMP/openrmm-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$APPLE_SIGNING_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" \
+            -P "$APPLE_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          # Without this, codesign blocks on a GUI prompt no runner can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
       - name: Build, bundle and sign the darwin sidecars
         run: |
           set -eux
@@ -155,8 +180,10 @@ jobs:
         with:
           name: rmm-remote-darwin
           path: dist/rmm-remote-darwin-*
-
           retention-days: 7
+      - name: Remove the signing keychain
+        if: always() && env.APPLE_SIGNING_P12 != ''
+        run: security delete-keychain "$RUNNER_TEMP/openrmm-signing.keychain-db" || true
 
   installers-linux:
     name: Linux installer validation

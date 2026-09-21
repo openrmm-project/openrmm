@@ -204,3 +204,16 @@ int rmmSetClipboard(const char *text) {
     [value release];
     return written ? 1 : 0;
 }
+
+// The endpoint's clipboard, read for mirroring to the technician. Returns a
+// copy the caller frees; NULL when there is no text (an image, or empty).
+char *rmmReadClipboard(void) {
+    __block char *out = NULL;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        NSString *value = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+        if (!value) return;
+        const char *utf8 = [value UTF8String];
+        if (utf8) out = strdup(utf8);
+    });
+    return out;
+}

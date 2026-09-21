@@ -20,6 +20,7 @@ import (
 // transfer (transfer_linux.go) and in-session chat (a native X11 window,
 // chat_linux.go).
 func runMedia(conn *websocket.Conn, allowFiles bool) error {
+	clipMirror := &clipboardMirror{}
 	type omsg struct {
 		mt int
 		b  []byte
@@ -144,6 +145,19 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
+	// Mirror the endpoint's clipboard to the technician for as long as the
+	// session lasts, so a copy on the remote screen can be pasted at home.
+	go watchClipboard(clipMirror, func(text string) {
+		b, err := json.Marshal(map[string]any{"t": "clip", "text": text})
+		if err != nil {
+			return
+		}
+		select {
+		case out <- omsg{websocket.TextMessage, b}:
+		case <-done:
+		}
+	}, done)
+
 	// reader / dispatcher
 	go func() {
 		for {
@@ -175,6 +189,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 					Paste bool   `json:"paste"`
 				}
 				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+					clipMirror.remember(cm.Text)
 					if err := setClipboard(cm.Text); err != nil {
 						log.Printf("rmm-remote: clipboard: %v", err)
 					} else if cm.Paste {

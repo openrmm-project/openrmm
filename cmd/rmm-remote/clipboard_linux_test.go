@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeTool puts an executable of that name first on PATH. It appends whatever
@@ -112,5 +113,61 @@ func TestPasteKeyEventsAreAControlVChord(t *testing.T) {
 	// Control must be released last, or it stays down on the user's keyboard.
 	if !strings.Contains(string(pasteKeyEvents[3]), `"code":17`) {
 		t.Error("the modifier is not released last")
+	}
+}
+
+func TestClipboardMirrorDoesNotBounceTextBack(t *testing.T) {
+	mirror := &clipboardMirror{}
+	// What the technician pasted into the endpoint must not come straight back
+	// as if the user had copied it: a clipboard that changes on its own is
+	// worse than one that does nothing.
+	mirror.remember("pasted by the technician")
+	if !mirror.sameAsLast("pasted by the technician") {
+		t.Fatal("the mirror forgot what it just wrote")
+	}
+	if mirror.sameAsLast("copied by the user") {
+		t.Fatal("a different value must be treated as new")
+	}
+}
+
+func TestClipboardWatcherSendsOnlyNewValues(t *testing.T) {
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "log")
+	fakeTool(t, dir, "wl-paste", transcript, 0)
+	withPath(t, dir)
+	// The fake reader echoes whatever this file holds, which the test rewrites.
+	source := filepath.Join(dir, "value")
+	if err := os.WriteFile(source, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n/bin/cat " + source + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "wl-paste"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(chan string, 8)
+	done := make(chan struct{})
+	defer close(done)
+	go watchClipboard(&clipboardMirror{}, func(text string) { got <- text }, done)
+
+	if first := <-got; first != "first" {
+		t.Fatalf("expected the current clipboard, got %q", first)
+	}
+	if err := os.WriteFile(source, []byte("second"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case second := <-got:
+		if second != "second" {
+			t.Fatalf("expected the new value, got %q", second)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a changed clipboard was never reported")
+	}
+	// An unchanged clipboard must stay quiet rather than resending every tick.
+	select {
+	case again := <-got:
+		t.Fatalf("an unchanged clipboard was sent again: %q", again)
+	case <-time.After(2 * clipboardPollInterval):
 	}
 }

@@ -19,6 +19,13 @@ var clipboardTools = [][]string{
 	{"xsel", "--clipboard", "--input"},
 }
 
+// Reading uses the same tools in the same order, for the same reason.
+var clipboardReadTools = [][]string{
+	{"wl-paste", "--no-newline"},
+	{"xclip", "-selection", "clipboard", "-o"},
+	{"xsel", "--clipboard", "--output"},
+}
+
 func setClipboard(text string) error {
 	tried := []string{}
 	for _, tool := range clipboardTools {
@@ -37,4 +44,26 @@ func setClipboard(text string) error {
 		return fmt.Errorf("no clipboard tool found (install wl-clipboard, xclip or xsel)")
 	}
 	return fmt.Errorf("clipboard tools failed: %s", strings.Join(tried, ", "))
+}
+
+// readClipboard returns what the endpoint currently holds. An empty clipboard
+// and a missing tool are different answers: the first is normal, the second is
+// reported so the operator learns why mirroring never works on this host.
+func readClipboard() (string, error) {
+	tried := []string{}
+	for _, tool := range clipboardReadTools {
+		path, err := exec.LookPath(tool[0])
+		if err != nil {
+			continue
+		}
+		tried = append(tried, tool[0])
+		out, err := exec.Command(path, tool[1:]...).Output()
+		if err == nil {
+			return string(out), nil
+		}
+	}
+	if len(tried) == 0 {
+		return "", fmt.Errorf("no clipboard tool found (install wl-clipboard, xclip or xsel)")
+	}
+	return "", fmt.Errorf("clipboard tools failed: %s", strings.Join(tried, ", "))
 }

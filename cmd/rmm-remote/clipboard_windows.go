@@ -13,6 +13,7 @@ var (
 	procOpenClipboard    = user32.NewProc("OpenClipboard")
 	procEmptyClipboard   = user32.NewProc("EmptyClipboard")
 	procSetClipboardData = user32.NewProc("SetClipboardData")
+	procGetClipboardData = user32.NewProc("GetClipboardData")
 	procCloseClipboard   = user32.NewProc("CloseClipboard")
 
 	// kernel32 itself is declared with the chat window's helpers.
@@ -70,4 +71,32 @@ func pasteShortcut() {
 	sendKey(vkV, true)
 	sendKey(vkV, false)
 	sendKey(vkControl, false)
+}
+
+// readClipboard returns the endpoint's clipboard text. Windows hands out a
+// locked handle that belongs to whoever owns the clipboard, so it is copied out
+// and the handle unlocked before the clipboard is closed — holding it open
+// blocks every other application that wants to copy.
+func readClipboard() (string, error) {
+	if ok, _, err := procOpenClipboard.Call(0); ok == 0 {
+		return "", err
+	}
+	defer procCloseClipboard.Call()
+
+	handle, _, err := procGetClipboardData.Call(cfUnicodeText)
+	if handle == 0 {
+		// No text on the clipboard is not a failure: an image or an empty
+		// clipboard is an ordinary state, and reporting it as an error would
+		// spam the log twice a second.
+		if err != nil && err.Error() == "The operation completed successfully." {
+			return "", nil
+		}
+		return "", nil
+	}
+	locked, _, err := procGlobalLock.Call(handle)
+	if locked == 0 {
+		return "", err
+	}
+	defer procGlobalUnlock.Call(handle)
+	return syscall.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(locked)), clipboardMaxBytes/2)), nil
 }

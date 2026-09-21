@@ -444,6 +444,7 @@ type session struct {
 	lockWanted atomic.Bool        // a viewer asked to block the host's physical input
 	monitor    atomic.Int32       // 0 = whole virtual desktop, 1..N = one display
 	monReq     atomic.Bool        // the selection changed; rebuild the capturer
+	clipMirror *clipboardMirror   // what has already crossed, so nothing bounces back
 	allowFiles bool
 }
 
@@ -461,8 +462,14 @@ func (s *session) sendJSON(v any) {
 
 func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
-		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}, allowFiles: allowFiles}
+		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}, allowFiles: allowFiles,
+		clipMirror: &clipboardMirror{}}
 	defer close(s.done)
+	// Mirror the endpoint's clipboard for as long as the session lasts, so a
+	// copy on the remote screen can be pasted on the technician's machine.
+	go watchClipboard(s.clipMirror, func(text string) {
+		s.sendJSON(map[string]any{"t": "clip", "text": text})
+	}, s.done)
 	s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
 		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
 	})
@@ -698,6 +705,7 @@ func (s *session) onMessage(mt int, data []byte) {
 			Paste bool   `json:"paste"`
 		}
 		if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+			s.clipMirror.remember(cm.Text)
 			if err := setClipboard(cm.Text); err != nil {
 				log.Printf("rmm-remote: clipboard: %v", err)
 			} else if cm.Paste {

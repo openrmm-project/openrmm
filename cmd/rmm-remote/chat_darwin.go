@@ -11,6 +11,7 @@ void rmmChatOpen(void);
 void rmmChatAppend(const char *text, int technician);
 void rmmChatClose(void);
 int rmmSetClipboard(const char *text);
+char *rmmReadClipboard(void);
 void rmmPermissionNotice(int screenAllowed, int accessibilityAllowed);
 */
 import "C"
@@ -98,4 +99,15 @@ func setMacClipboard(text string) bool {
 	c := C.CString(text)
 	defer C.free(unsafe.Pointer(c))
 	return C.rmmSetClipboard(c) != 0
+}
+
+// readClipboard returns this Mac's clipboard text, or an empty string when it
+// holds something that is not text.
+func readClipboard() (string, error) {
+	c := C.rmmReadClipboard()
+	if c == nil {
+		return "", nil
+	}
+	defer C.free(unsafe.Pointer(c))
+	return C.GoString(c), nil
 }

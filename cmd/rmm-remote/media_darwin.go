@@ -432,6 +432,12 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	// Asked before the first frame is captured: a grant given now applies to the
 	// next session, since macOS does not hand capture rights to a process that
 	// has already been refused them.
+	clipMirror := &clipboardMirror{}
+	// Mirror the endpoint's clipboard to the technician for as long as the
+	// session lasts, so a copy on the remote screen can be pasted at home.
+	go watchClipboard(clipMirror, func(text string) {
+		sendJSON(map[string]any{"t": "clip", "text": text})
+	}, done)
 	screenOK := C.rmmRequestScreenCapture() != 0
 	if !screenOK {
 		log.Printf("rmm-remote: screen recording not granted; the session will show a black screen until it is allowed")
@@ -499,6 +505,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 					Paste bool   `json:"paste"`
 				}
 				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+					clipMirror.remember(cm.Text)
 					if !setMacClipboard(cm.Text) {
 						sendJSON(map[string]any{"t": "paste", "ok": false, "err": "Could not write the macOS clipboard."})
 						continue

@@ -82,14 +82,39 @@ function Icon({ name, size = 16, className = '', strokeWidth = 1.7, fill = false
   );
 }
 
+// The agent reports Go's GOOS — "darwin", "windows", "linux" — so the family has
+// to be decided by matching those first. Substring tests in the other order get
+// it wrong in a way that looks like a typo and is not: "darwin" CONTAINS "win",
+// which is how macOS endpoints ended up with a Windows icon, the wrong label and
+// no match under the macOS filter.
+function osFamily(os) {
+  const o = String(os || '').toLowerCase();
+  if (!o) return 'Unknown';
+  if (o.includes('darwin') || o.includes('mac') || o.includes('osx') || o.includes('ios')) return 'macOS';
+  if (o.includes('windows') || o.startsWith('win') || o.includes('microsoft')) return 'Windows';
+  if (o.includes('linux') || o.includes('ubuntu') || o.includes('debian') || o.includes('cent') || o.includes('fedora') || o.includes('rhel') || o.includes('suse') || o.includes('alpine') || o.includes('arch')) return 'Linux';
+  return 'Unknown';
+}
+
+// What an operator should read in a device list. "darwin" is the kernel name and
+// means nothing to the person looking at the fleet; the product name does.
+function osLabel(os) {
+  const family = osFamily(os);
+  if (family === 'Unknown') return os || '—';
+  const o = String(os).toLowerCase();
+  // A distribution or release the agent reported in full is more specific than
+  // the family, so it wins — "Ubuntu 24.04" beats "Linux".
+  if (o !== 'linux' && o !== 'darwin' && o !== 'windows' && o.length > 2) return os;
+  return family;
+}
+
 function OsIcon({ os, size = 15, className = '' }) {
-  const o = (os || '').toLowerCase();
-  let name = 'devices';
-  if (o.includes('win')) name = 'windows';
-  else if (o.includes('mac') || o.includes('darwin') || o.includes('osx')) name = 'apple';
-  else if (o.includes('linux') || o.includes('ubuntu') || o.includes('debian') || o.includes('cent')) name = 'linux';
+  const family = osFamily(os);
+  const name = family === 'Windows' ? 'windows' : family === 'macOS' ? 'apple' : family === 'Linux' ? 'linux' : 'devices';
   return <Icon name={name} size={size} className={className} strokeWidth={1.6} />;
 }
 
 window.Icon = Icon;
 window.OsIcon = OsIcon;
+window.osFamily = osFamily;
+window.osLabel = osLabel;

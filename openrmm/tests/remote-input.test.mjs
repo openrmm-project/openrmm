@@ -80,3 +80,13 @@ test('keystrokes belong to the focused field while the technician types', async 
   assert.equal(policy.isTypingTarget({ tagName: 'CANVAS' }), false, 'the remote screen itself');
   assert.equal(policy.isTypingTarget(null), false);
 });
+
+test('the endpoint clipboard arriving for the technician is bounded', async () => {
+  const policy = await loadPolicy();
+  assert.equal(policy.incomingClipText({ text: 'from the endpoint' }), 'from the endpoint');
+  assert.equal(policy.incomingClipText({ text: 'x'.repeat(policy.CLIP_LIMIT + 10) }).length, policy.CLIP_LIMIT);
+  // An empty payload must not clobber a local clipboard the operator is using.
+  assert.equal(policy.incomingClipText({ text: '' }), null);
+  assert.equal(policy.incomingClipText({}), null);
+  assert.equal(policy.incomingClipText(null), null);
+});

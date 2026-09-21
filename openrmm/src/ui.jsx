@@ -16,7 +16,14 @@ function timeAgo(iso) {
 }
 function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function fmtClock(iso) { if (!iso) return '—'; return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
-function minuteToHHMM(m) { const h = Math.floor(m / 60); const mm = m % 60; return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); }
+// Undefined in, em dash out: a missing window on a policy is a blank field, not
+// "NaN:NaN" — and never an exception that takes the screen with it.
+function minuteToHHMM(m) {
+  const n = Number(m);
+  if (!Number.isFinite(n)) return '—';
+  const h = Math.floor(n / 60); const mm = Math.floor(n % 60);
+  return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+}
 
 /* --------------------------- query / mutation ----------------------------- */
 function useQuery(deps, fn, opts = {}) {

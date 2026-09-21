@@ -1,5 +1,32 @@
 /* screens-devices.jsx — Devices list + Device detail drawer */
 
+// Who is on an endpoint right now. Simultaneous sessions stay allowed — one
+// technician watching while another works is a legitimate hand-off — so this
+// only ever announces; it never blocks. Two people each believing they are
+// alone is the failure worth preventing.
+function useRemotePresence() {
+  const { can } = useAuth();
+  const q = useQuery(['remote-presence'], () => (can('devices.view') ? api.listRemotePresence() : Promise.resolve({ viewers: [] })), { poll: 10000 });
+  const usersQ = useQuery(['presence-users'], () => (can('users.view') ? api.listUsers() : Promise.resolve({ users: [] })), { invalidateOn: ['users'] });
+  const names = {};
+  (usersQ.data?.users || []).forEach((u) => { names[u.id] = u.username; });
+  const byAgent = {};
+  (q.data?.viewers || []).forEach((v) => {
+    (byAgent[v.agent_id] = byAgent[v.agent_id] || []).push({ ...v, name: names[v.user] || v.user || 'someone' });
+  });
+  return byAgent;
+}
+
+const PRESENCE_KIND = { native: 'remote desktop', files: 'file transfer', terminal: 'terminal' };
+
+function presenceSummary(viewers) {
+  if (!viewers || !viewers.length) return '';
+  const who = viewers.map((v) => v.name + ' (' + (PRESENCE_KIND[v.kind] || v.kind) + ')');
+  return who.length === 1
+    ? who[0] + ' is connected remotely'
+    : who.slice(0, -1).join(', ') + ' and ' + who[who.length - 1] + ' are connected remotely';
+}
+
 function DevicesScreen({ navigate }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
   const { can } = useAuth();
@@ -11,6 +38,7 @@ function DevicesScreen({ navigate }) {
   const [clientF, setClientF] = useState('all');
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const presence = useRemotePresence();
 
   const devices = devicesQ.data?.devices || [];
   const sites = sitesQ.data?.sites || [];
@@ -20,11 +48,10 @@ function DevicesScreen({ navigate }) {
   // A device belongs to a client (company) through its site; unassigned devices
   // and sites whose client is gone both fall back to the em dash.
   const clientName = (siteId) => clients.find((c) => c.id === clientOfSite(siteId))?.name || '—';
-  const osFamily = (os) => { const o = os.toLowerCase(); return o.includes('win') ? 'Windows' : o.includes('mac') ? 'macOS' : 'Linux'; };
 
   const filtered = devices.filter((d) => {
     if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((t) => t.includes(q.toLowerCase())))) return false;
-    if (osF !== 'all' && osFamily(d.os) !== osF) return false;
+    if (osF !== 'all' && window.osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
     if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
@@ -81,7 +108,7 @@ function DevicesScreen({ navigate }) {
                   </div>
                 </td>
                 <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
-                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]">{d.os}</span><span className="text-faint text-[11px] mono">{d.arch}</span></div></td>
+                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : 'in use'}</span></Tip> : null}</div></td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
@@ -207,11 +234,15 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const nativeHint = nativeUnavailable ? (nativeCaps.reason_code || 'unavailable') : (nativeCaps?.capture === 'unknown' ? 'capability unknown' : 'beta');
 
   const [remoteBusy, setRemoteBusy] = useState(false);
+  const presenceByAgent = useRemotePresence();
+  const attached = presenceByAgent[id] || [];
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
   const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
   const [orgOpen, setOrgOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const startRemote = async (provider) => {
+    // Announced, never blocked: joining a colleague is sometimes the point.
+    if (attached.length) toast.info('Someone is already connected', presenceSummary(attached) + ' to ' + d.hostname + '.');
     if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname, os: d.os }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
     try {
@@ -267,10 +298,19 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                   <StatusPill status={d.status} size="sm" pulse />
                 </div>
                 <div className="text-[12.5px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
-                  <span>{d.os}</span><span className="text-faint">·</span><span className="mono text-faint">{d.arch}</span>
+                  <span title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint">·</span><span className="mono text-faint">{d.arch}</span>
                   <span className="text-faint">·</span><span>agent v{d.version}</span><span className="text-faint">·</span>
                   <span>last seen {timeAgo(d.last_seen)}</span>
                 </div>
+                {attached.length > 0 && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-brandhi/40 bg-brandhi/10 px-2.5 py-1.5 text-[12px] text-ink">
+                    <Icon name="remote" size={13} className="text-brandhi mt-0.5 shrink-0" />
+                    <span>
+                      {presenceSummary(attached)}.
+                      <span className="text-muted"> Since {attached.map((v) => timeAgo(v.since)).join(', ')}. You can still connect — both sessions share the screen.</span>
+                    </span>
+                  </div>
+                )}
                 {d.description && <div className="text-[12px] text-faint mt-1">{d.description}</div>}
               </div>
               <button onClick={onClose} className="text-faint hover:text-ink p-1.5 -mr-1.5"><Icon name="close" size={18} /></button>
@@ -490,6 +530,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           if (m.capture_error) { setNotice(m.capture_error); if (noticeRef.current !== m.capture_error) { noticeRef.current = m.capture_error; toast.error('Screen capture blocked', m.capture_error); } }
         }
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
+        // The endpoint's clipboard, mirrored while the session is open, so a copy
+        // on the remote screen can be pasted on this machine. Writing can be
+        // refused by the browser when the tab is not focused; that is a missed
+        // update, not an error worth interrupting the session for.
+        else if (m.t === 'clip') {
+          const text = window.RemoteInput.incomingClipText(m);
+          if (text && navigator.clipboard?.writeText) { navigator.clipboard.writeText(text).catch(() => {}); }
+        }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'cad') { if (m.ok) { if (isMac) setCad({ available: true, reason: '' }); toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); } else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
         else if (m.t === 'paste') { if (m.ok && isMac) setCad({ available: true, reason: '' }); else if (!m.ok) toast.error('Paste failed', m.err || 'The device rejected the paste shortcut.'); }
@@ -1143,16 +1191,55 @@ function InventoryView({ id }) {
             {(net.interfaces || []).map((ifc, i) => <InfoGrid key={i} rows={[['Interface', ifc.name], ['IPv4', ifc.ipv4], ['MAC', ifc.mac]]} />)}
             {(net.interfaces || []).length === 0 && <div className="text-[12.5px] text-faint">No network interfaces reported yet.</div>}
           </InventorySection>
-          <Card className="p-4 md:col-span-2">
-            <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink"><Icon name="grid" size={14} className="text-muted" />Installed software <span className="text-faint font-normal">({sw.length})</span></div>
-            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
-              {sw.map((s, i) => <div key={i} className="flex items-center justify-between border-b border-line/60 pb-1.5"><span className="text-[12.5px] text-ink">{s.name}</span><span className="text-[11.5px] text-faint mono">{s.version}</span></div>)}
-            </div>
-            {sw.length === 0 && <div className="text-[12.5px] text-faint">No software inventory reported yet.</div>}
-          </Card>
+          <InstalledSoftware software={sw} />
         </div>
       )}
     </div>
+  );
+}
+
+/* Installed software: a workstation reports hundreds of entries, and rendering
+   all of them buried the rest of the inventory tab under a wall of names. Shows
+   a first page with a filter, and opens on demand. */
+function InstalledSoftware({ software }) {
+  const PREVIEW = 12;
+  const [expanded, setExpanded] = useState(false);
+  const [q, setQ] = useState('');
+  const list = software || [];
+  const ql = q.trim().toLowerCase();
+  const matching = !ql ? list : list.filter((s) => String(s.name || '').toLowerCase().includes(ql) || String(s.version || '').toLowerCase().includes(ql));
+  // A search is a request to see what matches, so it opens the list on its own.
+  const shown = expanded || ql ? matching : matching.slice(0, PREVIEW);
+  const hidden = matching.length - shown.length;
+
+  return (
+    <Card className="p-4 md:col-span-2">
+      <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink">
+        <Icon name="grid" size={14} className="text-muted" />Installed software
+        <span className="text-faint font-normal">({list.length})</span>
+        {list.length > PREVIEW && (
+          <div className="ml-auto relative">
+            <Icon name="search" size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter software…" className="h-7 pl-7 text-[12px] w-[200px]" />
+          </div>
+        )}
+      </div>
+      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
+        {shown.map((s, i) => <div key={i} className="flex items-center justify-between border-b border-line/60 pb-1.5"><span className="text-[12.5px] text-ink">{s.name}</span><span className="text-[11.5px] text-faint mono">{s.version}</span></div>)}
+      </div>
+      {list.length === 0 && <div className="text-[12.5px] text-faint">No software inventory reported yet.</div>}
+      {list.length > 0 && !matching.length && <div className="text-[12.5px] text-faint">Nothing matches “{q}”.</div>}
+      {hidden > 0 && (
+        <Button variant="ghost" size="sm" icon="chevdown" className="mt-3" onClick={() => setExpanded(true)}>
+          Show {hidden} more
+        </Button>
+      )}
+      {expanded && !ql && matching.length > PREVIEW && (
+        <Button variant="ghost" size="sm" icon="chevdown" className="mt-3" onClick={() => setExpanded(false)}>
+          Show less
+        </Button>
+      )}
+    </Card>
   );
 }
 

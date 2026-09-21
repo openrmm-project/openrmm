@@ -35,6 +35,15 @@ const RemoteInput = {
   // shares the session's socket with the video stream.
   CLIP_LIMIT: 256 * 1024,
 
+  // The endpoint's clipboard arriving for the technician. Same cap as the other
+  // direction, and an empty payload is not worth clobbering a local clipboard
+  // that may hold something the operator still needs.
+  incomingClipText(message) {
+    const text = message && typeof message.text === 'string' ? message.text : '';
+    if (!text) return null;
+    return text.slice(0, RemoteInput.CLIP_LIMIT);
+  },
+
   clipMessage(text) {
     if (typeof text !== 'string' || text === '') return null;
     return { t: 'clip', text: text.slice(0, RemoteInput.CLIP_LIMIT), paste: true };

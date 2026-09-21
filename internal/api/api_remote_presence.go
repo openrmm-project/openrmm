@@ -2,8 +2,11 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/p1ngu/rmm/internal/remote"
 )
 
 // listRemotePresence reports the live remote attachments, either for the whole
@@ -34,5 +37,27 @@ func (s *Server) listRemotePresence(w http.ResponseWriter, r *http.Request) {
 		}
 		viewers = allowed
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"viewers": viewers})
+	// Resolved here rather than in the console: reading who is connected needs
+	// only devices.view, and making the name depend on a second permission left
+	// most operators staring at a raw user id.
+	type namedViewer struct {
+		remote.Viewer
+		UserName string `json:"user_name"`
+	}
+	named := make([]namedViewer, 0, len(viewers))
+	names := map[string]string{}
+	for _, v := range viewers {
+		label, ok := names[v.User]
+		if !ok {
+			label = v.User
+			if user, err := s.store.GetUserByID(r.Context(), v.User); err == nil && user != nil && user.Username != "" {
+				label = user.Username
+			} else if strings.HasPrefix(v.User, "ai:") {
+				label = "AI assistant"
+			}
+			names[v.User] = label
+		}
+		named = append(named, namedViewer{Viewer: v, UserName: label})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"viewers": named})
 }

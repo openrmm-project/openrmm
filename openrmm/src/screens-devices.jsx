@@ -7,12 +7,12 @@
 function useRemotePresence() {
   const { can } = useAuth();
   const q = useQuery(['remote-presence'], () => (can('devices.view') ? api.listRemotePresence() : Promise.resolve({ viewers: [] })), { poll: 10000 });
-  const usersQ = useQuery(['presence-users'], () => (can('users.view') ? api.listUsers() : Promise.resolve({ users: [] })), { invalidateOn: ['users'] });
-  const names = {};
-  (usersQ.data?.users || []).forEach((u) => { names[u.id] = u.username; });
   const byAgent = {};
+  // The name comes resolved from the server. Looking it up here would have made
+  // the banner depend on permission to list users, which most technicians do
+  // not have — and the banner then read as a raw user id.
   (q.data?.viewers || []).forEach((v) => {
-    (byAgent[v.agent_id] = byAgent[v.agent_id] || []).push({ ...v, name: names[v.user] || v.user || 'someone' });
+    (byAgent[v.agent_id] = byAgent[v.agent_id] || []).push({ ...v, name: v.user_name || v.user || 'someone' });
   });
   return byAgent;
 }

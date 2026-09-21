@@ -97,19 +97,22 @@ agent downloads — see
 and [`scripts/windows-defender-exclusion.ps1`](../scripts/windows-defender-exclusion.ps1)
 to apply or revert it on endpoints that are already installed.
 
-**Windows — Programs and Features.** The installer registers the agent under
-`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent`, so it
-appears as *OpenRMM Agent* in Programs and Features, in Settings ▸ Apps and to
+**Windows — Programs and Features.** The **agent** registers itself under
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent` at every
+service start, so it appears as *OpenRMM Agent* there, in Settings ▸ Apps and to
 inventory tools. Registering a Windows service alone leaves no such entry, and
 software nobody can see on a managed endpoint is a support and audit problem. It
 is not a tamper control either way: a local administrator can stop the service
-regardless, so omitting the entry buys friction rather than protection. The
-entry is written only after the install reports healthy, refreshed on every run
-so the version stays honest, and its `UninstallString` runs
-`C:\ProgramData\rmm-agent\uninstall.ps1`, which stops and deletes the service,
-removes the binaries and enrolment state, drops the Defender exclusion if the
-installer added one, and removes the registry entry itself. `-action uninstall`
-on its own only removes the service.
+regardless, so omitting the entry buys friction rather than protection.
+
+The service does it rather than the installer because **agents update themselves
+and installers do not re-run**: an endpoint that self-updated past the release
+introducing the entry would never get one, and where one existed its version
+froze at whatever first wrote it. The `uninstall.ps1` its `UninstallString`
+points at is embedded in the agent and written out when it differs — it stops
+and deletes the service, removes the binaries and enrolment state, drops the
+Defender exclusion if one was added, and removes the registry entry itself.
+`-action uninstall` on its own only removes the service.
 
 **Where the agent is installed, and why the directory matters.** Linux keeps
 `/usr/local/bin/rmm-agent`; **macOS uses `/usr/local/libexec/openrmm/`**, because
@@ -151,6 +154,30 @@ published it downloads it, verifies the detached Ed25519 signature when
 configured, validates it runs (`-print-version`), confirms it is not
 byte-identical to the running one, atomically swaps it in, and reloads (re-exec
 on Unix; a detached service restart on Windows).
+
+### Serving `/dl` on Kubernetes
+
+Compose bind-mounts `deploy/public` into the web container, which is why `/dl`
+works out of the box there. A Kubernetes install has no such directory, and the
+web image carries none: the route answers and has nothing to serve, so no agent
+can install or update.
+
+The `artifacts` build target packages a published `deploy/public` into an image
+that copies itself into a volume:
+
+```bash
+docker build --target artifacts -t openrmm-artifacts:v0.5.10 .
+```
+
+Run it as an initContainer writing to a volume the web container mounts at
+`/usr/share/nginx/dl`, read-only — nothing that serves HTTP should be able to
+rewrite what endpoints are about to install. Shared storage is not needed, and
+the **image tag becomes the release identity**, so promoting one installation is
+a single value rather than a file sync nobody can reconstruct afterwards.
+
+The image is a transport, not a trust boundary: every artifact carries its
+Ed25519 signature and the agent verifies it against the key pinned at install
+time, so a compromised registry still cannot deliver an accepted update.
 
 So a fleet-wide upgrade is just **republish to `/dl`**:
 

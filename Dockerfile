@@ -39,6 +39,25 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
     CMD wget -q --spider http://127.0.0.1:8080/readyz || exit 1
 ENTRYPOINT ["/usr/local/bin/rmm-server"]
 
+# The signed update artifacts, as an image, so a Kubernetes install can serve
+# /dl/ without shared storage: an initContainer copies them into a volume the
+# web container reads. The files are what `make dist-signed` produced —
+# binaries, their .sig files, the manifest and its signature — and the image tag
+# IS the release identity, which makes promoting a tenant a single value change
+# rather than a file sync nobody can audit afterwards.
+#
+# Nothing here needs to be trusted: every artifact carries an Ed25519 signature
+# the agent verifies against the key pinned at install time, so this image is a
+# transport, not a trust boundary.
+FROM ${ALPINE_IMAGE} AS artifacts
+RUN apk upgrade --no-cache
+COPY deploy/public/ /artifacts/
+# Ownership matches the nginx user in the frontend image, so the copy lands
+# readable without the initContainer having to chown anything.
+RUN chown -R 101:101 /artifacts && chmod -R a-w /artifacts
+USER 101:101
+CMD ["sh", "-c", "cp -a /artifacts/. ${RMM_ARTIFACT_DEST:-/dl}/"]
+
 FROM ${NGINX_IMAGE} AS frontend
 # Patch OS packages (openssl, expat, libpng, c-ares, curl, ...) beyond what the
 # pinned nginx base ships; without this the image carries fixable HIGH/CRITICAL

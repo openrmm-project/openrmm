@@ -9,6 +9,11 @@ bin
 *.exe
 docs
 deploy
+# …except the published artifacts, which the `artifacts` image serves at /dl/.
+# The negation is deliberately narrow: deploy/ is excluded precisely because it
+# also holds deploy/secrets/, and that must never reach a build context.
+!deploy/public
+deploy/public/*.env
 *.md
 .env
 .env.*

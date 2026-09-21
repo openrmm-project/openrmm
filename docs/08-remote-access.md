@@ -512,8 +512,13 @@ three is installed the paste is refused and logged, not silently dropped.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.
-- Release CI builds the arm64 sidecar on macos-14, packages and ad-hoc signs its
-  `.app.tar.gz`, but does not sign with Developer ID, notarize or staple it.
+- Release CI builds **both** sidecars on one macos-14 runner — arm64 natively and
+  x86_64 cross-built with `clang -arch x86_64`, since Xcode's SDK is universal —
+  packages and ad-hoc signs each `.app.tar.gz`, and verifies with `file` that the
+  two slices really are different architectures. A cross-build that silently
+  produced two arm64 binaries would ship an Intel release no Intel Mac can start,
+  and nothing downstream would notice: the bundle unpacks and the signature
+  verifies either way. It does not sign with Developer ID, notarize or staple.
   Gatekeeper/TCC approval remains an operator concern; OpenRMM's Ed25519 update
   signature is a separate trust mechanism.
 - macOS source/native CI changes do not update an existing `/dl/` binary by

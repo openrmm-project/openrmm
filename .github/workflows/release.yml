@@ -177,23 +177,18 @@ jobs:
             deploy/public/rmm-remote-*
 
   macos-sidecar:
-    name: macOS sidecar (${{ matrix.arch }})
+    name: macOS sidecar (arm64 + amd64)
     needs: [gates, installer-windows, installer-macos]
     permissions:
       contents: read
-    strategy:
-      matrix:
-        include:
-          # Intel (amd64) is temporarily dropped from the release. It needs an
-          # older SDK because the macOS 15 SDK removed CGDisplayCreateImage (the
-          # CoreGraphics screen grab this engine uses), but the macos-13 (Intel)
-          # runners are being retired: the job now queues for ~24h and is
-          # cancelled, which blocked `publish` and stopped v0.4.5 from shipping.
-          # Re-add `- arch: amd64 / runner: <intel>` once the darwin capture path
-          # is migrated to ScreenCaptureKit and builds on macos-14 (docs/19 Ph.2).
-          - arch: arm64
-            runner: macos-14
-    runs-on: ${{ matrix.runner }}
+    # One Apple Silicon runner builds both. Intel was dropped from the release
+    # when the macos-13 runners started queueing for ~24h and being cancelled,
+    # which blocked `publish` entirely — but an Intel RUNNER was never the only
+    # way to get an Intel binary: Xcode's SDK is universal, so clang cross-builds
+    # x86_64 from here. CI has been doing exactly that for every PR, so the
+    # release was shipping less than CI proved buildable, and Intel Macs were
+    # left with no remote module at all.
+    runs-on: macos-14
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -204,19 +199,40 @@ jobs:
           # Go baked into the runner image, which is how CI kept building on a
           # release that already had published security fixes.
           check-latest: true
-      - name: Build and package macOS remote module
+      - name: Build and package macOS remote modules
         run: |
-          arch="${{ matrix.arch }}"
+          set -eux
           plist=cmd/rmm-remote/macapp/Info.plist
           ldflags="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$plist"
-          GOOS=darwin GOARCH="$arch" CGO_ENABLED=1 go build -buildvcs=false -ldflags "$ldflags" -o "rmm-remote-darwin-$arch" ./cmd/rmm-remote
-          scripts/build-macos-bundle.sh "$arch" "rmm-remote-darwin-$arch" "rmm-remote-darwin-$arch.app.tar.gz"
+          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags "$ldflags" -o rmm-remote-darwin-arm64 ./cmd/rmm-remote
+          # Cross-built here, not on an Intel runner: -arch x86_64 selects the
+          # slice of the same universal SDK. It cannot be executed on this
+          # machine, which is why the job verifies the architecture instead of
+          # running it.
+          CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 CC="clang -arch x86_64" go build -buildvcs=false -ldflags "$ldflags" -o rmm-remote-darwin-amd64 ./cmd/rmm-remote
+          for arch in arm64 amd64; do
+            scripts/build-macos-bundle.sh "$arch" "rmm-remote-darwin-$arch" "rmm-remote-darwin-$arch.app.tar.gz"
+          done
+      - name: Verify both slices are what they claim
+        run: |
+          set -eux
+          # A cross-build that silently produced two arm64 binaries would ship an
+          # Intel release that no Intel Mac can start, and nothing downstream
+          # would notice: the bundle unpacks, the signature verifies, and the
+          # sidecar simply never runs.
+          file rmm-remote-darwin-arm64 | grep -q 'arm64'
+          file rmm-remote-darwin-amd64 | grep -q 'x86_64'
+          for arch in arm64 amd64; do
+            tar -tzf "rmm-remote-darwin-$arch.app.tar.gz" | grep -q 'RMMRemote.app/Contents/MacOS/rmm-remote'
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: macos-sidecar-${{ matrix.arch }}
+          name: macos-sidecar
           path: |
-            rmm-remote-darwin-${{ matrix.arch }}
-            rmm-remote-darwin-${{ matrix.arch }}.app.tar.gz
+            rmm-remote-darwin-arm64
+            rmm-remote-darwin-arm64.app.tar.gz
+            rmm-remote-darwin-amd64
+            rmm-remote-darwin-amd64.app.tar.gz
 
   publish:
     name: Sign, attest and publish
@@ -250,7 +266,7 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: 'macos-sidecar-*'
+          pattern: 'macos-sidecar'
           path: release
           merge-multiple: true
       - name: Assemble unsigned release

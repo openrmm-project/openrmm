@@ -743,7 +743,19 @@ func (f AuditFilter) auditWhere() (string, []any) {
 		conds = append(conds, fmt.Sprintf(cond, len(args)))
 	}
 	if f.Actor != "" {
-		add("lower(actor) = lower($%d)", f.Actor)
+		// A person and "the AI acting for that person" are the same actor to
+		// anyone investigating. The trail records them apart — "<user-id>" and
+		// "ai:<user-id>" — which is right for attribution and wrong as a filter:
+		// picking a user hid every job the assistant proposed on their behalf,
+		// and the entries looked missing rather than filed under another name.
+		// Filtering by the AI alias stays exact, so "show me only what the AI
+		// did" is still answerable.
+		if strings.HasPrefix(strings.ToLower(f.Actor), "ai:") {
+			add("lower(actor) = lower($%d)", f.Actor)
+		} else {
+			args = append(args, f.Actor)
+			conds = append(conds, fmt.Sprintf("(lower(actor) = lower($%d) OR lower(actor) = 'ai:' || lower($%d))", len(args), len(args)))
+		}
 	}
 	if f.Action != "" {
 		// Prefix rather than equality: the actions are dotted namespaces

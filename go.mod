@@ -15,7 +15,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/kardianos/service v1.3.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/crypto v0.55.0
 	golang.org/x/oauth2 v0.36.0

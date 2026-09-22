@@ -7,55 +7,13 @@ access) and an **acceptance** check.
 
 Status legend: ✅ done · 🟡 in progress · ⬜ not started.
 
-## Current state (2026-07-27) — resume here
+## Before production deployment
 
-Still a **development / localhost** deployment (one Windows test endpoint). Since
-the 07-21 snapshot below:
-
-- ✅ Shipped through `v0.4.8`; the Windows installer verifies Ed25519 in-process
-  and no longer needs OpenSSL (`CHANGELOG.md`).
-- ✅ Remote desktop, file transfer and terminal **work** after the two fixes in
-  0.2 — verified against the Windows endpoint, including an elevated ConPTY
-  session under SYSTEM.
-- ⚠️ **The signing key was rotated on 07-26 and custody is currently split:**
-  `deploy/secrets/update-signing.key.env` holds the original pair
-  (`Itu2LJ3p…`), while the GitHub secrets and the artifacts now served from
-  `deploy/public/` use a newer pair (`yfWWMRQ…`). Reconcile to one pair before
-  bootstrapping any fleet — nothing is pinned to the old key yet, so adopting
-  the new one and updating the key file is the cheap path.
-- ⚠️ `/dl/` is signed **from a workstation**, not by the release workflow. That is
-  fine for the lab and not acceptable for production.
-- ⛔ **GitHub Actions quota is exhausted** (jobs fail instantly with a billing
-  annotation), so no signed release can be cut until billing is resolved. This
-  blocks 0.1 entirely.
-
-### Snapshot of 2026-07-21 (kept for history)
-
-This is a **development / localhost** deployment (single node, no real device
-fleet yet); production is a future goal. What landed this session:
-
-- ✅ Signed-update pipeline built and its release-gate failures fixed; **GitHub
-  secrets set** (`RMM_UPDATE_PUBLIC_KEY` at repo level, `RMM_SIGNING_KEY` in the
-  `release` Environment). No approval reviewer yet (private repo, Free plan).
-- ✅ Keyring rotation, `/readyz` + `/metrics`, container-scan CI gate, runtime bug
-  fixes (offline reconcile, blank Audit log), AGPL-3.0 license. See `CHANGELOG.md`.
-- 🟡 **Release `v0.4.5` was building** (run `29858165595`, tag → commit `64c90db`).
-  If it hasn't finished: `gh run watch <id> --repo P1N-GU/openrmm`. The Intel
-  (`macos-13`) sidecar was queued.
-
-**Immediate next action after the release publishes** (the one thing that unblocks
-remote access + auto-update locally):
-
-```bash
-gh release download v0.4.5 --repo P1N-GU/openrmm --dir deploy/public --clobber
-# verify, then it is served at /dl/ (deploy/public is the prod bind-mount)
-cd deploy/public && sha256sum -c SHA256SUMS
-```
-
-Then reinstall the test agent once with `--update-public-key <pub>` (the public key
-is in `deploy/secrets/update-signing.key.env`, gitignored), or run it `--lab-mode`
-for dev. **Do not lose `deploy/secrets/update-signing.key.env`** — it is the only
-readable copy of the signing private key (GitHub secrets can't be read back).
+Verify the signed-update chain end to end, including the key used by the
+release workflow, the published artifacts, and the key installed on agents.
+Keep signing keys outside the repository and follow
+[the update-signing runbook](18-update-signing-runbook.md). Confirm remote
+desktop, file transfer, and terminal through the intended ingress.
 
 ## Phase 0 — Go-live blockers
 
@@ -64,25 +22,18 @@ See [18-update-signing-runbook](18-update-signing-runbook.md).
 
 - Put `RMM_SIGNING_KEY` / `RMM_UPDATE_PUBLIC_KEY` in GitHub; create the protected
   `release` Environment with required reviewers.
-- Cut a signed `v0.4.5`; publish binaries **plus `.sig`**, `SHA256SUMS` and
-  `SHA256SUMS.sig` to the production `/dl/` (today it serves unsigned binaries).
+- Cut a signed release; publish binaries **plus `.sig`**, `SHA256SUMS` and
+  `SHA256SUMS.sig` to the production `/dl/`.
 - Bootstrap the fleet with `--update-public-key`; return
   `RMM_ALLOW_LEGACY_AGENT_RELAY=false`.
-- **Acceptance:** devices report 0.4.5; agent logs `security: verified update
-  signature`; a follow-up `v0.4.6` auto-updates within `RMM_UPDATE_INTERVAL`.
-
-> **Note (2026-07-26): the earlier claim that remote access was fixed by 0.1 was
-> wrong.** This plan previously stated that the remote-access / file-transfer /
-> terminal failure was "not a code bug" and that publishing signed artifacts
-> would resolve it. Investigation on 2026-07-26 disproved that: unsigned `/dl/`
-> was a real gap, but it was not what broke remote access. Two independent code
-> bugs were, both reproduced and fixed — see 0.2.
+- **Acceptance:** devices report the new version; agent logs `security: verified
+  update signature`; a follow-up release auto-updates within
+  `RMM_UPDATE_INTERVAL`.
 
 ### 0.2 Runtime bug fixes — code ✅ (deploy pending)
 - Stale online agents reconciled to offline (`scheduler` + `store.MarkAgentOffline`). ✅
 - Blank Audit log fixed (`ACTION_META` global export + null-actor guard). ✅
-- **Remote access: two real code bugs, both fixed 2026-07-26.** ✅ (not 0.1, as
-  this plan previously claimed)
+- **Remote access: two code bugs fixed.** ✅
   1. **Relay handshake dropped every browser viewer.** The console sends the
      viewer ticket and auth token as extra `Sec-WebSocket-Protocol` entries
      alongside `rmm-v1`, but `handleRelayWS` upgraded with an `Upgrader` that
@@ -160,7 +111,7 @@ PostgreSQL, so it changes nothing about data loss or restore time, and most real
 downtime is host- or database-level. The investment goes to the data layer
 instead.
 
-Landed (2026-07-27), all verified against throwaway clusters:
+Implemented and verified against temporary clusters:
 - ✅ Continuous WAL archiving (`archive_mode` + `archive_timeout`, default 300s)
   with `deploy/postgres/archive-wal.sh`. **RPO ≈ 5 minutes**, down from ~24h.
   Proven by destroying a cluster's data volume and recovering to a chosen instant

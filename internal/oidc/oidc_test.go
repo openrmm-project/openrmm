@@ -334,10 +334,10 @@ func TestDiscoverRequiresIssuerAndClient(t *testing.T) {
 func TestAuthenticationContextPolicy(t *testing.T) {
 	idp := newFakeIDP(t)
 	p := discover(t, idp, "email")
-	p.cfg.ACRValues = []string{"urn:openrmm:acr:mfa"}
+	p.cfg.ACRValues = []string{"urn:example:acr:mfa"}
 	p.cfg.RequiredAMR = []string{"otp", "mfa"}
 	u, _ := url.Parse(p.AuthCodeURL("s", "n", "v"))
-	if u.Query().Get("acr_values") != "urn:openrmm:acr:mfa" {
+	if u.Query().Get("acr_values") != "urn:example:acr:mfa" {
 		t.Fatal("ACR policy not requested")
 	}
 	for _, tc := range []struct {
@@ -347,11 +347,11 @@ func TestAuthenticationContextPolicy(t *testing.T) {
 		allowed bool
 	}{
 		{"missing", nil, nil, false},
-		{"single factor", "urn:openrmm:acr:single-factor", []string{"pwd"}, false},
-		{"ACR only", "urn:openrmm:acr:mfa", nil, false},
-		{"recovery is not OTP", "urn:openrmm:acr:mfa", []string{"pwd", "recovery", "mfa"}, false},
-		{"malformed methods", "urn:openrmm:acr:mfa", "otp mfa", false},
-		{"OTP proof", "urn:openrmm:acr:mfa", []string{"pwd", "otp", "mfa"}, true},
+		{"single factor", "urn:example:acr:single-factor", []string{"pwd"}, false},
+		{"ACR only", "urn:example:acr:mfa", nil, false},
+		{"recovery is not OTP", "urn:example:acr:mfa", []string{"pwd", "recovery", "mfa"}, false},
+		{"malformed methods", "urn:example:acr:mfa", "otp mfa", false},
+		{"OTP proof", "urn:example:acr:mfa", []string{"pwd", "otp", "mfa"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			idp.claims = func(c map[string]any) map[string]any { c["acr"] = tc.acr; c["amr"] = tc.amr; return c }
@@ -366,26 +366,46 @@ func TestAuthenticationContextPolicy(t *testing.T) {
 	}
 }
 
-// Invoked by the Cloud checkout's real Worker integration suite, with an
-// authorization code obtained through its portal, TOTP and consent endpoints.
-func TestCloudProviderInterop(t *testing.T) {
+// TestExternalProviderInterop verifies an opt-in OIDC provider with a real
+// authorization code. Its caller supplies provider-specific values and claims.
+func TestExternalProviderInterop(t *testing.T) {
 	issuer := os.Getenv("RMM_TEST_OIDC_ISSUER")
 	if issuer == "" {
-		t.Skip("run Cloud test:oidc:e2e with RMM_INTEROP_DIR")
+		t.Skip("set RMM_TEST_OIDC_ISSUER to test an external provider")
 	}
+	required := []string{
+		"RMM_TEST_OIDC_CLIENT_ID", "RMM_TEST_OIDC_SECRET", "RMM_TEST_OIDC_REDIRECT_URL",
+		"RMM_TEST_OIDC_CODE", "RMM_TEST_OIDC_VERIFIER", "RMM_TEST_OIDC_ACR",
+		"RMM_TEST_OIDC_AMR", "RMM_TEST_OIDC_SUBJECT", "RMM_TEST_OIDC_EMAIL",
+		"RMM_TEST_OIDC_NONCE",
+	}
+	for _, name := range required {
+		if os.Getenv(name) == "" {
+			t.Fatalf("%s is required when testing an external provider", name)
+		}
+	}
+	methods := strings.Split(os.Getenv("RMM_TEST_OIDC_AMR"), ",")
 	p, err := Discover(context.Background(), Config{
-		Issuer: issuer, ClientID: "instance-a", ClientSecret: os.Getenv("RMM_TEST_OIDC_SECRET"),
-		RedirectURL: "https://instance.example.test/api/auth/oidc/callback",
-		ACRValues:   []string{"urn:openrmm:acr:mfa"}, RequiredAMR: []string{"otp", "mfa"},
+		Issuer:       issuer,
+		ClientID:     os.Getenv("RMM_TEST_OIDC_CLIENT_ID"),
+		ClientSecret: os.Getenv("RMM_TEST_OIDC_SECRET"),
+		RedirectURL:  os.Getenv("RMM_TEST_OIDC_REDIRECT_URL"),
+		ACRValues:    []string{os.Getenv("RMM_TEST_OIDC_ACR")},
+		RequiredAMR:  methods,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := p.Exchange(context.Background(), os.Getenv("RMM_TEST_OIDC_CODE"), os.Getenv("RMM_TEST_OIDC_VERIFIER"), "nonce-e2e")
+	id, err := p.Exchange(context.Background(), os.Getenv("RMM_TEST_OIDC_CODE"), os.Getenv("RMM_TEST_OIDC_VERIFIER"), os.Getenv("RMM_TEST_OIDC_NONCE"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id.Subject != "customer-a" || id.Email != "a@example.test" || !contains(id.AMR, "otp") {
-		t.Fatalf("unexpected identity: %+v", id)
+	if id.Subject != os.Getenv("RMM_TEST_OIDC_SUBJECT") || id.Email != os.Getenv("RMM_TEST_OIDC_EMAIL") {
+		t.Fatal("external provider returned an unexpected identity")
+	}
+	for _, method := range methods {
+		if !contains(id.AMR, method) {
+			t.Fatalf("external provider did not report required method %q", method)
+		}
 	}
 }

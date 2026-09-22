@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// The bug, reproduced: `Olá, Miquéias!` printed by a redirected Python on a
+// The bug, reproduced: `Olá, café!` printed by a redirected Python on a
 // pt-BR Windows arrives as cp1252 bytes. Handing those straight to a Go string
 // and marshalling them replaced each accented byte with U+FFFD, which is what
-// reached the database as `Ol<?>, Miqu<?>ias!`. The replacement is lossy — no
+// reached the database as `Ol<?>, caf<?>!`. The replacement is lossy — no
 // downstream code can undo it — so it has to be handled at capture.
 func TestDecodeOutputRecoversCP1252Accents(t *testing.T) {
-	// "Olá, Miquéias! Python funcionando." in cp1252: á = 0xE1, é = 0xE9.
-	raw := []byte("Ol\xe1, Miqu\xe9ias! Python funcionando.")
+	// "Olá, café! Python funcionando." in cp1252: á = 0xE1, é = 0xE9.
+	raw := []byte("Ol\xe1, caf\xe9! Python funcionando.")
 
 	// What the old path produced.
 	spoiled, err := json.Marshal(string(raw))
@@ -27,7 +27,7 @@ func TestDecodeOutputRecoversCP1252Accents(t *testing.T) {
 	}
 
 	got := decodeOutput(raw)
-	if got != "Olá, Miquéias! Python funcionando." {
+	if got != "Olá, café! Python funcionando." {
 		t.Errorf("decodeOutput = %q, want the accents restored", got)
 	}
 	// And it survives the JSON round-trip that corrupted it before.
@@ -46,7 +46,7 @@ func TestDecodeOutputLeavesValidUTF8Alone(t *testing.T) {
 	for _, s := range []string{
 		"",
 		"plain ascii",
-		"Olá, Miquéias! Python funcionando.",
+		"Olá, café! Python funcionando.",
 		"日本語とEmoji 🎉",
 		"tab\tnewline\nquote\"backslash\\",
 	} {
@@ -87,11 +87,11 @@ func TestPythonOutputKeepsAccents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	code, stdout, stderr := runScriptCtx(ctx, "python", "print('Olá, Miquéias! Python funcionando.')")
+	code, stdout, stderr := runScriptCtx(ctx, "python", "print('Olá, café! Python funcionando.')")
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr = %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "Olá, Miquéias!") {
+	if !strings.Contains(stdout, "Olá, café!") {
 		t.Errorf("stdout = %q, want the accents intact", stdout)
 	}
 	if strings.ContainsRune(stdout, '�') {

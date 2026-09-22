@@ -17,10 +17,9 @@ import (
 // on purpose.
 //
 // The account transport carries password resets. It is env-only — no console
-// form, no app_settings row. A hosted instance sends its tenants' password-reset
-// mail from the operator's own domain, and that guarantee cannot survive an
-// editable copy in the database: a tenant admin would simply point it somewhere
-// else, and a reset link is an authentication artefact, not a preference.
+// form, no app_settings row. The server operator controls password-reset mail;
+// an editable copy in the database would let a settings administrator redirect
+// it. A reset link is an authentication artefact, not a preference.
 //
 // The alerts transport carries notifications and stays fully editable in the
 // console, because who a tenant's monitoring mail comes from is genuinely their

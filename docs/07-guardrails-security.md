@@ -160,10 +160,9 @@ RMM_DATABASE_URL=<owner dsn> rmm-server -migrate-only   # applies and exits
 RMM_DATABASE_URL=<app dsn>   rmm-server                 # serves
 ```
 
-The Helm chart does this with init containers — `migrate` with the owner's
-credentials, then `grant-app-login` to set the restricted role's password, then
-the server. Each install generates its own password, never shared between
-tenants: one leaked value would otherwise reach every customer's database.
+An orchestrated deployment should run migrations with the owner's credentials,
+configure the restricted application role, and only then start the server.
+Generate separate database credentials for each installation.
 
 Starting the server as the restricted role with a migration outstanding fails
 with the command to run, rather than an opaque permission error.

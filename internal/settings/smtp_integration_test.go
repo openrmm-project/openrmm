@@ -51,9 +51,8 @@ func smtpStore(t *testing.T) (context.Context, *store.Store, *config.Config) {
 	return ctx, st, cfg
 }
 
-// The account transport is the operator's, not the tenant's: on a hosted
-// instance it sends password resets from the operator's own domain. A save that
-// could reach it would hand a tenant admin the ability to repoint authentication
+// The account transport is controlled by the server operator. A save that
+// could reach it would let a settings administrator redirect authentication
 // mail, so the write is refused outright rather than merely hidden in the UI.
 func TestSaveSMTPRefusesTheAccountProfileIntegration(t *testing.T) {
 	ctx, st, cfg := smtpStore(t)

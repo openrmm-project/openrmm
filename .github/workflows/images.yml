@@ -2,10 +2,7 @@ name: Container images
 
 # Publishes the server and console images to GHCR.
 #
-# They exist so a tenant can be deployed from a registry rather than from
-# somebody's laptop. That distinction is the whole point: docs/19 records
-# workstation-produced release artifacts as unacceptable for production, and an
-# image nobody can trace back to a commit has exactly that problem.
+# Registry images let operators deploy builds traceable to a source commit.
 #
 # Tags land as:
 #   ghcr.io/<owner>/openrmm-server:0.5.0   (from the git tag)
@@ -85,7 +82,7 @@ jobs:
           # would run the Go toolchain under QEMU — an order of magnitude slower,
           # for minutes this project is currently rationing.
           #
-          # Civo's nodes are amd64, so nothing needs the second architecture yet.
+          # Current deployments target amd64; add arm64 when needed.
           # To add it, first teach the Dockerfile to cross-compile:
           #   FROM --platform=$BUILDPLATFORM golang AS server-build
           #   ARG TARGETARCH

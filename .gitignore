@@ -5,8 +5,10 @@ dist/
 
 # Secrets / environment (never commit)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.env
+!*.env.example
 /deploy/secrets/
 /deploy/backups/
 *.pem
@@ -17,7 +19,15 @@ id_*
 agent-state.json
 
 # Local editor / tool state
-.claude/settings.local.json
+.claude/
+CLAUDE.md
+.codex/
+.agents/
+.ai-memory/
+.ai-memory.*
+*.jsonl
+*.session.json
+*.session.log
 .idea/
 .vscode/
 *.swp

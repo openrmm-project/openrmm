@@ -116,10 +116,10 @@ point.
 
 ### Why account mail is env-only
 
-Password-reset mail is an authentication artefact, not a preference. On a hosted
-instance it goes out from the operator's own domain, and that guarantee cannot
-survive an editable copy in `app_settings`: any tenant admin holding
-`settings.manage` could repoint it. So the account transport has no console form
+Password-reset mail is an authentication artefact, not a preference. Its sender
+and credentials are set by the server operator. An editable copy in
+`app_settings` would let anyone with `settings.manage` repoint it. So the
+account transport has no console form
 and **no write endpoint** — `PUT /api/config/smtp` does not exist, and
 `settings.SaveSMTP` refuses the profile with `ErrAccountProfileReadOnly`.
 

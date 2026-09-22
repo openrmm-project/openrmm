@@ -82,3 +82,117 @@ func TestLoadRequiresDedicatedSettingsKeyWhenConfigured(t *testing.T) {
 		t.Fatal("Load accepted a missing production settings encryption key")
 	}
 }
+
+func TestOIDCRequiresIssuerClientAndHTTPS(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_OIDC_ENABLED", "true")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("single sign-on started with no issuer")
+	}
+
+	t.Setenv("RMM_OIDC_ISSUER", "https://idp.example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("single sign-on started with no client id")
+	}
+
+	// Discovery, the token exchange and the JWKS fetch all use this URL. Plain
+	// HTTP would put the client secret and the authorization code on the wire.
+	t.Setenv("RMM_OIDC_CLIENT_ID", "rmm-console")
+	t.Setenv("RMM_OIDC_ISSUER", "http://idp.example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("single sign-on started against a plain-HTTP issuer")
+	}
+
+	t.Setenv("RMM_OIDC_ISSUER", "https://idp.example.test/")
+	t.Setenv("RMM_PUBLIC_URL", "https://rmm.example.test")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OIDCIssuer != "https://idp.example.test" {
+		t.Errorf("issuer = %q, want the trailing slash trimmed to match discovery", cfg.OIDCIssuer)
+	}
+	// Derived rather than demanded: one fewer thing to get wrong, and it has to
+	// match what was registered with the provider.
+	if want := "https://rmm.example.test/api/auth/oidc/callback"; cfg.OIDCRedirectURL != want {
+		t.Errorf("redirect URL = %q, want %q", cfg.OIDCRedirectURL, want)
+	}
+}
+
+// Without the openid scope a provider returns no ID token at all, and there is
+// nothing to verify. Adding it back beats failing at the first sign-in with a
+// message nobody can act on.
+func TestOIDCAlwaysRequestsTheOpenIDScope(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_OIDC_ENABLED", "true")
+	t.Setenv("RMM_OIDC_ISSUER", "https://idp.example.test")
+	t.Setenv("RMM_OIDC_CLIENT_ID", "rmm-console")
+	t.Setenv("RMM_PUBLIC_URL", "https://rmm.example.test")
+	t.Setenv("RMM_OIDC_SCOPES", "profile,email")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.OIDCScopes) == 0 || cfg.OIDCScopes[0] != "openid" {
+		t.Errorf("scopes = %v, want openid first", cfg.OIDCScopes)
+	}
+}
+
+func TestOIDCAuthenticationContextSettings(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_OIDC_ENABLED", "false")
+	t.Setenv("RMM_OIDC_ACR_VALUES", " urn:openrmm:acr:mfa, another-context ,")
+	t.Setenv("RMM_OIDC_REQUIRED_AMR", " otp, mfa ,")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cfg.OIDCACRValues, "|"); got != "urn:openrmm:acr:mfa|another-context" {
+		t.Fatalf("ACR = %q", got)
+	}
+	if got := strings.Join(cfg.OIDCRequiredAMR, "|"); got != "otp|mfa" {
+		t.Fatalf("AMR = %q", got)
+	}
+}
+
+// Auto-provisioning plus an admin default would make everyone the provider will
+// authenticate an administrator here — for a Google Workspace or Entra tenant,
+// the whole company. Refuse the combination rather than log a warning nobody
+// reads.
+func TestOIDCRefusesAutoProvisionedAdmins(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_OIDC_ENABLED", "true")
+	t.Setenv("RMM_OIDC_ISSUER", "https://idp.example.test")
+	t.Setenv("RMM_OIDC_CLIENT_ID", "rmm-console")
+	t.Setenv("RMM_PUBLIC_URL", "https://rmm.example.test")
+	t.Setenv("RMM_OIDC_AUTO_PROVISION", "true")
+	t.Setenv("RMM_OIDC_DEFAULT_ROLE", "admin")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("auto-provisioning into the admin role was accepted")
+	}
+
+	t.Setenv("RMM_OIDC_DEFAULT_ROLE", "readonly")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load with a safe default role: %v", err)
+	}
+}
+
+// Off is off: nothing about a half-configured provider should stop the server
+// from starting when the feature was never turned on.
+func TestOIDCDisabledIgnoresItsOwnSettings(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_OIDC_ENABLED", "false")
+	t.Setenv("RMM_OIDC_ISSUER", "http://not-even-https")
+	t.Setenv("RMM_OIDC_CLIENT_ID", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.OIDCEnabled {
+		t.Error("OIDC reported as enabled")
+	}
+}

@@ -809,3 +809,31 @@ CREATE TABLE IF NOT EXISTS password_resets (
 
 CREATE INDEX IF NOT EXISTS idx_password_resets_user
     ON password_resets (user_id) WHERE used_at IS NULL;
+
+-- An in-flight single sign-on. state, nonce and the PKCE verifier each defend a
+-- different step of the redirect, and all three are stored rather than held in
+-- memory so a sign-in survives a restart. Single use: the callback deletes the
+-- row as it reads it.
+CREATE TABLE IF NOT EXISTS oidc_login_states (
+    state_hash    TEXT PRIMARY KEY,
+    nonce         TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    redirect_to   TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at    TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oidc_states_expiry ON oidc_login_states (expires_at);
+
+-- Which identity provider vouched for an account, and its stable id there.
+-- Empty for a local account. The pair identifies the user, never the email:
+-- addresses get reassigned when people leave, `sub` does not.
+--
+-- Added here rather than inside CREATE TABLE users because this file has to
+-- produce the same column order the migrations do, and these arrive last.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer  TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_subject TEXT NOT NULL DEFAULT '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity
+    ON users (oidc_issuer, oidc_subject)
+    WHERE oidc_subject <> '';

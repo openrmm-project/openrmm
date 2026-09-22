@@ -155,7 +155,7 @@ function DashboardScreen({ navigate }) {
 
   return (
     <Page wide>
-      <PageHeader title="Dashboard" subtitle="Fleet health at a glance" actions={
+      <PageHeader title={t('title.dashboard')} subtitle={t('dash.subtitle')} actions={
         <Dropdown align="right" width="w-56" trigger={<Button variant="ghost" icon="settings">Customize</Button>}>
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">Show panels</div>
           {customizable.map((w) => (

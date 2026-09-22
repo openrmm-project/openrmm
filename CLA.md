@@ -4,9 +4,8 @@
 > Apache Individual Contributor License Agreement and the Harmony agreements,
 > adapted for a project that is offered both under the AGPL-3.0 and under
 > separate commercial terms. Have counsel review it before you ask anyone to
-> sign it. Two things in particular need a decision that only you can make: who
-> the **Project Owner** is (you personally, or a company you own), and which
-> jurisdiction governs it.
+> sign it. One thing in particular still needs a decision that only you can
+> make: who the **Project Owner** is (you personally, or a company you own).
 
 **Project:** OpenRMM
 **Project Owner:** `<LEGAL NAME OF THE COPYRIGHT HOLDER>` ("the Owner")
@@ -117,8 +116,9 @@ tell the Owner as soon as you become aware of it.
 
 ## 9. Governing law
 
-This agreement is governed by the laws of `<JURISDICTION>`, without regard to its
-conflict-of-law rules.
+This agreement is governed by the substantive laws of Switzerland, without regard
+to its conflict-of-law rules and excluding the United Nations Convention on
+Contracts for the International Sale of Goods.
 
 ## 10. Entire agreement
 

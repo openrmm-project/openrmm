@@ -140,6 +140,11 @@ func main() {
 	log.Println("scheduler started")
 
 	srv := api.New(cfg, st, h, jobSvc, remoteMgr, relay, chat, sched, patchSvc)
+	// Discovery talks to the identity provider over the network, so it happens
+	// here rather than in New: a provider that is down delays this call, and it
+	// must not delay building the server or block the agent hub. It logs and
+	// carries on — local sign-in does not depend on it.
+	srv.InitOIDC(ctx)
 
 	httpServer := &http.Server{
 		Addr:         cfg.HTTPAddr,

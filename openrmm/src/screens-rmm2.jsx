@@ -356,7 +356,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
         {tab === 'checks' && (
           <div className="space-y-3">
             {canChecks && <div className="flex justify-end"><Button size="sm" variant="ghost" icon="plus" onClick={() => setEditCheck('new')}>Add check</Button></div>}
-            {checks.length ? <div className="space-y-2">{checks.map((c) => { const t = CHECK_TYPES[c.type]; return (
+            {checks.length ? <div className="space-y-2">{checks.map((c) => { const t = checkType(c.type); return (
               <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3">
                 <Icon name={t.icon} size={15} className="text-muted" />
                 <div className="flex-1 min-w-0"><div className="text-[13px] text-ink font-medium truncate">{c.name}</div><div className="text-[11px] text-faint">{t.label} · {c.warn_threshold != null ? `warn ${c.warn_threshold}/err ${c.err_threshold}` : ''}</div></div>

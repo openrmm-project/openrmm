@@ -18,6 +18,28 @@ const CHECK_TYPES = {
   script: { label: 'Script check', icon: 'script', unit: '', dir: 'script', cfg: 'script', cfgLabel: 'Inline script', cfgPh: 'exit 0' },
 };
 
+// A check whose type this build does not recognise.
+//
+// CHECK_TYPES was read directly — CHECK_TYPES[c.type].icon — in five places,
+// which meant one unrecognised row did not degrade a cell: it threw during
+// render and React unmounted the console to a white page. The server is the
+// authority on what types exist, and it can legitimately know one this bundle
+// does not: an agent shipped ahead of the console, a migration in progress, a
+// row edited by hand.
+//
+// So the lookup falls back, and the fallback shows the raw type rather than
+// dressing it up as some other kind of check. An operator seeing "kernel_taint"
+// under an unfamiliar icon can act on it; one seeing "Script check" has been
+// told something untrue about a thing that runs on their machines.
+//
+// SEV, PATCH_CLASS_STYLE and NOTIFY_LABELS already guarded their lookups. This
+// was the one that did not.
+function checkType(type) {
+  return CHECK_TYPES[type] || {
+    label: type || 'Unknown check', icon: 'settings', unit: '', dir: 'state', cfg: null,
+  };
+}
+
 function checkAggregateStatus(c) {
   if (!c.enabled) return 'disabled';
   const x = c.summary || {};
@@ -298,7 +320,7 @@ function ChecksScreen() {
           </tr></thead>
           <tbody className="divide-y divide-line">
             {checks.map((c) => {
-              const t = CHECK_TYPES[c.type]; const dev = devMap[c.agent_id]; const pol = polMap[c.policy_id];
+              const t = checkType(c.type); const dev = devMap[c.agent_id]; const pol = polMap[c.policy_id];
               return (
                 <tr key={c.id} onClick={() => setDetail(c)} className="cursor-pointer hover:bg-elevated/40 transition">
                   <td className="px-4 py-3"><StatusPill status={checkAggregateStatus(c)} size="sm" /></td>
@@ -333,7 +355,7 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
   const { can } = useAuth();
   const resultsQ = useQuery([check?.id, 'results'], () => check ? api.getCheckResults(check.id) : Promise.resolve({ results: [] }), { invalidateOn: ['checks'] });
   if (!check) return null;
-  const t = CHECK_TYPES[check.type]; const dev = devMap[check.agent_id];
+  const t = checkType(check.type); const dev = devMap[check.agent_id];
   const results = resultsQ.data?.results || [];
   return (
     <Drawer open={!!check} onClose={onClose} width="max-w-[620px]">
@@ -388,7 +410,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
   const [name, setName] = useState(check?.name || '');
   const [target, setTarget] = useState(check?.policy_id ? 'pol:' + check.policy_id : check?.agent_id ? 'dev:' + check.agent_id : defaultPolicyId ? 'pol:' + defaultPolicyId : '');
   const initialType = check?.type || 'diskspace';
-  const [cfgVal, setCfgVal] = useState(check?.config?.[CHECK_TYPES[initialType].cfg] || '');
+  const [cfgVal, setCfgVal] = useState(check?.config?.[checkType(initialType).cfg] || '');
   const [shell, setShell] = useState(check?.config?.shell || 'powershell');
   const [warn, setWarn] = useState(check?.warn_threshold ?? 20);
   const [err, setErr] = useState(check?.err_threshold ?? 10);
@@ -400,7 +422,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
   const [timeout, setTimeoutSec] = useState(check?.timeout_sec ?? 180);
   const [enabled, setEnabled] = useState(check?.enabled ?? true);
   const [busy, setBusy] = useState(false);
-  const t = CHECK_TYPES[type];
+  const t = checkType(type);
   const devices = Object.values(devMap);
 
   const save = async () => {
@@ -420,7 +442,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
       <div className="px-5 py-4 border-b border-line flex items-center justify-between"><div className="text-[15px] font-semibold text-ink">{check ? 'Edit check' : 'New check'}</div><button onClick={onClose} className="text-faint hover:text-ink"><Icon name="close" size={18} /></button></div>
       <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto scroll-area">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Type"><Select value={type} onChange={(e) => { const next = e.target.value; setType(next); setCfgVal(check?.type === next ? check?.config?.[CHECK_TYPES[next].cfg] || '' : ''); if (next === 'cpuload' && Number(err) <= Number(warn)) { setWarn(80); setErr(90); } if ((next === 'diskspace' || next === 'memory') && Number(err) >= Number(warn)) { setWarn(20); setErr(10); } }}>{Object.entries(CHECK_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select></Field>
+          <Field label="Type"><Select value={type} onChange={(e) => { const next = e.target.value; setType(next); setCfgVal(check?.type === next ? check?.config?.[checkType(next).cfg] || '' : ''); if (next === 'cpuload' && Number(err) <= Number(warn)) { setWarn(80); setErr(90); } if ((next === 'diskspace' || next === 'memory') && Number(err) >= Number(warn)) { setWarn(20); setErr(10); } }}>{Object.entries(CHECK_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Select></Field>
           <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t.label} /></Field>
         </div>
         <Field label="Apply to"><Combobox value={target} onChange={setTarget} placeholder="Select target…"
@@ -641,6 +663,7 @@ window.TasksScreen = TasksScreen;
 window.awaitingReview = awaitingReview;
 window.ProposalBadge = ProposalBadge;
 window.CHECK_TYPES = CHECK_TYPES;
+window.checkType = checkType;
 window.SEV = SEV;
 // The build gives each source file its own block scope, so the policy drawer in
 // screens-rmm2.jsx cannot reach these without going through window. It edits the

@@ -24,6 +24,32 @@ function LoginScreen({ onAuthed, onForgot }) {
   const [need2fa, setNeed2fa] = useState(false);
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Whether an identity provider is configured is the server's answer, not a
+  // build flag: one bundle serves an install with no provider and one behind
+  // Entra. Until it replies there is no button, which is the right default —
+  // an SSO button that fails is worse than none.
+  const [sso, setSso] = useState({ enabled: false, label: '' });
+
+  uE(() => {
+    let live = true;
+    api.ssoStatus().then((r) => { if (live) setSso(r || { enabled: false }); });
+    return () => { live = false; };
+  }, []);
+
+  // The callback sends the browser back with the outcome in the fragment.
+  // Fragments are never sent to a server, so a token in one stays out of proxy
+  // logs, access logs and Referer headers.
+  uE(() => {
+    const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const reason = hash.get('sso_error');
+    if (!reason) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    setErr(t({
+      sso_denied: 'auth.err.ssoDenied',
+      sso_expired: 'auth.err.ssoExpired',
+      sso_no_account: 'auth.err.ssoNoAccount',
+    }[reason] || 'auth.err.sso'));
+  }, []);
 
   const doLogin = async () => {
     if (busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)) return;
@@ -33,8 +59,8 @@ function LoginScreen({ onAuthed, onForgot }) {
       sessionStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] }));
       onAuthed(res);
     } catch (e) {
-      if (e.totpRequired) { setNeed2fa(true); setErr(code ? 'Invalid code — try again' : 'Enter your authenticator code'); }
-      else setErr(e.message || 'Login failed');
+      if (e.totpRequired) { setNeed2fa(true); setErr(t(code ? 'auth.err.badCode' : 'auth.err.needCode')); }
+      else setErr(e.message || t('auth.err.failed'));
     } finally { setBusy(false); }
   };
 
@@ -45,16 +71,16 @@ function LoginScreen({ onAuthed, onForgot }) {
           <BrandMark size={34} />
           <div>
             <div className="text-[17px] font-semibold text-ink tracking-tight">OpenRMM</div>
-            <div className="text-[12px] text-faint -mt-0.5">Remote Monitoring & Management</div>
+            <div className="text-[12px] text-faint -mt-0.5">{t('auth.brand.subtitle')}</div>
           </div>
         </div>
 
         <Card className="p-6 shadow-2xl shadow-black/30">
-          <div className="text-[15px] font-semibold text-ink">Sign in to your instance</div>
-          <div className="text-[12.5px] text-muted mt-1">Self-hosted · {api.API_BASE}</div>
+          <div className="text-[15px] font-semibold text-ink">{t('auth.title')}</div>
+          <div className="text-[12.5px] text-muted mt-1">{t('auth.selfHosted', { base: api.API_BASE })}</div>
 
           <div className="flex gap-1 mt-5 p-0.5 bg-app rounded-lg border border-line">
-            {[['password', 'Username'], ['token', 'API token']].map(([v, l]) => (
+            {[['password', t('auth.mode.password')], ['token', t('auth.mode.token')]].map(([v, l]) => (
               <button key={v} onClick={() => setMode(v)} className={cx('flex-1 h-8 rounded-md text-[12.5px] font-medium transition', mode === v ? 'bg-elevated text-ink shadow-sm' : 'text-faint hover:text-muted')}>{l}</button>
             ))}
           </div>
@@ -62,20 +88,33 @@ function LoginScreen({ onAuthed, onForgot }) {
           <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); doLogin(); }}>
             {mode === 'password' ? (
               <>
-                <Field label="Username"><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus /></Field>
-                <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></Field>
-                {need2fa && <Field label="Authenticator code" hint="6-digit app code, or a recovery code if you lost your device."><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456 or xxxxx-xxxxx" autoFocus className="mono tracking-widest" /></Field>}
+                <Field label={t('auth.username')}><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus /></Field>
+                <Field label={t('auth.password')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></Field>
+                {need2fa && <Field label={t('auth.code')} hint={t('auth.code.hint')}><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder={t('auth.code.placeholder')} autoFocus className="mono tracking-widest" /></Field>}
               </>
             ) : (
-              <Field label="Bearer token" hint="Paste an issued API token.">
-                <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="tok_…" autoFocus className="mono" />
+              <Field label={t('auth.token')} hint={t('auth.token.hint')}>
+                <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder={t('auth.token.placeholder')} autoFocus className="mono" />
               </Field>
             )}
             {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
-            <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)}>Sign in</Button>
+            <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)}>{t('auth.signIn')}</Button>
           </form>
+          {sso.enabled && (
+            <>
+              <div className="flex items-center gap-3 my-4">
+                <div className="h-px flex-1 bg-line" />
+                <div className="text-[11px] text-faint uppercase tracking-wider">{t('auth.or')}</div>
+                <div className="h-px flex-1 bg-line" />
+              </div>
+              <Button type="button" variant="ghost" size="lg" className="w-full"
+                      onClick={() => api.ssoStart(location.pathname + location.search)}>
+                <Icon name="shield" size={14} />{sso.label || t('auth.sso')}
+              </Button>
+            </>
+          )}
           {mode === 'password' && (
-            <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">Forgot your password?</button>
+            <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.forgot')}</button>
           )}
         </Card>
       </div>
@@ -101,23 +140,30 @@ function ForgotPasswordScreen({ onBack }) {
   };
 
   return (
-    <AuthShell title="Reset your password" subtitle="We'll email you a link to choose a new one.">
+    <AuthShell title={t('auth.reset.title')} subtitle={t('auth.reset.subtitle')}>
       {sent ? (
         <div className="mt-4 space-y-4">
           <div className="flex items-start gap-2 rounded-lg border border-ok/25 bg-oksoft px-3 py-2.5">
             <Icon name="check" size={14} className="text-ok mt-0.5 shrink-0" />
-            <div className="text-[12.5px] text-muted">If an account exists for <b className="text-ink">{email.trim()}</b>, a reset link is on its way. It expires in one hour and works once.</div>
+            <div className="text-[12.5px] text-muted">{(() => {
+              const address = email.trim();
+              const sentence = t('auth.reset.sent', { email: address });
+              const parts = sentence.split(address);
+              return parts.length === 2
+                ? <>{parts[0]}<b className="text-ink">{address}</b>{parts[1]}</>
+                : sentence;
+            })()}</div>
           </div>
-          <div className="text-[11.5px] text-faint">Nothing arrived? Check spam, or ask an administrator whether email delivery is configured on this instance.</div>
-          <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>Back to sign in</Button>
+          <div className="text-[11.5px] text-faint">{t('auth.reset.spam')}</div>
+          <Button variant="secondary" size="lg" className="w-full" onClick={onBack}>{t('auth.back')}</Button>
         </div>
       ) : (
         <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-          <Field label="Your notification address" hint="The address set on your account.">
+          <Field label={t('auth.reset.address')} hint={t('auth.reset.address.hint')}>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus placeholder="you@example.com" />
           </Field>
-          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || !email.trim()}>Send reset link</Button>
-          <button type="button" onClick={onBack} className="w-full text-center text-[12px] text-faint hover:text-muted transition">Back to sign in</button>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || !email.trim()}>{t('auth.reset.send')}</Button>
+          <button type="button" onClick={onBack} className="w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.back')}</button>
         </form>
       )}
     </AuthShell>
@@ -139,31 +185,31 @@ function ResetPasswordScreen({ token, onDone }) {
     if (!canSubmit) return;
     setBusy(true); setErr(null);
     try { await api.confirmPasswordReset(token, password); setDone(true); }
-    catch (e) { setErr(e.message || 'Could not reset your password'); }
+    catch (e) { setErr(e.message || t('auth.new.err')); }
     finally { setBusy(false); }
   };
 
   return (
-    <AuthShell title="Choose a new password" subtitle={done ? 'All set.' : 'This link works once and expires in one hour.'}>
+    <AuthShell title={t('auth.new.title')} subtitle={done ? t('auth.new.done') : t('auth.new.subtitle')}>
       {done ? (
         <div className="mt-4 space-y-4">
           <div className="flex items-start gap-2 rounded-lg border border-ok/25 bg-oksoft px-3 py-2.5">
             <Icon name="check" size={14} className="text-ok mt-0.5 shrink-0" />
-            <div className="text-[12.5px] text-muted">Your password was changed and every other session was signed out.</div>
+            <div className="text-[12.5px] text-muted">{t('auth.new.changed')}</div>
           </div>
-          <Button variant="primary" size="lg" className="w-full" onClick={onDone}>Sign in</Button>
+          <Button variant="primary" size="lg" className="w-full" onClick={onDone}>{t('auth.signIn')}</Button>
         </div>
       ) : (
         <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-          <Field label="New password" hint={tooShort ? 'At least 12 characters' : undefined}>
+          <Field label={t('auth.new.password')} hint={tooShort ? t('auth.new.tooShort') : undefined}>
             <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" autoFocus className={tooShort ? 'border-bad' : ''} />
           </Field>
-          <Field label="Confirm new password" hint={mismatch ? "Passwords don't match" : undefined}>
+          <Field label={t('auth.new.confirm')} hint={mismatch ? t('auth.new.mismatch') : undefined}>
             <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" className={mismatch ? 'border-bad' : ''} />
           </Field>
           {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
-          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!canSubmit}>Set new password</Button>
-          <button type="button" onClick={onDone} className="w-full text-center text-[12px] text-faint hover:text-muted transition">Back to sign in</button>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!canSubmit}>{t('auth.new.submit')}</Button>
+          <button type="button" onClick={onDone} className="w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.back')}</button>
         </form>
       )}
     </AuthShell>
@@ -180,7 +226,7 @@ function AuthShell({ title, subtitle, children }) {
           <BrandMark size={34} />
           <div>
             <div className="text-[17px] font-semibold text-ink tracking-tight">OpenRMM</div>
-            <div className="text-[12px] text-faint -mt-0.5">Remote Monitoring & Management</div>
+            <div className="text-[12px] text-faint -mt-0.5">{t('auth.brand.subtitle')}</div>
           </div>
         </div>
         <Card className="p-6 shadow-2xl shadow-black/30">
@@ -297,7 +343,18 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
 /* -------------------------------- Topbar ---------------------------------- */
 function Topbar({ route, navigate, onToggleTheme, theme, onOpenNav }) {
   const { can } = useAuth();
-  const titles = { dashboard: 'Dashboard', devices: 'Devices', jobs: 'Jobs & Approvals', alerts: 'Alerts', checks: 'Checks', tasks: 'Scheduled tasks', policies: 'Policies', scripts: 'Script library', chat: 'AI Chat', clients: 'Clients & Sites', audit: 'Audit log', settings: 'Users & Settings', reports: 'Reports', patches: 'Patches' };
+  // Resolved at render, not frozen into a module-level constant: t() called
+  // once at load would keep whatever language the session started in. Separate
+  // keys from nav.*, because the sidebar says "Jobs" where this heading says
+  // "Jobs & Approvals" — collapsing them would reword the product, not
+  // translate it.
+  const titles = {
+    dashboard: t('title.dashboard'), devices: t('title.devices'), jobs: t('title.jobs'),
+    alerts: t('title.alerts'), checks: t('title.checks'), tasks: t('title.tasks'),
+    policies: t('title.policies'), scripts: t('title.scripts'), chat: t('title.chat'),
+    clients: t('title.clients'), audit: t('title.audit'), settings: t('title.settings'),
+    reports: t('title.reports'), patches: t('title.patches'),
+  };
   return (
     <header className="h-14 shrink-0 border-b border-line bg-panel/70 backdrop-blur flex items-center gap-3 px-3 sm:px-5">
       <button aria-label="Open navigation" onClick={onOpenNav} className="h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line2 text-muted hover:text-ink md:hidden flex"><Icon name="menu" size={18} /></button>
@@ -405,6 +462,23 @@ function App() {
   }, []);
 
   uE(() => {
+    // A single sign-on that just landed wins over whatever this tab had: the
+    // person deliberately signed in again, possibly as someone else. Read it
+    // before the stored session, and strip it from the address bar so a
+    // refresh or a shared link cannot replay it.
+    const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+    const ssoToken = hash.get('sso_token');
+    if (ssoToken) {
+      history.replaceState(null, '', location.pathname + location.search);
+      api.loginWithToken(ssoToken)
+        .then((res) => {
+          sessionStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] }));
+          setAuth(res);
+        })
+        .catch(() => setAuth(null));
+      return;
+    }
+
     const raw = sessionStorage.getItem(AUTH_KEY);
     if (!raw) { setAuth(null); return; }
     try {

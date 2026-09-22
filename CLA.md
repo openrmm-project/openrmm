@@ -13,8 +13,7 @@
 ## Why this exists
 
 OpenRMM is released under the GNU Affero General Public License v3.0. The Owner
-also offers the same software to customers under separate commercial terms, and
-runs it as a hosted service.
+also offers the same software to customers under separate commercial terms.
 
 Doing both requires that one party hold the rights to the whole codebase. If a
 contribution arrives under the AGPL alone, the Owner cannot include it in a

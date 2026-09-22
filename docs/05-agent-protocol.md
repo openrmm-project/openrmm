@@ -182,7 +182,7 @@ A redirected child process on Windows writes in the **system code page**, not
 UTF-8: Python resolves `locale.getpreferredencoding()` (cp1252 on a pt-BR
 install), cmd and Windows PowerShell use the OEM page. Accented bytes are then
 not valid UTF-8 on their own, and marshalling them as JSON replaces each with
-U+FFFD — a **lossy** substitution, so `Olá, Miquéias` became `Ol<?>, Miqu<?>ias`
+U+FFFD — a **lossy** substitution, so `Olá, café` became `Ol<?>, caf<?>`
 in the database with no way to recover it downstream.
 
 Two defences, in order of preference:

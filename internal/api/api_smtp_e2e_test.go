@@ -166,9 +166,8 @@ func TestSMTPAlertsRouteWritesOnlyItsOwnProfileIntegration(t *testing.T) {
 }
 
 // The account transport has no write endpoint at all. Hiding the form in the
-// console is a UI decision; this is the one that holds, because a hosted
-// instance's password-reset sender belongs to the operator and a tenant admin
-// with settings.manage must not be able to repoint authentication mail.
+// console is a UI decision; this is the one that holds. A settings administrator
+// must not be able to repoint authentication mail.
 func TestAccountSMTPRouteIsReadOnlyIntegration(t *testing.T) {
 	e := newSMTPE2E(t, accountEnv)
 

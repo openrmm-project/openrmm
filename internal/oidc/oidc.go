@@ -2,10 +2,8 @@
 //
 // It answers exactly one question — who is this — and deliberately not the
 // other one. Roles and access scope live in the RMM's own database, so a
-// provider cannot promote itself, and an operator who points the console at a
-// hosted control plane is not handing that control plane administrative power
-// over their fleet. The provider vouches for an identity; this server decides
-// what the identity is allowed to do.
+// provider cannot promote itself. The provider vouches for an identity; this
+// server decides what the identity is allowed to do.
 //
 // Verification is delegated to github.com/coreos/go-oidc, which does the part
 // that must not be improvised: fetching and caching the provider's keys,

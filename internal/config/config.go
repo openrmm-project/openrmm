@@ -52,10 +52,10 @@ type Config struct {
 
 	// SMTP* configure the account mail transport: password resets, and the
 	// fallback sender for alerts. Unlike the AI and MeshCentral settings this one
-	// is env-only and has no console form. A hosted instance sends its tenants
-	// password-reset mail from the operator's own domain, and that guarantee
-	// cannot survive an editable copy in app_settings — a tenant admin could
-	// simply point it elsewhere. Alert mail stays editable in the console.
+	// is env-only and has no console form. The server operator controls the
+	// password-reset sender; an editable copy in app_settings would let a
+	// settings administrator redirect authentication mail. Alert mail stays
+	// editable in the console.
 	SMTPHost       string
 	SMTPPort       int
 	SMTPUsername   string
@@ -121,9 +121,7 @@ type Config struct {
 	// someone is should do so because an operator said to.
 	//
 	// It answers "who is this" and never "what may they do". Roles and access
-	// scope stay in this database, so a provider cannot promote itself to admin
-	// — which is also what makes it safe to point a hosted control plane at a
-	// customer's instance.
+	// scope stay in this database, so a provider cannot promote itself to admin.
 	OIDCEnabled bool
 	// Issuer URL, exactly as the provider publishes it. Discovery appends
 	// /.well-known/openid-configuration; the value in that document must match

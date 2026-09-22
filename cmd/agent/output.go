@@ -15,8 +15,8 @@ import (
 //
 // Handing those bytes to a Go string and marshalling them as JSON replaces each
 // one with U+FFFD, and the replacement is *lossy* — the original byte is gone, so
-// nothing downstream can recover it. That is how `Olá, Miquéias` reached the
-// database as `Ol<?>, Miqu<?>ias`.
+// nothing downstream can recover it. That is how `Olá, café` could reach the
+// database as `Ol<?>, caf<?>`.
 //
 // Two defences, in order of preference:
 //

@@ -19,9 +19,8 @@ every instance it signs into. It cannot. An account arrives with the role an
 operator gave it, and a provider that claims otherwise is ignored — no claim is
 read for permissions, ever.
 
-That property is also what makes it safe to point a hosted control plane at a
-customer's instance later: the control plane can say who someone is, and cannot
-give itself their fleet.
+This also keeps account permissions under the control of the OpenRMM operator
+even when the identity provider is managed by another organization.
 
 ## Turning it on
 
@@ -53,30 +52,30 @@ The issuer must be `https://`. Discovery, the token exchange and the JWKS fetch
 all go over it; plain HTTP would put the client secret and the authorization
 code on the wire, so the server refuses to start rather than doing it.
 
-## Requiring MFA from the Cloud portal
+## Requiring MFA from an OIDC provider
 
-Register a separate confidential client for each single-tenant instance in the
-Cloud provider (`site2-rmm/docs/oidc-provider.md`). The registration binds an exact
-callback and a unique credential to an active, provisioned subscription. Only its
-owning portal customer may authorize that client; this does not grant an RMM role.
+Register a confidential client with your OIDC provider for each OpenRMM
+instance. Configure its exact callback URL and separate credentials. Control
+which users the provider allows to authorize the client; authorization at the
+provider does not grant an OpenRMM role.
 
 For an authenticator-backed sign-in:
 
 ```bash
-RMM_OIDC_ACR_VALUES=urn:openrmm:acr:mfa
+RMM_OIDC_ACR_VALUES=urn:example:acr:mfa
 RMM_OIDC_REQUIRED_AMR=otp,mfa
 ```
 
-The provider reports `pwd` or `email` for the initial proof and `otp,mfa` after
-the authenticator challenge. A recovery code reports `recovery,mfa`, **not**
+Some providers report `pwd` or `email` for the initial proof and `otp,mfa` after
+an authenticator challenge. A recovery code may report `recovery,mfa`, **not**
 `otp`. To permit recovery-code login, require only `mfa` instead of `otp,mfa`.
 Merely enabling TOTP on the account does not prove MFA in an existing session.
 
 An `acr_values` request alone is not enforcement: providers may return a weaker
 context. RMM rejects missing, malformed or insufficient claims **before** linking,
 provisioning or creating a console session. Empty settings preserve compatibility
-with providers that do not emit these claims. Match values to the actual provider;
-the OpenRMM ACR URNs are not universal provider names.
+with providers that do not emit these claims. Replace the example ACR value with
+one your provider actually issues.
 
 These controls apply to new SSO logins, not existing console sessions or local
 password login. Local TOTP and account permissions remain separate. Provider

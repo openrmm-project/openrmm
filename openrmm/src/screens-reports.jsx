@@ -99,6 +99,11 @@ function ReportsScreen() {
   const [siteId, setSiteId] = useState('');
   const [deptId, setDeptId] = useState('');
   const [q, setQ] = useState('');
+  // A fleet report is thousands of rows; rendering every one of them at once
+  // made the tab unusable and gave no way to work through it.
+  const [pageSize, setPageSize] = useState(() => Number(localStorage.getItem('rmm-report-page-size')) || 100);
+  const [page, setPage] = useState(0);
+  useEffect(() => { try { localStorage.setItem('rmm-report-page-size', String(pageSize)); } catch (e) {} }, [pageSize]);
   // Hidden columns, persisted per report tab across sessions.
   const [hiddenCols, setHiddenCols] = useState(() => { try { return JSON.parse(localStorage.getItem('rmm-report-hidden') || '{}'); } catch (e) { return {}; } });
   useEffect(() => { try { localStorage.setItem('rmm-report-hidden', JSON.stringify(hiddenCols)); } catch (e) {} }, [hiddenCols]);
@@ -138,6 +143,14 @@ function ReportsScreen() {
   const rows = dataQ.data?.rows || [];
   const ql = q.trim().toLowerCase();
   const filtered = !ql ? rows : rows.filter((r) => visibleCols.some((c) => String(c.text(r) || '').toLowerCase().includes(ql)));
+  // Page bounds follow the filtered set: searching while on page 12 of an
+  // unfiltered report must not leave the viewer staring at an empty page.
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const current = Math.min(page, pageCount - 1);
+  useEffect(() => { setPage(0); }, [tab, ql, filter.scope, filter.id, pageSize]);
+  const pageRows = filtered.slice(current * pageSize, current * pageSize + pageSize);
+  const firstShown = filtered.length ? current * pageSize + 1 : 0;
+  const lastShown = Math.min(filtered.length, (current + 1) * pageSize);
 
   const onClient = (v) => { setClientId(v); setSiteId(''); setDeptId(''); };
   const onSite = (v) => { setSiteId(v); setDeptId(''); };
@@ -198,7 +211,7 @@ function ReportsScreen() {
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between px-4 h-11 border-b border-line">
           <div className="text-[12.5px] text-muted">
-            {dataQ.loading ? 'Loading…' : <><span className="text-ink font-semibold tabular">{filtered.length}</span> {ql && rows.length !== filtered.length ? <>of {rows.length} </> : ''}row{filtered.length === 1 ? '' : 's'}</>}
+            {dataQ.loading ? 'Loading…' : <>Showing <span className="text-ink font-semibold tabular">{firstShown}–{lastShown}</span> of <span className="text-ink font-semibold tabular">{filtered.length}</span>{ql && rows.length !== filtered.length ? <> filtered from {rows.length}</> : ''} row{filtered.length === 1 ? '' : 's'}</>}
           </div>
           <Tip label="Refresh"><Button size="icon" variant="ghost" icon="refresh" onClick={() => dataQ.refetch()} /></Tip>
         </div>
@@ -218,7 +231,7 @@ function ReportsScreen() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r, i) => (
+                {pageRows.map((r, i) => (
                   <tr key={i} className="border-b border-line/60 hover:bg-white/[0.02]">
                     {visibleCols.map((c) => (
                       <td key={c.key} className={cx('px-4 py-2 align-top', c.className)}>
@@ -229,6 +242,25 @@ function ReportsScreen() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {!dataQ.loading && !dataQ.error && filtered.length > 0 && (
+          <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-line">
+            <div className="flex items-center gap-2 text-[12px] text-muted">
+              <span>Rows per page</span>
+              <Select value={String(pageSize)} onChange={(v) => setPageSize(Number(v))} className="h-7 w-[84px] text-[12px]">
+                {[50, 100, 250, 500].map((n) => <option key={n} value={String(n)}>{n}</option>)}
+              </Select>
+              {/* The export covers the filtered report, not the page on screen —
+                  said here because a paged table invites the opposite assumption. */}
+              <span className="text-faint hidden sm:inline">· CSV exports all {filtered.length} rows</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[12px] text-muted">
+              <Button size="icon" variant="ghost" icon="chevleft" disabled={current === 0} onClick={() => setPage(current - 1)} title="Previous page" />
+              <span className="tabular px-1">Page {current + 1} of {pageCount}</span>
+              <Button size="icon" variant="ghost" icon="chevright" disabled={current >= pageCount - 1} onClick={() => setPage(current + 1)} title="Next page" />
+            </div>
           </div>
         )}
       </Card>

@@ -714,3 +714,48 @@ func TestAuditCursorHandlesIdenticalTimestampsIntegration(t *testing.T) {
 		}
 	}
 }
+
+// The assistant proposes jobs on a person's behalf, and the trail files those
+// under "ai:<user>" so attribution stays honest. Filtering by the person has to
+// find them anyway: to whoever is investigating, "what did Alice set in motion"
+// includes what she asked the assistant to do. Before this they looked missing.
+func TestAuditActorFilterIncludesTheAssistantActingForThemIntegration(t *testing.T) {
+	ctx, st := auditStore(t)
+	alice := uuid.NewString()
+
+	for _, e := range []struct{ actor, action string }{
+		{alice, "job.approve"},
+		{"ai:" + alice, "job.propose"},
+		{"ai:mcp:api", "job.propose"},
+		{uuid.NewString(), "job.propose"},
+	} {
+		if err := st.AddAudit(ctx, e.actor, e.action, uuid.NewString(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, _, err := st.ListAudit(ctx, AuditFilter{Actor: alice, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected the person's own entry and the assistant's, got %d", len(entries))
+	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		seen[e.Actor] = true
+	}
+	if !seen[alice] || !seen["ai:"+alice] {
+		t.Fatalf("both actors should be present, got %v", seen)
+	}
+
+	// The reverse question stays answerable: filtering by the alias must not
+	// drag the person's own actions back in.
+	only, _, err := st.ListAudit(ctx, AuditFilter{Actor: "ai:" + alice, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(only) != 1 || only[0].Actor != "ai:"+alice {
+		t.Fatalf("filtering by the AI alias must stay exact, got %+v", only)
+	}
+}

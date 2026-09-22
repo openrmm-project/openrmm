@@ -6,7 +6,8 @@ param(
     [string]$UpdatePublicKey,
     [switch]$RequireTls,
     [switch]$LabMode,
-    [switch]$ResetIdentity
+    [switch]$ResetIdentity,
+    [switch]$DefenderExclusion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -205,6 +206,54 @@ function Invoke-Agent {
     }
 }
 
+# Windows lists installed software from the Uninstall registry keys, and nothing
+# else. Registering a service leaves no entry, so the agent was invisible in
+# Programs and Features, to inventory tools and to whoever has to audit the
+# endpoint. The entry is not a security boundary either way: a local admin can
+# stop the service regardless, so hiding it buys friction, not protection.
+$UninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenRMMAgent'
+
+# A directory under C:\ProgramData inherits an ACL that lets standard users
+# create things, and whoever creates a folder there owns it with full control.
+# A user who pre-creates C:\ProgramData\rmm-agent therefore controls the
+# directory a SYSTEM service runs from — and the one an administrator runs
+# uninstall.ps1 out of. Inheritance is broken and the ACL written explicitly,
+# which also strips whatever a squatter granted itself. Well-known SIDs, not
+# names: "Administrators" is localised.
+function Set-AgentDirectoryAcl {
+    param([string]$Path)
+    $system = New-Object Security.Principal.SecurityIdentifier(
+        [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
+    $admins = New-Object Security.Principal.SecurityIdentifier(
+        [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
+    $users = New-Object Security.Principal.SecurityIdentifier(
+        [Security.Principal.WellKnownSidType]::BuiltinUsersSid, $null)
+
+    $acl = Get-Acl -Path $Path
+    $acl.SetAccessRuleProtection($true, $false)   # break inheritance, keep nothing
+    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $none = [Security.AccessControl.PropagationFlags]::None
+    foreach ($grant in @(@($system, 'FullControl'), @($admins, 'FullControl'), @($users, 'ReadAndExecute'))) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            $grant[0], $grant[1], $inherit, $none, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    Set-Acl -Path $Path -AclObject $acl
+
+    # Ownership carries an implicit right to rewrite the ACL, so it cannot stay
+    # with whoever created the directory. Taking it needs a privilege that is not
+    # always enabled in the token, so it is attempted after the entries are
+    # already restrictive and never fails the install on its own.
+    try {
+        $owner = Get-Acl -Path $Path
+        $owner.SetOwner($admins)
+        Set-Acl -Path $Path -AclObject $owner
+    } catch {
+        Write-Warning "Could not take ownership of ${Path}: $($_.Exception.Message)"
+        Write-Warning 'Its permissions were restricted, but the previous owner may still change them.'
+    }
+}
+
 function Restore-Install {
     Write-Warning 'Install did not become healthy; rolling back.'
     if ($serviceExisted) {
@@ -220,6 +269,9 @@ function Restore-Install {
         Move-Item -Force $Backup $Exe
     } elseif (-not $hadOld -and $swapped) {
         Remove-Item -Force -ErrorAction SilentlyContinue $Exe
+        # Nothing of this install survives, so neither should an entry from an
+        # earlier attempt that would now point at a missing agent.
+        Remove-Item -Path $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -Force -ErrorAction SilentlyContinue $SignaturePath
     if (Test-Path $SignatureBackup) { Move-Item -Force $SignatureBackup $SignaturePath }
@@ -271,6 +323,9 @@ function Test-Ed25519AnyKey {
 
 try {
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+    # Before anything is written into it, and on every run: an upgrade of an
+    # endpoint installed by an older installer is where the weak ACL gets fixed.
+    Set-AgentDirectoryAcl -Path $Dir
     if (Test-Path $Backup) { throw "Unresolved installer backup exists at $Backup" }
     if (Test-Path $SignatureBackup) { throw "Unresolved signature backup exists at $SignatureBackup" }
     if (Test-Path $StateBackup) { throw "Unresolved state backup exists at $StateBackup" }
@@ -412,6 +467,40 @@ try {
 
     $committed = $true
     Remove-Item -Force -ErrorAction SilentlyContinue $Backup, $SignatureBackup, $StateBackup, $OutboxBackup
+
+    # Opt-in, never silent: the agent downloads its remote-desktop sidecar to
+    # rmm-remote.exe.new and runs it once to validate it, which Defender treats
+    # as a service dropping and executing an unsigned binary. It quarantines the
+    # download on every retry, and remote sessions then show a black screen with
+    # no explanation. Excluding one directory is an operator's security decision,
+    # so the installer states the trade-off and only acts when asked.
+    if ($DefenderExclusion) {
+        if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
+            try {
+                if (@((Get-MpPreference).ExclusionPath) -contains $Dir) {
+                    Write-Host "Defender: $Dir is already excluded."
+                } else {
+                    Add-MpPreference -ExclusionPath $Dir
+                    Write-Host "Defender: excluded $Dir."
+                }
+            } catch {
+                # Managed by Intune/Group Policy, or refused by Tamper Protection.
+                Write-Warning "Defender exclusion refused: $($_.Exception.Message)"
+                Write-Warning 'Add it through Intune or Group Policy instead, or remote sessions may fail.'
+            }
+        } else {
+            Write-Host 'Defender: not present on this host; no exclusion needed.'
+        }
+    } else {
+        Write-Host 'Defender: no exclusion added. If remote sessions show a black screen, see docs/08-remote-access.md'
+        Write-Host '          or run scripts/windows-defender-exclusion.ps1 on the endpoint.'
+    }
+
+    # Programs and Features is registered by the AGENT, at service start, not
+    # here: installers do not re-run, so an endpoint installed before that entry
+    # existed would never get one and its version would freeze at whatever first
+    # wrote it. The service has already started and reported healthy by now.
+
     Write-Host 'Agent installed, connected, and healthy.'
 } catch {
     if ($transactionStarted -and -not $committed) { Restore-Install }

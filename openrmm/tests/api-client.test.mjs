@@ -122,8 +122,8 @@ test('the settings screen edits only the alerts SMTP profile', async () => {
     assert.match(screens, new RegExp(`api\\.${call}\\b`), `the Email screen should call ${call}`);
   }
   // Password-reset mail is configured with RMM_SMTP_* in the server environment.
-  // A hosted instance sends it from the operator's domain, and a form here would
-  // let a tenant admin repoint it — so the screen must not touch that profile.
+  // A form here would let a settings administrator repoint authentication mail,
+  // so the screen must not touch that profile.
   for (const call of ['updateSMTPConfig', 'getSMTPConfig', 'testSMTP\\(']) {
     assert.doesNotMatch(screens, new RegExp(`api\\.${call}`),
       `the Email screen must not call ${call}: the account transport is env-only`);

@@ -1,5 +1,32 @@
 /* screens-devices.jsx — Devices list + Device detail drawer */
 
+// Who is on an endpoint right now. Simultaneous sessions stay allowed — one
+// technician watching while another works is a legitimate hand-off — so this
+// only ever announces; it never blocks. Two people each believing they are
+// alone is the failure worth preventing.
+function useRemotePresence() {
+  const { can } = useAuth();
+  const q = useQuery(['remote-presence'], () => (can('devices.view') ? api.listRemotePresence() : Promise.resolve({ viewers: [] })), { poll: 10000 });
+  const byAgent = {};
+  // The name comes resolved from the server. Looking it up here would have made
+  // the banner depend on permission to list users, which most technicians do
+  // not have — and the banner then read as a raw user id.
+  (q.data?.viewers || []).forEach((v) => {
+    (byAgent[v.agent_id] = byAgent[v.agent_id] || []).push({ ...v, name: v.user_name || v.user || 'someone' });
+  });
+  return byAgent;
+}
+
+const PRESENCE_KIND = { native: 'remote desktop', files: 'file transfer', terminal: 'terminal' };
+
+function presenceSummary(viewers) {
+  if (!viewers || !viewers.length) return '';
+  const who = viewers.map((v) => v.name + ' (' + (PRESENCE_KIND[v.kind] || v.kind) + ')');
+  return who.length === 1
+    ? who[0] + ' is connected remotely'
+    : who.slice(0, -1).join(', ') + ' and ' + who[who.length - 1] + ' are connected remotely';
+}
+
 function DevicesScreen({ navigate }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
   const { can } = useAuth();
@@ -11,6 +38,7 @@ function DevicesScreen({ navigate }) {
   const [clientF, setClientF] = useState('all');
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const presence = useRemotePresence();
 
   const devices = devicesQ.data?.devices || [];
   const sites = sitesQ.data?.sites || [];
@@ -20,11 +48,10 @@ function DevicesScreen({ navigate }) {
   // A device belongs to a client (company) through its site; unassigned devices
   // and sites whose client is gone both fall back to the em dash.
   const clientName = (siteId) => clients.find((c) => c.id === clientOfSite(siteId))?.name || '—';
-  const osFamily = (os) => { const o = os.toLowerCase(); return o.includes('win') ? 'Windows' : o.includes('mac') ? 'macOS' : 'Linux'; };
 
   const filtered = devices.filter((d) => {
     if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((t) => t.includes(q.toLowerCase())))) return false;
-    if (osF !== 'all' && osFamily(d.os) !== osF) return false;
+    if (osF !== 'all' && window.osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
     if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
@@ -81,7 +108,7 @@ function DevicesScreen({ navigate }) {
                   </div>
                 </td>
                 <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
-                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]">{d.os}</span><span className="text-faint text-[11px] mono">{d.arch}</span></div></td>
+                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : 'in use'}</span></Tip> : null}</div></td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
@@ -207,11 +234,15 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const nativeHint = nativeUnavailable ? (nativeCaps.reason_code || 'unavailable') : (nativeCaps?.capture === 'unknown' ? 'capability unknown' : 'beta');
 
   const [remoteBusy, setRemoteBusy] = useState(false);
+  const presenceByAgent = useRemotePresence();
+  const attached = presenceByAgent[id] || [];
   const [remote, setRemote] = useState(null); // { deviceId, hostname } for the native viewer
   const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
   const [orgOpen, setOrgOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const startRemote = async (provider) => {
+    // Announced, never blocked: joining a colleague is sometimes the point.
+    if (attached.length) toast.info('Someone is already connected', presenceSummary(attached) + ' to ' + d.hostname + '.');
     if (provider === 'native') { setRemote({ deviceId: id, hostname: d.hostname, os: d.os }); return; } // viewer brokers + reconnects
     setRemoteBusy(true);
     try {
@@ -267,10 +298,19 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                   <StatusPill status={d.status} size="sm" pulse />
                 </div>
                 <div className="text-[12.5px] text-muted mt-0.5 flex items-center gap-2 flex-wrap">
-                  <span>{d.os}</span><span className="text-faint">·</span><span className="mono text-faint">{d.arch}</span>
+                  <span title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint">·</span><span className="mono text-faint">{d.arch}</span>
                   <span className="text-faint">·</span><span>agent v{d.version}</span><span className="text-faint">·</span>
                   <span>last seen {timeAgo(d.last_seen)}</span>
                 </div>
+                {attached.length > 0 && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-brandhi/40 bg-brandhi/10 px-2.5 py-1.5 text-[12px] text-ink">
+                    <Icon name="remote" size={13} className="text-brandhi mt-0.5 shrink-0" />
+                    <span>
+                      {presenceSummary(attached)}.
+                      <span className="text-muted"> Since {attached.map((v) => timeAgo(v.since)).join(', ')}. You can still connect — both sessions share the screen.</span>
+                    </span>
+                  </div>
+                )}
                 {d.description && <div className="text-[12px] text-faint mt-1">{d.description}</div>}
               </div>
               <button onClick={onClose} className="text-faint hover:text-ink p-1.5 -mr-1.5"><Icon name="close" size={18} /></button>
@@ -424,7 +464,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const can = auth.can;
   const allowFiles = filesOnly || can('devices.files');
   const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
+  const isMac = /darwin|macos|mac os/i.test(os || '');
+  const shortcutLabel = isMac ? '⌘⌥Esc' : 'Ctrl+Alt+Delete';
   const canLock = isWin || /linux/i.test(os || ''); // input lock: Windows + Linux (not macOS)
+  const viewerRef = useRef(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const dlRef = useRef({});   // active downloads: id -> { name, chunks: [] }
@@ -442,14 +485,35 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [locked, setLocked] = useState(false); // host's physical keyboard/mouse blocked (Windows)
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
+  const [cad, setCad] = useState({ available: false, reason: 'Waiting for the remote module…' });
+  const [monitors, setMonitors] = useState({ list: [], selected: 0, all: true }); // host displays; empty unless there are two or more
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
+  const [scale, setScale] = useState('fit');
+  const [fullscreen, setFullscreen] = useState(false);
   const [notice, setNotice] = useState(null); // host-side notice (e.g. Wayland can't be captured)
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
+  const noticeRef = useRef(null); // last notice toasted, so a reconnect loop doesn't repeat it
   useEffect(() => { openRef.current = chatOpen; if (chatOpen) setUnread(0); }, [chatOpen]);
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
   const sendJSON = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+
+  useEffect(() => {
+    const changed = () => setFullscreen(document.fullscreenElement === viewerRef.current);
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === viewerRef.current) await document.exitFullscreen();
+      else if (viewerRef.current?.requestFullscreen) await viewerRef.current.requestFullscreen();
+    } catch (e) {
+      toast.error('Full screen failed', e.message || 'The browser denied full-screen mode.');
+    }
+  };
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -458,9 +522,26 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const onMsg = (ev) => {
       if (typeof ev.data === 'string') {
         const m = JSON.parse(ev.data);
-        if (m.t === 'hello') setVer(m.v);
-        else if (m.t === 'notice') { if (m.text) { setNotice(m.text); toast.info('Remote notice', m.text); } else setNotice(null); }
+        if (m.t === 'hello') {
+          setVer(m.v);
+          setCad({ available: !!m.cad, reason: m.cad_error || (m.cad ? '' : 'Update the remote module to use this shortcut.') });
+          // A capture the endpoint cannot perform is the black screen this
+          // viewer would otherwise show without explanation.
+          if (m.capture_error) { setNotice(m.capture_error); if (noticeRef.current !== m.capture_error) { noticeRef.current = m.capture_error; toast.error('Screen capture blocked', m.capture_error); } }
+        }
+        else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
+        // The endpoint's clipboard, mirrored while the session is open, so a copy
+        // on the remote screen can be pasted on this machine. Writing can be
+        // refused by the browser when the tab is not focused; that is a missed
+        // update, not an error worth interrupting the session for.
+        else if (m.t === 'clip') {
+          const text = window.RemoteInput.incomingClipText(m);
+          if (text && navigator.clipboard?.writeText) { navigator.clipboard.writeText(text).catch(() => {}); }
+        }
         else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
+        else if (m.t === 'cad') { if (m.ok) { if (isMac) setCad({ available: true, reason: '' }); toast.info('Shortcut request sent', `${hostname}: ${shortcutLabel}`); } else toast.error('Shortcut failed', m.err || 'The device rejected the shortcut.'); }
+        else if (m.t === 'paste') { if (m.ok && isMac) setCad({ available: true, reason: '' }); else if (!m.ok) toast.error('Paste failed', m.err || 'The device rejected the paste shortcut.'); }
+        else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0, all: m.all !== false })
         else if (allowFiles && m.t === 'flist') setFb({ path: m.path, entries: m.entries || [] });
         else if (m.t === 'uac') { setUac(!!m.enabled); if (m.err) toast.error('UAC toggle failed', m.err); }
         else if (m.t === 'inputlocked') { setLocked(!!m.enabled); if (m.err) toast.error('Input lock failed', m.err); }
@@ -509,7 +590,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       drawChain = drawChain.then(() => decoded).then((tiles) => {
         const cv2 = canvasRef.current;
         if (!cv2) return;
-        if (cv2.width !== fw || cv2.height !== fh) { cv2.width = fw; cv2.height = fh; }
+        if (cv2.width !== fw || cv2.height !== fh) {
+          cv2.width = fw; cv2.height = fh;
+        }
+        setFrameSize((old) => old.width === fw && old.height === fh ? old : { width: fw, height: fh });
         const ctx = cv2.getContext('2d');
         for (const t of tiles) { if (t) { ctx.drawImage(t.bmp, t.x, t.y); if (t.bmp.close) t.bmp.close(); } }
       }).catch(() => {});
@@ -519,6 +603,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     // down) re-broker and reconnect — the agent re-spawns the SYSTEM sidecar into
     // the now-active session (login screen included).
     const connect = async () => {
+      setCad({ available: false, reason: 'Waiting for the remote module…' });
+      setMonitors({ list: [], selected: 0, all: true });
+      setVer(null);
       if (stopped) return;
       setStatus(retries ? 'reconnecting' : 'connecting');
       let wsUrl, viewerTicket;
@@ -557,7 +644,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
 
     const send = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
     const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
-    const typing = () => { const a = document.activeElement; return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'); };
+    const typing = () => window.RemoteInput.isTypingTarget(document.activeElement);
     let lastMove = 0;
     const onMove = (e) => { const t = Date.now(); if (t - lastMove < 33) return; lastMove = t; const p = norm(e); send({ t: 'm', x: p.x, y: p.y }); };
     // preventDefault() cancels the browser's default focus, so clicking the
@@ -568,8 +655,61 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     const onUp = (e) => { e.preventDefault(); const p = norm(e); send({ t: 'b', x: p.x, y: p.y, button: e.button, down: false }); };
     const onWheel = (e) => { e.preventDefault(); send({ t: 'w', dy: e.deltaY }); };
     const onCtx = (e) => e.preventDefault();
-    const kd = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: true }); };
-    const ku = (e) => { if (typing()) return; e.preventDefault(); send({ t: 'k', code: e.keyCode, down: false }); };
+    let skipFullscreenEscapeUp = false;
+    const heldKeys = new Map();
+    const releasedForPaste = new Set();
+    const releasePasteModifiers = () => {
+      for (const sourceCode of [17, 91, 93]) {
+        const remoteCode = heldKeys.get(sourceCode);
+        if (remoteCode == null) continue;
+        send({ t: 'k', code: remoteCode, down: false });
+        heldKeys.delete(sourceCode);
+        releasedForPaste.add(sourceCode);
+      }
+    };
+    const releaseHeldKeys = () => {
+      for (const remoteCode of heldKeys.values()) send({ t: 'k', code: remoteCode, down: false });
+      heldKeys.clear();
+      releasedForPaste.clear();
+    };
+    const kd = (e) => {
+      if (typing()) return;
+      if (e.key === 'Escape' && document.fullscreenElement === viewerRef.current) { skipFullscreenEscapeUp = true; return; }
+      // Not forwarded and, above all, not preventDefault()ed: that is what lets
+      // the browser raise the paste event the clipboard text arrives on. The
+      // endpoint presses its own paste shortcut when the text gets there.
+      if (window.RemoteInput.isPasteShortcut(e)) { releasePasteModifiers(); return; }
+      const code = window.RemoteInput.endpointKeyCode(e.keyCode, isMac);
+      e.preventDefault();
+      heldKeys.set(e.keyCode, code);
+      send({ t: 'k', code, down: true });
+    };
+    const ku = (e) => {
+      // A key may have gone down on the canvas just before focus moved to chat.
+      // Still release that key remotely so the endpoint never keeps it held.
+      if (typing() && !heldKeys.has(e.keyCode) && !releasedForPaste.has(e.keyCode)) return;
+      if (e.key === 'Escape' && skipFullscreenEscapeUp) { skipFullscreenEscapeUp = false; return; }
+      if (window.RemoteInput.isPasteShortcut(e)) return;
+      e.preventDefault();
+      if (releasedForPaste.delete(e.keyCode)) return;
+      const code = heldKeys.get(e.keyCode) ?? window.RemoteInput.endpointKeyCode(e.keyCode, isMac);
+      heldKeys.delete(e.keyCode);
+      send({ t: 'k', code, down: false });
+    };
+    // The technician's clipboard, on their own paste keystroke. The paste event
+    // carries the text with it, so nothing has to ask the browser for clipboard
+    // read permission, and the endpoint applies the paste shortcut its own
+    // platform uses — Command-V on a Mac, Control-V elsewhere — which a raw
+    // Ctrl+V forwarded as keystrokes would get wrong. Only this direction: the
+    // endpoint's clipboard is never read back, because silently collecting what
+    // somebody copied on their own machine is surveillance, not support.
+    const onPaste = (e) => {
+      if (typing()) return;
+      const message = window.RemoteInput.clipMessage(e.clipboardData && e.clipboardData.getData('text/plain'));
+      if (!message) return;
+      e.preventDefault();
+      send(message);
+    };
     // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
     if (!filesOnly && cv) {
       cv.addEventListener('pointermove', onMove);
@@ -580,10 +720,13 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       cv.addEventListener('contextmenu', onCtx);
       window.addEventListener('keydown', kd);
       window.addEventListener('keyup', ku);
+      window.addEventListener('paste', onPaste);
+      window.addEventListener('blur', releaseHeldKeys);
     }
     connect();
     return () => {
       stopped = true;
+      releaseHeldKeys();
       if (wsRef.current) wsRef.current.close();
       if (cv) {
         cv.removeEventListener('pointermove', onMove);
@@ -593,12 +736,19 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         cv.removeEventListener('wheel', onWheel);
         cv.removeEventListener('contextmenu', onCtx);
       }
+      window.removeEventListener('paste', onPaste);
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
+      window.removeEventListener('blur', releaseHeldKeys);
     };
-  }, [deviceId, filesOnly, allowFiles]);
+  }, [deviceId, filesOnly, allowFiles, isMac]);
 
   const sendChat = () => { const t = draft.trim(); if (!t) return; sendJSON({ t: 'chat', from: 'tech', text: t }); setChat((c) => [...c, { from: 'tech', text: t }]); setDraft(''); };
+  const shortcutAvailable = window.RemoteInput.shortcutAvailable(isMac, cad.available);
+  const sendCtrlAltDelete = () => {
+    if (!shortcutAvailable) { toast.error('Shortcut unavailable', cad.reason); return; }
+    sendJSON({ t: 'cad' });
+  };
   // Remote file browser: navigate folders, download a file, or
   // upload into the current folder — no path typing. Path semantics follow the
   // host OS: Windows uses "\\" + a drive list at the root; POSIX uses "/".
@@ -647,8 +797,14 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   };
 
   const statusCls = status === 'streaming' ? 'bg-oksoft text-ok' : status === 'error' || status === 'closed' ? 'bg-badsoft text-bad' : 'bg-warnsoft text-warn';
+  const zoom = Number(scale);
+  const canvasStyle = scale === 'fit' || !frameSize.width ? undefined : {
+    width: Math.round(frameSize.width * zoom / 100) + 'px',
+    height: Math.round(frameSize.height * zoom / 100) + 'px',
+    maxWidth: 'none', maxHeight: 'none',
+  };
   return (
-    <div className="fixed inset-0 z-[80] bg-black flex flex-col">
+    <div ref={viewerRef} className="fixed inset-0 z-[80] bg-black flex flex-col">
       <div className="flex items-center gap-2 px-2 sm:px-4 min-h-11 bg-elevated border-b border-line shrink-0 overflow-x-auto scroll-area">
         <Icon name={filesOnly ? 'devices' : 'remote'} size={15} className="text-muted" />
         <span className="text-[13px] font-semibold text-ink whitespace-nowrap">{filesOnly ? `File transfer · ${hostname}` : hostname}</span>
@@ -657,10 +813,24 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         <div className="ml-auto flex items-center gap-1 sm:gap-2 whitespace-nowrap">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           {!filesOnly && <>
-            <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>
+            <Button variant="ghost" size="sm" icon="key" onClick={sendCtrlAltDelete} disabled={status !== 'streaming' || !shortcutAvailable} title={isMac ? (cad.available ? 'Open Force Quit Applications' : `${cad.reason} Click to retry after granting it.`) : !cad.available ? cad.reason : isWin ? 'Request the Windows security screen' : 'Send Ctrl+Alt+Delete; action depends on the Linux desktop settings'}>{shortcutLabel}</Button>
+            {isWin && <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title="Move UAC prompts to the controllable desktop">UAC</Button>}
             {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title="Block the host's physical keyboard & mouse (user + login screen)">{locked ? 'Locked' : 'Lock input'}</Button>}
             {allowFiles && <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>Files</Button>}
             <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title="Toggle chat panel">Chat{unread ? ` (${unread})` : ''}</Button>
+            {monitors.list.length > 1 && (
+              <Select value={String(monitors.selected)} onChange={(e) => { const id = Number(e.target.value); setMonitors((m) => ({ ...m, selected: id })); sendJSON({ t: 'mon', id }); }}
+                aria-label="Host display" title="Choose which of the host's displays to stream" className="h-7 w-[150px] bg-card py-0 text-[12px]">
+                {monitors.all !== false && <option value="0">All displays</option>}
+                {monitors.list.map((m) => <option key={m.id} value={String(m.id)}>{`Display ${m.id} · ${m.w}×${m.h}${m.primary ? ' (main)' : ''}`}</option>)}
+              </Select>
+            )}
+            <span className="text-[10.5px] text-faint tabular" title="Remote screen resolution">{frameSize.width ? `${frameSize.width}×${frameSize.height}` : '—×—'}</span>
+            <Select value={scale} onChange={(e) => setScale(e.target.value)} aria-label="Screen scale" title="Adjust remote screen scale" className="h-7 w-[132px] bg-card py-0 text-[12px]">
+              <option value="fit">Fit to window</option>
+              <option value="50">50%</option><option value="75">75%</option><option value="100">100% (native)</option><option value="125">125%</option>
+            </Select>
+            <Button variant={fullscreen ? 'primary' : 'ghost'} size="sm" icon={fullscreen ? 'fullscreenexit' : 'fullscreen'} onClick={toggleFullscreen} disabled={!document.fullscreenEnabled} title={fullscreen ? 'Exit full screen' : 'Open full screen'}>{fullscreen ? 'Exit full screen' : 'Full screen'}</Button>
           </>}
           <button onClick={onClose} className="text-faint hover:text-ink p-1.5"><Icon name="close" size={18} /></button>
         </div>
@@ -719,8 +889,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
             {fb ? 'File transfer session' : 'Opening file browser…'}
           </div>
         ) : (<>
-        <div className="relative flex-1 flex items-center justify-center overflow-hidden p-2">
-          <canvas ref={canvasRef} tabIndex={0} className="max-w-full max-h-full outline-none remote-canvas" />
+        <div className="relative flex-1 overflow-auto p-2 scroll-area">
+          <canvas ref={canvasRef} tabIndex={0} style={canvasStyle} className={cx('outline-none remote-canvas', scale === 'fit' ? 'absolute inset-0 m-auto max-w-full max-h-full' : 'block mx-auto')} />
           {notice && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
               <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
@@ -734,8 +904,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {chat.length === 0 && <div className="text-[11.5px] text-faint">No messages. A chat window opens on {hostname}.</div>}
             {chat.map((m, i) => (
-              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand/15 text-ink' : 'bg-elevated text-ink')}>
-                <div className="text-[10px] text-faint mb-0.5">{m.from === 'tech' ? 'You' : hostname}</div>{m.text}
+              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand text-white shadow-sm shadow-brand/20' : 'mr-auto bg-elevated text-ink border border-line2')}>
+                <div className={cx('text-[10px] mb-0.5 font-semibold', m.from === 'tech' ? 'text-white/75' : 'text-run')}>{m.from === 'tech' ? 'Technician · You' : hostname}</div>{m.text}
               </div>
             ))}
           </div>
@@ -1021,16 +1191,55 @@ function InventoryView({ id }) {
             {(net.interfaces || []).map((ifc, i) => <InfoGrid key={i} rows={[['Interface', ifc.name], ['IPv4', ifc.ipv4], ['MAC', ifc.mac]]} />)}
             {(net.interfaces || []).length === 0 && <div className="text-[12.5px] text-faint">No network interfaces reported yet.</div>}
           </InventorySection>
-          <Card className="p-4 md:col-span-2">
-            <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink"><Icon name="grid" size={14} className="text-muted" />Installed software <span className="text-faint font-normal">({sw.length})</span></div>
-            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
-              {sw.map((s, i) => <div key={i} className="flex items-center justify-between border-b border-line/60 pb-1.5"><span className="text-[12.5px] text-ink">{s.name}</span><span className="text-[11.5px] text-faint mono">{s.version}</span></div>)}
-            </div>
-            {sw.length === 0 && <div className="text-[12.5px] text-faint">No software inventory reported yet.</div>}
-          </Card>
+          <InstalledSoftware software={sw} />
         </div>
       )}
     </div>
+  );
+}
+
+/* Installed software: a workstation reports hundreds of entries, and rendering
+   all of them buried the rest of the inventory tab under a wall of names. Shows
+   a first page with a filter, and opens on demand. */
+function InstalledSoftware({ software }) {
+  const PREVIEW = 12;
+  const [expanded, setExpanded] = useState(false);
+  const [q, setQ] = useState('');
+  const list = software || [];
+  const ql = q.trim().toLowerCase();
+  const matching = !ql ? list : list.filter((s) => String(s.name || '').toLowerCase().includes(ql) || String(s.version || '').toLowerCase().includes(ql));
+  // A search is a request to see what matches, so it opens the list on its own.
+  const shown = expanded || ql ? matching : matching.slice(0, PREVIEW);
+  const hidden = matching.length - shown.length;
+
+  return (
+    <Card className="p-4 md:col-span-2">
+      <div className="flex items-center gap-2 mb-3 text-[12.5px] font-semibold text-ink">
+        <Icon name="grid" size={14} className="text-muted" />Installed software
+        <span className="text-faint font-normal">({list.length})</span>
+        {list.length > PREVIEW && (
+          <div className="ml-auto relative">
+            <Icon name="search" size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter software…" className="h-7 pl-7 text-[12px] w-[200px]" />
+          </div>
+        )}
+      </div>
+      <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
+        {shown.map((s, i) => <div key={i} className="flex items-center justify-between border-b border-line/60 pb-1.5"><span className="text-[12.5px] text-ink">{s.name}</span><span className="text-[11.5px] text-faint mono">{s.version}</span></div>)}
+      </div>
+      {list.length === 0 && <div className="text-[12.5px] text-faint">No software inventory reported yet.</div>}
+      {list.length > 0 && !matching.length && <div className="text-[12.5px] text-faint">Nothing matches “{q}”.</div>}
+      {hidden > 0 && (
+        <Button variant="ghost" size="sm" icon="chevdown" className="mt-3" onClick={() => setExpanded(true)}>
+          Show {hidden} more
+        </Button>
+      )}
+      {expanded && !ql && matching.length > PREVIEW && (
+        <Button variant="ghost" size="sm" icon="chevdown" className="mt-3" onClick={() => setExpanded(false)}>
+          Show less
+        </Button>
+      )}
+    </Card>
   );
 }
 

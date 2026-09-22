@@ -5,6 +5,8 @@ package main
 import (
 	"log"
 	"runtime"
+	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -15,27 +17,27 @@ import (
 // creation fails the rest of the session (video/input/files) is unaffected.
 
 var (
-	kernel32          = syscall.NewLazyDLL("kernel32.dll")
-	procGetModuleH    = kernel32.NewProc("GetModuleHandleW")
-	procRegisterClass = user32.NewProc("RegisterClassExW")
-	procCreateWindow  = user32.NewProc("CreateWindowExW")
-	procDefWindowProc = user32.NewProc("DefWindowProcW")
-	procGetMessage    = user32.NewProc("GetMessageW")
-	procTranslateMsg  = user32.NewProc("TranslateMessage")
-	procDispatchMsg   = user32.NewProc("DispatchMessageW")
-	procPostQuit      = user32.NewProc("PostQuitMessage")
-	procDestroyWindow = user32.NewProc("DestroyWindow")
-	procShowWindow    = user32.NewProc("ShowWindow")
-	procSendMessage   = user32.NewProc("SendMessageW")
-	procPostMessage   = user32.NewProc("PostMessageW")
-	procGetWindowText = user32.NewProc("GetWindowTextW")
-	procMoveWindow      = user32.NewProc("MoveWindow")
-	procCreateFont      = gdi32.NewProc("CreateFontW")
+	kernel32             = syscall.NewLazyDLL("kernel32.dll")
+	procGetModuleH       = kernel32.NewProc("GetModuleHandleW")
+	procRegisterClass    = user32.NewProc("RegisterClassExW")
+	procCreateWindow     = user32.NewProc("CreateWindowExW")
+	procDefWindowProc    = user32.NewProc("DefWindowProcW")
+	procGetMessage       = user32.NewProc("GetMessageW")
+	procTranslateMsg     = user32.NewProc("TranslateMessage")
+	procDispatchMsg      = user32.NewProc("DispatchMessageW")
+	procPostQuit         = user32.NewProc("PostQuitMessage")
+	procDestroyWindow    = user32.NewProc("DestroyWindow")
+	procShowWindow       = user32.NewProc("ShowWindow")
+	procSendMessage      = user32.NewProc("SendMessageW")
+	procPostMessage      = user32.NewProc("PostMessageW")
+	procGetWindowText    = user32.NewProc("GetWindowTextW")
+	procMoveWindow       = user32.NewProc("MoveWindow")
+	procCreateFont       = gdi32.NewProc("CreateFontW")
 	procCreateSolidBrush = gdi32.NewProc("CreateSolidBrush")
-	procSetBkColor      = gdi32.NewProc("SetBkColor")
-	procSetTextColor    = gdi32.NewProc("SetTextColor")
-	procSetWindowLongPtr   = user32.NewProc("SetWindowLongPtrW")
-	procCallWindowProc     = user32.NewProc("CallWindowProcW")
+	procSetBkColor       = gdi32.NewProc("SetBkColor")
+	procSetTextColor     = gdi32.NewProc("SetTextColor")
+	procSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
+	procCallWindowProc   = user32.NewProc("CallWindowProcW")
 
 	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
 	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
@@ -43,10 +45,10 @@ var (
 
 // Dark theme (COLORREF 0x00BBGGRR) to match a modern remote-tool look.
 const (
-	clrWinBg  = 0x00181818
-	clrCtlBg  = 0x00282828
-	clrText   = 0x00EBEBEB
-	wmCtlEdit = 0x0133
+	clrWinBg    = 0x00181818
+	clrCtlBg    = 0x00282828
+	clrText     = 0x00EBEBEB
+	wmCtlEdit   = 0x0133
 	wmCtlStatic = 0x0138
 )
 
@@ -83,8 +85,8 @@ const (
 	wmChar    = 0x0102
 	wmApp     = 0x8000
 
-	vkReturn     = 0x0D
-	gwlpWndProc  = ^uintptr(3) // GWLP_WNDPROC (-4) for SetWindowLongPtr
+	vkReturn    = 0x0D
+	gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC (-4) for SetWindowLongPtr
 
 	emReplaceSel = 0x00C2
 	emSetSel     = 0x00B1
@@ -124,10 +126,13 @@ type msgStruct struct {
 }
 
 type chatWindow struct {
-	hwnd    uintptr
-	history uintptr
-	input   uintptr
-	onSend  func(string)
+	hwnd       uintptr
+	history    uintptr
+	input      uintptr
+	onSend     func(string)
+	mu         sync.Mutex
+	pending    []string
+	textBuffer [4096]uint16 // heap-owned: Win32 callbacks can grow the Go stack
 }
 
 // only one chat window exists per process; the WndProc reaches it here.
@@ -140,6 +145,8 @@ func newChatWindow(title string, onSend func(string)) *chatWindow {
 	activeChat = cw
 	ready := make(chan struct{})
 	go func() {
+		var readyOnce sync.Once
+		defer readyOnce.Do(func() { close(ready) })
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("chat: window crashed: %v", r)
@@ -147,7 +154,7 @@ func newChatWindow(title string, onSend func(string)) *chatWindow {
 		}()
 		runtime.LockOSThread()
 		cw.create(title)
-		close(ready)
+		readyOnce.Do(func() { close(ready) })
 		cw.loop()
 	}()
 	<-ready
@@ -185,10 +192,16 @@ func (cw *chatWindow) create(title string) {
 	dark := int32(1)
 	procDwmSetWindowAttribute.Call(hwnd, dwmaDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
 	editClass := u16("EDIT")
-	cw.history, _, _ = procCreateWindow.Call(0, uintptr(unsafe.Pointer(editClass)), 0,
+	if err := syscall.NewLazyDLL("Msftedit.dll").Load(); err != nil {
+		log.Printf("chat: RichEdit unavailable: %v", err)
+		procDestroyWindow.Call(hwnd)
+		cw.hwnd = 0
+		return
+	}
+	cw.history, _, _ = procCreateWindow.Call(0, uintptr(unsafe.Pointer(u16("RICHEDIT50W"))), 0,
 		wsChild|wsVisible|wsVScroll|esMultiline|esAutoVScroll|esReadonly, 8, 8, 328, 360, hwnd, idHistory, hInst, 0)
 	cw.input, _, _ = procCreateWindow.Call(0, uintptr(unsafe.Pointer(editClass)), 0,
-		wsChild|wsVisible, 8, 376, 252, 28, hwnd, idInput, hInst, 0)
+		wsChild|wsVisible|0x0080|0x00010000, 8, 376, 252, 28, hwnd, idInput, hInst, 0)
 	btn, _, _ := procCreateWindow.Call(0, uintptr(unsafe.Pointer(u16("BUTTON"))), uintptr(unsafe.Pointer(u16("Send"))),
 		wsChild|wsVisible, 268, 376, 68, 28, hwnd, idSend, hInst, 0)
 	// Subclass the input box so Enter submits (a single-line EDIT ignores it by
@@ -204,6 +217,7 @@ func (cw *chatWindow) create(title string) {
 	for _, h := range []uintptr{cw.history, cw.input, btn} {
 		procSendMessage.Call(h, wmSetFont, font, 1)
 	}
+	procSendMessage.Call(cw.history, 0x0443, 0, clrCtlBg) // EM_SETBKGNDCOLOR
 	procShowWindow.Call(hwnd, swShow)
 }
 
@@ -250,8 +264,41 @@ func (cw *chatWindow) append(line string) {
 	if cw == nil || cw.history == 0 {
 		return
 	}
-	procSendMessage.Call(cw.history, emSetSel, ^uintptr(0), ^uintptr(0))
-	procSendMessage.Call(cw.history, emReplaceSel, 0, uintptr(unsafe.Pointer(u16(line+"\r\n"))))
+	cw.mu.Lock()
+	cw.pending = append(cw.pending, line)
+	cw.mu.Unlock()
+	procPostMessage.Call(cw.hwnd, wmApp+2, 0, 0)
+}
+
+// CHARFORMATW, not CHARFORMAT2: explicit layout is identical on amd64/arm64.
+type chatCharFormat struct {
+	Size, Mask, Effects uint32
+	Height, Offset      int32
+	Color               uint32
+	Charset, Pitch      byte
+	Face                [32]uint16
+}
+
+func (cw *chatWindow) flushMessages() {
+	cw.mu.Lock()
+	lines := cw.pending
+	cw.pending = nil
+	cw.mu.Unlock()
+	for _, line := range lines {
+		color := uint32(clrText)
+		if strings.HasPrefix(line, "Tech: ") {
+			color = 0x00FFB5D8
+			line = "Technician: " + strings.TrimPrefix(line, "Tech: ")
+		}
+		if strings.HasPrefix(line, "You: ") {
+			color = 0x00B5E8A4
+		}
+		format := chatCharFormat{Mask: 0x40000000, Color: color} // CFM_COLOR
+		format.Size = uint32(unsafe.Sizeof(format))
+		procSendMessage.Call(cw.history, emSetSel, ^uintptr(0), ^uintptr(0))
+		procSendMessage.Call(cw.history, 0x0444, 1, uintptr(unsafe.Pointer(&format))) // EM_SETCHARFORMAT, SCF_SELECTION
+		procSendMessage.Call(cw.history, emReplaceSel, 0, uintptr(unsafe.Pointer(u16(line+"\r\n"))))
+	}
 	procShowWindow.Call(cw.hwnd, swShowNA)
 }
 
@@ -271,15 +318,20 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 		procSetTextColor.Call(wparam, clrText)
 		return ctlBrush
 	case wmCommand:
-		if cw != nil && (wparam&0xffff) == idSend {
+		if cw != nil && (wparam&0xffff) == idSend && wparam>>16 == 0 {
 			text := getWindowText(cw.input)
 			if text != "" {
 				if cw.onSend != nil {
-					cw.onSend(text)
+					go cw.onSend(text) // never block the Win32 UI/relay reader
 				}
 				cw.append("You: " + text)
 				procSendMessage.Call(cw.input, 0x000C, 0, uintptr(unsafe.Pointer(u16("")))) // WM_SETTEXT ""
 			}
+		}
+		return 0
+	case wmApp + 2:
+		if cw != nil {
+			cw.flushMessages()
 		}
 		return 0
 	case wmClose:
@@ -298,7 +350,13 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 }
 
 func getWindowText(h uintptr) string {
-	var buf [1024]uint16
-	n, _, _ := procGetWindowText.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-	return syscall.UTF16ToString(buf[:n])
+	if activeChat == nil {
+		return ""
+	}
+	buf := activeChat.textBuffer[:]
+	n, _, _ := procSendMessage.Call(h, 0x000D, uintptr(len(buf)), uintptr(unsafe.Pointer(&buf[0]))) // WM_GETTEXT
+	if n >= uintptr(len(buf)) {
+		return ""
+	}
+	return strings.TrimSpace(syscall.UTF16ToString(buf[:n]))
 }

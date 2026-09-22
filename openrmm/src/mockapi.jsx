@@ -258,6 +258,8 @@ const api = {
   // the browser would only ever search what happened to be on it, which is the
   // opposite of what an audit search is for.
   listAudit(params = {}) { return GET('/api/audit' + qs(params)); },
+  // Who is attached to endpoints right now (optionally one agent_id).
+  listRemotePresence(params = {}) { return GET('/api/remote/presence' + qs(params)); },
   listAuditFacets() { return GET('/api/audit/facets'); },
 
   // Exports are authenticated like every other call, so they cannot be a plain

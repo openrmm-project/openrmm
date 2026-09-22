@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 // When the agent runs as a service it lives in session 0, which cannot capture
@@ -79,6 +81,12 @@ type processInformation struct {
 }
 
 func launchSidecar(bin, relay, ticket string, extra ...string) error {
+	// SendInput cannot synthesize the Windows Secure Attention Sequence. Allow
+	// the LocalSystem remote module to use SendSAS unless an administrator has
+	// explicitly disabled software SAS generation through policy.
+	if err := ensureSoftwareSASPolicy(); err != nil {
+		log.Printf("remote: Ctrl+Alt+Delete unavailable: %v", err)
+	}
 	if err := launchInUserSession(bin, relay, ticket, extra); err != nil {
 		log.Printf("remote: user-session launch failed (%v); falling back to direct launch", err)
 		cmd := exec.Command(bin, sidecarArgs(relay, ticket, extra)...)
@@ -89,6 +97,29 @@ func launchSidecar(bin, relay, ticket string, extra ...string) error {
 		go cmd.Wait()
 	}
 	return nil
+}
+
+const softwareSASPolicyPath = `SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`
+
+func ensureSoftwareSASPolicy() error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, softwareSASPolicyPath, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	current, _, err := key.GetIntegerValue("SoftwareSASGeneration")
+	if err == registry.ErrNotExist { // not configured: allow services, but not unrelated applications
+		return key.SetDWordValue("SoftwareSASGeneration", 1)
+	}
+	if err != nil {
+		return err
+	}
+	switch current {
+	case 1, 3: // services already allowed
+		return nil
+	default: // value 0 is an explicit administrator prohibition
+		return fmt.Errorf("software Secure Attention Sequence is disabled by Windows policy")
+	}
 }
 
 func launchInUserSession(bin, relay, ticket string, extra []string) error {

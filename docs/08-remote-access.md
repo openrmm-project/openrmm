@@ -143,8 +143,9 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   requires CGO (see *macOS engine* below). The viewer is
   a plain browser client (`openrmm/src/screens-devices.jsx`, also openable in a new
   tab). A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
-  `0x02`=file chunk; JSON text for input, chat, file ops, and `{t:"kf"}` (the
-  viewer asks for a keyframe on (re)connect).
+  `0x02`=file chunk; JSON text for input, chat, file ops, `{t:"kf"}` (the
+  viewer asks for a keyframe on (re)connect), and `{t:"cad"}` (Windows secure
+  attention sequence).
 - **Codec — tile-delta (CGO-free, OS-agnostic):** `encoder.go` splits each
   captured RGBA frame into a grid of 64-px tiles and JPEG-encodes only the tiles
   that changed since the previous frame; a keyframe sends the whole screen as
@@ -179,7 +180,23 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   browser file browser is path-aware per host OS (Windows `\`+drive list vs POSIX
   `/`). Open it from **Remote ▸ File transfer** or the **Files** button in the
   viewer; both require `devices.files`.
-- **Windows extras:** multi-monitor selection, **in-session chat** (native dark
+- **Viewer controls:** the browser shows the received screen resolution, offers
+  fit-to-window and 50/75/100/125% display scaling, and can enter the browser's
+  real full-screen mode. Scaling is viewer-only and never changes the endpoint's
+  display settings.
+- **Windows extras:** a dedicated **Ctrl+Alt+Delete** button uses Windows
+  `SendSAS` **inside the agent service**, through a local SYSTEM-only named-pipe
+  broker. Calling it from the sidecar directly does not satisfy the
+  service/UIAccess requirement. The broker impersonates the pipe client only to
+  authenticate it, and **reverts before sending**: `SendSAS(FALSE)` is the
+  documented service path and Windows judges "is this a LocalSystem service" by
+  the calling thread, so sending while impersonating a token from the
+  interactive session produces nothing at all — acknowledged request, no
+  security screen. The agent configures software SAS for services only when the
+  policy is absent; explicit administrator choices are preserved. An
+  acknowledgment means the request was dispatched, not that Windows confirmed
+  the screen switch (the API returns void). Capability/error details are sent in
+  the sidecar `hello` message. Also included: **in-session chat** (native dark
   Win32 window on the host, rounded/minimizable), **UAC handling** (sidecar runs
   as SYSTEM in the active console session via `CreateProcessAsUser`;
   `PromptOnSecureDesktop=0`),
@@ -201,6 +218,14 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   Win32 chat window. The host user submits a reply with **Enter** (Windows and
   Linux); the Linux window is **drag-to-move** from anywhere (many WMs give it no
   title bar).
+- **Linux shortcut:** Ctrl+Alt+Delete is dispatched as an ordered key chord on
+  the input worker. Its action depends on the desktop's shortcut configuration;
+  it is not the Windows security screen and may open a logout dialog.
+- **Chat roles:** the console and native Windows, Linux and macOS windows label
+  technician/user messages separately and use purple/green native text. Windows
+  uses Unicode RichEdit history and a UI-thread message queue; reply text has
+  heap-owned storage across Win32 callbacks. Linux/macOS refresh the sidecar
+  before launch, just like Windows, so the first new session uses the update.
 - **Input lock (Windows):** the **Lock input** button in the viewer blocks the
   host's **physical** keyboard and mouse for the duration of the session, so the
   person at the machine can't fight the technician. It uses system-wide
@@ -211,9 +236,11 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   desktop, the UAC/secure desktop and the Winlogon login screen**. The host is
   told via the chat window (transparency), and the lock is always released on
   release/disconnect/session-end (and reset to off on reconnect). **Not covered:**
-  `Ctrl+Alt+Del` (the Secure Attention Sequence) is a kernel trusted path no
-  user-mode hook can intercept — suppressing it would need the Enterprise/IoT
-  Keyboard Filter driver and is intentionally out of scope.
+  a **locally typed** `Ctrl+Alt+Del` (the Secure Attention Sequence) is a kernel
+  trusted path no user-mode hook can intercept — suppressing it would need the
+  Enterprise/IoT Keyboard Filter driver and is intentionally out of scope. This
+  is separate from the technician's viewer button, which sends SAS through the
+  OS-supported `SendSAS` path.
 - **Input lock (Linux):** same **Lock input** button; the sidecar grabs every
   physical keyboard/pointer via the evdev **`EVIOCGRAB`** ioctl
   (`inputlock_linux.go`), making itself the exclusive consumer so the local user
@@ -234,6 +261,49 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   encryption is still open (today the relay is the trust boundary; terminate
   WSS — see `07`).
 
+### Multiple monitors
+
+Windows and Linux stream **every monitor at once**, as one image. Windows
+captures the virtual desktop (`SM_XVIRTUALSCREEN` … `SM_CYVIRTUALSCREEN`) and
+Linux the X screen, which RandR has already stitched. Pointer input matches:
+coordinates are normalized across that whole rectangle and injected with
+`MOUSEEVENTF_VIRTUALDESK`, so clicks land on the right monitor.
+
+**Picking one display.** The sidecar announces the host's displays with
+`{"t":"monitors","list":[{id,w,h,primary}],"selected":N}` — sent once the
+capture geometry is known and again whenever it changes, so a desktop switch or
+a hot-plug refreshes it. The list is omitted for a single display, and the
+viewer only shows its selector when there are two or more. `{"t":"mon","id":N}`
+selects one: `0` is the stitched whole desktop, `1..N` a display, ordered left
+to right so the viewer's index and the captured region cannot disagree.
+
+Switching rebuilds the capture buffer and forces a keyframe, because the frame
+size changes and the encoder keys its tile diff on it. Pointer coordinates stay
+normalized against whatever is being captured, so each capturer maps them back
+before injection — Windows onto `MOUSEEVENTF_VIRTUALDESK`'s virtual-desktop
+space, Linux onto the X screen. Getting that wrong sends clicks to the wrong
+display, which is why the Linux path is verified against a pixel comparison of
+the region capture with the corresponding half of a full-screen frame.
+
+An index that no longer exists (display unplugged mid-session) falls back to the
+whole desktop rather than failing the session.
+
+**macOS selects, but never stitches.** `CGDisplayCreateImage` works one display
+at a time, so there is no equivalent of the whole-desktop frame: the host sends
+`"all": false` with its list and the viewer drops the *All displays* option
+rather than offering something the endpoint cannot do. Selection itself works
+the same way, over `CGGetActiveDisplayList`.
+
+Pointer input there goes through the display's bounds rather than the captured
+image, which also settles the points-vs-pixels question the capturer carried as
+a to-do: `CGEventPost` works in points, a Retina display reports twice as many
+pixels as points, and a second display does not start at the origin. Multiplying
+the normalized coordinate by the image size was right only for a non-Retina main
+display.
+
+The darwin engine is CGO and compiles only on a Mac; the macOS CI job is where
+it is built.
+
 ### macOS engine (experimental, CGO)
 
 Unlike Windows (GDI) and Linux (X11), macOS has **no CGO-free capture path** —
@@ -248,14 +318,213 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   no longer cross-builds darwin.
 - **Permissions** (TCC, enforced even for root): the binary needs **Screen
   Recording** (capture) and **Accessibility** (input) granted in System Settings ▸
-  Privacy & Security. Without them, capture is blank / input is dropped.
-- **Not yet covered**: login-window capture (needs entitlements), and the
-  in-session **chat window** (needs a Cocoa window — Win32/X11 only for now).
+  Privacy & Security. Without them, capture is blank / input is dropped. The
+  request runs on AppKit's main thread so the native consent sheet belongs to
+  the logged-in desktop. When macOS does not show that sheet again after a
+  denial, OpenRMM displays its own host-side alert with buttons that open the
+  exact Screen Recording and Accessibility panes.
+- **Chat and shortcut (sidecar 0.11.0+):** Cocoa chat supports Unicode, replies via
+  Enter/Send, and distinct technician/user colors. AppKit runs on the initial
+  process thread; a LaunchDaemon launches desktop mode into the console user's
+  Aqua session with `launchctl asuser`, staying root — **not** through `sudo`.
+  File-only sessions remain non-graphical. The viewer
+  offers **⌘⌥Esc** (Force Quit Applications), gated on Accessibility permission,
+  rather than a Windows-specific CAD/UAC action. Full screen and viewer scaling
+  are shared with the other platforms.
+- **Never put `sudo` in that chain.** TCC judges a request by its *responsible*
+  process, and `sudo` is an Apple-signed platform binary: `tccd` then refuses to
+  prompt at all — `Platform binary prompting is 'Deny' because: is Platform
+  Binary` — so the sidecar is denied and never appears in any Privacy list for
+  an operator to allow. On macOS 15 the first thing that fails is not capture
+  but **local networking**: the sidecar cannot reach the relay and reports
+  `connect: no route to host`, which reads like a routing fault and is not one.
+  Measured on 15.8, seconds apart, same binary and same user: through
+  `launchctl asuser` it connects; through `launchctl asuser` + `sudo` it does
+  not.
+- **A server on the local network needs Local Network permission, and a
+  command-line tool cannot be given it.** macOS 15 gates access to private
+  address ranges behind a per-app grant. The list is populated only by attributed
+  requests, and a bare executable never appears there — measured with a
+  `CFBundleIdentifier` and `NSLocalNetworkUsageDescription` embedded in
+  `__TEXT,__info_plist` and an ad-hoc signature, which is as much identity as a
+  non-bundle can carry. The denial surfaces as `connect: no route to host`, which
+  reads like a routing fault and is not one.
+
+  This is **specific to a server on a private address**. Through the same
+  LaunchAgent, seconds apart, the sidecar reaches a public host and is refused by
+  a `10.x` one, so a deployment whose server is on the internet was never
+  affected.
+
+  **Fixed by shipping the sidecar as a bundle.** macOS publishes
+  `rmm-remote-darwin-<arch>.app.tar.gz`; the agent verifies its signature,
+  unpacks it and installs `RMMRemote.app` under
+  `/Library/Application Support/OpenRMM`, and the LaunchAgent runs the executable
+  inside it. Once bundled, the sidecar appears in Privacy & Security as *OpenRMM
+  Remote*, the operator allows it once, and a LAN-hosted server works. Nothing
+  short of a bundle achieved this: an ad-hoc signature and the same plist
+  embedded in `__TEXT,__info_plist` were both measured and both still left the
+  tool absent from the list.
+
+  **Nothing may be written inside the bundle.** A signed bundle seals its
+  contents, so a single added file invalidates the signature and with it every
+  privacy grant the bundle holds — the sidecar's own log, written next to its
+  executable, was enough to put the black screen back after an update. The log
+  goes to `~/Library/Logs/rmm-remote.log` on macOS, and the unpack step does not
+  restore the archive's numeric ownership.
+
+  **Updates and the Designated Requirement.** macOS records the app's DR when a
+  permission is granted and checks whether a new version satisfies it. The
+  default ad-hoc DR is tied to one build. Before replacing the bundle, the
+  updater compares the staged bundle against the installed one's DR and writes
+  the outcome to `agent.log`: an identity change means the operator has to grant
+  the permissions again. **The update still goes through** — refusing it would
+  freeze the module at the installed version for as long as builds keep changing
+  identity, which is a worse trade than one re-grant. The comparison needs
+  `codesign`, which ships with the Xcode Command Line Tools rather than with
+  macOS, so on a stock Mac it is skipped; the archive's Ed25519 signature is the
+  integrity check in every case.
+
+  **Stale grants are cleared, not left to mislead.** A privacy row is keyed by
+  bundle identifier, so it outlives the build it was granted to: after an update
+  the panes still list the sidecar as allowed while macOS denies it, which looks
+  like a broken permission rather than one that has to be granted again. After
+  replacing the bundle the agent therefore runs `tccutil reset All
+  io.openrmm.remote`, once as root for the system-wide rows (Accessibility) and
+  once through `launchctl asuser` for the console user's (Screen Recording), and
+  logs it. The rows disappear, and the next session prompts properly. To do it by
+  hand on an endpoint:
+
+  ```sh
+  sudo tccutil reset All io.openrmm.remote   # system-wide rows
+  tccutil reset All io.openrmm.remote        # the logged-in user's rows
+  ```
+
+  The reset is skipped only when both bundles carry the same
+  `Contents/Resources/StableCodeIdentity`. The builder writes the actual DR into
+  that sealed marker when `RMM_MACOS_CODESIGN_IDENTITY` signs the bundle. Moving
+  to a different certificate, moving to or from ad-hoc signing, or replacing one
+  ad-hoc build with another clears the stale rows.
+
+  **What this costs, and who pays it.** Official builds are ad-hoc signed, so
+  every published sidecar is a new application to macOS and the operator is asked
+  for Screen Recording and Accessibility again. In steady state a sidecar release
+  is rare, which makes this an occasional prompt rather than a routine — but it
+  is the behaviour to expect. The updater removes only rows whose recorded code
+  identity cannot apply to the new bundle, and the viewer explains how to repair
+  a row that macOS still displays as enabled.
+
+##### Signing the macOS sidecar yourself
+
+A self-hosted install downloads the sidecar from **its own** `/dl/`, so whoever
+signed that artifact decides the code identity the endpoints record. Three cases,
+with different consequences:
+
+1. **You publish the official artifact unchanged.** Its identity is whatever the
+   project signed it with — today ad-hoc, so the prompt returns on each sidecar
+   upgrade.
+2. **You build the sidecar yourself** (rebranding, auditing, or a patched
+   build). Set `RMM_MACOS_CODESIGN_IDENTITY` to a persistent signing identity and
+   the grants survive your upgrades, because the DR then follows the certificate
+   instead of the build. `scripts/build-macos-bundle.sh` reads that variable and
+   records `Contents/Resources/StableCodeIdentity` inside the bundle.
+3. **Developer ID**, which only the entity that owns it can use. It is the only
+   option that also gives notarization, so a bundle downloaded through a browser
+   is not blocked by Gatekeeper.
+
+To create an identity for case 2, on a Mac: Keychain Access ▸ Certificate
+Assistant ▸ *Create a Certificate…*, a **self-signed root** of type **Code
+Signing**; tick *Let me override defaults* and give it a validity of years —
+expiry costs every endpoint a fresh grant. `security find-identity -v -p
+codesigning` prints the name to pass in the variable. Export it as a `.p12` and
+guard it the way you guard the update-signing key: **losing it re-prompts every
+Mac in your fleet**, and unlike the Ed25519 key there is no two-key rotation that
+would hide the change from users. Building where the certificate lives is part of
+the deal — a CI runner needs the `.p12` as a secret and imports it into a
+temporary keychain.
+
+Note what a self-signed identity does **not** buy: no notarization, no Gatekeeper
+clearance for a browser download, and no verified publisher name — the Privacy
+panes still say the app is from an unidentified developer. It buys exactly one
+thing, which is that an update stops looking like a different application.
+
+**The project deliberately does not sign official builds with a self-signed
+certificate.** It would spare operators the prompt, but it would put a key whose
+loss re-prompts every macOS endpoint of every self-hosted install under the
+project's custody, and it would do nothing for anyone building from source. The
+intended path for official builds is Developer ID.
+
+  Measured, not assumed: after the first auto-update the endpoint prompted again
+  while Privacy & Security still showed the entry as allowed — the list matches
+  by path and name, the decision by DR, and the two disagree after a rebuild.
+  Toggling the switch off and on re-grants it (`tccutil reset <service>
+  io.openrmm.remote` does the same). That is why the updater clears the rows
+  itself: the operator is asked once, instead of being shown a permission that
+  is already on and still denied.
+
+  **The bundle identifier is `io.openrmm.remote`.** Reverse-DNS names a domain
+  the project controls, and the earlier `com.openrmm.remote` did not. The
+  identifier is the privacy identity and the LaunchAgent label, so endpoints
+  installed under the old name are migrated: the agent (and a reinstall) boots
+  out the old job, deletes `/Library/LaunchAgents/com.openrmm.remote.plist` and
+  resets its privacy rows. The agent also rewrites its own LaunchAgent plist
+  whenever it no longer matches, because agents update themselves and installers
+  do not re-run.
+  **A Terminal window at every login is not the installer's doing.** macOS runs a
+  Unix executable added to Login Items inside Terminal.app, so a bare
+  `rmm-agent` or `rmm-remote` listed under *General ▸ Login Items ▸ Open at
+  Login* opens a terminal showing its log on every sign-in. Nothing here adds
+  login items — the agent is started by launchd from its LaunchDaemon — so an
+  entry there was added by hand while debugging and should be removed with the
+  **−** button. The separate *Allow in the Background* list is where the real
+  daemon and LaunchAgent appear, and both must stay enabled.
+
+#### Clipboard
+
+The technician's clipboard reaches the endpoint on their own paste keystroke.
+The viewer listens for the browser's `paste` event, which carries the text with
+it — nothing asks for clipboard *read* permission — and sends
+`{"t":"clip","text":"…","paste":true}`. The sidecar replaces the endpoint's
+clipboard and then presses the paste shortcut **its own platform uses**: ⌘V on
+macOS, Ctrl+V on Windows and Linux. Forwarding the technician's raw Ctrl+V as
+keystrokes would paste nothing on a Mac, which is the bug this replaces.
+
+For ordinary keyboard shortcuts, the viewer maps the technician's Control key
+to Command when the endpoint is macOS. Thus Ctrl+C reaches the Mac as ⌘C. Before
+the special paste path runs it releases any forwarded modifier, so ⌘V is not
+accidentally posted as Control+Command+V. The macOS pasteboard write completes on
+the AppKit thread before ⌘V is serialized with the remaining input events.
+
+Text only, capped at 256 KB: the message shares the session's socket with the
+video stream.
+
+**One direction only.** The endpoint's clipboard is never read back. Collecting
+what somebody copied on their own machine, silently, is surveillance rather than
+support; a technician who needs content from the endpoint can use file transfer,
+which the user can see.
+
+On Linux the text is handed to `wl-copy`, `xclip` or `xsel`, whichever is
+installed — Wayland first, since the X11 tools reach Xwayland's clipboard rather
+than the one the compositor's applications read. Owning the X11 CLIPBOARD
+selection directly would mean answering selection requests for as long as the
+content should live, and the capture loop owns that connection. If none of the
+three is installed the paste is refused and logged, not silently dropped.
+
+- **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.
-- Release CI builds both macOS architectures, but does not Apple-code-sign,
-  notarize or staple the sidecar. Gatekeeper/TCC approval remains an operator
-  concern; OpenRMM's Ed25519 update signature is a separate trust mechanism.
+- Release CI builds **both** sidecars on one macos-14 runner — arm64 natively and
+  x86_64 cross-built with `clang -arch x86_64`, since Xcode's SDK is universal —
+  packages and ad-hoc signs each `.app.tar.gz`, and verifies with `file` that the
+  two slices really are different architectures. A cross-build that silently
+  produced two arm64 binaries would ship an Intel release no Intel Mac can start,
+  and nothing downstream would notice: the bundle unpacks and the signature
+  verifies either way. It does not sign with Developer ID, notarize or staple.
+  Gatekeeper/TCC approval remains an operator concern; OpenRMM's Ed25519 update
+  signature is a separate trust mechanism.
+- macOS source/native CI changes do not update an existing `/dl/` binary by
+  themselves. Compile on a Mac with the compatible SDK, verify on a logged-in
+  device, then publish the binary and detached signature together. A Linux-only
+  test deployment must not claim that the old macOS sidecar includes new chat.
 
 ### Linux requires Xorg (not Wayland)
 
@@ -277,6 +546,58 @@ with `echo $XDG_SESSION_TYPE` → `x11`.
 **VirtualBox note:** GNOME-on-Xorg can black-screen in a VirtualBox guest unless
 the graphics are right — set **Graphics Controller = VMSVGA**, **3D Acceleration
 OFF**, and install the guest X driver (`virtualbox-guest-x11`/`-utils`).
+
+### When no screen arrives at all
+
+The sidecar is the only peer that ever reaches the relay, so if the agent cannot
+prepare or launch it, nothing connects: the viewer opens, reports *streaming*
+(that is only its own socket), and shows a black canvas until the relay's
+pairing timeout. Two things make that diagnosable:
+
+- The agent **tells the viewer why**, taking the sidecar's place on the relay
+  for a single `{"t":"notice"}` message — "this endpoint could not prepare the
+  remote module: …". The console shows it as a banner plus one toast (repeated
+  reconnects don't re-toast the same text).
+- On **Windows** the agent keeps `agent.log` next to `rmm-agent.exe`
+  (`C:\ProgramData\rmm-agent`), rotating once at 4 MB. A Windows service has no
+  stderr, so before this every `log.Printf` — including the reason a session
+  never started — was discarded. systemd and launchd already capture the
+  daemon's output on the other platforms.
+
+The sidecar keeps its own `rmm-remote.log` in the same directory; the agent
+re-downloads `rmm-remote` from `/dl/` whenever it is missing or its ETag moved,
+so deleting the binary is a safe way to force a clean copy.
+
+**Antivirus quarantine (the usual Windows cause).** The agent downloads the
+module to `rmm-remote.exe.new` and runs it once (`-print-version`) to validate
+it. An unsigned executable written by a service and then executed is a textbook
+heuristic trigger: Windows Defender's cloud verdict arrives *after* the first
+copy has already run, so the first session works and every later one has its
+download deleted mid-flight. The agent now says so instead of failing with a
+bare "file not found". Confirm it on the endpoint with
+
+```powershell
+Get-MpThreatDetection | Select-Object -Last 5 InitialDetectionTime,Resources
+```
+
+and clear it with the bundled, idempotent
+[`scripts/windows-defender-exclusion.ps1`](../scripts/windows-defender-exclusion.ps1)
+— it excludes only the agent directory (no process exclusion, and it never
+disables real-time protection), prints every action, reverts with `-Remove`, and
+says so plainly when Intune or Group Policy owns the exclusion list. Push it
+through the RMM as a Script-library job to cover the fleet. On a new endpoint,
+`install.ps1 -DefenderExclusion` does the same at install time; it is opt-in,
+because an antivirus exclusion is the operator's decision to make.
+
+A copy already quarantined is cleared with `Remove-MpThreat` or from Defender's
+protection history; the agent re-downloads the sidecar on the next remote
+session, with no service restart.
+
+The durable fix is **Authenticode-signing** the Windows binaries — OpenRMM's
+Ed25519 update signature protects the update channel but means nothing to
+Defender, which reads the PE signature, reputation and behaviour. Signing is
+tracked separately; the exclusion is what makes the current, Ed25519-signed
+distribution work.
 
 ## The "own remote tool" plan
 

@@ -19,6 +19,16 @@ const COMPLIANCE_STYLE = {
   critical: { c: 'text-bad bg-badsoft border-bad/25', label: 'Critical' },
   unknown: { c: 'text-faint bg-elevated border-line2', label: 'Not scanned' },
 };
+// A single field of the wrong shape used to blank the whole screen: a policy
+// whose auto_approve arrived as "security" instead of ["security"] threw on
+// .join and took the React tree down with it. Nothing renders a list without
+// going through here now — a malformed field costs that field, not the page.
+function asList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') return value.split(',').map((v) => v.trim()).filter(Boolean);
+  return [];
+}
+
 function ComplianceBadge({ s }) {
   const m = COMPLIANCE_STYLE[s] || COMPLIANCE_STYLE.unknown;
   return <span className={cx('inline-flex items-center gap-1.5 rounded-full border px-2 py-[3px] text-[11.5px] font-medium', m.c)}>{m.label}</span>;
@@ -190,10 +200,10 @@ function PoliciesTab() {
                     {!p.enabled && <span className="text-[10.5px] uppercase text-faint border border-line2 rounded px-1.5 py-0.5">disabled</span>}
                   </div>
                   <div className="text-[12px] text-muted mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                    <span>Auto-approve: {p.auto_approve?.length ? p.auto_approve.join(', ') : '—'} {p.auto_approve?.length ? `(after ${p.auto_approve_age_days}d)` : ''}</span>
-                    <span>Window: {p.window_days?.length ? p.window_days.map((d) => WEEKDAYS[d]).join(',') : 'any day'} {minuteToHHMM(p.window_start_min)}–{minuteToHHMM(p.window_end_min)}</span>
-                    <span>Reboot: {p.reboot}</span>
-                    {p.exclusions?.length ? <span>Excludes: {p.exclusions.join(', ')}</span> : null}
+                    <span>Auto-approve: {asList(p.auto_approve).length ? asList(p.auto_approve).join(', ') : '—'} {asList(p.auto_approve).length && p.auto_approve_age_days ? `(after ${p.auto_approve_age_days}d)` : ''}</span>
+                    <span>Window: {asList(p.window_days).length ? asList(p.window_days).map((d) => WEEKDAYS[d]).join(',') : 'any day'} {minuteToHHMM(p.window_start_min)}–{minuteToHHMM(p.window_end_min)}</span>
+                    <span>Reboot: {p.reboot || '—'}</span>
+                    {asList(p.exclusions).length ? <span>Excludes: {asList(p.exclusions).join(', ')}</span> : null}
                   </div>
                 </div>
                 {can('patches.policies.manage') && (

@@ -22,15 +22,18 @@
 //	    {"t":"b","x":..,"y":..,"button":0,"down":true}  mouse button
 //	    {"t":"w","dy":120}                        wheel (browser deltaY)
 //	    {"t":"k","code":65,"down":true}           key (browser keyCode ~= VK)
+//	    {"t":"cad"}                                   secure-attention equivalent (⌘⌥Esc on macOS)
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -41,6 +44,7 @@ func main() {
 	printVer := flag.Bool("print-version", false, "print the sidecar version and exit")
 	filesOnly := flag.Bool("files", false, "file-transfer-only mode: no screen capture/streaming")
 	noFiles := flag.Bool("no-files", false, "disable in-band file transfer in desktop mode")
+	session := flag.String("session", "", "read the session parameters from this file and delete it (macOS LaunchAgent)")
 	flag.Parse()
 	if *printVer {
 		fmt.Println(remoteVersion)
@@ -51,10 +55,18 @@ func main() {
 	// Microsecond timestamps make the startup breakdown (dial → X11 attach →
 	// first frame) legible when chasing "time to first frame".
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	if exe, err := os.Executable(); err == nil {
-		if f, e := os.OpenFile(filepath.Join(filepath.Dir(exe), "rmm-remote.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); e == nil {
-			log.SetOutput(f)
+	openLog()
+	// Before the check below, not after: this is what supplies the relay URL.
+	// A LaunchAgent's plist is static while a relay URL and a single-use ticket
+	// are not, so the agent leaves them in a file owned by the session user and
+	// kickstarts the job. Reading them here also keeps the ticket out of the
+	// process arguments, where `ps` shows it to every user on the machine.
+	if *session != "" {
+		p, err := readSessionFile(*session)
+		if err != nil {
+			log.Fatalf("rmm-remote: session file: %v", err)
 		}
+		*relay, *ticket, *filesOnly, *noFiles = p.Relay, p.Ticket, p.FilesOnly, p.NoFiles
 	}
 	if *relay == "" {
 		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
@@ -84,9 +96,74 @@ func main() {
 	if *filesOnly {
 		allowFiles = true
 	}
-	if err := run(conn, allowFiles); err != nil {
+	if err := runPlatformUI(!*filesOnly, func() error { return run(conn, allowFiles) }); err != nil {
 		log.Printf("rmm-remote: session ended: %v", err)
 	}
 }
 
-const remoteVersion = "0.9.0"
+const remoteVersion = "0.16.0"
+
+// sessionParams is what the agent hands to a LaunchAgent-started sidecar.
+type sessionParams struct {
+	Relay     string `json:"relay"`
+	Ticket    string `json:"ticket"`
+	FilesOnly bool   `json:"files_only"`
+	NoFiles   bool   `json:"no_files"`
+}
+
+// readSessionFile consumes the file: the ticket is single-use, and leaving it on
+// disk after the session starts would widen the window in which it is stealable
+// beyond the moment it is actually needed.
+func readSessionFile(path string) (sessionParams, error) {
+	var p sessionParams
+	b, err := os.ReadFile(path)
+	_ = os.Remove(path)
+	if err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal(b, &p); err != nil {
+		return p, err
+	}
+	if p.Relay == "" {
+		return p, fmt.Errorf("no relay URL")
+	}
+	return p, nil
+}
+
+// openLog points the logger at a file, because the sidecar is started with no
+// console: on Windows with CREATE_NO_WINDOW, and by launchd or a service with
+// stdout on /dev/null.
+//
+// The fallback is not decoration. The same binary runs as root for a
+// file-transfer session and as the console user for a desktop one, so a log
+// created by the first is unwritable by the second — which is how a macOS
+// session came to leave no trace at all, not even its first line, while we were
+// looking for a capture problem that did not exist.
+func openLog() {
+	paths := []string{}
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		// Never inside an .app. A signed bundle seals its contents, so adding a
+		// file invalidates the signature — and on macOS an invalid signature
+		// costs every privacy grant the bundle holds. Writing one log line there
+		// turned a working session back into a black screen.
+		if !strings.Contains(filepath.ToSlash(dir), ".app/Contents/") {
+			paths = append(paths, filepath.Join(dir, "rmm-remote.log"))
+		}
+	}
+	// Exists on macOS only, which is the platform that needs somewhere better
+	// than the temp directory; elsewhere the check simply fails and is skipped.
+	if home, err := os.UserHomeDir(); err == nil {
+		logs := filepath.Join(home, "Library", "Logs")
+		if info, err := os.Stat(logs); err == nil && info.IsDir() {
+			paths = append(paths, filepath.Join(logs, "rmm-remote.log"))
+		}
+	}
+	paths = append(paths, filepath.Join(os.TempDir(), "rmm-remote.log"))
+	for _, p := range paths {
+		if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666); err == nil {
+			log.SetOutput(f)
+			return
+		}
+	}
+}

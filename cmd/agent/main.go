@@ -81,8 +81,12 @@ type agent struct {
 // program adapts the agent to the service interface.
 type program struct{ a *agent }
 
-func (p *program) Start(_ service.Service) error { go p.a.loop(); return nil }
-func (p *program) Stop(_ service.Service) error  { close(p.a.quit); return nil }
+func (p *program) Start(_ service.Service) error {
+	startPlatformServices(p.a.quit)
+	go p.a.loop()
+	return nil
+}
+func (p *program) Stop(_ service.Service) error { close(p.a.quit); return nil }
 
 func main() {
 	wsURL := flag.String("server", envOr("RMM_SERVER_WS", "ws://localhost:8080/ws/agent"), "server agent WebSocket URL")
@@ -196,6 +200,7 @@ func main() {
 	}
 
 	// Run (foreground when interactive, managed when installed as a service).
+	setupServiceLog()
 	if err := svc.Run(); err != nil {
 		log.Fatalf("run: %v", err)
 	}

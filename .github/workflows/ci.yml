@@ -52,7 +52,7 @@ jobs:
           go=false; frontend=false; installers=false; docker=false
           has '^(cmd/|internal/|go\.(mod|sum)$)'                  && go=true
           has '^openrmm/'                                          && frontend=true
-          has '^(deploy/public/install\.|cmd/agent/|internal/protocol/)' && installers=true
+          has '^(deploy/public/install\.|scripts/|cmd/agent/|internal/protocol/)' && installers=true
           has '^(Dockerfile$|\.dockerignore$|deploy/)'             && docker=true
           # A change to the workflows themselves has to be proven by running them.
           if has '^\.github/workflows/'; then
@@ -112,6 +112,78 @@ jobs:
           # release that already had published security fixes.
           check-latest: true
       - run: go test ./cmd/agent ./internal/protocol -count=1
+      - if: runner.os != 'macOS'
+        run: go test ./cmd/rmm-remote -count=1
+
+  macos-remote:
+    name: macOS native chat and remote sidecar
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: macos-14
+    # The same signing identity the release uses, so the bundle this job
+    # publishes as an artifact is the one operators can actually install without
+    # re-granting permissions. Absent — on a fork, or before one exists — the
+    # bundle stays ad-hoc signed and everything still builds.
+    env:
+      APPLE_SIGNING_P12: ${{ secrets.APPLE_SIGNING_P12 }}
+      APPLE_SIGNING_P12_PASSWORD: ${{ secrets.APPLE_SIGNING_P12_PASSWORD }}
+      RMM_MACOS_CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: CGO_ENABLED=1 go test ./cmd/rmm-remote
+      # A command-line tool has no Info.plist, so macOS has no bundle identity to
+      # attribute a privacy request to and no purpose string to show — it neither
+      # prompts nor lists the tool, and the operator has nothing to allow. On
+      # macOS 15 that surfaces as a denied LOCAL NETWORK access: the sidecar
+      # cannot reach the relay and reports "no route to host". Embedding the
+      # plist in __TEXT,__info_plist helps identify a bare tool, but privacy
+      # grants for the shipped sidecar rely on the application bundle. Ad-hoc
+      # signing changes identity on rebuild and cannot preserve those grants.
+      - name: Import the signing identity
+        if: env.APPLE_SIGNING_P12 != ''
+        run: |
+          set -eu
+          keychain="$RUNNER_TEMP/openrmm-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$APPLE_SIGNING_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" \
+            -P "$APPLE_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          # Without this, codesign blocks on a GUI prompt no runner can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+      - name: Build, bundle and sign the darwin sidecars
+        run: |
+          set -eux
+          PLIST=cmd/rmm-remote/macapp/Info.plist
+          LD="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$PLIST"
+          CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
+          # The runner is arm64; Xcode's SDK is universal, so -arch x86_64 gives
+          # the Intel build that /dl/ has never carried. It cannot run here.
+          CGO_ENABLED=1 GOARCH=amd64 CC="clang -arch x86_64" go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+          # Bundle assembly lives in a script so this job and `make
+          # remote-dist-darwin` cannot drift apart.
+          for arch in arm64 amd64; do
+            scripts/build-macos-bundle.sh "$arch" "dist/rmm-remote-darwin-$arch" "dist/rmm-remote-darwin-$arch.app.tar.gz"
+          done
+          ls -la dist/
+      - run: dist/rmm-remote-darwin-arm64 -print-version
+      - run: file dist/rmm-remote-darwin-amd64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rmm-remote-darwin
+          path: dist/rmm-remote-darwin-*
+          retention-days: 7
+      - name: Remove the signing keychain
+        if: always() && env.APPLE_SIGNING_P12 != ''
+        run: security delete-keychain "$RUNNER_TEMP/openrmm-signing.keychain-db" || true
 
   installers-linux:
     name: Linux installer validation
@@ -122,20 +194,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Shell syntax and lint
         run: |
-          bash -n deploy/public/install.sh
-          shellcheck -x deploy/public/install.sh deploy/ops/*.sh
+          bash -n deploy/public/install.sh deploy/public/uninstall.sh scripts/test-install-migration.sh
+          shellcheck -x deploy/public/install.sh deploy/public/uninstall.sh scripts/test-install-migration.sh deploy/ops/*.sh
           for script in deploy/ops/*.sh; do bash -n "$script"; done
+      # Installs into the runner's real system paths, which is why it only runs
+      # on a throwaway machine. It covers the installer's transaction, the
+      # directory-ownership refusal and uninstall.sh; the agent is a stand-in,
+      # since CI has no server for a real one to enrol against.
+      - name: Installer transaction and uninstall
+        run: sudo bash scripts/test-install-migration.sh
       - name: PowerShell static validation
         shell: pwsh
         run: |
           $tokens = $null
           $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count) { $errors | Format-List; exit 1 }
+          $scripts = @('deploy/public/install.ps1', 'cmd/agent/uninstall_windows.ps1') + (Get-ChildItem scripts/*.ps1 | ForEach-Object { $_.FullName })
+          foreach ($script in $scripts) {
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { Write-Host $script; $errors | Format-List; exit 1 }
+          }
           Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
-          $findings = Invoke-ScriptAnalyzer deploy/public/install.ps1 -Severity Error
-          if ($findings) { $findings | Format-Table; exit 1 }
+          # One path at a time: the positional parameter is -ScriptDefinition, so
+          # an array binds to it as a string and the call fails before analysing.
+          foreach ($script in $scripts) {
+            $findings = Invoke-ScriptAnalyzer -Path $script -Severity Error
+            if ($findings) { Write-Host $script; $findings | Format-Table; exit 1 }
+          }
 
   installer-windows:
     name: Windows installer verification
@@ -155,12 +240,19 @@ jobs:
         shell: pwsh
         run: |
           $tokens = $null; $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path deploy/public/install.ps1), [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count) { $errors | Format-List; exit 1 }
+          $scripts = @('deploy/public/install.ps1', 'cmd/agent/uninstall_windows.ps1') + (Get-ChildItem scripts/*.ps1 | ForEach-Object { $_.FullName })
+          foreach ($script in $scripts) {
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { Write-Host $script; $errors | Format-List; exit 1 }
+          }
           Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
-          $findings = Invoke-ScriptAnalyzer deploy/public/install.ps1 -Severity Error
-          if ($findings) { $findings | Format-Table; exit 1 }
+          # One path at a time: the positional parameter is -ScriptDefinition, so
+          # an array binds to it as a string and the call fails before analysing.
+          foreach ($script in $scripts) {
+            $findings = Invoke-ScriptAnalyzer -Path $script -Severity Error
+            if ($findings) { Write-Host $script; $findings | Format-Table; exit 1 }
+          }
       - name: Build rmm-sign
         shell: pwsh
         run: go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
@@ -195,8 +287,8 @@ jobs:
         run: |
           export PATH="$(brew --prefix openssl@3)/bin:$PATH"
           openssl version | grep -E '^OpenSSL ([3-9]|[1-9][0-9])\.'
-          bash -n deploy/public/install.sh
-          shellcheck deploy/public/install.sh
+          bash -n deploy/public/install.sh deploy/public/uninstall.sh
+          shellcheck deploy/public/install.sh deploy/public/uninstall.sh
           tmp="$(mktemp -d)"
           go build -buildvcs=false -o "$tmp/rmm-sign" ./cmd/rmm-sign
           keys="$("$tmp/rmm-sign" -gen-key)"
@@ -213,6 +305,10 @@ jobs:
           printf '%s' "$signature" | openssl base64 -d -A > "$tmp/signature.bin"
           openssl dgst -sha256 -binary "$tmp/artifact" > "$tmp/artifact.digest"
           openssl pkeyutl -verify -pubin -inkey "$tmp/public.der" -keyform DER -rawin -in "$tmp/artifact.digest" -sigfile "$tmp/signature.bin"
+      # The one platform where the agent moves out of /usr/local/bin, and the
+      # only place the installer's BSD stat syntax is exercised.
+      - name: Installer migration and uninstall
+        run: sudo bash scripts/test-install-migration.sh
 
   frontend:
     name: Frontend npm validation

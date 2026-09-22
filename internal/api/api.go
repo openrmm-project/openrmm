@@ -62,15 +62,18 @@ const (
 
 // Server holds all HTTP dependencies.
 type Server struct {
-	cfg     *config.Config
-	store   *store.Store
-	hub     *hub.Hub
-	jobs    *jobs.Service
-	remote  *remote.Manager
-	relay   *remote.Relay
-	chat    *ai.Engine
-	sched   *scheduler.Scheduler
-	patches *patches.Service
+	cfg    *config.Config
+	store  *store.Store
+	hub    *hub.Hub
+	jobs   *jobs.Service
+	remote *remote.Manager
+	relay  *remote.Relay
+	// presence is who is attached to which endpoint right now, so a second
+	// technician is told rather than surprised. See internal/remote/presence.go.
+	presence *remote.Presence
+	chat     *ai.Engine
+	sched    *scheduler.Scheduler
+	patches  *patches.Service
 
 	// oidc is the discovered identity provider, or nil when single sign-on is
 	// off or discovery failed. Guarded because InitOIDC runs after New and a
@@ -86,7 +89,7 @@ type Server struct {
 
 // New builds the API server.
 func New(cfg *config.Config, s *store.Store, h *hub.Hub, j *jobs.Service, rm *remote.Manager, relay *remote.Relay, chat *ai.Engine, sched *scheduler.Scheduler, patchSvc *patches.Service) *Server {
-	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, chat: chat, sched: sched, patches: patchSvc}
+	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, presence: remote.NewPresence(), chat: chat, sched: sched, patches: patchSvc}
 }
 
 func (s *Server) lockAgentLifecycle(agentID string) func() {
@@ -220,6 +223,11 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/remote-capabilities", s.getRemoteCapabilities)
+		// Who is attached right now. Readable by anyone who can see devices:
+		// knowing that a colleague is already on a machine is what stops two
+		// people from working on it blind, and it reveals nothing about the
+		// session's contents.
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/remote/presence", s.listRemotePresence)
 		r.With(s.requirePermissionAny(models.PermDevicesRemote, models.PermDevicesFiles, models.PermDevicesTerminal)).Post("/devices/{id}/remote", s.startRemote)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}", s.updateDeviceMeta)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)

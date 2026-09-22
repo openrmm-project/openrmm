@@ -33,6 +33,8 @@ const ICON_PATHS = {
   file: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v4a2 2 0 0 0 2 2h4',
   scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12',
   remote: 'M5 3h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 21h8M12 17v4',
+  fullscreen: 'M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5',
+  fullscreenexit: 'M3 8h5V3M21 8h-5V3M21 16h-5v5M3 16h5v5',
   terminal: 'M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM7 9l3 3-3 3M13 15h4',
   cpu: 'M6 6h12v12H6zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4',
   disk: 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0zM12 12h.01M12 8a4 4 0 0 1 0 8',
@@ -80,14 +82,39 @@ function Icon({ name, size = 16, className = '', strokeWidth = 1.7, fill = false
   );
 }
 
+// The agent reports Go's GOOS — "darwin", "windows", "linux" — so the family has
+// to be decided by matching those first. Substring tests in the other order get
+// it wrong in a way that looks like a typo and is not: "darwin" CONTAINS "win",
+// which is how macOS endpoints ended up with a Windows icon, the wrong label and
+// no match under the macOS filter.
+function osFamily(os) {
+  const o = String(os || '').toLowerCase();
+  if (!o) return 'Unknown';
+  if (o.includes('darwin') || o.includes('mac') || o.includes('osx') || o.includes('ios')) return 'macOS';
+  if (o.includes('windows') || o.startsWith('win') || o.includes('microsoft')) return 'Windows';
+  if (o.includes('linux') || o.includes('ubuntu') || o.includes('debian') || o.includes('cent') || o.includes('fedora') || o.includes('rhel') || o.includes('suse') || o.includes('alpine') || o.includes('arch')) return 'Linux';
+  return 'Unknown';
+}
+
+// What an operator should read in a device list. "darwin" is the kernel name and
+// means nothing to the person looking at the fleet; the product name does.
+function osLabel(os) {
+  const family = osFamily(os);
+  if (family === 'Unknown') return os || '—';
+  const o = String(os).toLowerCase();
+  // A distribution or release the agent reported in full is more specific than
+  // the family, so it wins — "Ubuntu 24.04" beats "Linux".
+  if (o !== 'linux' && o !== 'darwin' && o !== 'windows' && o.length > 2) return os;
+  return family;
+}
+
 function OsIcon({ os, size = 15, className = '' }) {
-  const o = (os || '').toLowerCase();
-  let name = 'devices';
-  if (o.includes('win')) name = 'windows';
-  else if (o.includes('mac') || o.includes('darwin') || o.includes('osx')) name = 'apple';
-  else if (o.includes('linux') || o.includes('ubuntu') || o.includes('debian') || o.includes('cent')) name = 'linux';
+  const family = osFamily(os);
+  const name = family === 'Windows' ? 'windows' : family === 'macOS' ? 'apple' : family === 'Linux' ? 'linux' : 'devices';
   return <Icon name={name} size={size} className={className} strokeWidth={1.6} />;
 }
 
 window.Icon = Icon;
 window.OsIcon = OsIcon;
+window.osFamily = osFamily;
+window.osLabel = osLabel;

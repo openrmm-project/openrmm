@@ -56,9 +56,19 @@ remote-all-darwin:
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o bin/rmm-remote-darwin-arm64 ./cmd/rmm-remote
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o bin/rmm-remote-darwin-amd64 ./cmd/rmm-remote
 
+# The embedded Info.plist helps identify the legacy bare binary; the .app bundle
+# is what macOS attributes privacy grants to. Ad-hoc signatures are build-bound.
+DARWIN_PLIST_LDFLAGS := -extldflags -Wl,-sectcreate,__TEXT,__info_plist,cmd/rmm-remote/macapp/Info.plist
+
+# Produces both shapes: the .app.tar.gz the agent installs (privacy grants are
+# keyed to a bundle) and the bare binary, which older agents still ask for.
 remote-dist-darwin:
-	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-darwin-arm64 ./cmd/rmm-remote
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -o deploy/public/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-arm64 ./cmd/rmm-remote
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 CC="clang -arch x86_64" $(GO) build -buildvcs=false -ldflags '$(DARWIN_PLIST_LDFLAGS)' -o deploy/public/rmm-remote-darwin-amd64 ./cmd/rmm-remote
+	@set -e; for arch in arm64 amd64; do \
+	  ./scripts/build-macos-bundle.sh "$$arch" "deploy/public/rmm-remote-darwin-$$arch" "deploy/public/rmm-remote-darwin-$$arch.app.tar.gz"; \
+	  codesign --sign "$${RMM_MACOS_CODESIGN_IDENTITY:--}" --force --identifier io.openrmm.remote "deploy/public/rmm-remote-darwin-$$arch"; \
+	done
 
 # Publish the agent binaries to deploy/public/ so the server serves them at /dl/
 # for the agent's ETag-based SELF-UPDATE (and the install scripts). Republish here

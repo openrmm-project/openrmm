@@ -15,6 +15,7 @@ import (
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -397,6 +398,20 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	conn.SetReadLimit(relayWSReadLimit)
+	// Only the viewer side is presence: the agent end is the endpoint itself,
+	// and announcing that a machine is attached to itself says nothing. Removed
+	// by defer, so a dropped socket cannot leave a ghost claiming somebody is
+	// still connected.
+	if role == "viewer" {
+		leave := s.presence.Join(remote.Viewer{
+			SessionID: sess.ID,
+			AgentID:   sess.AgentID,
+			User:      viewerSubject,
+			Kind:      sess.Provider,
+			Since:     time.Now().UTC(),
+		})
+		defer leave()
+	}
 	if err := s.relay.Join(sess.ID, sess.AgentID, role, conn); err != nil {
 		log.Printf("remote relay session=%s role=%s rejected: %v", sess.ID, role, err)
 	}

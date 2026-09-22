@@ -22,6 +22,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -63,15 +64,18 @@ const shmRetryAfter = 5 * time.Minute
 var le = binary.LittleEndian
 
 type x11 struct {
-	conn           net.Conn
-	r              *bufio.Reader
-	root           uint32
-	width, height  int
-	minKey, maxKey int
-	xtestOp        byte // XTEST major opcode (0 = unavailable)
-	keycodeFor     map[uint32]byte
-	img            *image.RGBA
-	raw            []byte // reusable socket GetImage payload buffer
+	conn             net.Conn
+	r                *bufio.Reader
+	root             uint32
+	width, height    int  // captured region size (the whole screen unless a monitor is picked)
+	originX, originY int  // captured region origin on the root window
+	screenW, screenH int  // whole X screen — RandR has already stitched the monitors
+	randrOp          byte // RandR major opcode (0 = absent or older than 1.5)
+	minKey, maxKey   int
+	xtestOp          byte // XTEST major opcode (0 = unavailable)
+	keycodeFor       map[uint32]byte
+	img              *image.RGBA
+	raw              []byte // reusable socket GetImage payload buffer
 
 	xidBase, xidMask uint32 // resource-id allocation (for the SHM segment XID)
 	xidNext          uint32
@@ -257,6 +261,7 @@ func connectX11(conn net.Conn, name, data []byte) (*x11, error) {
 	}
 	x.img = image.NewRGBA(image.Rect(0, 0, x.width, x.height))
 	x.queryXTest()
+	x.queryRandR()
 	x.loadKeymap()
 	x.setupShm()
 	return x, nil
@@ -396,6 +401,7 @@ func (x *x11) parseSetup(b []byte) error {
 	if x.width == 0 || x.height == 0 {
 		return fmt.Errorf("x11 reported zero screen size")
 	}
+	x.screenW, x.screenH = x.width, x.height
 	return nil
 }
 
@@ -474,7 +480,8 @@ func (x *x11) getImageSHM() error {
 	req[1] = shmGetImage
 	le.PutUint16(req[2:], 8)
 	le.PutUint32(req[4:], x.root) // drawable
-	// x=0, y=0 at [8],[10]
+	le.PutUint16(req[8:], uint16(int16(x.originX)))
+	le.PutUint16(req[10:], uint16(int16(x.originY)))
 	le.PutUint16(req[12:], uint16(x.width))
 	le.PutUint16(req[14:], uint16(x.height))
 	le.PutUint32(req[16:], 0xffffffff) // plane mask
@@ -500,7 +507,8 @@ func (x *x11) getImageSocket() (*image.RGBA, error) {
 	req[1] = zPixmap
 	le.PutUint16(req[2:], 5) // request length in 4-byte units
 	le.PutUint32(req[4:], x.root)
-	// x, y = 0 (int16); width, height
+	le.PutUint16(req[8:], uint16(int16(x.originX)))
+	le.PutUint16(req[10:], uint16(int16(x.originY)))
 	le.PutUint16(req[12:], uint16(x.width))
 	le.PutUint16(req[14:], uint16(x.height))
 	le.PutUint32(req[16:], 0xffffffff) // plane mask
@@ -660,4 +668,121 @@ func init() {
 	for i := 0; i < 12; i++ { // F1-F12
 		browserKeysym[112+i] = uint32(0xffbe + i)
 	}
+}
+
+// ---- RandR monitors ----
+
+// xMonitor is one physical display inside the single X screen. RandR stitches
+// them into one root window, so capture needs the rectangle to crop to.
+type xMonitor struct {
+	X, Y, W, H int
+	Primary    bool
+}
+
+const (
+	randrQueryVersion = 0
+	randrGetMonitors  = 42 // RandR 1.5
+)
+
+// queryRandR resolves the RandR opcode and confirms 1.5, which is where
+// RRGetMonitors was introduced. The version handshake is not optional: an
+// unsupported request answers with an X error, and readReply skips errors while
+// waiting for a reply that will never come.
+func (x *x11) queryRandR() {
+	op, ok := x.queryExtensionMajor("RANDR")
+	if !ok {
+		return
+	}
+	req := make([]byte, 12)
+	req[0] = op
+	req[1] = randrQueryVersion
+	le.PutUint16(req[2:], 3)
+	le.PutUint32(req[4:], 1) // client major
+	le.PutUint32(req[8:], 5) // client minor
+	if _, err := x.conn.Write(req); err != nil {
+		return
+	}
+	h, err := x.readReply()
+	if err != nil {
+		return
+	}
+	major, minor := le.Uint32(h[8:]), le.Uint32(h[12:])
+	if major > 1 || (major == 1 && minor >= 5) {
+		x.randrOp = op
+	} else {
+		log.Printf("rmm-remote: RandR %d.%d is older than 1.5 — per-monitor capture unavailable", major, minor)
+	}
+}
+
+// monitors lists the displays left to right, matching the order the viewer
+// shows and indexes them by. Empty when RandR is too old or reports nothing
+// useful, which keeps the whole-screen capture as the only option.
+func (x *x11) monitors() []xMonitor {
+	if x.randrOp == 0 {
+		return nil
+	}
+	req := make([]byte, 12)
+	req[0] = x.randrOp
+	req[1] = randrGetMonitors
+	le.PutUint16(req[2:], 3)
+	le.PutUint32(req[4:], x.root)
+	req[8] = 1 // get-active: only monitors with a CRTC
+	_ = x.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer x.conn.SetReadDeadline(time.Time{})
+	if _, err := x.conn.Write(req); err != nil {
+		return nil
+	}
+	h, err := x.readReply()
+	if err != nil {
+		return nil
+	}
+	body := make([]byte, int(le.Uint32(h[4:]))*4)
+	if _, err := io.ReadFull(x.r, body); err != nil {
+		return nil
+	}
+	count := int(le.Uint32(h[12:]))
+	var out []xMonitor
+	p := 0
+	for i := 0; i < count; i++ {
+		// MONITORINFO: name(4) primary(1) automatic(1) ncrtcs(2) x(2) y(2)
+		// width(2) height(2) widthmm(4) heightmm(4) then ncrtcs × output(4).
+		if p+24 > len(body) {
+			break
+		}
+		ncrtcs := int(le.Uint16(body[p+6:]))
+		out = append(out, xMonitor{
+			X: int(int16(le.Uint16(body[p+8:]))), Y: int(int16(le.Uint16(body[p+10:]))),
+			W: int(le.Uint16(body[p+12:])), H: int(le.Uint16(body[p+14:])),
+			Primary: body[p+4] != 0,
+		})
+		p += 24 + 4*ncrtcs
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].X != out[j].X {
+			return out[i].X < out[j].X
+		}
+		return out[i].Y < out[j].Y
+	})
+	return out
+}
+
+// setRegion points the capturer at one monitor, or at the whole screen when sel
+// is 0. The frame buffer is rebuilt because the encoder keys its tile diff on
+// the frame size; callers force a keyframe afterwards.
+func (x *x11) setRegion(sel int32) {
+	ox, oy, w, h := 0, 0, x.screenW, x.screenH
+	if sel > 0 {
+		if mons := x.monitors(); int(sel) <= len(mons) {
+			m := mons[sel-1]
+			// A monitor can extend past the root window after a hot-unplug.
+			if m.W > 0 && m.H > 0 && m.X+m.W <= x.screenW && m.Y+m.H <= x.screenH {
+				ox, oy, w, h = m.X, m.Y, m.W, m.H
+			}
+		}
+	}
+	if ox == x.originX && oy == x.originY && w == x.width && h == x.height {
+		return
+	}
+	x.originX, x.originY, x.width, x.height = ox, oy, w, h
+	x.img = image.NewRGBA(image.Rect(0, 0, w, h))
 }

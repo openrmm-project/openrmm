@@ -11,8 +11,8 @@ tag.
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and
   validates acceptable signed `acr` values; `RMM_OIDC_REQUIRED_AMR` requires
   every configured authentication method before SSO account resolution. Includes
-  downgrade/recovery-code tests and optional interoperability tests with the
-  Cloud portal provider. Existing local sign-in and role assignment are unchanged.
+  downgrade/recovery-code tests and optional OIDC interoperability tests.
+  Existing local sign-in and role assignment are unchanged.
   First-time linking of an email-shaped username now also requires the provider's
   matching, signed `email_verified=true` claim.
 
@@ -118,7 +118,83 @@ tag.
   counts, which is the honest answer when there is nothing to deduplicate
   against.
 
+### Added
+
+- **macOS asks for the permissions it needs, and keeps the answers.** The sidecar
+  never requested Screen Recording or Accessibility — it only checked them, and
+  macOS neither prompts nor lists an app that does not ask, so every Mac needed
+  someone to add it by hand. It now requests both, and the viewer explains what
+  is missing instead of showing a black screen or a session that ignores clicks.
+  The agent preserves privacy grants while the bundle keeps the same sealed code
+  identity and clears stale rows when that identity changes. Docs cover what
+  signing the sidecar yourself changes for a self-hosted install, and why
+  official builds are not self-signed.
+
+- **Paste into a remote session.** The technician's clipboard follows their own
+  paste keystroke: the viewer catches the browser's `paste` event, which carries
+  the text, so no clipboard-read permission is involved, and the sidecar applies
+  the paste shortcut the endpoint's platform uses — ⌘V on macOS, Ctrl+V
+  elsewhere. Forwarding a raw Ctrl+V pasted nothing on a Mac. Text only, 256 KB
+  cap, and strictly one direction: the endpoint's clipboard is never read back.
+  Sidecar 0.14.0.
+
 ### Fixed
+
+- **A root service no longer runs from a directory another account can own.**
+  On Windows a standard user may create folders under `C:\ProgramData` and owns
+  what they create, so pre-creating `C:\ProgramData\rmm-agent` left the
+  directory of a SYSTEM service — and of the script an administrator runs to
+  uninstall it — under their control. The installer now breaks ACL inheritance
+  and writes the entries explicitly (SYSTEM and Administrators full control,
+  Users read and execute), on every run, which also repairs endpoints installed
+  earlier. On macOS the agent moved to `/usr/local/libexec/openrmm/`, because
+  Homebrew gives `/usr/local` to the logged-in administrator; existing installs
+  are migrated on the next run and the installer refuses a target directory that
+  is not root-owned. The update signature is checked at download and says
+  nothing about a binary swapped afterwards, which is what these directories
+  allowed. The macOS remote-desktop bundle's parent directory is taken over the
+  same way: it lives under `/Library/Application Support`, which is
+  group-writable by administrators, and the bundle holds Screen Recording and
+  Accessibility.
+
+- **Linux and macOS can be uninstalled.** `deploy/public/uninstall.sh` (served at
+  `/uninstall.sh`) stops and removes the service, the binaries, the enrolment
+  state and, on macOS, the remote-desktop bundle, its LaunchAgent and the privacy
+  grants. `-action uninstall` only ever removed the service definition, so a
+  decommissioned endpoint kept credentials that still authenticated to the
+  server. `--keep-state` preserves the enrolment. Removal is local and revokes
+  nothing: the device still has to be deleted in the console.
+
+- **macOS remote access stopped claiming a permission it did not have.** A
+  privacy grant includes the bundle's code identity: after an ad-hoc-signed
+  sidecar update the Privacy panes could still list OpenRMM as allowed while
+  macOS denied capture and input to the new build. The archive now carries the
+  sealed designated requirement when a persistent signing identity is used. The
+  agent keeps grants only when that marker matches and otherwise clears the stale
+  rows after a successful replacement, so System Settings can ask for the new
+  build instead of showing a switch that no longer authorizes it.
+
+- **macOS remote keyboard shortcuts use the endpoint's conventions.** Control is
+  translated to Command for a Mac endpoint, so Ctrl+C from a Windows or Linux
+  technician reaches the Mac as ⌘C. Paste releases locally-held modifiers,
+  writes the Mac pasteboard synchronously and queues ⌘V with the rest of the
+  input stream. The Force Quit button (the Mac equivalent of Ctrl+Alt+Delete)
+  continues to send ⌘⌥Esc and reports stale Accessibility grants explicitly.
+  Permission requests now run on AppKit's main thread, and a host-side alert
+  links directly to Screen Recording and Accessibility when macOS suppresses
+  its own consent sheet. The Force Quit button can retry after Accessibility is
+  granted during an open session instead of staying disabled until reconnect.
+
+- **The macOS sidecar's bundle identifier is `io.openrmm.remote`.** Reverse-DNS
+  should name a domain the project controls, and `com.openrmm.remote` did not.
+  Endpoints installed under the old name are migrated: the old LaunchAgent is
+  booted out, its plist removed and its privacy rows reset. The agent also
+  rewrites its LaunchAgent plist whenever it drifts, because agents update
+  themselves and installers do not re-run. Sidecar 0.13.1.
+
+- **A refused or failed macOS sidecar update no longer takes remote access with
+  it.** When an update cannot be installed and a working module is present, the
+  session uses the installed one and the update is retried later.
 
 - **The Windows enrollment command had to be scrolled to be read.** It is a
   single line carrying the server URL and the token, and the code block scrolls
@@ -212,8 +288,8 @@ tag.
   audited; the one mutation that could hand over the entire fleet left no trace
   of who did it.
 
-- **Accented characters were destroyed in script output.** `Olá, Miquéias!`
-  reached the database as `Ol<?>, Miqu<?>ias!`. A redirected child on Windows
+- **Accented characters were destroyed in script output.** `Olá, café!`
+  reached the database as `Ol<?>, caf<?>!`. A redirected child on Windows
   writes the system code page, not UTF-8 — Python uses cp1252 on a pt-BR
   install — so each accented byte was invalid UTF-8 on its own, and marshalling
   it replaced the byte with U+FFFD. That substitution is **lossy**: nothing

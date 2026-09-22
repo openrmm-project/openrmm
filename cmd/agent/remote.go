@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -13,11 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"github.com/p1ngu/rmm/internal/protocol"
 )
 
-// sidecarRefresh serializes background sidecar refreshes so two near-simultaneous
-// sessions don't race on the temp file.
+// sidecarRefresh serializes sidecar refreshes so two near-simultaneous sessions
+// don't race on the temp file.
 var sidecarRefresh sync.Mutex
 
 // startRemoteSession launches the media sidecar (cmd/rmm-remote) for a remote
@@ -32,6 +36,7 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	bin, err := a.ensureSidecar()
 	if err != nil {
 		log.Printf("remote: sidecar unavailable: %v", err)
+		a.reportRemoteFailure(relay, ticket, fmt.Sprintf("this endpoint could not prepare the remote module: %v", err))
 		return
 	}
 	// Kind "files" runs the sidecar in file-transfer-only mode (no screen
@@ -59,7 +64,38 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	}
 	if err := launchSidecar(bin, relay, ticket, extra...); err != nil {
 		log.Printf("remote: failed to start sidecar: %v", err)
+		a.reportRemoteFailure(relay, ticket, fmt.Sprintf("this endpoint could not start the remote module: %v", err))
 	}
+}
+
+// reportRemoteFailure tells the waiting technician why no screen is coming. The
+// sidecar is the only peer that ever reaches the relay, so when it cannot be
+// prepared or launched nothing at all connects and the viewer shows a black
+// canvas until the pairing times out — with nothing to act on. Taking the
+// sidecar's place on the relay for one message turns that into a stated reason.
+// Best effort by design: a failure to report must not mask the original one.
+func (a *agent) reportRemoteFailure(relay, ticket, text string) {
+	if relay == "" {
+		return
+	}
+	var headers http.Header
+	if ticket != "" {
+		headers = http.Header{"Authorization": []string{"Remote-Agent " + ticket}}
+	}
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 10 * time.Second
+	conn, _, err := dialer.Dial(relay, headers)
+	if err != nil {
+		log.Printf("remote: could not report the failure to the viewer: %v", err)
+		return
+	}
+	defer conn.Close()
+	b, err := json.Marshal(map[string]string{"t": "notice", "text": text})
+	if err != nil {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.WriteMessage(websocket.TextMessage, b)
 }
 
 func (a *agent) relayForStart(rs protocol.RemoteStartMsg) (relay, ticket string) {
@@ -120,37 +156,36 @@ func sidecarName() string {
 // ensureSidecar returns the sidecar path, downloading it next to the agent
 // binary from the server's /dl endpoint if it is not already present.
 //
-// When a cached sidecar already exists on Linux, it returns immediately and
-// checks for a newer build in the BACKGROUND (applied to the next session) —
-// keeping the ETag HEAD round-trip and any ~8 MB re-download OFF the
-// session-start critical path, which is the dominant "time to first frame" on
-// Linux. (Renaming over a running binary is fine on Linux; on Windows a running
-// .exe is locked, so there we keep the synchronous check before launch.)
+// Check the published version before starting a session on every OS. A
+// background-only refresh made the first Linux session silently use stale UI
+// and input capabilities even after an operator had published an update.
 func (a *agent) ensureSidecar() (string, error) {
+	sidecarRefresh.Lock()
+	defer sidecarRefresh.Unlock()
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(filepath.Dir(exe), sidecarName())
-	dlName := fmt.Sprintf("rmm-remote-%s-%s", runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
-		dlName += ".exe"
-	}
-	src := a.httpBase() + "/dl/" + dlName
-	etagPath := path + ".etag"
+	path := sidecarExePath(filepath.Dir(exe))
+	src := a.httpBase() + "/dl/" + sidecarDownloadName()
+	// Kept beside the agent even when the sidecar is not: on macOS the bundle is
+	// replaced wholesale, and a marker inside it would go with the old copy.
+	etagPath := filepath.Join(filepath.Dir(exe), sidecarName()+".etag")
 
 	if _, err := os.Stat(path); err == nil {
-		if runtime.GOOS == "linux" {
-			go a.refreshSidecar(src, path, etagPath)
-			return path, nil
-		}
-		// Windows/macOS: verify the cached build synchronously before launch.
+		// All platforms: a newly opened session must use the published build.
 		remoteTag := remoteETag(src)
 		if remoteTag == "" || remoteTag == readETag(etagPath) {
 			return path, nil
 		}
 		log.Printf("remote: sidecar changed on server; refreshing")
 		if err := a.fetchSidecar(src, path, etagPath, remoteTag); err != nil {
+			// A failed update must not take away working remote access. Keep the
+			// published ETag unmatched so the next session can retry the update.
+			if _, statErr := os.Stat(path); statErr == nil {
+				log.Printf("remote: update refused; keeping installed sidecar: %v", err)
+				return path, nil
+			}
 			return "", err
 		}
 		return path, nil
@@ -163,57 +198,74 @@ func (a *agent) ensureSidecar() (string, error) {
 	return path, nil
 }
 
-// refreshSidecar updates the cached sidecar when the server has a newer build.
-// It runs off the session-start path; at most one refresh runs at a time.
-func (a *agent) refreshSidecar(src, path, etagPath string) {
-	if !sidecarRefresh.TryLock() {
-		return // a refresh is already in flight
-	}
-	defer sidecarRefresh.Unlock()
-	remoteTag := remoteETag(src)
-	if remoteTag == "" || remoteTag == readETag(etagPath) {
-		return // server unreachable, or the cached sidecar is already current
-	}
-	log.Printf("remote: sidecar changed on server; refreshing for next session")
-	if err := a.fetchSidecar(src, path, etagPath, remoteTag); err != nil {
-		log.Printf("remote: sidecar refresh failed: %v", err)
-	}
-}
-
 // fetchSidecar downloads, signature-verifies, and atomically installs the
 // sidecar, recording its ETag for the cache comparison above.
 func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
-	tmp := path + ".new"
+	exeDir, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(exeDir), sidecarName()+".new")
 	_ = os.Remove(tmp)
 	if err := download(src, tmp); err != nil {
 		return err
 	}
+	// Verified before anything is unpacked: untrusted archives are never opened.
 	if err := enforceArtifactSignature(src, tmp); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(tmp, 0o755)
-	}
-	candidateVersion, err := binaryVersion(tmp)
+	candidate, commit, cleanup, err := stageSidecar(tmp)
 	if err != nil {
 		_ = os.Remove(tmp)
+		return err
+	}
+	// Reported, not enforced: an identity change costs the operator one re-grant,
+	// while refusing the update would freeze the module at the installed version
+	// for as long as the build identity keeps changing.
+	if err := validateSidecarCandidate(path, candidate); err != nil {
+		log.Printf("remote: %v; macOS privacy permissions may have to be granted again", err)
+	}
+	candidateVersion, err := binaryVersion(candidate)
+	if err != nil {
+		if quarantined(candidate) {
+			return errQuarantined(candidate)
+		}
+		cleanup()
 		return fmt.Errorf("sidecar validation failed: %w", err)
 	}
 	if currentVersion, err := binaryVersion(path); err == nil {
 		if err := validateUpgradeVersion(currentVersion, candidateVersion); err != nil {
-			_ = os.Remove(tmp)
+			cleanup()
 			return fmt.Errorf("sidecar update refused: %w", err)
 		}
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := commit(path); err != nil {
+		if quarantined(candidate) {
+			return errQuarantined(candidate)
+		}
+		cleanup()
 		return err
 	}
 	if remoteTag != "" {
 		_ = os.WriteFile(etagPath, []byte(remoteTag), 0o644)
 	}
 	return nil
+}
+
+// quarantined reports that the module we just downloaded is no longer on disk.
+// Endpoint security software deletes unsigned executables that a service writes
+// and then runs — Windows Defender does exactly this to rmm-remote.exe.new, and
+// it does it to every retry, so the session fails forever rather than once. The
+// bare "file not found" that surfaces otherwise points at nothing.
+func quarantined(tmp string) bool {
+	_, err := os.Stat(tmp)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func errQuarantined(tmp string) error {
+	return fmt.Errorf("the downloaded remote module disappeared before it could be validated (%s); "+
+		"endpoint security software most likely quarantined it — exclude the agent directory or sign the binary", tmp)
 }
 
 // remoteETag returns the ETag of a URL via HEAD, or "" if unknown.

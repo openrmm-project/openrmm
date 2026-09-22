@@ -24,8 +24,7 @@ package main
 //   - Retina displays report points vs pixels; CGImage gives pixels and CGEvent
 //     takes points — the capturer sizes the frame from the image and scales
 //     pointer coordinates from the same image dims (validate on a Retina Mac).
-//   - In-session chat (the Win32/X11 chat window) is NOT yet ported to macOS;
-//     it needs a Cocoa window. Tracked as follow-up.
+//   - In-session chat uses Cocoa on the application's main thread.
 
 /*
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation
@@ -50,6 +49,84 @@ static CGEventRef rmmCreateKeyboardEvent(CGKeyCode key, bool down) {
 }
 static int rmmImageIsNull(CGImageRef img) { return img == NULL; }
 static int rmmDataIsNull(CFDataRef data) { return data == NULL; }
+// CGGetActiveDisplayList is called twice in the usual idiom; a fixed cap keeps
+// the Go side allocation-free and no Mac has sixteen displays.
+static unsigned int rmmDisplays(unsigned int max, CGDirectDisplayID *out) {
+    uint32_t n = 0;
+    if (CGGetActiveDisplayList(max, out, &n) != kCGErrorSuccess) return 0;
+    return (unsigned int)n;
+}
+static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFlags flags) {
+    CGEventRef e = CGEventCreateKeyboardEvent(src, key, down);
+    if (!e) return 0;
+    CGEventSetFlags(e, flags);
+    CGEventPost(kCGHIDEventTap, e);
+    CFRelease(e);
+    return 1;
+}
+
+// How far the chord got. The viewer only ever learns "sent", and a chord that
+// posts cleanly without opening Force Quit looks exactly like one that worked,
+// so the log keeps the difference: 5 means every event was accepted.
+//
+// Read through a function, not directly: a static in the cgo preamble is local
+// to its translation unit, and referencing the variable from Go asks the linker
+// for a symbol that was never exported.
+static int rmmForceQuitStep = 0;
+static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
+
+// Command-Option-Escape opens Force Quit Applications. The shortcut is matched
+// against the modifier state the WindowServer maintains, and that state is fed
+// by the modifier keys' OWN events: decorating Escape with flags leaves it
+// untouched, so the shortcut never fires while the call still reports success.
+// Press and release them for real, in order.
+static int rmmForceQuit(void) {
+    rmmForceQuitStep = 1;
+    if (!CGPreflightPostEventAccess()) return 0;
+    rmmForceQuitStep = 2;
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (!src) return 0;
+    rmmForceQuitStep = 3;
+    const CGEventFlags cmd = kCGEventFlagMaskCommand;
+    const CGEventFlags both = kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate;
+    int ok = 1;
+    ok &= rmmPostKey(src, 55, true, cmd);   // kVK_Command down
+    ok &= rmmPostKey(src, 58, true, both);  // kVK_Option down
+    ok &= rmmPostKey(src, 53, true, both);  // kVK_Escape down
+    ok &= rmmPostKey(src, 53, false, both);
+    // Released unconditionally, never behind an early return: giving up midway
+    // would leave Command and Option stuck down on the host user's keyboard.
+    ok &= rmmPostKey(src, 58, false, cmd);
+    ok &= rmmPostKey(src, 55, false, 0);
+    if (src) CFRelease(src);
+    rmmForceQuitStep = ok ? 5 : 4;
+    return ok;
+}
+
+// Command-V after the pasteboard is replaced. The technician presses whatever
+// paste shortcut their own machine uses; what has to arrive here is the one
+// this platform understands, so the viewer never guesses the endpoint's OS.
+static int rmmPasteShortcut(void) {
+    if (!CGPreflightPostEventAccess()) return 0;
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (!src) return 0;
+    const CGEventFlags cmd = kCGEventFlagMaskCommand;
+    int ok = 1;
+    ok &= rmmPostKey(src, 55, true, cmd);  // kVK_Command down
+    ok &= rmmPostKey(src, 9, true, cmd);   // kVK_ANSI_V down
+    ok &= rmmPostKey(src, 9, false, cmd);
+    // Released unconditionally: an early return would leave Command stuck down
+    // on the user's own keyboard.
+    ok &= rmmPostKey(src, 55, false, 0);
+    if (src) CFRelease(src);
+    return ok;
+}
+
+// Implemented in chat_darwin.m so both permission requests run on AppKit's
+// initial process thread. Calling them from this media goroutine can update TCC
+// without putting a consent prompt on the logged-in user's desktop.
+int rmmRequestScreenCapture(void);
+int rmmRequestPostEvents(void);
 */
 import "C"
 
@@ -58,6 +135,7 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"sort"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -65,17 +143,98 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// cgCapturer captures the main display via CoreGraphics. The frame buffer is
-// reused across calls and reallocated only when the resolution changes.
+// macDisplay is one active display. Bounds are in POINTS, the space CGEvent
+// works in; the captured image is in PIXELS, which is twice that on Retina.
+// Conflating the two is why pointer input needs the bounds and not the image.
+type macDisplay struct {
+	id         C.CGDirectDisplayID
+	x, y, w, h float64
+	main       bool
+}
+
+// macDisplays lists the active displays left to right, then top to bottom — the
+// same ordering the other platforms use, so a selection index means the same
+// display everywhere.
+func macDisplays() []macDisplay {
+	var ids [16]C.CGDirectDisplayID
+	n := int(C.rmmDisplays(C.uint(len(ids)), &ids[0]))
+	if n == 0 {
+		return nil
+	}
+	main := C.CGMainDisplayID()
+	out := make([]macDisplay, 0, n)
+	for _, id := range ids[:n] {
+		b := C.CGDisplayBounds(id)
+		out = append(out, macDisplay{
+			id: id,
+			x:  float64(b.origin.x), y: float64(b.origin.y),
+			w: float64(b.size.width), h: float64(b.size.height),
+			main: id == main,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].x != out[j].x {
+			return out[i].x < out[j].x
+		}
+		return out[i].y < out[j].y
+	})
+	return out
+}
+
+// describeMacDisplays is the hello-independent monitors payload. all=false says
+// this host cannot stitch every display into one frame: CGDisplayCreateImage is
+// per-display, so the viewer must not offer "All displays" here.
+func describeMacDisplays(selected int32) map[string]any {
+	var list []map[string]any
+	displays := macDisplays()
+	if len(displays) > 1 {
+		for i, d := range displays {
+			list = append(list, map[string]any{
+				"id": i + 1, "w": int(d.w), "h": int(d.h), "primary": d.main,
+			})
+		}
+	}
+	return map[string]any{"t": "monitors", "list": list, "selected": selected, "all": false}
+}
+
+// cgCapturer captures one display via CoreGraphics. The frame buffer is reused
+// across calls and reallocated only when the resolution changes.
 type cgCapturer struct {
 	display C.CGDirectDisplayID
-	w, h    int
+	x, y    float64 // display origin in global points
+	pw, ph  float64 // display size in points
+	w, h    int     // captured image size in pixels
 	img     *image.RGBA
 }
 
-func newCGCapturer() (*cgCapturer, error) {
-	d := C.CGMainDisplayID()
-	return &cgCapturer{display: d}, nil
+// newCGCapturer picks display 1..N, falling back to the main one — including
+// when sel is 0, which on the other platforms means "all of them stitched" and
+// here cannot.
+func newCGCapturer(sel int32) (*cgCapturer, error) {
+	displays := macDisplays()
+	pick := -1
+	for i, d := range displays {
+		if d.main {
+			pick = i
+		}
+	}
+	if sel > 0 && int(sel) <= len(displays) {
+		pick = int(sel) - 1
+	}
+	if pick < 0 {
+		return nil, fmt.Errorf("no active display")
+	}
+	d := displays[pick]
+	return &cgCapturer{display: d.id, x: d.x, y: d.y, pw: d.w, ph: d.h}, nil
+}
+
+// toPoint maps a viewer coordinate, normalized against the captured display,
+// into the global point space CGEventPost expects.
+func (c *cgCapturer) toPoint(x, y float64) (float64, float64) {
+	if c == nil || c.pw <= 0 || c.ph <= 0 {
+		return x, y
+	}
+	return c.x + x*c.pw, c.y + y*c.ph
 }
 
 // frame grabs the current screen into an RGBA image. CGImage pixels are BGRA
@@ -131,8 +290,8 @@ func (c *cgCapturer) frame() (*image.RGBA, error) {
 
 // ---- input injection (CGEvent) ----
 
-func postMouseMoveDrag(x, y float64, w, h int, buttonsDown int) {
-	pt := C.CGPointMake(C.double(x*float64(w)), C.double(y*float64(h)))
+func postMouseMoveDrag(px, py float64, buttonsDown int) {
+	pt := C.CGPointMake(C.double(px), C.double(py))
 	typ := C.kCGEventMouseMoved
 	btn := C.kCGMouseButtonLeft
 	if buttonsDown&1 != 0 {
@@ -146,8 +305,8 @@ func postMouseMoveDrag(x, y float64, w, h int, buttonsDown int) {
 	C.CFRelease(C.CFTypeRef(e))
 }
 
-func postMouseButton(x, y float64, w, h, button int, down bool) {
-	pt := C.CGPointMake(C.double(x*float64(w)), C.double(y*float64(h)))
+func postMouseButton(px, py float64, button int, down bool) {
+	pt := C.CGPointMake(C.double(px), C.double(py))
 	var typ C.CGEventType
 	var btn C.CGMouseButton
 	switch button {
@@ -255,9 +414,51 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		}
 	})
 
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles}); e == nil {
+	// Display selection: 1..N, applied by the capture goroutine that owns the
+	// capturer. There is no 0 here — CGDisplayCreateImage is per-display, so
+	// this host cannot stitch them the way Windows and Linux do.
+	var monSel atomic.Int32
+	var monReq atomic.Bool
+
+	sendJSON := func(v any) {
+		b, _ := json.Marshal(v)
+		select {
+		case out <- omsg{websocket.TextMessage, b}:
+		case <-done:
+		}
+	}
+	openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) })
+	defer closeMacChat()
+	// Asked before the first frame is captured: a grant given now applies to the
+	// next session, since macOS does not hand capture rights to a process that
+	// has already been refused them.
+	clipMirror := &clipboardMirror{}
+	// Mirror the endpoint's clipboard to the technician for as long as the
+	// session lasts, so a copy on the remote screen can be pasted at home.
+	go watchClipboard(clipMirror, func(text string) {
+		sendJSON(map[string]any{"t": "clip", "text": text})
+	}, done)
+	screenOK := C.rmmRequestScreenCapture() != 0
+	if !screenOK {
+		log.Printf("rmm-remote: screen recording not granted; the session will show a black screen until it is allowed")
+	}
+	inputAllowed := C.rmmRequestPostEvents() != 0
+	if !inputAllowed {
+		log.Printf("rmm-remote: accessibility not granted; keyboard and mouse will not reach this Mac")
+	}
+	showMacPermissionNotice(screenOK, inputAllowed)
+	cadAvailable := inputAllowed
+	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
+	if !screenOK {
+		hello["capture_error"] = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant."
+	}
+	if !cadAvailable {
+		hello["cad_error"] = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant. Without it no keyboard, mouse, paste, or Force Quit shortcut reaches this Mac."
+	}
+	if b, e := json.Marshal(hello); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
+	sendJSON(describeMacDisplays(monSel.Load()))
 
 	// reader / dispatcher
 	go func() {
@@ -283,6 +484,48 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				continue
 			}
 			switch e.T {
+			case "chat":
+				var message struct {
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(data, &message) == nil && message.Text != "" {
+					appendMacChat(message.Text, true)
+				}
+			case "mon":
+				var mm struct {
+					ID int32 `json:"id"`
+				}
+				if json.Unmarshal(data, &mm) == nil && mm.ID > 0 {
+					monSel.Store(mm.ID)
+					monReq.Store(true)
+				}
+			case "clip":
+				var cm struct {
+					Text  string `json:"text"`
+					Paste bool   `json:"paste"`
+				}
+				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+					clipMirror.remember(cm.Text)
+					if !setMacClipboard(cm.Text) {
+						sendJSON(map[string]any{"t": "paste", "ok": false, "err": "Could not write the macOS clipboard."})
+						continue
+					}
+					if cm.Paste {
+						// Clipboard write is synchronous; serialize Command-V with
+						// every other input event instead of racing a fixed delay.
+						select {
+						case inputCh <- []byte(`{"t":"paste"}`):
+						case <-done:
+							return
+						}
+					}
+				}
+			case "cad":
+				select {
+				case inputCh <- data:
+				case <-done:
+					return
+				}
 			case "m", "b", "w", "k":
 				select {
 				case inputCh <- data:
@@ -299,7 +542,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		}
 	}()
 
-	cap, err := newCGCapturer()
+	cap, err := newCGCapturer(monSel.Load())
 	if err != nil {
 		return err
 	}
@@ -313,14 +556,49 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	var buttons int
 	for {
 		select {
-		case <-done:
-			return <-errc
+		case err := <-errc:
+			return err
 		case data := <-inputCh:
 			pace.markActivity()
-			injectMacInput(data, cap.w, cap.h, &buttons)
+			var command macInput
+			if json.Unmarshal(data, &command) == nil && command.T == "paste" {
+				ok := C.rmmPasteShortcut() != 0
+				response := map[string]any{"t": "paste", "ok": ok}
+				if !ok {
+					response["err"] = "macOS Accessibility permission is required for Command-V."
+				}
+				sendJSON(response)
+				continue
+			}
+			if command.T == "cad" {
+				ok := C.rmmForceQuit() != 0
+				// Logged on both outcomes: the chord can post cleanly and still
+				// not open Force Quit, and from the viewer that is
+				// indistinguishable from success. Step 5 means every event was
+				// accepted, so anything wrong after it is the WindowServer's
+				// handling of the shortcut, not ours.
+				log.Printf("rmm-remote: force quit chord posted=%t (step %d)", ok, int(C.rmmForceQuitProgress()))
+				response := map[string]any{"t": "cad", "ok": ok}
+				if !ok {
+					response["err"] = "macOS Accessibility permission is required for ⌘⌥Esc."
+				}
+				sendJSON(response)
+				continue
+			}
+			injectMacInput(data, cap, &buttons)
 		case <-ticker.C:
 			if len(out) >= videoBacklog {
 				continue
+			}
+			// Applied here, on the goroutine that owns the capturer.
+			if monReq.Swap(false) {
+				if nc, nerr := newCGCapturer(monSel.Load()); nerr == nil {
+					cap = nc
+					enc.reset() // different display, different frame size
+					sendJSON(describeMacDisplays(monSel.Load()))
+				} else {
+					log.Printf("rmm-remote: display %d unavailable: %v", monSel.Load(), nerr)
+				}
 			}
 			if kfReq.Swap(false) {
 				enc.forceKeyframe()
@@ -359,14 +637,19 @@ type macInput struct {
 	Code   int     `json:"code"`
 }
 
-func injectMacInput(data []byte, w, h int, buttons *int) {
+// injectMacInput delivers one viewer event. Pointer coordinates arrive
+// normalized against the captured display and are mapped to global points
+// first: the image is in pixels, which differs from points on Retina, and a
+// non-main display does not start at the origin.
+func injectMacInput(data []byte, c *cgCapturer, buttons *int) {
 	var e macInput
 	if json.Unmarshal(data, &e) != nil {
 		return
 	}
+	px, py := c.toPoint(e.X, e.Y)
 	switch e.T {
 	case "m":
-		postMouseMoveDrag(e.X, e.Y, w, h, *buttons)
+		postMouseMoveDrag(px, py, *buttons)
 	case "b":
 		mask := 1 << uint(min(e.Button, 2))
 		if e.Down {
@@ -374,7 +657,7 @@ func injectMacInput(data []byte, w, h int, buttons *int) {
 		} else {
 			*buttons &^= mask
 		}
-		postMouseButton(e.X, e.Y, w, h, e.Button, e.Down)
+		postMouseButton(px, py, e.Button, e.Down)
 	case "w":
 		postScroll(e.DY)
 	case "k":

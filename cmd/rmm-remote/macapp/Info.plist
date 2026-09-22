@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The sidecar's application bundle.
+
+  A command-line tool is not a bundle, and macOS 15 will not list one in
+  Privacy & Security ▸ Local Network — so an operator whose RMM server is on a
+  private address has nothing to allow, and the relay dial fails with
+  "no route to host", which reads like a routing fault and is not one. Embedding
+  this same plist in the Mach-O was not enough: measured on 15.8, with an
+  ad-hoc signature, the tool still never appeared. A real bundle is what the
+  privacy lists are keyed to.
+
+  Also embedded in __TEXT,__info_plist so a bare run keeps the same identity.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>io.openrmm.remote</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>OpenRMM Remote</string>
+  <key>CFBundleExecutable</key><string>rmm-remote</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSUIElement</key><true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>OpenRMM connects to your organisation's RMM server to stream this Mac's screen to an authorised technician.</string>
+</dict>
+</plist>

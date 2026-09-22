@@ -20,6 +20,7 @@ import (
 // transfer (transfer_linux.go) and in-session chat (a native X11 window,
 // chat_linux.go).
 func runMedia(conn *websocket.Conn, allowFiles bool) error {
+	clipMirror := &clipboardMirror{}
 	type omsg struct {
 		mt int
 		b  []byte
@@ -33,6 +34,13 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	errc := make(chan error, 3)
 	var kfReq atomic.Bool
 	pace := newPacer()
+
+	// Monitor selection: 0 is the whole X screen (all monitors, as RandR
+	// stitched them), 1..N one display. The reader only records the wish; the
+	// capture goroutine owns *x11 and applies it.
+	reg := &captureRegion{}
+	var monSel atomic.Int32
+	var monReq atomic.Bool
 
 	// Input via /dev/uinput (kernel level): works on the login greeter and any
 	// session, Xorg or Wayland. Falls back to XTEST (X11 only) if unavailable.
@@ -59,7 +67,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 					return
 				case data := <-inputCh:
 					pace.markActivity()
-					injectInput(nil, inp, data)
+					injectInput(nil, inp, data, reg)
 				}
 			}
 		}()
@@ -115,10 +123,40 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	lock := &inputLock{}
 	defer lock.closeAll()
 
+	sendMonitors := func(x *x11) {
+		var list []map[string]any
+		if mons := x.monitors(); len(mons) > 1 {
+			for i, m := range mons {
+				list = append(list, map[string]any{
+					"id": i + 1, "w": m.W, "h": m.H, "primary": m.Primary,
+				})
+			}
+		}
+		if b, e := json.Marshal(map[string]any{"t": "monitors", "list": list, "selected": monSel.Load()}); e == nil {
+			select {
+			case out <- omsg{websocket.TextMessage, b}:
+			case <-done:
+			}
+		}
+	}
+
 	// announce the running sidecar version (viewer staleness check)
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles}); e == nil {
+	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": true}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
+
+	// Mirror the endpoint's clipboard to the technician for as long as the
+	// session lasts, so a copy on the remote screen can be pasted at home.
+	go watchClipboard(clipMirror, func(text string) {
+		b, err := json.Marshal(map[string]any{"t": "clip", "text": text})
+		if err != nil {
+			return
+		}
+		select {
+		case out <- omsg{websocket.TextMessage, b}:
+		case <-done:
+		}
+	}, done)
 
 	// reader / dispatcher
 	go func() {
@@ -145,6 +183,50 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				continue
 			}
 			switch e.T {
+			case "clip":
+				var cm struct {
+					Text  string `json:"text"`
+					Paste bool   `json:"paste"`
+				}
+				if json.Unmarshal(data, &cm) == nil && cm.Text != "" {
+					clipMirror.remember(cm.Text)
+					if err := setClipboard(cm.Text); err != nil {
+						log.Printf("rmm-remote: clipboard: %v", err)
+					} else if cm.Paste {
+						// Sent as ordinary key events so the paste travels
+						// through whichever backend is injecting input —
+						// uinput or XTEST — instead of a second code path.
+						for _, event := range pasteKeyEvents {
+							select {
+							case inputCh <- event:
+							case <-done:
+								return
+							}
+						}
+					}
+				}
+			case "mon":
+				var mm struct {
+					ID int32 `json:"id"`
+				}
+				if json.Unmarshal(data, &mm) == nil && mm.ID >= 0 {
+					monSel.Store(mm.ID)
+					monReq.Store(true)
+				}
+			case "cad":
+				select {
+				case inputCh <- data:
+					// Dispatched, not confirmed: what the chord does is the
+					// desktop's shortcut configuration, not ours.
+					if b, e := json.Marshal(map[string]any{"t": "cad", "ok": true}); e == nil {
+						select {
+						case out <- omsg{websocket.TextMessage, b}:
+						case <-done:
+						}
+					}
+				case <-done:
+					return
+				}
 			case "m", "b", "w", "k":
 				select {
 				case inputCh <- data:
@@ -172,9 +254,9 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 						}
 					}
 					if err == nil {
-						note := "⚠ O técnico bloqueou seu teclado e mouse durante a sessão."
+						note := "⚠ The technician locked your keyboard and mouse for this session."
 						if !on {
-							note = "✓ Seu teclado e mouse foram liberados."
+							note = "✓ Your keyboard and mouse have been released."
 						}
 						select { // transparency notice in the host chat window
 						case chatInbox <- note:
@@ -271,6 +353,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				return
 			}
 			x = nx
+			x.setRegion(monSel.Load())
+			reg.store(x)
+			monReq.Store(false)
+			sendMonitors(x)
 			enc.reset()
 			freshAttach = true
 			log.Printf("rmm-remote: attached x11 %s %dx%d xtest=%v keymap=%d",
@@ -293,7 +379,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				return
 			case data := <-xtestCh:
 				pace.markActivity()
-				injectInput(x, inp, data)
+				injectInput(x, inp, data, reg)
 			case msg := <-chatInbox:
 				// Reopen the window if the host user closed it (the WM kills the
 				// client, so a new tech message brings it back).
@@ -314,6 +400,14 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				// tunables.go for why dropping after encode would be wrong.)
 				if len(out) >= videoBacklog {
 					continue
+				}
+				// Applied here, on the goroutine that owns *x11: setRegion
+				// swaps the frame buffer the capture is about to write into.
+				if monReq.Swap(false) && x != nil {
+					x.setRegion(monSel.Load())
+					reg.store(x)
+					enc.reset() // different frame size — start from a keyframe
+					sendMonitors(x)
 				}
 				// Re-evaluate the active session ~1×/s, or immediately if detached.
 				if x == nil || time.Since(lastEval) > time.Second {
@@ -394,9 +488,48 @@ type linInput struct {
 	Code   int     `json:"code"`
 }
 
+// regionGeom is the captured rectangle and the screen it sits on. Stored behind
+// a single pointer so the uinput goroutine, which injects while the capture
+// goroutine may be switching monitors, can never read a half-updated rectangle.
+type regionGeom struct{ x, y, w, h, screenW, screenH int }
+
+type captureRegion struct{ v atomic.Pointer[regionGeom] }
+
+func (r *captureRegion) store(x *x11) {
+	r.v.Store(&regionGeom{x.originX, x.originY, x.width, x.height, x.screenW, x.screenH})
+}
+
+// toScreen maps a viewer coordinate, normalized against the captured region,
+// onto the whole X screen — the space both uinput and XTEST inject into.
+func (r *captureRegion) toScreen(nx, ny float64) (float64, float64) {
+	g := r.v.Load()
+	if g == nil || g.screenW <= 0 || g.screenH <= 0 {
+		return nx, ny
+	}
+	return (float64(g.x) + nx*float64(g.w)) / float64(g.screenW),
+		(float64(g.y) + ny*float64(g.h)) / float64(g.screenH)
+}
+
 // injectInput delivers one viewer event using uinput when available (works on
 // the login greeter + any session), otherwise XTEST (X11 only).
-func injectInput(x *x11, u *uinputDevice, data []byte) {
+func injectInput(x *x11, u *uinputDevice, data []byte, reg *captureRegion) {
+	var command struct {
+		T string `json:"t"`
+	}
+	if json.Unmarshal(data, &command) == nil && command.T == "cad" {
+		shortcutKeys([]int{17, 18, 46}, func(code int, down bool) {
+			b, _ := json.Marshal(linInput{T: "k", Code: code, Down: down})
+			injectInput(x, u, b, reg)
+		})
+		return
+	}
+	// Pointer coordinates arrive normalized against the captured region.
+	if e := new(linInput); json.Unmarshal(data, e) == nil && (e.T == "m" || e.T == "b") {
+		e.X, e.Y = reg.toScreen(e.X, e.Y)
+		if b, err := json.Marshal(e); err == nil {
+			data = b
+		}
+	}
 	if u == nil {
 		if x != nil {
 			x.handleInput(data)
@@ -475,4 +608,13 @@ func allBlack(pix []byte) bool {
 		}
 	}
 	return true
+}
+
+// Control-V as the viewer would send it: browser key codes, which both input
+// backends already map.
+var pasteKeyEvents = [][]byte{
+	[]byte(`{"t":"k","code":17,"down":true}`),
+	[]byte(`{"t":"k","code":86,"down":true}`),
+	[]byte(`{"t":"k","code":86,"down":false}`),
+	[]byte(`{"t":"k","code":17,"down":false}`),
 }

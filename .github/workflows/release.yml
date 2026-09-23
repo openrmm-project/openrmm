@@ -255,6 +255,28 @@ jobs:
           for arch in arm64 amd64; do
             tar -tzf "rmm-remote-darwin-$arch.app.tar.gz" | grep -q 'RMMRemote.app/Contents/MacOS/rmm-remote'
           done
+      # A silent fall back to ad-hoc signing is the failure worth catching here:
+      # the bundle still builds, still verifies, still installs — and every Mac
+      # in the fleet is asked for its privacy permissions again, because macOS
+      # sees a different application. Nothing downstream would notice.
+      - name: The bundle must carry the persistent identity
+        if: env.APPLE_SIGNING_P12 != ''
+        run: |
+          set -eux
+          work="$(mktemp -d)"
+          tar -xzf rmm-remote-darwin-arm64.app.tar.gz -C "$work"
+          app="$work/RMMRemote.app"
+          codesign -dvv "$app" 2> "$work/info"
+          if grep -q 'Signature=adhoc' "$work/info"; then
+            echo "the bundle is ad-hoc signed: the identity was not used" >&2
+            exit 1
+          fi
+          # Written by the bundle script only when a real identity signed it.
+          test -f "$app/Contents/Resources/StableCodeIdentity"
+          # The designated requirement has to follow the CERTIFICATE. A cdhash
+          # requirement is bound to one build, which is the whole problem.
+          codesign -d -r- "$app" 2> "$work/req"
+          grep -q 'certificate leaf' "$work/req"
       - name: Remove the signing keychain
         if: always() && env.APPLE_SIGNING_P12 != ''
         run: security delete-keychain "$RUNNER_TEMP/openrmm-signing.keychain-db" || true

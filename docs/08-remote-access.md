@@ -323,6 +323,50 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   the logged-in desktop. When macOS does not show that sheet again after a
   denial, OpenRMM displays its own host-side alert with buttons that open the
   exact Screen Recording and Accessibility panes.
+
+  **One prompt at a time (sidecar 0.17.0+).** macOS shows a single privacy
+  prompt at once and silently drops a request made while another is on screen:
+  no prompt, no row in the privacy database, and the app never appears in the
+  Accessibility list. Asking for both back to back therefore left a first
+  session with Screen Recording allowed and nothing to allow for Accessibility
+  until it was reopened (seen on macOS 15.8). The sidecar now asks for
+  Accessibility only once Screen Recording is allowed — or after a minute, since
+  a dismissed prompt leaves nothing to observe.
+
+  Both grants reach the running process, measured on macOS 15.8: capture
+  resumed seconds after Screen Recording was allowed (the viewer's banner is
+  withdrawn), and mouse and keyboard worked in the same session right after
+  Accessibility was. What does **not** update is `CGPreflightPostEventAccess`:
+  in the process that asked, it kept answering "denied" half an hour later.
+  Command-V and ⌘⌥Esc used to be gated on it and failed in exactly that session
+  while typing worked, so nothing is gated on it any more — the events are
+  always posted and the check only goes to the log. No session has to be
+  reopened after a permission is allowed.
+
+  **Where to look.** The sidecar logs to `~/Library/Logs/rmm-remote.log` of the
+  console user (capped at 5 MB, one previous file kept as `.1`). Each session
+  opens with the build, the macOS release and the bundle's code identity
+  (certificate or ad-hoc), then the permission state and every request and
+  grant. A failure that repeats on every frame is written once and summarised
+  each minute, with a line when it stops. The agent's own log
+  (`/usr/local/libexec/openrmm/agent.log`, root only) records each sidecar
+  refresh: the ETags, the download, and the identity change with whether the
+  privacy grants were reset. A relay dial that fails with `no route to host` is
+  the **Local Network** permission, not the network, and the log says so.
+
+  **First session after an update.** Local Network access is enforced per
+  executable UUID, which every build changes. The grant survives (nehelper:
+  "Local network allowed by preference … Clearing cached UUIDs and restarting
+  session"), but the new build's first dial races the cache rebuild — about
+  half a second — and was refused, which showed as a black screen until the
+  session was reopened. The sidecar now retries that one error up to five
+  times over under four seconds; the relay never saw the refused attempt, so
+  the single-use ticket is still good. The same update also makes macOS post a
+  "background item" notification for the LaunchAgent, whose click opens
+  *Login Items & Extensions*; it needs no action. A capture that fails while Screen
+  Recording is allowed is logged as the display being asleep or locked, which
+  is what it was every time it was investigated; the session also ends with
+  `no active display` when it is opened against a sleeping screen.
 - **Chat and shortcut (sidecar 0.11.0+):** Cocoa chat supports Unicode, replies via
   Enter/Send, and distinct technician/user colors. AppKit runs on the initial
   process thread; a LaunchDaemon launches desktop mode into the console user's
@@ -419,9 +463,24 @@ A self-hosted install downloads the sidecar from **its own** `/dl/`, so whoever
 signed that artifact decides the code identity the endpoints record. Three cases,
 with different consequences:
 
-1. **You publish the official artifact unchanged.** Its identity is whatever the
-   project signed it with — today ad-hoc, so the prompt returns on each sidecar
-   upgrade.
+1. **You publish the official artifacts unchanged.** Each release carries two
+   bundles per architecture, built from the same binary:
+   `rmm-remote-darwin-<arch>.app.tar.gz`, signed with the project's
+   certificate, and `rmm-remote-darwin-<arch>.adhoc.app.tar.gz`, ad-hoc. Every
+   Mac fetches the signed one unless it was installed with
+   `install.sh --macos-bundle adhoc`.
+
+   | | `signed` (default) | `adhoc` |
+   |---|---|---|
+   | Privacy grants across sidecar updates | kept | asked again on every update |
+   | Depends on the project's certificate | yes — if it is ever lost or replaced, every Mac on it is asked once | no |
+
+   The choice is written to `/etc/rmm-agent/remote-bundle` and **stays with the
+   endpoint**: a reinstall that does not pass `--macos-bundle` keeps it, because
+   switching variants is itself an identity change and costs every grant on
+   that Mac. To switch deliberately, reinstall with the other value; the
+   operator is asked for the permissions once. Linux and Windows accept the
+   flag and ignore it, so one install command serves a mixed fleet.
 2. **You build the sidecar yourself** (rebranding, auditing, or a patched
    build). Set `RMM_MACOS_CODESIGN_IDENTITY` to a persistent signing identity and
    the grants survive your upgrades, because the DR then follows the certificate

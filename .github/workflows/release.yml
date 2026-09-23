@@ -234,6 +234,9 @@ jobs:
           set -eux
           plist=cmd/rmm-remote/macapp/Info.plist
           ldflags="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$plist"
+          # The oldest macOS the sidecar supports (Go's own floor), rather than
+          # the runner's release: see the matching step in ci.yml.
+          export MACOSX_DEPLOYMENT_TARGET=12.0
           CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags "$ldflags" -o rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # Cross-built here, not on an Intel runner: -arch x86_64 selects the
           # slice of the same universal SDK. It cannot be executed on this
@@ -252,6 +255,9 @@ jobs:
           # sidecar simply never runs.
           file rmm-remote-darwin-arm64 | grep -q 'arm64'
           file rmm-remote-darwin-amd64 | grep -q 'x86_64'
+          # And that they start on the oldest macOS the release claims to support.
+          vtool -show-build rmm-remote-darwin-arm64 | grep -qE 'minos 12\.0$'
+          vtool -show-build rmm-remote-darwin-amd64 | grep -qE 'minos 12\.0$'
           for arch in arm64 amd64; do
             tar -tzf "rmm-remote-darwin-$arch.app.tar.gz" | grep -q 'RMMRemote.app/Contents/MacOS/rmm-remote'
           done
@@ -294,17 +300,39 @@ jobs:
             echo "the requirement is bound to this build, not to the certificate" >&2
             exit 1
           fi
+      # The opt-out variant must really opt out. Ungated: it is built with or
+      # without a signing identity, and an ad-hoc bundle that still carried the
+      # certificate's marker would make the agent believe grants survive that
+      # macOS has already dropped.
+      - name: The ad-hoc variant must carry no identity
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            work="$(mktemp -d)"
+            tar -xzf "rmm-remote-darwin-$arch.adhoc.app.tar.gz" -C "$work"
+            app="$work/RMMRemote.app"
+            codesign -dvv "$app" > "$work/info" 2>&1
+            test -s "$work/info"
+            grep -q 'Signature=adhoc' "$work/info"
+            grep -q 'Identifier=io.openrmm.remote' "$work/info"
+            test ! -e "$app/Contents/Resources/StableCodeIdentity"
+          done
       - name: Remove the signing keychain
         if: always() && env.APPLE_SIGNING_P12 != ''
         run: security delete-keychain "$RUNNER_TEMP/openrmm-signing.keychain-db" || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-sidecar
+          # fail on a missing file: an absent ad-hoc archive would publish a
+          # release in which --macos-bundle adhoc finds nothing to install.
+          if-no-files-found: error
           path: |
             rmm-remote-darwin-arm64
             rmm-remote-darwin-arm64.app.tar.gz
+            rmm-remote-darwin-arm64.adhoc.app.tar.gz
             rmm-remote-darwin-amd64
             rmm-remote-darwin-amd64.app.tar.gz
+            rmm-remote-darwin-amd64.adhoc.app.tar.gz
 
   publish:
     name: Sign, attest and publish

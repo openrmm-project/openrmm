@@ -10,7 +10,8 @@ import (
 )
 
 // sidecarDownloadName is the artifact published under /dl/ for this platform.
-func sidecarDownloadName() string {
+// Only macOS has variants to choose between, so the state directory is unused.
+func sidecarDownloadName(string) string {
 	name := fmt.Sprintf("rmm-remote-%s-%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		return name + ".exe"

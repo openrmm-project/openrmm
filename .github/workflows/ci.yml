@@ -173,6 +173,11 @@ jobs:
           set -eux
           PLIST=cmd/rmm-remote/macapp/Info.plist
           LD="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$PLIST"
+          # The oldest macOS the sidecar supports (Go's own floor). Left to the
+          # runner, clang targets the runner's release: the binary then refuses
+          # to start on older Macs, and a macOS 15 runner fails the build
+          # because its SDK hides CGDisplayCreateImage.
+          export MACOSX_DEPLOYMENT_TARGET=12.0
           CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # The runner is arm64; Xcode's SDK is universal, so -arch x86_64 gives
           # the Intel build that /dl/ has never carried. It cannot run here.
@@ -185,6 +190,12 @@ jobs:
           ls -la dist/
       - run: dist/rmm-remote-darwin-arm64 -print-version
       - run: file dist/rmm-remote-darwin-amd64
+      - name: Both slices start on macOS 12
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            vtool -show-build "dist/rmm-remote-darwin-$arch" | grep -qE 'minos 12\.0$'
+          done
       # A silent fall back to ad-hoc signing is the failure worth catching here:
       # the bundle still builds, still verifies, still installs — and every Mac
       # in the fleet is asked for its privacy permissions again, because macOS
@@ -224,6 +235,23 @@ jobs:
             echo "the requirement is bound to this build, not to the certificate" >&2
             exit 1
           fi
+      # The opt-out variant must really opt out. Ungated: it is built with or
+      # without a signing identity, and an ad-hoc bundle that still carried the
+      # certificate's marker would make the agent believe grants survive that
+      # macOS has already dropped.
+      - name: The ad-hoc variant must carry no identity
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            work="$(mktemp -d)"
+            tar -xzf "dist/rmm-remote-darwin-$arch.adhoc.app.tar.gz" -C "$work"
+            app="$work/RMMRemote.app"
+            codesign -dvv "$app" > "$work/info" 2>&1
+            test -s "$work/info"
+            grep -q 'Signature=adhoc' "$work/info"
+            grep -q 'Identifier=io.openrmm.remote' "$work/info"
+            test ! -e "$app/Contents/Resources/StableCodeIdentity"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rmm-remote-darwin

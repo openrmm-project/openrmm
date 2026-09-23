@@ -9,6 +9,10 @@
 # should not install into — so the agent is replaced by a script that answers
 # the same flags.
 #
+# The first install asks for the ad-hoc remote-desktop bundle. The choice only
+# means something on macOS; elsewhere the same command line must be accepted and
+# ignored, so a mixed fleet can share one.
+#
 # Installs into the real system paths, so run it only on a throwaway machine
 # (a CI runner). Needs root.
 set -euo pipefail
@@ -103,7 +107,7 @@ chmod 0600 "${STATE_DIR}/state.json"
 
 echo "== running the installer =="
 bash "${REPO_ROOT}/deploy/public/install.sh" \
-  --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode
+  --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode --macos-bundle adhoc
 
 echo "== checking the result =="
 fail=0
@@ -128,6 +132,20 @@ if [ -n "$LEGACY_DEST" ]; then
   check "the binary at the previous location is gone" test ! -e "$LEGACY_DEST"
 fi
 check "the install directory belongs to root" install_dir_is_root
+if [ "$OS" = "darwin" ]; then
+  check "the remote-desktop bundle choice was recorded" grep -qx adhoc "${STATE_DIR}/remote-bundle"
+else
+  check "no remote-desktop bundle choice outside macOS" test ! -e "${STATE_DIR}/remote-bundle"
+fi
+# Refused before anything is touched, so a typo cannot quietly install the
+# variant the operator was trying to avoid.
+bundle_typo_refused() {
+  ! bash "${REPO_ROOT}/deploy/public/install.sh" \
+      --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode --macos-bundle adhock \
+      >"${WORK}/typo.log" 2>&1 &&
+    grep -q "must be 'signed' or 'adhoc'" "${WORK}/typo.log"
+}
+check "an unknown bundle variant is refused" bundle_typo_refused
 
 echo "== a failed install must hand the endpoint back =="
 # The failure that matters in practice: the replacement is in place and the
@@ -149,21 +167,53 @@ else
   check "the enrolment state is intact" enrolment_survived
 fi
 
-echo "== the installer must refuse a directory somebody else owns =="
+echo "== the installer must take back a directory somebody else owns =="
 # Only meaningful where the installer owns its directory outright; on Linux it
 # installs into /usr/local/bin, which is shared with everything else on the host.
+#
+# The installer does not refuse a squatted directory: running as root it claims
+# it back (chown 0, chmod 755) and only refuses when that repair does not hold.
+# What is asserted here is the end state, because that is the security property
+# -- the agent must never execute from a directory another account controls.
 if [ "$OS" = "darwin" ]; then
   # By name, not by id: macOS gives nobody the uid -2, which BSD chown reads as
   # 4294967294 and rejects as an illegal user name. The name works on both.
   chown nobody "$(dirname "$NEW_DEST")"
+  chmod 777 "$(dirname "$NEW_DEST")"
+  # The served build is still the one that cannot start, left by the case above,
+  # so this install is expected to fail. The repair happens before any of that
+  # and is not undone by the rollback, which is exactly what makes it testable
+  # without republishing a healthy build.
+  bash "${REPO_ROOT}/deploy/public/install.sh" \
+    --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/refused.log" 2>&1 || true
+  check "the install directory was taken back by root" install_dir_is_root
+  check "and is no longer writable by anyone else" \
+    test "$(stat -f%Lp "$(dirname "$NEW_DEST")")" = 755
+  chown 0 "$(dirname "$NEW_DEST")"
+fi
+
+echo "== the installer must refuse a directory reached through somebody else's =="
+# A planted symbolic link: the agent's directory now leads into a directory
+# another account controls. Taking ownership of the link's target would not
+# help — that account can still rename it away — so the install must stop.
+if [ "$OS" = "darwin" ]; then
+  owned="$(dirname "$NEW_DEST")"
+  squat="${WORK}/home"
+  mkdir -p "${squat}/openrmm"
+  chown -R nobody "$squat"
+  mv "$owned" "${owned}.real"
+  ln -s "${squat}/openrmm" "$owned"
   if bash "${REPO_ROOT}/deploy/public/install.sh" \
-      --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/refused.log" 2>&1; then
-    echo "  FAIL: the installer accepted a directory owned by nobody"
+      --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/symlink.log" 2>&1; then
+    echo "  FAIL: the installer followed a link into another account's directory"
     fail=1
   else
-    check "refused with an ownership error" grep -q 'not root' "${WORK}/refused.log"
+    check "refused because of the directory above it" grep -q 'above' "${WORK}/symlink.log"
   fi
-  chown 0 "$(dirname "$NEW_DEST")"
+  check "nothing was installed there" test ! -e "${squat}/openrmm/rmm-agent"
+  check "and it was not taken over by root" test "$(stat -f%u "${squat}/openrmm")" != 0
+  rm -f "$owned"
+  mv "${owned}.real" "$owned"
 fi
 
 echo "== uninstalling =="

@@ -351,9 +351,19 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   each minute, with a line when it stops. The agent's own log
   (`/usr/local/libexec/openrmm/agent.log`, root only) records each sidecar
   refresh: the ETags, the download, and the identity change with whether the
-  privacy grants were reset. A relay dial that fails with `no route to host` on
-  the first run after an identity change is the **Local Network** permission,
-  not the network, and the log says so. A capture that fails while Screen
+  privacy grants were reset. A relay dial that fails with `no route to host` is
+  the **Local Network** permission, not the network, and the log says so.
+
+  **First session after an update.** Local Network access is enforced per
+  executable UUID, which every build changes. The grant survives (nehelper:
+  "Local network allowed by preference … Clearing cached UUIDs and restarting
+  session"), but the new build's first dial races the cache rebuild — about
+  half a second — and was refused, which showed as a black screen until the
+  session was reopened. The sidecar now retries that one error up to five
+  times over under four seconds; the relay never saw the refused attempt, so
+  the single-use ticket is still good. The same update also makes macOS post a
+  "background item" notification for the LaunchAgent, whose click opens
+  *Login Items & Extensions*; it needs no action. A capture that fails while Screen
   Recording is allowed is logged as the display being asleep or locked, which
   is what it was every time it was investigated; the session also ends with
   `no active display` when it is opened against a sleeping screen.

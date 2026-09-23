@@ -137,3 +137,60 @@ func TestDescribePermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestRetryDialRidesOutTheLocalNetworkCacheRefresh(t *testing.T) {
+	var out captured
+	var pauses []time.Duration
+	refused := errors.New("dial tcp 10.0.2.2:3005: connect: no route to host")
+	calls := 0
+	conn, err := retryDial(func() (string, error) {
+		calls++
+		if calls < 3 {
+			return "", refused
+		}
+		return "conn", nil
+	}, func(err error) bool { return dialRetryable("darwin", err) }, 5, 250*time.Millisecond,
+		func(d time.Duration) { pauses = append(pauses, d) }, out.logf)
+	if err != nil || conn != "conn" || calls != 3 {
+		t.Fatalf("conn %q, err %v, calls %d", conn, err, calls)
+	}
+	if fmt.Sprint(pauses) != "[250ms 500ms]" {
+		t.Fatalf("pauses %v, want doubling from 250ms", pauses)
+	}
+	if last := out.lines[len(out.lines)-1]; !strings.Contains(last, "attempt 3") {
+		t.Fatalf("the recovery is not logged: %q", last)
+	}
+}
+
+func TestRetryDialGivesUpOnOtherFailures(t *testing.T) {
+	var out captured
+	calls := 0
+	_, err := retryDial(func() (string, error) {
+		calls++
+		return "", errors.New("websocket: bad handshake")
+	}, func(err error) bool { return dialRetryable("darwin", err) }, 5, time.Millisecond, func(time.Duration) {}, out.logf)
+	// A rejected ticket must not be retried: it is single-use, and the relay
+	// has already seen it.
+	if err == nil || calls != 1 {
+		t.Fatalf("err %v, calls %d; a handshake failure is final", err, calls)
+	}
+}
+
+func TestRetryDialStopsAfterTheLastAttempt(t *testing.T) {
+	var out captured
+	calls := 0
+	refused := errors.New("connect: no route to host")
+	_, err := retryDial(func() (string, error) { calls++; return "", refused },
+		func(err error) bool { return dialRetryable("darwin", err) }, 5, time.Millisecond, func(time.Duration) {}, out.logf)
+	if err != refused || calls != 5 {
+		t.Fatalf("err %v, calls %d", err, calls)
+	}
+}
+
+func TestDialRetryableOnlyOnMacOS(t *testing.T) {
+	refused := errors.New("connect: no route to host")
+	if !dialRetryable("darwin", refused) || dialRetryable("linux", refused) || dialRetryable("darwin", nil) ||
+		dialRetryable("darwin", errors.New("connection refused")) {
+		t.Fatal("dialRetryable")
+	}
+}

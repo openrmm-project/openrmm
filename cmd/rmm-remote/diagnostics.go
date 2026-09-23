@@ -127,3 +127,38 @@ func describePermissions(s permissionStart) string {
 	}
 	return fmt.Sprintf("screen recording %s, accessibility %s", state(s.screen), input)
 }
+
+// dialRetryable reports a relay dial failure worth another attempt. There is
+// one: on macOS, Local Network access is enforced per executable UUID, and the
+// first run of a new build — every update — dials before the system has put
+// the new UUID in its cache. The permission is intact ("Local network allowed
+// by preference … Clearing cached UUIDs and restarting session", nehelper,
+// macOS 15.8), the refusal is a race, and the cache is rebuilt within about
+// half a second. Giving up on the first attempt turned every update's first
+// session into a black screen. The connection is refused before the relay is
+// reached, so the single-use ticket has not been spent.
+func dialRetryable(goos string, err error) bool {
+	return err != nil && goos == "darwin" && strings.Contains(err.Error(), "no route to host")
+}
+
+// retryDial calls dial until it succeeds, fails in a way retryable does not
+// accept, or runs out of attempts, doubling the pause each time.
+func retryDial[T any](dial func() (T, error), retryable func(error) bool, attempts int, wait time.Duration, sleep func(time.Duration), logf func(string, ...any)) (T, error) {
+	var conn T
+	var err error
+	for attempt := 1; ; attempt++ {
+		conn, err = dial()
+		if err == nil {
+			if attempt > 1 {
+				logf("rmm-remote: relay reached on attempt %d", attempt)
+			}
+			return conn, nil
+		}
+		if attempt >= attempts || !retryable(err) {
+			return conn, err
+		}
+		logf("rmm-remote: dial relay attempt %d: %v; retrying in %s", attempt, err, wait)
+		sleep(wait)
+		wait *= 2
+	}
+}

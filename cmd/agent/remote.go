@@ -167,7 +167,7 @@ func (a *agent) ensureSidecar() (string, error) {
 		return "", err
 	}
 	path := sidecarExePath(filepath.Dir(exe))
-	src := a.httpBase() + "/dl/" + sidecarDownloadName()
+	src := a.httpBase() + "/dl/" + sidecarDownloadName(filepath.Dir(a.statePath))
 	// Kept beside the agent even when the sidecar is not: on macOS the bundle is
 	// replaced wholesale, and a marker inside it would go with the old copy.
 	etagPath := filepath.Join(filepath.Dir(exe), sidecarName()+".etag")
@@ -175,10 +175,11 @@ func (a *agent) ensureSidecar() (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		// All platforms: a newly opened session must use the published build.
 		remoteTag := remoteETag(src)
-		if remoteTag == "" || remoteTag == readETag(etagPath) {
+		installedTag := readETag(etagPath)
+		if remoteTag == "" || remoteTag == installedTag {
 			return path, nil
 		}
-		log.Printf("remote: sidecar changed on server; refreshing")
+		log.Printf("remote: %s changed on server (installed etag %s, published %s); refreshing", filepath.Base(src), orNone(installedTag), remoteTag)
 		if err := a.fetchSidecar(src, path, etagPath, remoteTag); err != nil {
 			// A failed update must not take away working remote access. Keep the
 			// published ETag unmatched so the next session can retry the update.
@@ -207,8 +208,12 @@ func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
 	}
 	tmp := filepath.Join(filepath.Dir(exeDir), sidecarName()+".new")
 	_ = os.Remove(tmp)
+	started := time.Now()
 	if err := download(src, tmp); err != nil {
 		return err
+	}
+	if info, err := os.Stat(tmp); err == nil {
+		log.Printf("remote: downloaded %s (%d bytes) in %s", filepath.Base(src), info.Size(), time.Since(started).Round(time.Millisecond))
 	}
 	// Verified before anything is unpacked: untrusted archives are never opened.
 	if err := enforceArtifactSignature(src, tmp); err != nil {
@@ -250,7 +255,16 @@ func (a *agent) fetchSidecar(src, path, etagPath, remoteTag string) error {
 	if remoteTag != "" {
 		_ = os.WriteFile(etagPath, []byte(remoteTag), 0o644)
 	}
+	log.Printf("remote: sidecar %s installed from %s", candidateVersion, filepath.Base(src))
 	return nil
+}
+
+// orNone keeps an empty value visible in a log line instead of leaving a gap.
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 // quarantined reports that the module we just downloaded is no longer on disk.

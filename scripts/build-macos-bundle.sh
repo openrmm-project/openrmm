@@ -6,13 +6,23 @@
 # added afterwards invalidates the signature — which costs every grant the
 # bundle holds, not just the new file.
 #
-# Usage: build-macos-bundle.sh <arch> <built-binary> <output.tar.gz>
+# Usage: build-macos-bundle.sh <arch> <built-binary> <output.app.tar.gz>
 # RMM_MACOS_CODESIGN_IDENTITY selects a persistent keychain identity when set.
 # The default ad-hoc signature is suitable for builds that do not need to retain
 # privacy grants across versions.
+#
+# Two archives come out: <output> signed with that identity, and beside it
+# <name>.adhoc.app.tar.gz, the same bundle with an ad-hoc signature. A Mac is
+# installed with one or the other (install.sh --macos-bundle), so an operator
+# who does not want their endpoints to depend on the project's certificate does
+# not have to build anything. Without an identity both are ad-hoc.
 set -euo pipefail
 
 arch="$1"; binary="$2"; out="$3"
+case "$out" in
+  *.app.tar.gz) adhoc_out="${out%.app.tar.gz}.adhoc.app.tar.gz" ;;
+  *) echo "output must end in .app.tar.gz: $out" >&2; exit 2 ;;
+esac
 root="$(cd "$(dirname "$0")/.." && pwd)"
 plist="$root/cmd/rmm-remote/macapp/Info.plist"
 icon_src="$root/openrmm/assets/logo_open_rmm_edit3.png"
@@ -61,3 +71,16 @@ codesign --verify --deep --strict --verbose=2 "$app"
 mkdir -p "$(dirname "$out")"
 tar -czf "$out" -C "$stage" RMMRemote.app
 echo "built $out ($arch)"
+
+# The ad-hoc variant, from the same contents. The marker goes first: it records
+# the certificate's requirement, and an ad-hoc bundle carrying it would claim an
+# identity it does not have — the agent would then keep grants that macOS has
+# already stopped honouring.
+adhoc_stage="$stage/adhoc"
+mkdir -p "$adhoc_stage"
+cp -R "$app" "$adhoc_stage/RMMRemote.app"
+rm -f "$adhoc_stage/RMMRemote.app/Contents/Resources/StableCodeIdentity"
+codesign --sign - --force --identifier io.openrmm.remote "$adhoc_stage/RMMRemote.app"
+codesign --verify --deep --strict --verbose=2 "$adhoc_stage/RMMRemote.app"
+tar -czf "$adhoc_out" -C "$adhoc_stage" RMMRemote.app
+echo "built $adhoc_out ($arch, ad-hoc)"

@@ -49,6 +49,14 @@ const RemoteInput = {
     return { t: 'clip', text: text.slice(0, RemoteInput.CLIP_LIMIT), paste: true };
   },
 
+  // The endpoint resends its hello when a permission arrives mid-session. A
+  // capture banner still on screen after a hello that no longer reports the
+  // problem is stale, and only that banner: a notice about something else stays.
+  staleCaptureNotice(shownNotice, lastCaptureError, hello) {
+    if (!hello || hello.capture_error) return false;
+    return !!lastCaptureError && shownNotice === lastCaptureError;
+  },
+
   // Focus lives in a real input when the technician is typing a chat message or
   // a path, and keystrokes belong to that field rather than to the endpoint.
   isTypingTarget(element) {

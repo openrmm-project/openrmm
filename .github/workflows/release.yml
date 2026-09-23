@@ -294,17 +294,39 @@ jobs:
             echo "the requirement is bound to this build, not to the certificate" >&2
             exit 1
           fi
+      # The opt-out variant must really opt out. Ungated: it is built with or
+      # without a signing identity, and an ad-hoc bundle that still carried the
+      # certificate's marker would make the agent believe grants survive that
+      # macOS has already dropped.
+      - name: The ad-hoc variant must carry no identity
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            work="$(mktemp -d)"
+            tar -xzf "rmm-remote-darwin-$arch.adhoc.app.tar.gz" -C "$work"
+            app="$work/RMMRemote.app"
+            codesign -dvv "$app" > "$work/info" 2>&1
+            test -s "$work/info"
+            grep -q 'Signature=adhoc' "$work/info"
+            grep -q 'Identifier=io.openrmm.remote' "$work/info"
+            test ! -e "$app/Contents/Resources/StableCodeIdentity"
+          done
       - name: Remove the signing keychain
         if: always() && env.APPLE_SIGNING_P12 != ''
         run: security delete-keychain "$RUNNER_TEMP/openrmm-signing.keychain-db" || true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-sidecar
+          # fail on a missing file: an absent ad-hoc archive would publish a
+          # release in which --macos-bundle adhoc finds nothing to install.
+          if-no-files-found: error
           path: |
             rmm-remote-darwin-arm64
             rmm-remote-darwin-arm64.app.tar.gz
+            rmm-remote-darwin-arm64.adhoc.app.tar.gz
             rmm-remote-darwin-amd64
             rmm-remote-darwin-amd64.app.tar.gz
+            rmm-remote-darwin-amd64.adhoc.app.tar.gz
 
   publish:
     name: Sign, attest and publish

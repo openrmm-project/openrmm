@@ -90,3 +90,13 @@ test('the endpoint clipboard arriving for the technician is bounded', async () =
   assert.equal(policy.incomingClipText({}), null);
   assert.equal(policy.incomingClipText(null), null);
 });
+
+test('a capture banner is retracted only by a hello that stops reporting it', async () => {
+  const policy = await loadPolicy();
+  const blocked = 'Allow Screen & System Audio Recording for OpenRMM…';
+  assert.equal(policy.staleCaptureNotice(blocked, blocked, { t: 'hello' }), true, 'permission arrived mid-session');
+  assert.equal(policy.staleCaptureNotice(blocked, blocked, { t: 'hello', capture_error: blocked }), false, 'still blocked');
+  assert.equal(policy.staleCaptureNotice('Session recorded by policy', blocked, { t: 'hello' }), false, 'another notice is left alone');
+  assert.equal(policy.staleCaptureNotice(null, null, { t: 'hello' }), false, 'nothing shown, nothing to retract');
+  assert.equal(policy.staleCaptureNotice(blocked, blocked, null), false);
+});

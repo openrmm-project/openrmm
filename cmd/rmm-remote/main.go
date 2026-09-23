@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -71,7 +72,8 @@ func main() {
 	if *relay == "" {
 		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
 	}
-	log.Printf("rmm-remote %s starting", remoteVersion)
+	exe, _ := os.Executable()
+	log.Printf("rmm-remote %s starting (pid %d, %s, %s)", remoteVersion, os.Getpid(), platformDetail(), bundleIdentity(exe))
 
 	var headers http.Header
 	if *ticket != "" {
@@ -84,7 +86,7 @@ func main() {
 	}
 	conn, _, err := websocket.DefaultDialer.Dial(*relay, headers)
 	if err != nil {
-		log.Fatalf("rmm-remote: dial relay: %v", err)
+		log.Fatalf("rmm-remote: dial relay: %v%s", err, dialHint(runtime.GOOS, err))
 	}
 	defer conn.Close()
 
@@ -101,7 +103,7 @@ func main() {
 	}
 }
 
-const remoteVersion = "0.16.0"
+const remoteVersion = "0.17.0"
 
 // sessionParams is what the agent hands to a LaunchAgent-started sidecar.
 type sessionParams struct {
@@ -161,6 +163,7 @@ func openLog() {
 	}
 	paths = append(paths, filepath.Join(os.TempDir(), "rmm-remote.log"))
 	for _, p := range paths {
+		rotateLog(p, maxLogBytes)
 		if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666); err == nil {
 			log.SetOutput(f)
 			return

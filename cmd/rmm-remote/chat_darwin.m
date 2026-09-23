@@ -112,7 +112,10 @@ void rmmPermissionNotice(int screenAllowed, int accessibilityAllowed) {
     if (screenAllowed && accessibilityAllowed) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         BOOL screenMissing = !CGPreflightScreenCaptureAccess();
-        BOOL accessibilityMissing = !CGPreflightPostEventAccess();
+        // The caller says "allowed" also while the Accessibility request is
+        // still to come: macOS takes one prompt at a time, and until the sidecar
+        // has asked, the app is not in the Accessibility list to be switched on.
+        BOOL accessibilityMissing = !accessibilityAllowed && !CGPreflightPostEventAccess();
         if (!screenMissing && !accessibilityMissing) return;
 
         if (!chat || !chat.window || permissionAlert) return;

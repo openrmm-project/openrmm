@@ -215,6 +215,23 @@ jobs:
             echo "the requirement is bound to this build, not to the certificate" >&2
             exit 1
           fi
+      # The opt-out variant must really opt out. Ungated: it is built with or
+      # without a signing identity, and an ad-hoc bundle that still carried the
+      # certificate's marker would make the agent believe grants survive that
+      # macOS has already dropped.
+      - name: The ad-hoc variant must carry no identity
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            work="$(mktemp -d)"
+            tar -xzf "dist/rmm-remote-darwin-$arch.adhoc.app.tar.gz" -C "$work"
+            app="$work/RMMRemote.app"
+            codesign -dvv "$app" > "$work/info" 2>&1
+            test -s "$work/info"
+            grep -q 'Signature=adhoc' "$work/info"
+            grep -q 'Identifier=io.openrmm.remote' "$work/info"
+            test ! -e "$app/Contents/Resources/StableCodeIdentity"
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rmm-remote-darwin

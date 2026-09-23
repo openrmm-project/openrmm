@@ -37,8 +37,10 @@ func codesignUsable() bool {
 // agent's own directory because it is an application, not a helper binary.
 const macSidecarBundle = "/Library/Application Support/OpenRMM/RMMRemote.app"
 
-func sidecarDownloadName() string {
-	return fmt.Sprintf("rmm-remote-darwin-%s.app.tar.gz", runtime.GOARCH)
+// sidecarDownloadName picks the bundle variant this Mac was installed with; see
+// sidecar_variant.go for why the choice is read from the state directory.
+func sidecarDownloadName(stateDir string) string {
+	return macBundleArchive(runtime.GOARCH, readMacBundleChoice(stateDir))
 }
 
 func sidecarExePath(string) string {
@@ -122,27 +124,6 @@ func verifyMacBundle(bundle string) error {
 	return fmt.Errorf("macOS bundle identifier is not io.openrmm.remote")
 }
 
-// Written by the bundle builder when a persistent signing identity was used.
-// Its absence means the bundle is ad-hoc signed, so macOS sees every published
-// build as a different application.
-const macStableIdentityMarker = "Contents/Resources/StableCodeIdentity"
-
-func macStableIdentity(bundle string) (string, bool) {
-	b, err := os.ReadFile(filepath.Join(bundle, macStableIdentityMarker))
-	if err != nil {
-		return "", false
-	}
-	identity := strings.TrimSpace(string(b))
-	return identity, identity != ""
-}
-
-// macPrivacyIdentityChanged is deliberately conservative. An ad-hoc build has
-// no identity that a later build can satisfy, and moving either to or from a
-// persistent identity also invalidates the rows already stored by TCC.
-func macPrivacyIdentityChanged(current string, currentStable bool, candidate string, candidateStable bool) bool {
-	return !currentStable || !candidateStable || current != candidate
-}
-
 // resetStalePrivacyGrants drops the privacy rows macOS recorded for the bundle
 // identifier. Those rows outlive the build they were granted to: the Privacy
 // panes keep listing the sidecar as allowed while macOS denies it, which reads
@@ -215,8 +196,9 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		_ = os.RemoveAll(old)
 		replacing := false
 		resetPrivacy := false
+		currentIdentity, currentStable := "", false
 		if _, err := os.Stat(bundle); err == nil {
-			currentIdentity, currentStable := macStableIdentity(bundle)
+			currentIdentity, currentStable = macStableIdentity(bundle)
 			resetPrivacy = macPrivacyIdentityChanged(currentIdentity, currentStable, candidateIdentity, candidateStable)
 			if err := os.Rename(bundle, old); err != nil {
 				return err
@@ -229,6 +211,10 @@ func stageSidecar(artifact string) (string, func(string) error, func(), error) {
 		}
 		_ = os.RemoveAll(old)
 		_ = os.Remove(artifact)
+		// The one line that answers "why did this Mac ask for its permissions
+		// again": which identity was replaced by which, and whether that cost
+		// the grants.
+		log.Printf("remote: installed sidecar bundle; %s", describeMacIdentityChange(replacing, currentIdentity, currentStable, candidateIdentity, candidateStable))
 		// TCC keeps showing an old ad-hoc build as enabled after replacing it even
 		// though the new build cannot satisfy the stored designated requirement.
 		// Clear only rows that cannot apply to the candidate. A persistent signing

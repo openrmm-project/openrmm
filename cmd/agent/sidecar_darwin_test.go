@@ -67,25 +67,3 @@ func TestMacSidecarInstallsWithoutCodesign(t *testing.T) {
 		t.Fatalf("update refused without codesign: %v", err)
 	}
 }
-
-func TestMacPrivacyIdentityChange(t *testing.T) {
-	tests := []struct {
-		name                           string
-		current, candidate             string
-		currentStable, candidateStable bool
-		want                           bool
-	}{
-		{name: "same persistent identity", current: "dr-a", candidate: "dr-a", currentStable: true, candidateStable: true, want: false},
-		{name: "rotated persistent identity", current: "dr-a", candidate: "dr-b", currentStable: true, candidateStable: true, want: true},
-		{name: "two ad-hoc builds", want: true},
-		{name: "ad-hoc to persistent", candidate: "dr-a", candidateStable: true, want: true},
-		{name: "persistent to ad-hoc", current: "dr-a", currentStable: true, want: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := macPrivacyIdentityChanged(tt.current, tt.currentStable, tt.candidate, tt.candidateStable); got != tt.want {
-				t.Fatalf("macPrivacyIdentityChanged() = %t, want %t", got, tt.want)
-			}
-		})
-	}
-}

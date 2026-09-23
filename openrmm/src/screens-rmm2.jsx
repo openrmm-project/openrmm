@@ -585,6 +585,11 @@ function shellQuote(value) {
 }
 function EnrollCommands({ token, site }) {
   const [os, setOs] = useState('linux');
+  // Which remote-desktop bundle a Mac installs. Signed keeps privacy grants
+  // across updates; ad-hoc depends on no certificate but asks again after each
+  // one. Signed is the installer's own default, so it adds nothing to the
+  // command — only the opt-out is spelled out.
+  const [macBundle, setMacBundle] = useState('signed');
   const configQ = useQuery(['config'], () => api.getConfig(), {});
   // Enrollment, updates, and the agent-side relay live on the agents origin in
   // split ingress, not on the console origin serving this screen.
@@ -593,7 +598,8 @@ function EnrollCommands({ token, site }) {
   if (!base) return <div className="text-[12px] text-bad py-2">Could not load the agents install URL. Refresh the page before copying an enrollment command.</div>;
   const agentsBase = base.replace(/\/$/, '');
   const siteArg = site ? ` \\\n  --site ${shellQuote(site.name)}` : '';
-  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${siteArg}`;
+  const bundleArg = os === 'macos' && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
+  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${siteArg}${bundleArg}`;
   const winCmd = `# Run PowerShell as Administrator\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}`;
   const isWin = os === 'windows';
   const cmd = isWin ? winCmd : nixCmd;
@@ -615,6 +621,23 @@ function EnrollCommands({ token, site }) {
       <CodeBlock code={cmd} shell={isWin ? 'powershell' : 'bash'} label="install agent" showCopy={false} maxHeight={180} wrap />
       {isWin && <div className="text-[11.5px] text-faint mt-2">Run in an <span className="text-ink font-medium">elevated PowerShell</span> (Run as Administrator).</div>}
       {os === 'macos' && <div className="text-[11.5px] text-faint mt-2">Same installer as Linux — it auto-detects macOS (Intel &amp; Apple Silicon).</div>}
+      {os === 'macos' && (
+        <div className="mt-3">
+          <div className="text-[11.5px] text-muted mb-1.5">Remote desktop bundle</div>
+          <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">
+            {[{ v: 'signed', l: 'Signed' }, { v: 'adhoc', l: 'Ad-hoc' }].map((o) => (
+              <button key={o.v} onClick={() => setMacBundle(o.v)}
+                className={cx('px-3 h-7 rounded-md text-[12px] font-medium transition-colors', macBundle === o.v ? 'bg-card text-ink shadow-sm' : 'text-faint hover:text-muted')}>{o.l}</button>
+            ))}
+          </div>
+          <div className="text-[11.5px] text-faint mt-1.5">
+            {macBundle === 'signed'
+              ? 'Screen Recording and Accessibility, once allowed, stay allowed across updates. The Mac trusts the OpenRMM project certificate for that.'
+              : 'Depends on no certificate. macOS asks for Screen Recording and Accessibility again after every remote-desktop update.'}
+            {' '}The choice stays with the Mac; changing it later asks for the permissions once.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

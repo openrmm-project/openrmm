@@ -27,6 +27,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       installers: ${{ steps.filter.outputs.installers }}
       docker: ${{ steps.filter.outputs.docker }}
+      macos: ${{ steps.filter.outputs.macos }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,22 +44,28 @@ jobs:
           if [ -z "${BASE:-}" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "no usable diff base — running everything"
-            printf 'go=true\nfrontend=true\ninstallers=true\ndocker=true\n' >> "$GITHUB_OUTPUT"
+            printf 'go=true\nfrontend=true\ninstallers=true\ndocker=true\nmacos=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           files=$(git diff --name-only "$BASE"...HEAD)
           echo "changed files:"; echo "$files"
           has() { echo "$files" | grep -qE "$1"; }
-          go=false; frontend=false; installers=false; docker=false
+          go=false; frontend=false; installers=false; docker=false; macos=false
           has '^(cmd/|internal/|go\.(mod|sum)$)'                  && go=true
+          # The macOS jobs are billed at ten times a Linux minute and rounded up,
+          # so they stay off pull requests that cannot affect them. A change that
+          # CAN is worth the ten minutes: both defects found on main the first
+          # time these ran — an ad-hoc bundle having no designated requirement,
+          # and chown rejecting nobody's uid on BSD — were in files matched here.
+          has '(_darwin\.(go|m)$|^cmd/rmm-remote/macapp/|^scripts/build-macos-bundle\.sh$|^scripts/test-install-migration\.sh$|^deploy/public/(install|uninstall)\.sh$)' && macos=true
           has '^openrmm/'                                          && frontend=true
           has '^(deploy/public/install\.|scripts/|cmd/agent/|internal/protocol/)' && installers=true
           has '^(Dockerfile$|\.dockerignore$|deploy/)'             && docker=true
           # A change to the workflows themselves has to be proven by running them.
           if has '^\.github/workflows/'; then
-            go=true; frontend=true; installers=true; docker=true
+            go=true; frontend=true; installers=true; docker=true; macos=true
           fi
-          printf 'go=%s\nfrontend=%s\ninstallers=%s\ndocker=%s\n' "$go" "$frontend" "$installers" "$docker" | tee -a "$GITHUB_OUTPUT"
+          printf 'go=%s\nfrontend=%s\ninstallers=%s\ndocker=%s\nmacos=%s\n' "$go" "$frontend" "$installers" "$docker" "$macos" | tee -a "$GITHUB_OUTPUT"
 
   go:
     name: Go vet, race, test and build
@@ -99,8 +106,10 @@ jobs:
       fail-fast: false
       matrix:
         # macOS is billed at ten times a Linux minute and each job is rounded up,
-        # so a 14-second run costs ten. It stays on main, not on every PR.
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') }}
+        # so a 14-second run costs ten. It runs on main, and on a pull request
+        # only when the change can actually affect it — which is what makes a
+        # macOS defect visible before the merge rather than after.
+        os: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true') && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,6 +173,11 @@ jobs:
           set -eux
           PLIST=cmd/rmm-remote/macapp/Info.plist
           LD="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$PLIST"
+          # The oldest macOS the sidecar supports (Go's own floor). Left to the
+          # runner, clang targets the runner's release: the binary then refuses
+          # to start on older Macs, and a macOS 15 runner fails the build
+          # because its SDK hides CGDisplayCreateImage.
+          export MACOSX_DEPLOYMENT_TARGET=12.0
           CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # The runner is arm64; Xcode's SDK is universal, so -arch x86_64 gives
           # the Intel build that /dl/ has never carried. It cannot run here.
@@ -176,6 +190,12 @@ jobs:
           ls -la dist/
       - run: dist/rmm-remote-darwin-arm64 -print-version
       - run: file dist/rmm-remote-darwin-amd64
+      - name: Both slices start on macOS 12
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            vtool -show-build "dist/rmm-remote-darwin-$arch" | grep -qE 'minos 12\.0$'
+          done
       # A silent fall back to ad-hoc signing is the failure worth catching here:
       # the bundle still builds, still verifies, still installs — and every Mac
       # in the fleet is asked for its privacy permissions again, because macOS
@@ -215,6 +235,23 @@ jobs:
             echo "the requirement is bound to this build, not to the certificate" >&2
             exit 1
           fi
+      # The opt-out variant must really opt out. Ungated: it is built with or
+      # without a signing identity, and an ad-hoc bundle that still carried the
+      # certificate's marker would make the agent believe grants survive that
+      # macOS has already dropped.
+      - name: The ad-hoc variant must carry no identity
+        run: |
+          set -eux
+          for arch in arm64 amd64; do
+            work="$(mktemp -d)"
+            tar -xzf "dist/rmm-remote-darwin-$arch.adhoc.app.tar.gz" -C "$work"
+            app="$work/RMMRemote.app"
+            codesign -dvv "$app" > "$work/info" 2>&1
+            test -s "$work/info"
+            grep -q 'Signature=adhoc' "$work/info"
+            grep -q 'Identifier=io.openrmm.remote' "$work/info"
+            test ! -e "$app/Contents/Resources/StableCodeIdentity"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rmm-remote-darwin
@@ -309,7 +346,10 @@ jobs:
   installer-macos:
     name: macOS installer validation
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.installers == 'true'
+    # Same rule as the agent test: always on main, and on a pull request when the
+    # change touches something macOS-specific. The BSD-only defects this job
+    # exists to catch are invisible everywhere else.
+    if: needs.changes.outputs.installers == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true')
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

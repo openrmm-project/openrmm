@@ -2,7 +2,7 @@
 # OpenRMM agent installer (Linux/macOS).
 set -euo pipefail
 
-SERVER=""; TOKEN=""; UPDATE_PUBLIC_KEY=""; LAB_MODE=0; REQUIRE_TLS=0; RESET_IDENTITY=0
+SERVER=""; TOKEN=""; UPDATE_PUBLIC_KEY=""; LAB_MODE=0; REQUIRE_TLS=0; RESET_IDENTITY=0; MACOS_BUNDLE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --server) [ $# -ge 2 ] || { echo "error: --server needs a value"; exit 2; }; SERVER="$2"; shift 2;;
@@ -12,12 +12,18 @@ while [ $# -gt 0 ]; do
     --require-tls) REQUIRE_TLS=1; shift;;
     --lab-mode) LAB_MODE=1; shift;;
     --reset-identity) RESET_IDENTITY=1; shift;;
+    # macOS only, ignored elsewhere so one command line serves a mixed fleet.
+    --macos-bundle) [ $# -ge 2 ] || { echo "error: --macos-bundle needs a value"; exit 2; }; MACOS_BUNDLE="$2"; shift 2;;
     *) echo "error: unknown argument: $1"; exit 2;;
   esac
 done
 [ -n "$SERVER" ] || { echo "error: --server is required"; exit 1; }
 [ -n "$TOKEN" ] || { echo "error: --token is required"; exit 1; }
 SERVER="${SERVER%/}"
+case "$MACOS_BUNDLE" in
+  ""|signed|adhoc) ;;
+  *) echo "error: --macos-bundle must be 'signed' or 'adhoc'"; exit 2;;
+esac
 
 if [ "$REQUIRE_TLS" = "1" ]; then
   case "$SERVER" in https://*) ;; *) echo "error: --require-tls needs an https:// server URL"; exit 1;; esac
@@ -137,6 +143,47 @@ assert_root_owned() {
   fi
 }
 
+# physical_dir prints where a directory really is, with every symbolic link on
+# the way resolved. Ownership has to be judged there: a link only names the
+# place, and checking the link itself would bless whatever it points at.
+physical_dir() {
+  (cd "$1" && pwd -P)
+}
+
+# assert_safe_ancestors refuses a directory whose parents are not all root's and
+# closed to everyone else. Owning the directory is not enough: whoever can write
+# to its parent can rename it away and put one of their own under the same name,
+# and a symbolic link planted in its place is the same attack in one step. Judged
+# on the physical path, so a link that leads into somebody's home is caught at
+# the home rather than trusted at the link.
+#
+# A shared parent with the sticky bit is fine: there nobody may rename or remove
+# an entry they do not own, which is exactly the swap this guards against.
+# Refusing it would turn away hosts where / itself is group-writable and sticky.
+assert_safe_ancestors() {
+  target="$1"
+  # With the sticky/setid digit: BSD splits it out as %Mp, GNU folds it into %a.
+  if [ "$OS" = "darwin" ]; then
+    owner_fmt='-f%u'; perms_fmt='-f%Mp%Lp'
+  else
+    owner_fmt='-c%u'; perms_fmt='-c%a'
+  fi
+  parent="$target"
+  while [ "$parent" != "/" ]; do
+    parent="$(dirname "$parent")"
+    owner="$(stat "$owner_fmt" "$parent")" || { echo "error: cannot read ownership of $parent"; exit 1; }
+    perms="$(stat "$perms_fmt" "$parent")" || { echo "error: cannot read permissions of $parent"; exit 1; }
+    mode=$(( 8#$perms ))
+    if [ "$owner" != "0" ] || { [ $(( mode & 8#022 )) -ne 0 ] && [ $(( mode & 8#1000 )) -eq 0 ]; }; then
+      echo "error: $parent, above $target, is owned by uid $owner with mode $perms."
+      echo "       An account that can write to it can swap $target for its own"
+      echo "       directory, and the agent runs as root. It must belong to root"
+      echo "       and be writable by nobody else before the agent can go there."
+      exit 1
+    fi
+  done
+}
+
 detect_service_config() {
   for path in /etc/systemd/system/rmm-agent.service /lib/systemd/system/rmm-agent.service /usr/lib/systemd/system/rmm-agent.service; do
     if [ -f "$path" ]; then SERVICE_KIND=systemd; SERVICE_PATH="$path"; return 0; fi
@@ -219,12 +266,20 @@ mkdir -p "$STATE_DIR"
 # Without this the transactional swap failed at the very last step, with mv
 # reporting "No such file or directory" about a source file that plainly existed.
 mkdir -p "$DEST_DIR"
+# The parents first, and on the physical path: until they are known to be
+# root's, nothing below is repaired — chown follows a symbolic link, so taking
+# back a planted link would hand root's ownership to the attacker's directory
+# and then install the agent into it.
+DEST_DIR_REAL="$(physical_dir "$DEST_DIR")" || { echo "error: cannot resolve $DEST_DIR"; exit 1; }
+STATE_DIR_REAL="$(physical_dir "$STATE_DIR")" || { echo "error: cannot resolve $STATE_DIR"; exit 1; }
+assert_safe_ancestors "$DEST_DIR_REAL"
+assert_safe_ancestors "$STATE_DIR_REAL"
 # Created by root, but an existing directory keeps whatever ownership it had —
 # including a directory somebody pre-created to sit in the agent's path.
-chown 0 "$DEST_DIR" 2>/dev/null || true
-chmod 755 "$DEST_DIR" 2>/dev/null || true
-assert_root_owned "$DEST_DIR"
-assert_root_owned "$STATE_DIR"
+chown 0 "$DEST_DIR_REAL" 2>/dev/null || true
+chmod 755 "$DEST_DIR_REAL" 2>/dev/null || true
+assert_root_owned "$DEST_DIR_REAL"
+assert_root_owned "$STATE_DIR_REAL"
 [ ! -e "$BACKUP" ] || { echo "error: unresolved installer backup exists at $BACKUP"; exit 1; }
 [ ! -e "$SIGNATURE_BACKUP" ] || { echo "error: unresolved signature backup exists at $SIGNATURE_BACKUP"; exit 1; }
 [ ! -e "$STATE_BACKUP" ] || { echo "error: unresolved state backup exists at $STATE_BACKUP"; exit 1; }
@@ -427,6 +482,18 @@ PLIST
       echo "note: could not load the remote LaunchAgent now; it loads at the next login"
   fi
   echo "Remote desktop LaunchAgent installed at $REMOTE_AGENT_PLIST"
+  # Which remote-desktop bundle the agent fetches: signed with the project's
+  # certificate, so privacy grants survive updates, or ad-hoc, so nothing on
+  # this Mac depends on that certificate and every update asks again. Written
+  # only when chosen: a reinstall that does not say keeps the earlier choice,
+  # because switching variants is itself an identity change that costs every
+  # grant. The agent treats a missing file as "signed".
+  if [ -n "$MACOS_BUNDLE" ]; then
+    printf '%s\n' "$MACOS_BUNDLE" > "${STATE_DIR}/remote-bundle"
+    chown root:wheel "${STATE_DIR}/remote-bundle"
+    chmod 644 "${STATE_DIR}/remote-bundle"
+  fi
+  echo "Remote desktop bundle: $(cat "${STATE_DIR}/remote-bundle" 2>/dev/null || echo signed)"
 fi
 
 echo "Agent installed, connected, and healthy."

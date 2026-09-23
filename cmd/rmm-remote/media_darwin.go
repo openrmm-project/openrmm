@@ -75,6 +75,19 @@ static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFla
 static int rmmForceQuitStep = 0;
 static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
 
+// What CGPreflightPostEventAccess said when the chord was sent. Recorded, not
+// obeyed: see rmmInputPreflight below.
+static int rmmForceQuitPreflight = 0;
+static int rmmForceQuitPreflightResult(void) { return rmmForceQuitPreflight; }
+
+// CGPreflightPostEventAccess is a report, not a gate. In the process that asked
+// for Accessibility it keeps answering "denied" after the person at the Mac
+// allows it — half an hour later on macOS 15.8 — while the events themselves
+// are delivered: mouse and keyboard worked in that very session. Gating the
+// shortcuts on it made Command-V and Force Quit fail exactly there. So they are
+// always posted, and the answer only goes to the log.
+static int rmmInputPreflight(void) { return CGPreflightPostEventAccess() ? 1 : 0; }
+
 // Command-Option-Escape opens Force Quit Applications. The shortcut is matched
 // against the modifier state the WindowServer maintains, and that state is fed
 // by the modifier keys' OWN events: decorating Escape with flags leaves it
@@ -82,7 +95,7 @@ static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
 // Press and release them for real, in order.
 static int rmmForceQuit(void) {
     rmmForceQuitStep = 1;
-    if (!CGPreflightPostEventAccess()) return 0;
+    rmmForceQuitPreflight = rmmInputPreflight();
     rmmForceQuitStep = 2;
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
     if (!src) return 0;
@@ -107,7 +120,6 @@ static int rmmForceQuit(void) {
 // paste shortcut their own machine uses; what has to arrive here is the one
 // this platform understands, so the viewer never guesses the endpoint's OS.
 static int rmmPasteShortcut(void) {
-    if (!CGPreflightPostEventAccess()) return 0;
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
     if (!src) return 0;
     const CGEventFlags cmd = kCGEventFlagMaskCommand;
@@ -127,6 +139,11 @@ static int rmmPasteShortcut(void) {
 // without putting a consent prompt on the logged-in user's desktop.
 int rmmRequestScreenCapture(void);
 int rmmRequestPostEvents(void);
+
+// Checks only, never a prompt: safe from any thread, and used to watch for a
+// grant given while the session is open.
+static int rmmScreenGranted(void) { return CGPreflightScreenCaptureAccess() ? 1 : 0; }
+static int rmmInputGranted(void) { return rmmInputPreflight(); }
 */
 import "C"
 
@@ -243,7 +260,14 @@ func (c *cgCapturer) toPoint(x, y float64) (float64, float64) {
 func (c *cgCapturer) frame() (*image.RGBA, error) {
 	cgImg := C.CGDisplayCreateImage(c.display)
 	if C.rmmImageIsNull(cgImg) != 0 {
-		return nil, fmt.Errorf("CGDisplayCreateImage failed (Screen Recording permission?)")
+		// Two different faults fail the same way. Most often it is not the
+		// permission at all: a Mac whose display went to sleep or locked stops
+		// yielding images, and blaming Screen Recording sent the search the wrong
+		// way on a Mac that had it allowed all along.
+		if C.rmmScreenGranted() != 0 {
+			return nil, fmt.Errorf("CGDisplayCreateImage failed with Screen Recording allowed: the display is probably asleep or locked")
+		}
+		return nil, fmt.Errorf("CGDisplayCreateImage failed: Screen Recording is not allowed for this session")
 	}
 	defer C.CGImageRelease(cgImg)
 
@@ -438,26 +462,33 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	go watchClipboard(clipMirror, func(text string) {
 		sendJSON(map[string]any{"t": "clip", "text": text})
 	}, done)
-	screenOK := C.rmmRequestScreenCapture() != 0
-	if !screenOK {
-		log.Printf("rmm-remote: screen recording not granted; the session will show a black screen until it is allowed")
+	probe := permissionProbe{
+		screenGranted: func() bool { return C.rmmScreenGranted() != 0 },
+		inputGranted:  func() bool { return C.rmmInputGranted() != 0 },
+		requestScreen: func() bool { return C.rmmRequestScreenCapture() != 0 },
+		requestInput:  func() bool { return C.rmmRequestPostEvents() != 0 },
 	}
-	inputAllowed := C.rmmRequestPostEvents() != 0
-	if !inputAllowed {
-		log.Printf("rmm-remote: accessibility not granted; keyboard and mouse will not reach this Mac")
-	}
-	showMacPermissionNotice(screenOK, inputAllowed)
-	cadAvailable := inputAllowed
-	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": cadAvailable, "chat": true}
-	if !screenOK {
-		hello["capture_error"] = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant."
-	}
-	if !cadAvailable {
-		hello["cad_error"] = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant. Without it no keyboard, mouse, paste, or Force Quit shortcut reaches this Mac."
-	}
-	if b, e := json.Marshal(hello); e == nil {
+	perm := startPermissions(probe)
+	log.Printf("rmm-remote: permissions at session start: %s", describePermissions(perm))
+	// A deferred Accessibility request is not missing yet: pointing the person
+	// at the Accessibility pane now would send them to a list the app is not in.
+	showMacPermissionNotice(perm.screen, perm.input || perm.inputDeferred)
+	if b, e := json.Marshal(macHello(remoteVersion, allowFiles, perm.screen, perm.input, perm.inputDeferred)); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
+	go followInput(probe, perm, done, time.Second, time.Minute, func(ev permissionEvent) {
+		screen := probe.screenGranted()
+		switch ev.kind {
+		case "screen-allowed":
+			log.Printf("rmm-remote: Screen Recording allowed %s into the session; capture is live", ev.after.Round(time.Second))
+			sendJSON(macHello(remoteVersion, allowFiles, true, false, true))
+		case "asked":
+			log.Printf("rmm-remote: asked for Accessibility %s after the session started (Screen Recording allowed first: %t)", ev.after.Round(time.Second), ev.screenAnswered)
+		case "granted":
+			log.Printf("rmm-remote: Accessibility was already allowed when asked %s into the session; keyboard and mouse are live", ev.after.Round(time.Second))
+			sendJSON(macHello(remoteVersion, allowFiles, screen, true, false))
+		}
+	})
 	sendJSON(describeMacDisplays(monSel.Load()))
 
 	// reader / dispatcher
@@ -550,6 +581,9 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	// Input runs on the same goroutine as capture for simplicity; CGEvent is
 	// thread-safe but keeping it serialized avoids surprising interleavings.
 	enc := newVideoEncoder(jpegQuality())
+	// A missing Screen Recording grant fails every frame; summarised, it no
+	// longer grows the log by megabytes while the session waits for it.
+	captureLog := newRepeatLog(time.Minute, log.Printf)
 	ticker := time.NewTicker(pace.active)
 	defer ticker.Stop()
 	curInterval := pace.active
@@ -565,7 +599,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				ok := C.rmmPasteShortcut() != 0
 				response := map[string]any{"t": "paste", "ok": ok}
 				if !ok {
-					response["err"] = "macOS Accessibility permission is required for Command-V."
+					response["err"] = "The Mac did not accept the Command-V events."
+				}
+				if C.rmmInputPreflight() == 0 {
+					log.Printf("rmm-remote: Command-V posted=%t while macOS reports Accessibility as missing (stale in the process that asked for it)", ok)
 				}
 				sendJSON(response)
 				continue
@@ -577,10 +614,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				// indistinguishable from success. Step 5 means every event was
 				// accepted, so anything wrong after it is the WindowServer's
 				// handling of the shortcut, not ours.
-				log.Printf("rmm-remote: force quit chord posted=%t (step %d)", ok, int(C.rmmForceQuitProgress()))
+				log.Printf("rmm-remote: force quit chord posted=%t (step %d, Accessibility reported %t)", ok, int(C.rmmForceQuitProgress()), C.rmmForceQuitPreflightResult() != 0)
 				response := map[string]any{"t": "cad", "ok": ok}
 				if !ok {
-					response["err"] = "macOS Accessibility permission is required for ⌘⌥Esc."
+					response["err"] = "The Mac did not accept the ⌘⌥Esc events."
 				}
 				sendJSON(response)
 				continue
@@ -605,10 +642,11 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			}
 			img, err := cap.frame()
 			if err != nil {
-				log.Printf("rmm-remote: capture: %v", err)
+				captureLog.fail("rmm-remote: capture: " + err.Error())
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
+			captureLog.ok()
 			payload, eerr := enc.encode(img)
 			sent := false
 			if eerr == nil && payload != nil {

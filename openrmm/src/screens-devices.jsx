@@ -495,6 +495,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
   const noticeRef = useRef(null); // last notice toasted, so a reconnect loop doesn't repeat it
+  const captureErrorRef = useRef(null); // the capture problem the endpoint last reported, so a later hello can retract it
   useEffect(() => { openRef.current = chatOpen; if (chatOpen) setUnread(0); }, [chatOpen]);
 
   const nextId = () => (tidRef.current = (tidRef.current + 1) & 0xff);
@@ -527,7 +528,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
           setCad({ available: !!m.cad, reason: m.cad_error || (m.cad ? '' : 'Update the remote module to use this shortcut.') });
           // A capture the endpoint cannot perform is the black screen this
           // viewer would otherwise show without explanation.
-          if (m.capture_error) { setNotice(m.capture_error); if (noticeRef.current !== m.capture_error) { noticeRef.current = m.capture_error; toast.error('Screen capture blocked', m.capture_error); } }
+          if (m.capture_error) { captureErrorRef.current = m.capture_error; setNotice(m.capture_error); if (noticeRef.current !== m.capture_error) { noticeRef.current = m.capture_error; toast.error('Screen capture blocked', m.capture_error); } }
+          // A later hello without it means the permission arrived mid-session;
+          // leaving the old banner up would contradict the picture beneath it.
+          else if (window.RemoteInput.staleCaptureNotice(noticeRef.current, captureErrorRef.current, m)) { captureErrorRef.current = null; noticeRef.current = null; setNotice(null); }
         }
         else if (m.t === 'notice') { if (m.text) { setNotice(m.text); if (noticeRef.current !== m.text) { noticeRef.current = m.text; toast.info('Remote notice', m.text); } } else { noticeRef.current = null; setNotice(null); } }
         // The endpoint's clipboard, mirrored while the session is open, so a copy

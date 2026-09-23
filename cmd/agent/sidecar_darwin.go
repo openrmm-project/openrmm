@@ -89,7 +89,14 @@ func validateSidecarCandidate(currentExe, candidateExe string) error {
 		}
 	}
 	if requirement == "" {
-		return fmt.Errorf("installed macOS bundle has no designated requirement")
+		// An ad-hoc signature carries no designated requirement at all, so there
+		// is nothing to compare the candidate against. That is the state every
+		// endpoint installed before a signing identity existed is in, and it is
+		// not a defect to report as one: the grants tied to that bundle cannot
+		// be preserved by any means, and the operator is asked once when the
+		// identity changes. Said plainly, because "no designated requirement"
+		// reads like a broken bundle.
+		return fmt.Errorf("the installed bundle is ad-hoc signed, so its privacy identity cannot be carried over")
 	}
 	output, err = exec.Command(codesignExe, "--verify", "--deep", "--strict", "-R="+requirement, candidate).CombinedOutput()
 	if err != nil {

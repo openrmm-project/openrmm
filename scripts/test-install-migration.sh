@@ -153,11 +153,12 @@ echo "== the installer must refuse a directory somebody else owns =="
 # Only meaningful where the installer owns its directory outright; on Linux it
 # installs into /usr/local/bin, which is shared with everything else on the host.
 if [ "$OS" = "darwin" ]; then
-  nobody_uid="$(id -u nobody 2>/dev/null || echo 65534)"
-  chown "$nobody_uid" "$(dirname "$NEW_DEST")"
+  # By name, not by id: macOS gives nobody the uid -2, which BSD chown reads as
+  # 4294967294 and rejects as an illegal user name. The name works on both.
+  chown nobody "$(dirname "$NEW_DEST")"
   if bash "${REPO_ROOT}/deploy/public/install.sh" \
       --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/refused.log" 2>&1; then
-    echo "  FAIL: the installer accepted a directory owned by uid $nobody_uid"
+    echo "  FAIL: the installer accepted a directory owned by nobody"
     fail=1
   else
     check "refused with an ownership error" grep -q 'not root' "${WORK}/refused.log"

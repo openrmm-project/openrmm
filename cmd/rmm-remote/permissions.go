@@ -60,11 +60,11 @@ type permissionEvent struct {
 // Recording has been allowed — or once screenWait has passed, since a dismissed
 // or denied prompt leaves nothing to observe.
 //
-// It does not wait for the answer, because this process could not use it: on
-// macOS 15.8 an Accessibility grant reaches only processes started after it.
-// The sidecar that asked kept reporting it as missing half an hour later, and
-// Force Quit failed there, while the next session's sidecar used it at once.
-// So the viewer is told to reopen the session, which is the truth.
+// It does not wait for the answer, because this process cannot see it: on
+// macOS 15.8 CGPreflightPostEventAccess keeps answering "denied" in the process
+// that asked, long after the grant. The grant itself does apply — mouse and
+// keyboard work in that same session — so nothing is gated on the check and
+// the viewer is not told to reopen.
 func followInput(p permissionProbe, s permissionStart, done <-chan struct{}, poll, screenWait time.Duration, report func(permissionEvent)) {
 	if s.input || !s.inputDeferred {
 		return
@@ -119,8 +119,8 @@ func followInput(p permissionProbe, s permissionStart, done <-chan struct{}, pol
 
 const (
 	macCaptureBlocked = "Allow Screen & System Audio Recording for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant."
-	macInputBlocked   = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security, then reopen the session. If it already appears enabled, turn it off and on again to replace the stale grant. Without it no keyboard, mouse, paste, or Force Quit shortcut reaches this Mac."
-	macInputPending   = "macOS asks for Accessibility once Screen Recording has been answered at the Mac. After it is allowed, reopen the session: macOS applies it to the next session, not to this one."
+	macInputBlocked   = "Allow Accessibility for OpenRMM in System Settings → Privacy & Security; keyboard, mouse, paste and shortcuts work as soon as it is allowed. If it already appears enabled, turn it off and on again to replace the stale grant."
+	macInputPending   = "macOS asks for Accessibility once Screen Recording has been answered at the Mac. Keyboard, mouse, paste and shortcuts work as soon as it is allowed."
 )
 
 // macHello is the session greeting. It is sent again whenever what it says

@@ -127,9 +127,9 @@ func TestFollowInputAsksOnceScreenIsAllowed(t *testing.T) {
 	}
 }
 
-// It asks and stops there. On macOS 15.8 the grant reaches only the next
-// session's process, so watching for it here would wait for something this
-// process can never see.
+// It asks and stops there. On macOS 15.8 the check stays "denied" in the
+// process that asked, so watching it would wait for something this process
+// can never see, even though the grant itself applies.
 func TestFollowInputDoesNotWaitForTheGrant(t *testing.T) {
 	f := &fakeTCC{}
 	f.screen.Store(false)
@@ -206,9 +206,9 @@ func TestMacHello(t *testing.T) {
 	if h["capture_error"] != macCaptureBlocked {
 		t.Fatalf("capture_error = %v", h["capture_error"])
 	}
-	// Pending is not the same as blocked, but both end the same way: the grant
-	// reaches the next session only, so the technician is told to reopen.
-	if h["cad_error"] != macInputPending || !strings.Contains(macInputPending, "reopen the session") {
+	// Pending is not blocked: the grant applies to the running session, so
+	// telling the technician to reopen would send them round for nothing.
+	if h["cad_error"] != macInputPending || strings.Contains(macInputPending, "reopen") {
 		t.Fatalf("pending cad_error = %v", h["cad_error"])
 	}
 	if h = macHello("9.9.9", false, true, false, false); h["cad_error"] != macInputBlocked || h["cad"] != false {

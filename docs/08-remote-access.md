@@ -333,13 +333,15 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   Accessibility only once Screen Recording is allowed — or after a minute, since
   a dismissed prompt leaves nothing to observe.
 
-  The two permissions do not take effect the same way, measured on macOS 15.8:
-  **Screen Recording reaches the running process** (capture resumed seconds
-  after it was allowed, and the viewer's banner is withdrawn), while **an
-  Accessibility grant reaches only processes started after it** — the sidecar
-  that asked still reported it missing half an hour later and Force Quit failed
-  there, while the next session's sidecar used it at once. So after allowing
-  Accessibility the session has to be reopened, and the viewer says so.
+  Both grants reach the running process, measured on macOS 15.8: capture
+  resumed seconds after Screen Recording was allowed (the viewer's banner is
+  withdrawn), and mouse and keyboard worked in the same session right after
+  Accessibility was. What does **not** update is `CGPreflightPostEventAccess`:
+  in the process that asked, it kept answering "denied" half an hour later.
+  Command-V and ⌘⌥Esc used to be gated on it and failed in exactly that session
+  while typing worked, so nothing is gated on it any more — the events are
+  always posted and the check only goes to the log. No session has to be
+  reopened after a permission is allowed.
 
   **Where to look.** The sidecar logs to `~/Library/Logs/rmm-remote.log` of the
   console user (capped at 5 MB, one previous file kept as `.1`). Each session

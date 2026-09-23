@@ -75,6 +75,19 @@ static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFla
 static int rmmForceQuitStep = 0;
 static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
 
+// What CGPreflightPostEventAccess said when the chord was sent. Recorded, not
+// obeyed: see rmmInputPreflight below.
+static int rmmForceQuitPreflight = 0;
+static int rmmForceQuitPreflightResult(void) { return rmmForceQuitPreflight; }
+
+// CGPreflightPostEventAccess is a report, not a gate. In the process that asked
+// for Accessibility it keeps answering "denied" after the person at the Mac
+// allows it — half an hour later on macOS 15.8 — while the events themselves
+// are delivered: mouse and keyboard worked in that very session. Gating the
+// shortcuts on it made Command-V and Force Quit fail exactly there. So they are
+// always posted, and the answer only goes to the log.
+static int rmmInputPreflight(void) { return CGPreflightPostEventAccess() ? 1 : 0; }
+
 // Command-Option-Escape opens Force Quit Applications. The shortcut is matched
 // against the modifier state the WindowServer maintains, and that state is fed
 // by the modifier keys' OWN events: decorating Escape with flags leaves it
@@ -82,7 +95,7 @@ static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
 // Press and release them for real, in order.
 static int rmmForceQuit(void) {
     rmmForceQuitStep = 1;
-    if (!CGPreflightPostEventAccess()) return 0;
+    rmmForceQuitPreflight = rmmInputPreflight();
     rmmForceQuitStep = 2;
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
     if (!src) return 0;
@@ -107,7 +120,6 @@ static int rmmForceQuit(void) {
 // paste shortcut their own machine uses; what has to arrive here is the one
 // this platform understands, so the viewer never guesses the endpoint's OS.
 static int rmmPasteShortcut(void) {
-    if (!CGPreflightPostEventAccess()) return 0;
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
     if (!src) return 0;
     const CGEventFlags cmd = kCGEventFlagMaskCommand;
@@ -131,7 +143,7 @@ int rmmRequestPostEvents(void);
 // Checks only, never a prompt: safe from any thread, and used to watch for a
 // grant given while the session is open.
 static int rmmScreenGranted(void) { return CGPreflightScreenCaptureAccess() ? 1 : 0; }
-static int rmmInputGranted(void) { return CGPreflightPostEventAccess() ? 1 : 0; }
+static int rmmInputGranted(void) { return rmmInputPreflight(); }
 */
 import "C"
 
@@ -587,7 +599,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				ok := C.rmmPasteShortcut() != 0
 				response := map[string]any{"t": "paste", "ok": ok}
 				if !ok {
-					response["err"] = "macOS Accessibility permission is required for Command-V."
+					response["err"] = "The Mac did not accept the Command-V events."
+				}
+				if C.rmmInputPreflight() == 0 {
+					log.Printf("rmm-remote: Command-V posted=%t while macOS reports Accessibility as missing (stale in the process that asked for it)", ok)
 				}
 				sendJSON(response)
 				continue
@@ -599,10 +614,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				// indistinguishable from success. Step 5 means every event was
 				// accepted, so anything wrong after it is the WindowServer's
 				// handling of the shortcut, not ours.
-				log.Printf("rmm-remote: force quit chord posted=%t (step %d)", ok, int(C.rmmForceQuitProgress()))
+				log.Printf("rmm-remote: force quit chord posted=%t (step %d, Accessibility reported %t)", ok, int(C.rmmForceQuitProgress()), C.rmmForceQuitPreflightResult() != 0)
 				response := map[string]any{"t": "cad", "ok": ok}
 				if !ok {
-					response["err"] = "macOS Accessibility permission is required for ⌘⌥Esc."
+					response["err"] = "The Mac did not accept the ⌘⌥Esc events."
 				}
 				sendJSON(response)
 				continue

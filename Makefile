@@ -60,6 +60,12 @@ remote-all-darwin:
 # is what macOS attributes privacy grants to. Ad-hoc signatures are build-bound.
 DARWIN_PLIST_LDFLAGS := -extldflags -Wl,-sectcreate,__TEXT,__info_plist,cmd/rmm-remote/macapp/Info.plist
 
+# The oldest macOS the sidecar runs on, which is also Go's own floor. Without
+# it clang targets the build host: a binary built on macOS 14 refuses to start
+# on 12 and 13, and on a macOS 15 host the SDK hides CGDisplayCreateImage
+# (obsoleted there), so the build fails outright.
+export MACOSX_DEPLOYMENT_TARGET := 12.0
+
 # Produces both shapes: the .app.tar.gz the agent installs (privacy grants are
 # keyed to a bundle) and the bare binary, which older agents still ask for.
 remote-dist-darwin:

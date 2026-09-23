@@ -234,6 +234,9 @@ jobs:
           set -eux
           plist=cmd/rmm-remote/macapp/Info.plist
           ldflags="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$plist"
+          # The oldest macOS the sidecar supports (Go's own floor), rather than
+          # the runner's release: see the matching step in ci.yml.
+          export MACOSX_DEPLOYMENT_TARGET=12.0
           CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags "$ldflags" -o rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # Cross-built here, not on an Intel runner: -arch x86_64 selects the
           # slice of the same universal SDK. It cannot be executed on this
@@ -252,6 +255,9 @@ jobs:
           # sidecar simply never runs.
           file rmm-remote-darwin-arm64 | grep -q 'arm64'
           file rmm-remote-darwin-amd64 | grep -q 'x86_64'
+          # And that they start on the oldest macOS the release claims to support.
+          vtool -show-build rmm-remote-darwin-arm64 | grep -qE 'minos 12\.0$'
+          vtool -show-build rmm-remote-darwin-amd64 | grep -qE 'minos 12\.0$'
           for arch in arm64 amd64; do
             tar -tzf "rmm-remote-darwin-$arch.app.tar.gz" | grep -q 'RMMRemote.app/Contents/MacOS/rmm-remote'
           done

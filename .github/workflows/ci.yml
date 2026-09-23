@@ -27,6 +27,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       installers: ${{ steps.filter.outputs.installers }}
       docker: ${{ steps.filter.outputs.docker }}
+      macos: ${{ steps.filter.outputs.macos }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,22 +44,28 @@ jobs:
           if [ -z "${BASE:-}" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
              || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "no usable diff base — running everything"
-            printf 'go=true\nfrontend=true\ninstallers=true\ndocker=true\n' >> "$GITHUB_OUTPUT"
+            printf 'go=true\nfrontend=true\ninstallers=true\ndocker=true\nmacos=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           files=$(git diff --name-only "$BASE"...HEAD)
           echo "changed files:"; echo "$files"
           has() { echo "$files" | grep -qE "$1"; }
-          go=false; frontend=false; installers=false; docker=false
+          go=false; frontend=false; installers=false; docker=false; macos=false
           has '^(cmd/|internal/|go\.(mod|sum)$)'                  && go=true
+          # The macOS jobs are billed at ten times a Linux minute and rounded up,
+          # so they stay off pull requests that cannot affect them. A change that
+          # CAN is worth the ten minutes: both defects found on main the first
+          # time these ran — an ad-hoc bundle having no designated requirement,
+          # and chown rejecting nobody's uid on BSD — were in files matched here.
+          has '(_darwin\.(go|m)$|^cmd/rmm-remote/macapp/|^scripts/build-macos-bundle\.sh$|^scripts/test-install-migration\.sh$|^deploy/public/(install|uninstall)\.sh$)' && macos=true
           has '^openrmm/'                                          && frontend=true
           has '^(deploy/public/install\.|scripts/|cmd/agent/|internal/protocol/)' && installers=true
           has '^(Dockerfile$|\.dockerignore$|deploy/)'             && docker=true
           # A change to the workflows themselves has to be proven by running them.
           if has '^\.github/workflows/'; then
-            go=true; frontend=true; installers=true; docker=true
+            go=true; frontend=true; installers=true; docker=true; macos=true
           fi
-          printf 'go=%s\nfrontend=%s\ninstallers=%s\ndocker=%s\n' "$go" "$frontend" "$installers" "$docker" | tee -a "$GITHUB_OUTPUT"
+          printf 'go=%s\nfrontend=%s\ninstallers=%s\ndocker=%s\nmacos=%s\n' "$go" "$frontend" "$installers" "$docker" "$macos" | tee -a "$GITHUB_OUTPUT"
 
   go:
     name: Go vet, race, test and build
@@ -99,8 +106,10 @@ jobs:
       fail-fast: false
       matrix:
         # macOS is billed at ten times a Linux minute and each job is rounded up,
-        # so a 14-second run costs ten. It stays on main, not on every PR.
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') }}
+        # so a 14-second run costs ten. It runs on main, and on a pull request
+        # only when the change can actually affect it — which is what makes a
+        # macOS defect visible before the merge rather than after.
+        os: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true') && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -309,7 +318,10 @@ jobs:
   installer-macos:
     name: macOS installer validation
     needs: changes
-    if: github.event_name != 'pull_request' && needs.changes.outputs.installers == 'true'
+    # Same rule as the agent test: always on main, and on a pull request when the
+    # change touches something macOS-specific. The BSD-only defects this job
+    # exists to catch are invisible everywhere else.
+    if: needs.changes.outputs.installers == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true')
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

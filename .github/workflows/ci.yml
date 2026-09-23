@@ -196,8 +196,19 @@ jobs:
           test -f "$app/Contents/Resources/StableCodeIdentity"
           # The designated requirement has to follow the CERTIFICATE. A cdhash
           # requirement is bound to one build, which is the whole problem.
+          #
+          # "root" and "leaf" are both right, and which one appears says what
+          # signed it: a self-signed certificate IS the root of its own chain,
+          # while a Developer ID leaf sits under Apple's anchor. Asserting only
+          # "leaf" failed against a self-signed identity that had in fact signed
+          # correctly — so the assertion accepts either and rejects what actually
+          # matters, a requirement bound to this build's hash.
           codesign -d -r- "$app" 2> "$work/req"
-          grep -q 'certificate leaf' "$work/req"
+          grep -qE 'certificate (root|leaf)' "$work/req"
+          if grep -q 'cdhash' "$work/req"; then
+            echo "the requirement is bound to this build, not to the certificate" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rmm-remote-darwin

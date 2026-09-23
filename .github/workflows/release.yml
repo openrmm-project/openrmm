@@ -266,7 +266,12 @@ jobs:
           work="$(mktemp -d)"
           tar -xzf rmm-remote-darwin-arm64.app.tar.gz -C "$work"
           app="$work/RMMRemote.app"
-          codesign -dvv "$app" 2> "$work/info"
+          # Both streams: codesign splits its output between them in ways that
+          # differ by subcommand, and a capture that lands empty would make the
+          # ad-hoc test below pass by finding nothing — the exact failure this
+          # step exists to catch.
+          codesign -dvv "$app" > "$work/info" 2>&1
+          test -s "$work/info"
           if grep -q 'Signature=adhoc' "$work/info"; then
             echo "the bundle is ad-hoc signed: the identity was not used" >&2
             exit 1
@@ -282,7 +287,8 @@ jobs:
           # "leaf" failed against a self-signed identity that had in fact signed
           # correctly — so the assertion accepts either and rejects what actually
           # matters, a requirement bound to this build's hash.
-          codesign -d -r- "$app" 2> "$work/req"
+          codesign -d -r- "$app" > "$work/req" 2>&1
+          test -s "$work/req"
           grep -qE 'certificate (root|leaf)' "$work/req"
           if grep -q 'cdhash' "$work/req"; then
             echo "the requirement is bound to this build, not to the certificate" >&2

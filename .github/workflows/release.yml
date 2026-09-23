@@ -255,6 +255,45 @@ jobs:
           for arch in arm64 amd64; do
             tar -tzf "rmm-remote-darwin-$arch.app.tar.gz" | grep -q 'RMMRemote.app/Contents/MacOS/rmm-remote'
           done
+      # A silent fall back to ad-hoc signing is the failure worth catching here:
+      # the bundle still builds, still verifies, still installs — and every Mac
+      # in the fleet is asked for its privacy permissions again, because macOS
+      # sees a different application. Nothing downstream would notice.
+      - name: The bundle must carry the persistent identity
+        if: env.APPLE_SIGNING_P12 != ''
+        run: |
+          set -eux
+          work="$(mktemp -d)"
+          tar -xzf rmm-remote-darwin-arm64.app.tar.gz -C "$work"
+          app="$work/RMMRemote.app"
+          # Both streams: codesign splits its output between them in ways that
+          # differ by subcommand, and a capture that lands empty would make the
+          # ad-hoc test below pass by finding nothing — the exact failure this
+          # step exists to catch.
+          codesign -dvv "$app" > "$work/info" 2>&1
+          test -s "$work/info"
+          if grep -q 'Signature=adhoc' "$work/info"; then
+            echo "the bundle is ad-hoc signed: the identity was not used" >&2
+            exit 1
+          fi
+          # Written by the bundle script only when a real identity signed it.
+          test -f "$app/Contents/Resources/StableCodeIdentity"
+          # The designated requirement has to follow the CERTIFICATE. A cdhash
+          # requirement is bound to one build, which is the whole problem.
+          #
+          # "root" and "leaf" are both right, and which one appears says what
+          # signed it: a self-signed certificate IS the root of its own chain,
+          # while a Developer ID leaf sits under Apple's anchor. Asserting only
+          # "leaf" failed against a self-signed identity that had in fact signed
+          # correctly — so the assertion accepts either and rejects what actually
+          # matters, a requirement bound to this build's hash.
+          codesign -d -r- "$app" > "$work/req" 2>&1
+          test -s "$work/req"
+          grep -qE 'certificate (root|leaf)' "$work/req"
+          if grep -q 'cdhash' "$work/req"; then
+            echo "the requirement is bound to this build, not to the certificate" >&2
+            exit 1
+          fi
       - name: Remove the signing keychain
         if: always() && env.APPLE_SIGNING_P12 != ''
         run: security delete-keychain "$RUNNER_TEMP/openrmm-signing.keychain-db" || true

@@ -6,6 +6,16 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A leftover Windows service no longer blocks installing the agent.** An
+  `rmm-agent` service whose program was gone — left by `sc.exe delete` while the
+  Services console held it open — made every later `install.ps1` stop with
+  "Service exists but its executable is missing", after a misleading "rolling
+  back". The installer now removes an orphan only when it points at the expected
+  agent path, refuses a service from another folder, and deletes a service
+  created by a failed fresh install instead of leaving another orphan.
+
 ### Added
 
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and

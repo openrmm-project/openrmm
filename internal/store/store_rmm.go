@@ -687,12 +687,6 @@ func (s *Store) SiteEnrollmentAllowedForUser(ctx context.Context, userID, siteID
 	return ok, err
 }
 
-// DeleteClient removes a client (cascades to sites).
-func (s *Store) DeleteClient(ctx context.Context, id string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM clients WHERE id=$1`, id)
-	return err
-}
-
 // RenameClient changes a client's name.
 func (s *Store) RenameClient(ctx context.Context, id, name string) error {
 	ct, err := s.pool.Exec(ctx, `UPDATE clients SET name=$2 WHERE id=$1`, id, name)
@@ -748,12 +742,6 @@ func (s *Store) ListSites(ctx context.Context, clientID string) ([]models.Site, 
 		out = append(out, st)
 	}
 	return out, rows.Err()
-}
-
-// DeleteSite removes a site.
-func (s *Store) DeleteSite(ctx context.Context, id string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM sites WHERE id=$1`, id)
-	return err
 }
 
 // AgentScope returns an agent's site and client ids (either may be nil).

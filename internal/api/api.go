@@ -237,6 +237,14 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermDevicesDelete)).Delete("/devices/{id}", s.deleteDevice)
 		r.With(s.requirePermission(models.PermClientsManage)).Patch("/devices/{id}/group", s.setDeviceGroup)
 		r.With(s.requirePermission(models.PermClientsManage)).Patch("/devices/{id}/site", s.setDeviceSite)
+		r.With(s.requirePermission(models.PermClientsManage)).Post("/devices/bulk/move", s.bulkMoveDevices)
+		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/bulk/delete", s.bulkDeleteDevices)
+		// Proposals from the AI and MCP clients. Listing needs only visibility;
+		// deciding needs the permission the operation itself would, checked
+		// per proposal in the handler.
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/device-operations", s.listDeviceOperations)
+		r.With(s.requirePermissionAny(models.PermClientsManage, models.PermDevicesDelete)).Post("/device-operations/{id}/approve", s.approveDeviceOperation)
+		r.With(s.requirePermissionAny(models.PermClientsManage, models.PermDevicesDelete)).Post("/device-operations/{id}/reject", s.rejectDeviceOperation)
 
 		r.With(s.requirePermission(models.PermJobsView)).Get("/jobs", s.listJobs)
 		r.With(s.requirePermission(models.PermJobsView)).Get("/jobs/{id}", s.getJob)

@@ -57,7 +57,8 @@ server (`11-mcp`).
 
 | Tool | Required permission | Kind | Description |
 |------|---------------------|------|-------------|
-| `list_devices` | `devices.view` | read | List agents (id, hostname, os, arch, status) |
+| `list_devices` | `devices.view` | read | List agents (id, hostname, os, arch, status, site_id, group_id) |
+| `list_org` | `clients.view` | read | Companies, their sites and departments, with ids — scope-filtered |
 | `get_inventory` | `devices.view` | read | Latest inventory for a device |
 | `get_job_status` | `jobs.view` | read | Status + result of a job |
 | `fleet_summary` | `devices.view` (+ `jobs.view` for recent jobs) | read | Aggregate counts + recent jobs when allowed |
@@ -71,6 +72,8 @@ server (`11-mcp`).
 | `propose_task` | `tasks.manage` | **write (gated)** | Create a scheduled task **disabled** and stamped `proposed_by` — the scheduler selects `WHERE enabled`, so it never runs until a person enables it |
 | `propose_check` | `checks.manage` | **write (gated)** | Same, for a monitoring check |
 | `propose_policy` | `policies.manage` | **write (gated)** | Create a policy marked as awaiting review. Unrestricted admins only, like the REST handler |
+| `propose_move_devices` | `clients.manage` | **write (gated)** | Propose moving up to 500 devices to a site (and optional department). Changes nothing until a person approves it under Devices ▸ Pending operations |
+| `propose_delete_devices` | `devices.delete` | **write (gated)** | Propose deleting up to 500 devices. The approver must type the device count |
 
 ### Configuration is proposed too, and here is why
 
@@ -130,6 +133,31 @@ the targets (device ids ∪ site ∪ department), keeps only the caller's in-sco
 devices, and calls `jobs.ProposeBulk`, which splits them **by company** into one
 `awaiting_approval` batch per company (a deployment never spans companies). The
 human approves each company batch in the UI; nothing runs before that.
+
+### Moving and deleting devices
+
+Moving a device between companies or deleting it is a change the server makes,
+not a job an endpoint runs, so there was no approval gate to route it through.
+It now has its own: `propose_move_devices` and `propose_delete_devices` write a
+`device_operations` row that does nothing by itself (migration 014).
+
+Approving it does **not** replay the AI's authority. The server carries it out
+as the person approving, with their permissions and access scope checked again
+at that moment:
+
+- a move needs `clients.manage`, a delete `devices.delete` — the same as doing it
+  by hand; the approval route admits either, and the handler checks the one the
+  proposal needs;
+- a scoped approver cannot release a proposal that names a device, or a
+  destination, outside their scope — it is not even listed for them;
+- a deletion is confirmed by typing its device count, as in the console's own
+  bulk delete;
+- one approval runs it once: the proposal is claimed atomically, and a second
+  approver gets 409.
+
+The proposal's own checks (the caller's scope, the department belonging to the
+site, the 500-device limit) only keep the AI from asking for what its user could
+not see. They are not what authorises the change.
 
 ## High-level tools (OS-aware actions)
 

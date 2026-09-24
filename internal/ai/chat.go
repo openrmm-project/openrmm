@@ -40,6 +40,11 @@ Hard rules:
    (powershell/cmd for Windows, bash/sh for Linux/macOS). "python" is available on
    either OS, but only where an interpreter is installed and on agents 0.4.9 or
    later — prefer the native shell unless the task genuinely needs Python.
+   Moving devices between sites/departments and deleting devices work the same
+   way: propose_move_devices and propose_delete_devices only create a proposal a
+   HUMAN approves under Devices > Pending operations. Resolve names with list_org
+   and list_devices first. Propose a deletion only when the user explicitly asks
+   to remove devices, and list which ones.
 4. After proposing a script, clearly tell the user it is awaiting their approval and
    show what the script will do. Never claim something ran unless a job result confirms it.
 5. Prefer idempotent, safe scripts. Avoid destructive operations; if one is unavoidable,

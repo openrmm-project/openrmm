@@ -455,6 +455,36 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS days_of_week SMALLINT NOT NULL DEFAUL
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS run_at_minutes INTEGER[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_tasks_policy ON tasks(policy_id);
 
+-- ===================== Device operations =====================
+-- Bulk moves and deletions proposed by the AI or an MCP client; inert until a
+-- person approves them. See migration 014.
+CREATE TABLE IF NOT EXISTS device_operations (
+    id          UUID PRIMARY KEY,
+    kind        TEXT NOT NULL CHECK (kind IN ('move', 'delete')),
+    agent_ids   UUID[] NOT NULL CHECK (cardinality(agent_ids) BETWEEN 1 AND 500),
+    -- The destination of a move. A proposal whose destination is deleted
+    -- before anyone reviews it has nothing left to approve, so it goes with it.
+    site_id     UUID REFERENCES sites(id) ON DELETE CASCADE,
+    group_id    UUID REFERENCES device_groups(id) ON DELETE CASCADE,
+    description TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'awaiting_approval'
+                CHECK (status IN ('awaiting_approval', 'approved', 'completed', 'failed', 'rejected')),
+    proposed_by TEXT NOT NULL CHECK (proposed_by <> ''),
+    decided_by  TEXT NOT NULL DEFAULT '',
+    result      JSONB NOT NULL DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at  TIMESTAMPTZ,
+    CHECK (kind <> 'move' OR site_id IS NOT NULL),
+    CHECK (kind <> 'delete' OR (site_id IS NULL AND group_id IS NULL)),
+    -- Anything past review names who reviewed it.
+    CHECK (status = 'awaiting_approval' OR decided_by <> '')
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_operations_awaiting
+    ON device_operations (created_at DESC) WHERE status = 'awaiting_approval';
+CREATE INDEX IF NOT EXISTS idx_device_operations_created
+    ON device_operations (created_at DESC);
+
 -- ===================== Alerts =====================
 
 CREATE TABLE IF NOT EXISTS alerts (

@@ -132,6 +132,10 @@ function DashboardScreen({ navigate }) {
   const jobsQ = useQuery(['dash-jobs', role], () => can('jobs.view') ? api.listJobs() : Promise.resolve({ jobs: [] }), { invalidateOn: ['jobs'], poll: can('jobs.view') ? 4000 : 0 });
   const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit(8) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
   const alertsQ = useQuery(['dash-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
+  // Moves and deletions the AI or an MCP client proposed wait for a person just
+  // like jobs do, so they count here too. A failure shows nothing rather than
+  // breaking the dashboard.
+  const opsQ = useQuery(['dash-device-ops', role], () => can('devices.view') ? api.listDeviceOperations().catch(() => ({ operations: [] })) : Promise.resolve({ operations: [] }), { invalidateOn: ['device-ops', 'devices'], poll: can('devices.view') ? 8000 : 0 });
   const [ask, setAsk] = useState('');
   const [hidden, setHidden] = useState(loadDashHidden);
   const show = (id) => !hidden.includes(id);
@@ -147,6 +151,9 @@ function DashboardScreen({ navigate }) {
   const alerts = alertsQ.data?.alerts || [];
   const online = devices.filter((d) => d.status === 'online').length;
   const awaiting = jobs.filter((j) => j.status === 'awaiting_approval');
+  const pendingOps = window.DeviceBulk.awaiting(opsQ.data?.operations);
+  const awaitingTotal = awaiting.length + pendingOps.length;
+  const canSeeApprovals = can('jobs.view') || can('devices.view');
   const failures = jobs.filter((j) => j.status === 'failed');
   const openAlerts = alerts.filter((a) => a.status === 'new' || a.status === 'acked');
   const openAlertCount = alertsQ.data?.counts?.open ?? openAlerts.length;
@@ -186,14 +193,14 @@ function DashboardScreen({ navigate }) {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
         {can('devices.view') && <StatTile label="Total devices" value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
         {can('devices.view') && <StatTile label="Online" value={online} icon="dot" tone="ok" sub={`${devices.length - online} offline`} onClick={() => navigate('devices')} />}
-        {can('jobs.view') && <StatTile label="Awaiting approval" value={awaiting.length} icon="flash" tone="warn" highlight={awaiting.length > 0} onClick={() => navigate('jobs')} sub="needs a human" />}
+        {canSeeApprovals && <StatTile label="Awaiting approval" value={awaitingTotal} icon="flash" tone="warn" highlight={awaitingTotal > 0} onClick={() => navigate(awaiting.length === 0 && pendingOps.length > 0 ? 'devices' : 'jobs')} sub={window.DeviceBulk.approvalSummary(awaiting.length, pendingOps.length)} />}
         {can('alerts.view') && <StatTile label="Open alerts" value={openAlertCount} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
         {can('jobs.view') && <StatTile label="Recent failures" value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
       </div>
       )}
 
       {(() => {
-        const showAwaiting = can('jobs.view') && show('awaiting');
+        const showAwaiting = canSeeApprovals && show('awaiting');
         const showActivity = can('audit.view') && show('activity');
         const showAlerts = can('alerts.view') && show('alerts');
         const leftHasContent = showAwaiting || showActivity;
@@ -215,8 +222,20 @@ function DashboardScreen({ navigate }) {
               <button onClick={() => navigate('jobs')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">View all <Icon name="chevright" size={13} /></button>
             </div>
             <div className="divide-y divide-line">
-              {awaiting.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">Nothing waiting. The queue is clear.</div>}
-              {awaiting.slice(0, 4).map((j) => {
+              {awaitingTotal === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">Nothing waiting. The queue is clear.</div>}
+              {pendingOps.slice(0, 4).map((op) => (
+                <button key={op.id} onClick={() => navigate('devices')} className="w-full text-left px-4 py-3 hover:bg-elevated/50 transition flex items-center gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] text-ink font-medium truncate">{window.DeviceBulk.describe(op)}</span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{String(op.proposed_by).startsWith('mcp:') ? 'MCP' : 'AI'}</span>
+                    </div>
+                    <div className="text-[11.5px] text-faint mt-0.5 flex items-center gap-1.5"><Icon name={op.kind === 'delete' ? 'trash' : 'building'} size={12} />{op.description || window.DeviceBulk.proposer(op.proposed_by)} · {timeAgo(op.created_at)}</div>
+                  </div>
+                  <StatusPill status="awaiting_approval" size="sm" />
+                </button>
+              ))}
+              {awaiting.slice(0, Math.max(0, 4 - pendingOps.length)).map((j) => {
                 const dev = devices.find((d) => d.id === j.agent_id);
                 const ai = j.created_by.startsWith('ai:');
                 return (

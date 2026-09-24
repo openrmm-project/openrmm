@@ -281,12 +281,14 @@ boolean `*_set` flags.
 | GET | `/api/clients` | `clients.view` | List clients |
 | POST | `/api/clients` | `clients.manage` | `{name}` |
 | PATCH | `/api/clients/{id}` | `clients.manage` | `{name}` rename a client |
-| DELETE | `/api/clients/{id}` | `clients.manage` | Delete (cascades to sites) |
+| DELETE | `/api/clients/{id}` | `clients.manage` | Delete with its sites, departments and their enrollment tokens; its devices become unassigned |
 | GET | `/api/sites?client_id=` | `clients.view` | List sites |
 | POST | `/api/sites` | `clients.manage` | `{client_id,name}` |
 | PATCH | `/api/sites/{id}` | `clients.manage` | `{name}` rename a site |
-| DELETE | `/api/sites/{id}` | `clients.manage` | Delete site |
+| DELETE | `/api/sites/{id}` | `clients.manage` | Delete a site with its departments and enrollment tokens. **409** while it still has devices, with the count in the message — move or delete them first |
 | PATCH | `/api/devices/{id}/site` | `clients.manage` | `{site_id}` reassign a device |
+| POST | `/api/devices/bulk/move` | `clients.manage` | `{agent_ids, site_id, group_id?}` — all or none; up to 500 devices; every device and the destination must be in the caller's scope; each device audited as `device.move` |
+| POST | `/api/devices/bulk/delete` | `devices.delete` | `{agent_ids, confirm_count}` — `confirm_count` must equal the number of distinct devices; up to 500; each deleted and audited on its own, failures listed in `failed` |
 
 ## Script library
 
@@ -413,7 +415,20 @@ Department); it never spans companies/sites. Optional.
 | PATCH | `/api/groups/{id}` | `clients.manage` | `{name}` rename a department (audited as `group.rename`) |
 | DELETE | `/api/groups/{id}` | `clients.manage` | Delete a department (audited) |
 | PATCH | `/api/devices/{id}/group` | `clients.manage` | `{group_id}` assign/clear — the department must be in the device's own site |
-| DELETE | `/api/devices/{id}` | `devices.delete` | Delete a device (audited; never via AI/MCP) |
+| DELETE | `/api/devices/{id}` | `devices.delete` | Delete a device (audited). AI/MCP can only *propose* it — see below |
+
+### Device operations proposed by the AI or MCP clients
+
+`propose_move_devices` and `propose_delete_devices` store a proposal and change
+nothing. A person decides it here; approving carries it out with **the
+approver's** permissions and access scope, checked again at that moment, and
+each device's audit entry records the proposal and who proposed it.
+
+| Method | Path | Permission | Description |
+|--------|------|------------|-------------|
+| GET | `/api/device-operations` | `devices.view` | Waiting proposals first, then recent ones. A scoped caller sees only proposals whose devices are all in their scope |
+| POST | `/api/device-operations/{id}/approve` | `clients.manage` for a move, `devices.delete` for a delete | A delete needs `{confirm_count}` equal to its device count. A refusal (permission, scope, count) leaves it waiting; **409** once someone else decided it |
+| POST | `/api/device-operations/{id}/reject` | same | Discard it; nothing changes |
 
 ## MCP endpoint
 

@@ -24,6 +24,7 @@ const sources = [
   'src/icons.jsx',
   'src/mockapi.jsx',
   'src/remote-input.jsx',
+  'src/device-bulk.jsx',
   'src/ui.jsx',
   'src/screens-core.jsx',
   'src/screens-devices.jsx',

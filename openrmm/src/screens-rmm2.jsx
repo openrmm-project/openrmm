@@ -506,7 +506,7 @@ function ClientsScreen() {
           {visibleClients.map((c) => <ClientNode key={c.id} client={c} sites={sitesFor(c)} groups={groups} devices={devices} sel={sel} setSel={setSel} selDept={selDept} setSelDept={setSelDept} siteCount={siteCount} clientCount={clientCount} />)}
           {visibleClients.length === 0 && <Card><EmptyState icon="building" title={ql ? 'No matches' : 'No clients'} /></Card>}
         </div>
-        <div>{selSite ? <SiteDetail site={selSite} client={selClient} devices={selDevices} clients={clients} sites={sites} query={ql} focusDept={selDept} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
+        <div>{selSite ? <SiteDetail site={selSite} client={selClient} devices={selDevices} siteDeviceTotal={window.DeviceBulk.siteDeviceCount(devices, sel)} clients={clients} sites={sites} query={ql} focusDept={selDept} /> : <Card className="h-full"><EmptyState icon="pin" title="Select a site" msg="Pick a site to see its devices and enrollment command." /></Card>}</div>
       </div>
       <Modal open={creatingClient} onClose={() => setCreatingClient(false)} width="max-w-md"><div className="p-5"><div className="text-[15px] font-semibold text-ink mb-4">New client</div><Field label="Client name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Northwind Trading" autoFocus /></Field><div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setCreatingClient(false)}>Cancel</Button><Button variant="primary" onClick={addClient} disabled={!name}>Create</Button></div></div></Modal>
     </Page>
@@ -642,7 +642,9 @@ function EnrollCommands({ token, site }) {
   );
 }
 
-function SiteDetail({ site, client, devices, clients, sites, query, focusDept }) {
+// siteDeviceTotal counts every device in the site; `devices` is narrowed by the
+// search box and must not decide whether the site can be deleted.
+function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, query, focusDept }) {
   const { can } = useAuth();
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
@@ -820,7 +822,14 @@ function SiteDetail({ site, client, devices, clients, sites, query, focusDept })
           )}
         </div>
       )}
-      <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?" body={<>This removes <b>{site.name}</b> and its departments. Its devices become unassigned. This cannot be undone.</>} confirmLabel="Delete site" />
+      {/* A site with devices is refused by the server; say so here, before the
+          click, instead of letting it come back as an error. */}
+      <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?"
+        blocked={siteDeviceTotal > 0}
+        body={siteDeviceTotal > 0
+          ? <><b>{site.name}</b> still has {window.DeviceBulk.countLabel(siteDeviceTotal)}. {siteDeviceTotal === 1 ? 'Move or delete it first.' : 'Move or delete them first — select them in Devices to move them all at once.'}</>
+          : <>This removes <b>{site.name}</b>, its departments and the enrollment tokens that point at it. This cannot be undone.</>}
+        confirmLabel="Delete site" />
       <ConfirmDialog open={!!confirmDelDept} onClose={() => setConfirmDelDept(null)} onConfirm={delDept} danger title="Delete department?" body={<>This removes the department <b>{confirmDelDept?.name}</b>. Its devices stay, but their department is cleared.</>} confirmLabel="Delete department" />
       <DeviceMoveModal open={!!moveDevice} onClose={() => setMoveDevice(null)} device={moveDevice} clients={clients} sites={sites} groups={groupsQ.data?.groups || []} onSave={saveDeviceMove} />
       <ConfirmDialog open={!!confirmDelDevice} onClose={() => setConfirmDelDevice(null)} onConfirm={delDevice} danger title="Delete device?" body={<>This permanently removes <b>{confirmDelDevice?.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />

@@ -30,6 +30,7 @@ function presenceSummary(viewers) {
 function DevicesScreen({ navigate }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
   const { can } = useAuth();
+  const toast = useToast();
   const sitesQ = useQuery(['sites-all'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
   const clientsQ = useQuery(['clients-all'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
   const [q, setQ] = useState('');
@@ -39,8 +40,19 @@ function DevicesScreen({ navigate }) {
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const presence = useRemotePresence();
+  // Bulk move and delete. The selection is by id and survives filtering, but
+  // the header checkbox acts only on what is visible (see DeviceBulk).
+  const canMove = can('clients.manage');
+  const canDelete = can('devices.delete');
+  const canBulk = canMove || canDelete;
+  const [picked, setPicked] = useState([]);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
 
   const devices = devicesQ.data?.devices || [];
+  const groups = groupsQ.data?.groups || [];
+  useEffect(() => { setPicked((cur) => window.DeviceBulk.prune(cur, devices.map((d) => d.id))); }, [devicesQ.data]);
   const sites = sitesQ.data?.sites || [];
   const clients = clientsQ.data?.clients || [];
   const siteName = (id) => sites.find((s) => s.id === id)?.name || '—';
@@ -56,6 +68,25 @@ function DevicesScreen({ navigate }) {
     if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
   });
+  const visibleIds = filtered.map((d) => d.id);
+  const pickedDevices = devices.filter((d) => picked.includes(d.id));
+  const cols = canBulk ? 9 : 8;
+
+  const moveSelected = async ({ siteId, groupId }) => {
+    try {
+      const r = await api.bulkMoveDevices(picked, siteId, groupId || null);
+      toast.success('Devices moved', window.DeviceBulk.countLabel(r.moved) + ' now in ' + siteName(siteId));
+      setMoveOpen(false); setPicked([]); window.dataBus.emit('devices');
+    } catch (e) { toast.error('Nothing was moved', e.message); }
+  };
+  const deleteSelected = async () => {
+    try {
+      const r = await api.bulkDeleteDevices(picked, picked.length);
+      if (r.failed && r.failed.length) toast.error('Some devices were not deleted', r.failed.map((f) => f.hostname || f.agent_id).join(', '));
+      else toast.success('Devices deleted', window.DeviceBulk.countLabel(r.deleted));
+      setPicked([]); window.dataBus.emit('devices');
+    } catch (e) { toast.error('Nothing was deleted', e.message); }
+  };
 
   return (
     <Page wide>
@@ -81,10 +112,26 @@ function DevicesScreen({ navigate }) {
         </div>
       </Card>
 
+      <PendingDeviceOperations devices={devices} sites={sites} groups={groups} />
+
+      {canBulk && picked.length > 0 && (
+        <Card className="mb-3">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="text-[12.5px] text-ink font-medium">{window.DeviceBulk.countLabel(picked.length)} selected</span>
+            {picked.length > window.DeviceBulk.LIMIT && <span className="text-[12px] text-bad">More than {window.DeviceBulk.LIMIT}; select fewer to act on them.</span>}
+            <div className="flex-1" />
+            {canMove && <Button size="sm" icon="building" disabled={picked.length > window.DeviceBulk.LIMIT} onClick={() => setMoveOpen(true)}>Move…</Button>}
+            {canDelete && <Button size="sm" variant="danger" icon="trash" disabled={picked.length > window.DeviceBulk.LIMIT} onClick={() => setDeleteOpen(true)}>Delete…</Button>}
+            <Button size="sm" variant="ghost" onClick={() => setPicked([])}>Clear</Button>
+          </div>
+        </Card>
+      )}
+
       <Card className="overflow-hidden">
         <table className="w-full text-left">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
+              {canBulk && <th className="pl-4 pr-1 py-2.5 w-8"><input type="checkbox" aria-label="Select all visible devices" className="h-3.5 w-3.5 accent-brand" checked={window.DeviceBulk.allVisibleSelected(picked, visibleIds)} onChange={() => setPicked((cur) => window.DeviceBulk.toggleAllVisible(cur, visibleIds))} /></th>}
               <th className="font-semibold px-4 py-2.5">Hostname</th>
               <th className="font-semibold px-3 py-2.5">Description</th>
               <th className="font-semibold px-3 py-2.5">OS</th>
@@ -97,10 +144,11 @@ function DevicesScreen({ navigate }) {
           </thead>
           <tbody className="divide-y divide-line">
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i}><td className="px-4 py-3" colSpan={8}><Skeleton className="h-5 w-full" /></td></tr>
+              <tr key={i}><td className="px-4 py-3" colSpan={cols}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
             {!devicesQ.loading && filtered.map((d) => (
-              <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
+              <tr key={d.id} onClick={() => setSelected(d.id)} className={cx('cursor-pointer hover:bg-elevated/50 transition group', picked.includes(d.id) && 'bg-brandsoft/40')}>
+                {canBulk && <td className="pl-4 pr-1 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={'Select ' + d.hostname} className="h-3.5 w-3.5 accent-brand" checked={picked.includes(d.id)} onChange={() => setPicked((cur) => window.DeviceBulk.toggle(cur, d.id))} /></td>}
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <span className={cx('h-2 w-2 rounded-full shrink-0', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
@@ -125,7 +173,120 @@ function DevicesScreen({ navigate }) {
 
       <DeviceDetail id={selected} onClose={() => setSelected(null)} navigate={navigate} sites={sites} clients={clients} />
       <BulkDeployModal open={bulkOpen} onClose={() => setBulkOpen(false)} devices={devices} sites={sites} clients={clients} navigate={navigate} />
+      <DeviceOrgModal open={moveOpen} onClose={() => setMoveOpen(false)} device={{ id: 'bulk', hostname: window.DeviceBulk.countLabel(picked.length), site_id: '', group_id: '' }}
+        clients={clients} sites={sites} groups={groups} onSave={moveSelected} allowUnassigned={false} />
+      <ConfirmDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={deleteSelected} danger
+        title={'Delete ' + window.DeviceBulk.countLabel(picked.length) + '?'}
+        body={<>
+          <span>{pickedDevices.slice(0, 8).map((d) => d.hostname).join(', ')}{pickedDevices.length > 8 ? ` and ${pickedDevices.length - 8} more` : ''}.</span>
+          <span className="block mt-2">They disappear from the console and their credentials stop working. The agent stays installed on each machine until it is uninstalled there. This cannot be undone.</span>
+        </>}
+        requireType={String(picked.length)} confirmLabel={'Delete ' + window.DeviceBulk.countLabel(picked.length)} />
     </Page>
+  );
+}
+
+// PendingDeviceOperations lists the moves and deletions the AI assistant or an
+// MCP client has proposed. Nothing in them has happened: a person reviews each
+// one here, and approving runs it with that person's permissions and scope.
+function PendingDeviceOperations({ devices, sites, groups }) {
+  const { can } = useAuth();
+  // A server without the feature, or a caller without access, simply shows
+  // nothing: this panel must never be what breaks the Devices screen.
+  const opsQ = useQuery(['device-ops'], () => api.listDeviceOperations().catch(() => ({ operations: [] })), { invalidateOn: ['devices', 'device-ops'], poll: 15000 });
+  const [review, setReview] = useState(null);
+  const pending = window.DeviceBulk.awaiting(opsQ.data?.operations);
+  if (!pending.length) return null;
+  const names = {
+    site: (id) => sites.find((s) => s.id === id)?.name,
+    group: (id) => groups.find((g) => g.id === id)?.name,
+  };
+  return (
+    <Card className="mb-3 border-warn/40">
+      <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+        <Icon name="sparkle" size={15} className="text-warn" />
+        <span className="text-[13px] font-semibold text-ink">Pending operations</span>
+        <span className="text-[12px] text-muted">Proposed by the AI assistant or an MCP client. Nothing has changed until someone approves.</span>
+      </div>
+      <div className="divide-y divide-line">
+        {pending.map((op) => (
+          <div key={op.id} className="flex items-center gap-3 px-4 py-2.5">
+            <Icon name={op.kind === 'delete' ? 'trash' : 'building'} size={15} className={op.kind === 'delete' ? 'text-bad' : 'text-brandhi'} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] text-ink truncate">{window.DeviceBulk.describe(op, names)}</div>
+              <div className="text-[11.5px] text-faint truncate">{window.DeviceBulk.proposer(op.proposed_by)} · {timeAgo(op.created_at)}{op.description ? ' · ' + op.description : ''}</div>
+            </div>
+            <Button size="sm" onClick={() => setReview(op)}>Review</Button>
+          </div>
+        ))}
+      </div>
+      <DeviceOperationReview op={review} onClose={() => setReview(null)} devices={devices} names={names} canDecide={review ? can(window.DeviceBulk.decidePermission(review)) : false} />
+    </Card>
+  );
+}
+
+function DeviceOperationReview({ op, onClose, devices, names, canDecide }) {
+  const toast = useToast();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setTyped(''); }, [op && op.id]);
+  if (!op) return null;
+  const isDelete = op.kind === 'delete';
+  const n = op.agent_ids.length;
+  const listed = op.agent_ids.map((id) => devices.find((d) => d.id === id)).filter(Boolean);
+  const missing = n - listed.length;
+  const confirmed = !isDelete || window.DeviceBulk.confirmMatches(typed, n);
+  const decide = async (approve) => {
+    setBusy(true);
+    try {
+      if (approve) {
+        const r = await api.approveDeviceOperation(op.id, isDelete ? n : undefined);
+        if (r.failed && r.failed.length) toast.error('Partly done', r.failed.map((f) => f.hostname || f.agent_id).join(', ') + ' could not be deleted');
+        else toast.success('Approved', window.DeviceBulk.describe(op, names));
+      } else {
+        await api.rejectDeviceOperation(op.id);
+        toast.info('Rejected', 'Nothing was changed.');
+      }
+      window.dataBus.emit('device-ops'); window.dataBus.emit('devices');
+      onClose();
+    } catch (e) {
+      toast.error(approve ? 'Not approved' : 'Not rejected', e.message);
+      window.dataBus.emit('device-ops');
+    } finally { setBusy(false); }
+  };
+  return (
+    <Modal open={!!op} onClose={onClose} width="max-w-lg">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className={cx('h-9 w-9 rounded-xl flex items-center justify-center shrink-0', isDelete ? 'bg-badsoft text-bad' : 'bg-brandsoft text-brandhi')}><Icon name={isDelete ? 'trash' : 'building'} size={18} /></div>
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold text-ink">{window.DeviceBulk.describe(op, names)}</div>
+            <div className="text-[12.5px] text-muted">{window.DeviceBulk.proposer(op.proposed_by)} · {timeAgo(op.created_at)}</div>
+          </div>
+        </div>
+        {op.description && <div className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[12.5px] text-ink">{op.description}</div>}
+        <div className="rounded-xl border border-line max-h-56 overflow-y-auto scroll-area divide-y divide-line">
+          {listed.map((d) => (
+            <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px]">
+              <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
+              <span className="text-ink flex-1 truncate">{d.hostname}</span>
+              <span className="text-faint">{names.site(d.site_id) || 'unassigned'}</span>
+            </div>
+          ))}
+          {missing > 0 && <div className="px-3 py-1.5 text-[12px] text-faint">{window.DeviceBulk.countLabel(missing)} not in your list (deleted, or outside your view)</div>}
+        </div>
+        {isDelete && <div className="text-[12.5px] text-muted">Deleted devices disappear from the console and their credentials stop working. The agent stays installed on each machine until it is uninstalled there. This cannot be undone.</div>}
+        {!canDecide && <div className="text-[12.5px] text-warn">Deciding this needs the {window.DeviceBulk.decidePermission(op)} permission.</div>}
+        {canDecide && isDelete && (
+          <Field label={`Type ${n} to confirm`}><Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={String(n)} autoFocus /></Field>
+        )}
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Close</Button>
+          {canDecide && <Button variant="ghost" onClick={() => decide(false)} disabled={busy}>Reject</Button>}
+          {canDecide && <Button variant={isDelete ? 'danger' : 'primary'} loading={busy} disabled={!confirmed} onClick={() => decide(true)}>{isDelete ? 'Approve deletion' : 'Approve move'}</Button>}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -359,7 +520,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   );
 }
 
-function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave }) {
+function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave, allowUnassigned = true }) {
   const [q, setQ] = useState('');
   const [siteId, setSiteId] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -383,7 +544,7 @@ function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave 
         </div>
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, site, or department…" autoFocus />
         <div className="rounded-xl border border-line max-h-80 overflow-y-auto scroll-area p-1">
-          <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>
+          {allowUnassigned && <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>}
           {visibleClients.map((c) => {
             const clientSites = sites.filter((s) => s.client_id === c.id && (matches(c.name) || matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name))));
             return (
@@ -406,7 +567,7 @@ function DeviceOrgModal({ open, onClose, device, clients, sites, groups, onSave 
           })}
           {visibleClients.length === 0 && <div className="px-3 py-8 text-center text-[12px] text-faint">No matches.</div>}
         </div>
-        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>Save assignment</Button></div>
+        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed || (!allowUnassigned && !siteId)} onClick={save}>Save assignment</Button></div>
       </div>
     </Modal>
   );

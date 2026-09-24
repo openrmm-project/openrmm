@@ -418,17 +418,10 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 	if a, err := s.store.GetAgent(r.Context(), id); err == nil && a != nil {
 		label = a.Hostname
 	}
-	unlock := s.lockAgentLifecycle(id)
-	defer unlock()
-	if err := s.store.DeleteAgent(r.Context(), id); err != nil {
+	if err := s.deleteOneDevice(r, id, label, nil); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.closeRetiredDeviceMonitoring(r, id, "deleted")
-	// The durable delete succeeds before the in-memory relay is permanently
-	// fenced. A failed database operation must not leave an active device blocked.
-	s.terminateAgentTransport(r.Context(), id)
-	_ = s.store.AddAudit(r.Context(), actorOf(r), "device.delete", id, auditLabel("hostname", label))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

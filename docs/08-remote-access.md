@@ -524,10 +524,32 @@ intended path for official builds is Developer ID.
   the project controls, and the earlier `com.openrmm.remote` did not. The
   identifier is the privacy identity and the LaunchAgent label, so endpoints
   installed under the old name are migrated: the agent (and a reinstall) boots
-  out the old job, deletes `/Library/LaunchAgents/com.openrmm.remote.plist` and
-  resets its privacy rows. The agent also rewrites its own LaunchAgent plist
-  whenever it no longer matches, because agents update themselves and installers
-  do not re-run.
+  out the old job and deletes `/Library/LaunchAgents/com.openrmm.remote.plist`.
+  The agent also rewrites its own LaunchAgent plist whenever it no longer
+  matches, because agents update themselves and installers do not re-run.
+
+  The old identifier's **privacy rows are not cleared automatically**, and
+  never were in practice: `tccutil reset` resolves an identifier through
+  LaunchServices and refuses one whose app is gone (`No such bundle identifier`,
+  OSStatus -10814). They grant nothing to the current module and only leave a
+  dead "OpenRMM Remote" entry in System Settings. Only test machines ran that
+  identifier. To clear them anyway, run this as a script job (it touches only
+  `com.openrmm.remote`): it registers a placeholder app carrying the identifier
+  so `tccutil` can resolve it — `/Applications`, not `/tmp`, which
+  LaunchServices did not pick up — resets both databases, and removes it.
+
+  ```bash
+  L=com.openrmm.remote
+  LS=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  U="$(stat -f %u /dev/console)"; APP=/Applications/.OpenRMMLegacyCleanup.app
+  mkdir -p "$APP/Contents/MacOS"
+  printf '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>%s</string><key>CFBundleExecutable</key><string>x</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>' "$L" > "$APP/Contents/Info.plist"
+  printf '#!/bin/sh\n' > "$APP/Contents/MacOS/x"; chmod 755 "$APP/Contents/MacOS/x"
+  "$LS" -f -R -trusted "$APP"; launchctl asuser "$U" sudo -u "#$U" "$LS" -f -R -trusted "$APP"
+  sleep 2
+  tccutil reset All "$L"; launchctl asuser "$U" sudo -u "#$U" tccutil reset All "$L"
+  "$LS" -u "$APP"; launchctl asuser "$U" sudo -u "#$U" "$LS" -u "$APP"; rm -rf "$APP"
+  ```
   **A Terminal window at every login is not the installer's doing.** macOS runs a
   Unix executable added to Login Items inside Terminal.app, so a bare
   `rmm-agent` or `rmm-remote` listed under *General ▸ Login Items ▸ Open at

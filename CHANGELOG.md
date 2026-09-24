@@ -6,6 +6,17 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Enrollment commands from the console work on HTTPS servers.** The install
+  commands the console shows had no `--update-public-key` / `-UpdatePublicKey`,
+  and both installers refuse a production install without one, so every
+  enrollment copied from the console failed. The server now reads
+  `RMM_UPDATE_PUBLIC_KEY` (base64; comma-separated during a rotation), refuses
+  to start on a malformed one, and publishes it in `/api/config`; the console
+  adds it to both commands and warns when an HTTPS server has none.
+  `docker-compose.prod.yml` now requires it.
+
 ### Added
 
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and

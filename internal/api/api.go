@@ -622,8 +622,20 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"version":               "0.2.1",
 			"base_url":              s.cfg.PublicURL,
 			"allow_unapproved_jobs": s.cfg.AllowUnapprovedJobs,
+			// Public keys, not secrets: every installer that pins them was
+			// served by this same origin.
+			"update_public_keys": updatePublicKeys(s.cfg),
 		},
 	})
+}
+
+// updatePublicKeys is never null in JSON, so the console can tell "none
+// configured" from an older server that does not send the field at all.
+func updatePublicKeys(cfg *config.Config) []string {
+	if len(cfg.UpdatePublicKeys) == 0 {
+		return []string{}
+	}
+	return cfg.UpdatePublicKeys
 }
 
 // updateConfig persists editable runtime config. Secret inputs are write-only:

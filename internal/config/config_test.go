@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,5 +195,41 @@ func TestOIDCDisabledIgnoresItsOwnSettings(t *testing.T) {
 	}
 	if cfg.OIDCEnabled {
 		t.Error("OIDC reported as enabled")
+	}
+}
+
+// The console builds its install command from these keys, and the installers
+// refuse a production install without one, so a malformed value must stop the
+// server rather than reach a technician's clipboard.
+func TestUpdatePublicKeys(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	keyA := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	keyB := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("b", 32)))
+
+	t.Setenv("RMM_UPDATE_PUBLIC_KEY", "")
+	c, err := Load()
+	if err != nil || len(c.UpdatePublicKeys) != 0 {
+		t.Fatalf("unset: keys=%v err=%v", c.UpdatePublicKeys, err)
+	}
+
+	// A rotation carries two, in whatever separator the installers accept;
+	// a repeated key is listed once.
+	t.Setenv("RMM_UPDATE_PUBLIC_KEY", keyA+", "+keyB+";"+keyA)
+	c, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.UpdatePublicKeys, ","); got != keyA+","+keyB {
+		t.Fatalf("keys = %q", got)
+	}
+
+	// Hex included: a 64-character hex key is valid base64 of the wrong length,
+	// and the agent would reject it after the install command was copied.
+	hexKey := strings.Repeat("ab", 32)
+	for _, bad := range []string{"not-a-key", base64.StdEncoding.EncodeToString(make([]byte, 31)), keyA + ",zz", hexKey} {
+		t.Setenv("RMM_UPDATE_PUBLIC_KEY", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "RMM_UPDATE_PUBLIC_KEY") {
+			t.Fatalf("%q: err = %v, want a refusal naming RMM_UPDATE_PUBLIC_KEY", bad, err)
+		}
 	}
 }

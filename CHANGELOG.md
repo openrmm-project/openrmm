@@ -6,7 +6,21 @@ tag.
 
 ## [Unreleased]
 
+### Security
+
+- **The first admin needs the operator's admin token.** `POST
+  /api/auth/bootstrap` now requires `Authorization: Bearer $RMM_ADMIN_TOKEN`.
+  Before, an empty instance belonged to whoever called it first — and a hosted
+  instance is reachable before its owner knows the URL (Certificate
+  Transparency logs, the load balancer answering by Host header). Scripts that
+  created the first user anonymously must add the header.
+
 ### Added
+
+- **`openrmm-artifacts` image on every release.** The release workflow packages
+  the signed files it just published into `ghcr.io/<owner>/openrmm-artifacts`
+  (`X.Y.Z`, `X.Y`, `latest`), which Kubernetes tenants serve at `/dl/`.
+
 
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and
   validates acceptable signed `acr` values; `RMM_OIDC_REQUIRED_AMR` requires

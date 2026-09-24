@@ -72,7 +72,19 @@ func validPassword(password, username string) bool {
 }
 
 // bootstrapAdmin creates the very first admin user, only when no users exist.
+//
+// It takes the operator's RMM_ADMIN_TOKEN. "Only while empty" is not a guard
+// on its own: a new instance is empty from the moment it answers until someone
+// signs up, and whoever calls this first owns it. A hosted tenant is reachable
+// before its customer knows the URL — its certificate reaches the Certificate
+// Transparency logs, which scanners read within seconds, and the load balancer
+// answers for the name before any DNS record exists. The token turns the race
+// into a step only the operator can take.
 func (s *Server) bootstrapAdmin(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.AdminToken == "" || !auth.ConstantTimeEqual(bearer(r), s.cfg.AdminToken) {
+		writeErr(w, http.StatusUnauthorized, "bootstrap requires the server's admin token (Authorization: Bearer $RMM_ADMIN_TOKEN)")
+		return
+	}
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`

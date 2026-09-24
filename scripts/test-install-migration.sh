@@ -217,7 +217,29 @@ if [ "$OS" = "darwin" ]; then
 fi
 
 echo "== uninstalling =="
+# What an agent leaves beside itself once it has run for a while: its log, a
+# rollback copy from a self-update, and what fetching the remote sidecar
+# leaves (the sidecar itself and its log only on Linux; on macOS the sidecar
+# is the bundle).
+AGENT_DIR="$(dirname "$NEW_DEST")"
+LEFTOVERS="agent.log agent.log.1 rmm-agent.old rmm-remote.etag rmm-remote.new"
+[ "$OS" = "darwin" ] || LEFTOVERS="$LEFTOVERS rmm-remote rmm-remote.log"
+for name in $LEFTOVERS; do printf 'x' > "${AGENT_DIR}/${name}"; done
+mkdir -p "${AGENT_DIR}/rmm-remote.new.stage"
+# Not ours: only removed when an agent sat beside it, so this must survive.
+if [ "$OS" = "darwin" ]; then printf 'x' > /usr/local/bin/agent.log; fi
 bash "${REPO_ROOT}/deploy/public/uninstall.sh" >/dev/null
+leftovers_gone() {
+  for name in $LEFTOVERS rmm-remote.new.stage; do
+    [ ! -e "${AGENT_DIR}/${name}" ] || { echo "    still there: ${AGENT_DIR}/${name}"; return 1; }
+  done
+}
+check "uninstall removed the agent's log, rollback copy and sidecar files" leftovers_gone
+if [ "$OS" = "darwin" ]; then
+  check "and with nothing left in it, the agent's directory" test ! -e "$AGENT_DIR"
+  check "an agent.log in /usr/local/bin with no agent beside it was left alone" test -e /usr/local/bin/agent.log
+  rm -f /usr/local/bin/agent.log
+fi
 check "uninstall removed the agent" test ! -e "$NEW_DEST"
 check "uninstall removed the service definition" test ! -e "$SERVICE_PATH"
 check "uninstall removed the enrolment state" test ! -e "$STATE_DIR"

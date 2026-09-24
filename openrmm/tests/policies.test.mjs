@@ -55,8 +55,8 @@ test('a policy\'s checks and tasks can be edited from the drawer', async () => {
   assert.match(detail, /<TaskEditor[\s\S]{0,260}defaultPolicyId=\{policy\.id\}/);
   // The toggle was inert: `onChange={() => { }} disabled`.
   assert.doesNotMatch(detail, /onChange=\{\(\) => \{ \}\}/, 'the task toggle must do something');
-  assert.match(detail, /onChange=\{\(\) => setConfirmToggleTask\(t\)\}/);
-  assert.match(detail, /api\.updateTask\(t\.id, \{ \.\.\.t, enabled: !t\.enabled \}\)/,
+  assert.match(detail, /onChange=\{\(\) => setConfirmToggleTask\(task\)\}/);
+  assert.match(detail, /api\.updateTask\(task\.id, \{ \.\.\.task, enabled: !task\.enabled \}\)/,
     'toggling goes through PUT, so the whole task has to be resent');
   // Changing what a policy contains is gated separately from editing the policy.
   assert.match(detail, /const canChecks = can\('checks\.manage'\), canTasks = can\('tasks\.manage'\)/);
@@ -69,5 +69,5 @@ test('the new-policy form sends a description', async () => {
   const screen = source.slice(source.indexOf('function PoliciesScreen('), source.indexOf('function PolicyCard('));
   assert.match(screen, /api\.createPolicy\(\{ name: [^}]*description: [^}]*\}\)/,
     'create must send the description the API accepts');
-  assert.match(screen, /<Field label="Description"/, 'the form needs a description field');
+  assert.match(screen, /<Field label=\{t\('common\.description'\)\}/, 'the form needs a description field');
 });

@@ -134,8 +134,8 @@ function ChatScreen({ navigate }) {
   const newChat = async () => { const s = await api.createSession(''); setActive(s.id); setSessionsOpen(false); };
   const delSession = async () => {
     const sess = confirmDel; if (!sess) return;
-    try { await api.deleteSession(sess.id); if (active === sess.id) setActive(null); toast.info('Conversation deleted'); }
-    catch (e) { toast.error('Failed', e.message); }
+    try { await api.deleteSession(sess.id); if (active === sess.id) setActive(null); toast.info(t('chat.deleted')); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
   };
 
   return (
@@ -143,8 +143,8 @@ function ChatScreen({ navigate }) {
       {/* sessions */}
       <div className={cx('absolute inset-0 z-20 w-full border-r border-line bg-panel flex-col sm:static sm:z-auto sm:flex sm:w-[252px] sm:shrink-0', sessionsOpen ? 'flex' : 'hidden')}>
         <div className="p-3 border-b border-line flex gap-2">
-          <Button variant="primary" icon="plus" className="w-full" onClick={newChat}>New conversation</Button>
-          <Button variant="ghost" size="icon" icon="close" className="sm:hidden" onClick={() => setSessionsOpen(false)} aria-label="Close conversations" />
+          <Button variant="primary" icon="plus" className="w-full" onClick={newChat}>{t('chat.new')}</Button>
+          <Button variant="ghost" size="icon" icon="close" className="sm:hidden" onClick={() => setSessionsOpen(false)} aria-label={t('chat.closeList')} />
         </div>
         <div className="flex-1 overflow-y-auto scroll-area p-2">
           {sessions.map((s) => (
@@ -152,11 +152,11 @@ function ChatScreen({ navigate }) {
               <button onClick={() => { setActive(s.id); setSessionsOpen(false); }} className="flex-1 min-w-0 text-left">
                 <div className="flex items-center gap-2">
                   <Icon name="chat" size={13} className={active === s.id ? 'text-brandhi' : 'text-faint'} />
-                  <span className={cx('text-[12.5px] truncate flex-1', active === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.title || 'New conversation'}</span>
+                  <span className={cx('text-[12.5px] truncate flex-1', active === s.id ? 'text-ink font-medium' : 'text-muted')}>{s.title || t('chat.new')}</span>
                 </div>
                 <div className="text-[10.5px] text-faint mt-0.5 pl-5">{timeAgo(s.created_at)}</div>
               </button>
-              <button onClick={() => setConfirmDel(s)} title="Delete conversation" className="opacity-0 group-hover:opacity-100 text-faint hover:text-bad p-1 transition shrink-0"><Icon name="trash" size={13} /></button>
+              <button onClick={() => setConfirmDel(s)} title={t('chat.delete')} className="opacity-0 group-hover:opacity-100 text-faint hover:text-bad p-1 transition shrink-0"><Icon name="trash" size={13} /></button>
             </div>
           ))}
         </div>
@@ -165,20 +165,17 @@ function ChatScreen({ navigate }) {
       {/* thread */}
       <div className="flex-1 min-w-0 flex flex-col bg-app">
         {active ? <ChatThread key={active} sessionId={active} navigate={navigate} onOpenSessions={() => setSessionsOpen(true)} /> : (
-          <div className="flex-1 flex flex-col"><div className="sm:hidden p-2 border-b border-line"><Button variant="ghost" icon="menu" onClick={() => setSessionsOpen(true)}>Conversations</Button></div><div className="flex-1 flex items-center justify-center"><EmptyState icon="sparkle" title="Start a conversation" msg="Ask the AI to inspect or act on your fleet. It proposes; you approve." action={<Button variant="primary" icon="plus" onClick={newChat}>New conversation</Button>} /></div></div>
+          <div className="flex-1 flex flex-col"><div className="sm:hidden p-2 border-b border-line"><Button variant="ghost" icon="menu" onClick={() => setSessionsOpen(true)}>{t('chat.conversations')}</Button></div><div className="flex-1 flex items-center justify-center"><EmptyState icon="sparkle" title={t('chat.start')} msg={t('chat.startMsg')} action={<Button variant="primary" icon="plus" onClick={newChat}>{t('chat.new')}</Button>} /></div></div>
         )}
       </div>
-      <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={delSession} danger title="Delete conversation?" body={<>This permanently removes <b>{confirmDel?.title || 'this conversation'}</b> and its messages. This cannot be undone.</>} confirmLabel="Delete conversation" />
+      <ConfirmDialog open={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={delSession} danger title={t('chat.deleteTitle')} body={t('chat.deleteBody', { title: confirmDel?.title || t('chat.thisConversation') })} confirmLabel={t('chat.delete')} />
     </div>
   );
 }
 
-const SUGGESTIONS = [
-  'Install 7-zip on the finance group',
-  'Give me a report of offline devices',
-  'PLANT-HMI-01 disk is almost full, fix it',
-  'Restart the print spooler on the domain controller',
-];
+// Sent to the assistant as the operator's own words, so they are in the
+// console's language: the assistant answers in the language it is asked in.
+const SUGGESTIONS = ['chat.suggest1', 'chat.suggest2', 'chat.suggest3', 'chat.suggest4'];
 
 function ChatThread({ sessionId, navigate, onOpenSessions }) {
   const msgsQ = useQuery([sessionId, 'msgs'], () => api.getMessages(sessionId), { invalidateOn: ['chat'], poll: 1200 });
@@ -204,15 +201,15 @@ function ChatThread({ sessionId, navigate, onOpenSessions }) {
 
   return (
     <>
-      <div className="sm:hidden p-2 border-b border-line bg-panel"><Button variant="ghost" icon="menu" onClick={onOpenSessions}>Conversations</Button></div>
+      <div className="sm:hidden p-2 border-b border-line bg-panel"><Button variant="ghost" icon="menu" onClick={onOpenSessions}>{t('chat.conversations')}</Button></div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden scroll-area">
         <div className="max-w-[760px] mx-auto px-3 sm:px-5 py-4 sm:py-6 min-w-0">
           {empty && !working && (
             <div className="pt-10">
-              <div className="flex items-center gap-2.5 mb-2"><div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi"><Icon name="sparkle" size={18} /></div><div className="text-[15px] font-semibold text-ink">How can I help with your fleet?</div></div>
-              <p className="text-[13px] text-muted sm:ml-[46px] mb-5">I can inspect devices, propose scripts, and queue actions. I never run anything without your approval.</p>
+              <div className="flex items-center gap-2.5 mb-2"><div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi"><Icon name="sparkle" size={18} /></div><div className="text-[15px] font-semibold text-ink">{t('chat.howHelp')}</div></div>
+              <p className="text-[13px] text-muted sm:ml-[46px] mb-5">{t('chat.intro')}</p>
               <div className="grid sm:grid-cols-2 gap-2 sm:ml-[46px]">
-                {SUGGESTIONS.map((s) => <button key={s} onClick={() => send(s)} className="text-left rounded-xl border border-line bg-card hover:border-line2 hover:bg-elevated transition px-3.5 py-2.5 text-[12.5px] text-muted hover:text-ink flex items-center gap-2"><Icon name="arrowright" size={13} className="text-faint shrink-0" />{s}</button>)}
+                {SUGGESTIONS.map((k) => t(k)).map((s) => <button key={s} onClick={() => send(s)} className="text-left rounded-xl border border-line bg-card hover:border-line2 hover:bg-elevated transition px-3.5 py-2.5 text-[12.5px] text-muted hover:text-ink flex items-center gap-2"><Icon name="arrowright" size={13} className="text-faint shrink-0" />{s}</button>)}
               </div>
             </div>
           )}
@@ -226,10 +223,10 @@ function ChatThread({ sessionId, navigate, onOpenSessions }) {
       <div className="border-t border-line bg-panel/70 backdrop-blur px-2 sm:px-5 py-2.5 sm:py-3.5">
         <div className="max-w-[760px] mx-auto">
           <div className="flex items-end gap-2 rounded-2xl border border-line2 bg-app px-3 py-2 focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/25 transition">
-            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder="Ask the AI to inspect or act…" className="flex-1 bg-transparent resize-none outline-none text-[13.5px] text-ink placeholder:text-faint py-1.5 max-h-32 chat-input" />
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={1} placeholder={t('chat.placeholder')} className="flex-1 bg-transparent resize-none outline-none text-[13.5px] text-ink placeholder:text-faint py-1.5 max-h-32 chat-input" />
             <Button variant="primary" size="icon" onClick={() => send()} disabled={!input.trim() || working}><Icon name="send" size={16} /></Button>
           </div>
-          <div className="text-[11px] text-faint mt-1.5 text-center flex items-center justify-center gap-1.5"><Icon name="shield" size={11} />The AI proposes actions as approval-gated jobs. Nothing runs until you approve it.</div>
+          <div className="text-[11px] text-faint mt-1.5 text-center flex items-center justify-center gap-1.5"><Icon name="shield" size={11} />{t('chat.footer')}</div>
         </div>
       </div>
     </>
@@ -241,7 +238,7 @@ function WorkingIndicator() {
     <div className="flex items-start gap-3 animate-fade-in">
       <div className="h-7 w-7 rounded-lg bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0 mt-0.5"><Icon name="sparkle" size={14} /></div>
       <div className="flex items-center gap-1.5 h-7">
-        <span className="text-[12.5px] text-muted">Working</span>
+        <span className="text-[12.5px] text-muted">{t('chat.working')}</span>
         <span className="flex gap-1">{[0, 1, 2].map((i) => <span key={i} className={cx('h-1.5 w-1.5 rounded-full bg-brandhi/70 animate-bounce', i && `typing-delay-${i}`)} />)}</span>
       </div>
     </div>
@@ -294,7 +291,7 @@ function ExportDownload({ path }) {
     } catch (err) {
       // The link expires, and the account has to still be allowed to see the
       // data — saying which is more useful than "download failed".
-      setFailed(err.message || 'could not download');
+      setFailed(err.message || t('chat.downloadFailed'));
     } finally {
       setBusy(false);
     }
@@ -305,7 +302,7 @@ function ExportDownload({ path }) {
       <button onClick={save} disabled={busy}
         className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-card hover:border-line2 hover:bg-elevated/60 transition px-2.5 py-1.5 text-[12px] text-muted hover:text-ink disabled:opacity-50">
         <Icon name="download" size={13} className="text-brandhi" />
-        {busy ? 'Downloading…' : 'Download CSV'}
+        {busy ? t('chat.downloading') : t('chat.downloadCsv')}
       </button>
       {failed && <div className="mt-1.5 text-[11.5px] text-bad">{failed}</div>}
     </div>
@@ -314,14 +311,13 @@ function ExportDownload({ path }) {
 
 function ToolStep({ m }) {
   const [open, setOpen] = useState(false);
-  const labels = { list_devices: 'Looked up devices', inventory_query: 'Inspected inventory', run_check: 'Ran a check', reason: 'Reasoned about the request' };
   return (
     <div className="flex items-start gap-3 animate-fade-in">
       <div className="h-7 w-7 rounded-lg bg-elevated border border-line flex items-center justify-center text-faint shrink-0 mt-0.5"><Icon name="wrench" size={13} /></div>
       <div className="min-w-0 flex-1">
         <button onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-2 rounded-lg border border-line bg-card hover:border-line2 hover:bg-elevated/50 transition px-2.5 py-1.5 text-[12px] text-muted">
           <span className="text-faint mono text-[11px]">{m.name || 'tool'}</span>
-          <span className="text-ink">{labels[m.name] || 'Tool step'}</span>
+          <span className="text-ink">{m.name && tEnum('chat.tool', m.name) !== m.name ? tEnum('chat.tool', m.name) : t('chat.toolStep')}</span>
           <Icon name={open ? 'chevdown' : 'chevright'} size={13} className="text-faint" />
         </button>
         {open && <div className="mt-1.5 rounded-lg border border-line bg-card px-3 py-2 text-[12px] text-muted leading-relaxed mono">{m.content}</div>}
@@ -340,17 +336,17 @@ function ProposedJob({ jobId, navigate }) {
   const isAwaiting = j.status === 'awaiting_approval';
   const done = j.status === 'completed' || j.status === 'failed';
 
-  const act = async (fn, label) => { setBusy(true); try { await fn(j.id); toast.success(label); } catch (e) { toast.error('Failed', e.message); } finally { setBusy(false); } };
+  const act = async (fn, label) => { setBusy(true); try { await fn(j.id); toast.success(label); } catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); } };
 
   return (
     <div className="mt-3 rounded-2xl border border-warn/30 bg-warn/[0.03] overflow-hidden animate-scale-in">
       <div className="flex items-center justify-between px-3.5 h-11 border-b border-line/60">
         <div className="flex items-center gap-2 min-w-0">
           <Icon name="flash" size={15} className="text-warn shrink-0" />
-          <span className="text-[12.5px] font-semibold text-ink truncate">Proposed job</span>
+          <span className="text-[12.5px] font-semibold text-ink truncate">{t('chat.proposedJob')}</span>
           <StatusPill status={j.status} size="sm" pulse />
         </div>
-        <button onClick={() => navigate('jobs', { focus: j.id })} className="text-[11.5px] text-muted hover:text-ink flex items-center gap-1 shrink-0">Open in queue <Icon name="external" size={12} /></button>
+        <button onClick={() => navigate('jobs', { focus: j.id })} className="text-[11.5px] text-muted hover:text-ink flex items-center gap-1 shrink-0">{t('chat.openInQueue')} <Icon name="external" size={12} /></button>
       </div>
       <div className="p-3.5 space-y-3">
         <div className="text-[12.5px] text-ink font-medium">{j.description}</div>
@@ -358,16 +354,16 @@ function ProposedJob({ jobId, navigate }) {
         {done && (j.stdout || j.stderr) && <OutputBlock stdout={j.stdout} stderr={j.stderr} exitCode={j.exit_code} />}
         {isAwaiting && (
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="eye" size={12} />Nothing has run yet.</span>
+            <span className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="eye" size={12} />{t('chat.nothingRun')}</span>
             {can('jobs.manage') && (
               <div className="flex gap-2">
-                <Button size="sm" variant="danger" icon="reject" onClick={() => act(api.rejectJob, 'Rejected')} disabled={busy}>Reject</Button>
-                <Button size="sm" variant="success" icon="approve" loading={busy} onClick={() => act(api.approveJob, 'Approved — dispatching')}>Approve & run</Button>
+                <Button size="sm" variant="danger" icon="reject" onClick={() => act(api.rejectJob, t('devices.review.rejected'))} disabled={busy}>{t('action.reject')}</Button>
+                <Button size="sm" variant="success" icon="approve" loading={busy} onClick={() => act(api.approveJob, t('chat.approvedDispatching'))}>{t('jobs.approveRun')}</Button>
               </div>
             )}
           </div>
         )}
-        {j.status === 'running' && <div className="flex items-center gap-2 text-[12px] text-run"><Spinner size={13} className="text-run" />Executing…</div>}
+        {j.status === 'running' && <div className="flex items-center gap-2 text-[12px] text-run"><Spinner size={13} className="text-run" />{t('chat.executing')}</div>}
       </div>
     </div>
   );

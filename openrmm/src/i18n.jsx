@@ -19,9 +19,13 @@
  * breaking the screen.
  */
 
-// Locales offered in the picker. `complete` says whether every key is present
-// and reviewed; the picker marks the rest, because a half-translated console
-// that claims to be Japanese is worse than one that admits it is a draft.
+// Locales offered in the picker, each with its table in src/locales/<code>.jsx.
+// `complete` says whether the table has been reviewed by someone who reads the
+// language; the picker marks the rest. That matters more here than in most
+// products: this console approves scripts that run as root on other people's
+// machines, and a confirmation that reads as "cancel" when it means "run" is not
+// a cosmetic bug. A half-translated console that claims to be Japanese is worse
+// than one that admits it is a draft.
 const LOCALES = [
   { code: 'en',    name: 'English',    nativeName: 'English',  complete: true },
   { code: 'pt-BR', name: 'Portuguese', nativeName: 'Português', complete: true },
@@ -79,6 +83,31 @@ function t(key, vars) {
   return interpolate(found, vars);
 }
 
+/* Plurals. tn('bulk.devices', 3) reads 'bulk.devices.one' or 'bulk.devices.other'
+ * as the language's own rules pick (Intl.PluralRules), with {n} filled in. Every
+ * language here needs only those two forms. Zero takes the plural everywhere —
+ * CLDR files 0 under "one" in Portuguese, but "0 dispositivo" reads as a typo. */
+function tn(key, n, vars) {
+  const form = n !== 0 && new Intl.PluralRules(currentLocale).select(n) === 'one' ? 'one' : 'other';
+  return t(key + '.' + form, { n, ...vars });
+}
+
+/* "a, b and c" in the console's language — the conjunction is the language's,
+ * which a join(', ') + ' and ' could never be. */
+function formatList(items) {
+  return new Intl.ListFormat(currentLocale, { style: 'long', type: 'conjunction' }).format(items.map(String));
+}
+
+/* Values the server sends — a status, a classification, a reason code — shown
+ * translated when the table knows them and as they came when it does not: a
+ * newer server's new value appears raw rather than as 'patch.status.whatever'. */
+function tEnum(prefix, value) {
+  if (value == null || value === '') return '';
+  const key = prefix + '.' + value;
+  const found = lookup(currentLocale, key) ?? lookup('en', key);
+  return found == null ? String(value) : found;
+}
+
 function getLocale() { return currentLocale; }
 
 function setLocale(code) {
@@ -105,4 +134,4 @@ function useLocale() {
 
 document.documentElement.lang = currentLocale;
 
-Object.assign(window, { t, getLocale, setLocale, useLocale, LOCALES });
+Object.assign(window, { t, tn, tEnum, formatList, getLocale, setLocale, useLocale, LOCALES });

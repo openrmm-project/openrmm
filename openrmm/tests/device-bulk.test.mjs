@@ -3,15 +3,16 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
+import { i18nSandbox } from './i18n-sandbox.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-async function load() {
-  const source = await readFile(path.join(root, 'src', 'device-bulk.jsx'), 'utf8');
-  const sandbox = { window: {} };
-  vm.createContext(sandbox);
-  vm.runInContext(source, sandbox);
+// Loaded with the i18n runtime: the wording comes from the locale tables, so
+// the same calls can be checked in English and in another language.
+let sandbox;
+async function load(locale = 'en') {
+  sandbox = await i18nSandbox('src/device-bulk.jsx');
+  sandbox.setLocale(locale);
   return sandbox.window.DeviceBulk;
 }
 
@@ -95,4 +96,19 @@ test('a site with devices is counted before it is offered for deletion', async (
   const devices = [{ site_id: 's1' }, { site_id: 's1' }, { site_id: 's2' }, { site_id: null }];
   assert.equal(B.siteDeviceCount(devices, 's1'), 2);
   assert.equal(B.siteDeviceCount(devices, 's3'), 0);
+});
+
+// The wording is the console's language, plurals included: "1 dispositivo",
+// "3 dispositivos", and zero reads as a plural rather than "0 dispositivo".
+test('proposals are described in the console language', async () => {
+  const B = await load('pt-BR');
+  const names = { site: (id) => (id === 's1' ? 'Matriz' : undefined), group: () => 'Financeiro' };
+  assert.equal(B.describe({ kind: 'move', agent_ids: ['a', 'b', 'c'], site_id: 's1', group_id: 'g1' }, names), 'Mover 3 dispositivos para Matriz ▸ Financeiro');
+  assert.equal(B.describe({ kind: 'delete', agent_ids: ['a'] }, names), 'Excluir 1 dispositivo');
+  assert.equal(B.countLabel(0), '0 dispositivos');
+  assert.equal(B.approvalSummary(2, 1), '2 jobs · 1 operação de dispositivo');
+  assert.equal(B.proposer('ai:alice'), 'Assistente de IA (para alice)');
+
+  const ja = await load('ja');
+  assert.equal(ja.countLabel(3), '3 台のデバイス');
 });

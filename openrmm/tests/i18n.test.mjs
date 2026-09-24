@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -17,13 +17,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // turns a sentence into a lie: `{email}` missing from the reset confirmation
 // means the address the link went to is simply not shown.
 //
-// src/i18n-strings.jsx is plain JS that assigns to window, so it runs in a vm
+// src/locales/*.jsx are plain JS that assign to window, so they run in a vm
 // with a stubbed window rather than being parsed.
 async function loadStrings() {
-  const source = await readFile(path.join(root, 'src', 'i18n-strings.jsx'), 'utf8');
+  const dir = path.join(root, 'src', 'locales');
   const sandbox = { window: {} };
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox);
+  for (const name of (await readdir(dir)).filter((f) => f.endsWith('.jsx')).sort()) {
+    vm.runInContext(await readFile(path.join(dir, name), 'utf8'), sandbox, { filename: name });
+  }
   return sandbox.window.LOCALE_STRINGS;
 }
 
@@ -99,8 +101,26 @@ test('no screen reads CHECK_TYPES without the fallback', async () => {
       .map((line, i) => [i + 1, line])
       .filter(([, line]) => /CHECK_TYPES\s*\[/.test(line))
       // The helper itself, and the comment explaining why it exists.
-      .filter(([, line]) => !/return CHECK_TYPES\[type\] \|\|/.test(line) && !/^\s*\/\//.test(line));
+      .filter(([, line]) => !/const known = CHECK_TYPES\[type\];/.test(line) && !/^\s*\/\//.test(line));
     assert.deepEqual(direct.map(([n]) => n), [],
       `${name}: use checkType() instead of indexing CHECK_TYPES at line(s) ${direct.map(([n]) => n).join(', ')}`);
   }
+});
+
+// Audit actions read in the console's language. Composed from resource and
+// verb, with each locale's own format so gendered languages never have to
+// agree an adjective with a noun they cannot see.
+test('audit actions are labelled in the console language', async () => {
+  const { i18nSandbox } = await import('./i18n-sandbox.mjs');
+  const sb = await i18nSandbox('src/labels.jsx');
+  const label = sb.window.auditActionLabel;
+  assert.equal(label('job.approve'), 'Job approved');
+  assert.equal(label('patch.policy.update'), 'Patch policy updated');
+  assert.equal(label('auth.login'), 'Signed in', 'a whole-action entry wins over composition');
+  assert.equal(label('brand.new_thing'), 'brand new_thing', 'an unknown action still reads');
+  sb.setLocale('pt-BR');
+  assert.equal(label('policy.update'), 'Política · alteração');
+  assert.equal(label('job.approve'), 'Job · aprovação');
+  sb.setLocale('ja');
+  assert.equal(label('device.delete'), 'デバイス · 削除');
 });

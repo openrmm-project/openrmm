@@ -153,15 +153,15 @@ test('an empty "restricted" scope selection cannot be saved as full access', asy
 
   // And the guard exists and gates both submit buttons.
   assert.match(source, /const scopeIncomplete = \(mode, list\) => mode === 'restricted' && list\.length === 0;/);
-  // The <Button …> element whose label is `label`, back to its opening tag.
-  const button = (label) => {
-    const end = source.indexOf('>' + label + '</Button>');
-    assert.notEqual(end, -1, `could not find the ${label} button`);
+  // The <Button …> element whose label is t(key), back to its opening tag.
+  const button = (key) => {
+    const end = source.indexOf(`>{t('${key}')}</Button>`);
+    assert.notEqual(end, -1, `could not find the ${key} button`);
     return source.slice(source.lastIndexOf('<Button', end), end);
   };
-  assert.match(button('Create user'), /disabled=\{[^}]*scopeIncomplete\(scopeMode, scopes\)/,
+  assert.match(button('users.create'), /disabled=\{[^}]*scopeIncomplete\(scopeMode, scopes\)/,
     'Create user must be disabled while the scope is restricted-but-empty');
-  assert.match(button('Save scope'), /disabled=\{[^}]*scopeIncomplete\(editScopeMode, editScopes\)/,
+  assert.match(button('users.saveScope'), /disabled=\{[^}]*scopeIncomplete\(editScopeMode, editScopes\)/,
     'Save scope must be disabled while the scope is restricted-but-empty');
 });
 
@@ -176,14 +176,14 @@ test('user row actions are grouped into a single kebab menu', async () => {
   assert.match(row, /Icon name="dots"/, 'the trigger is the three-dot icon');
   // Arrow functions in the props mean `[^>]*` cannot span a MenuItem's
   // attributes; match the label as the element's child instead.
-  for (const label of ['Email address', 'Access scope', 'Reset 2FA', 'Remove user', 'Enable sign-in', 'Disable sign-in']) {
-    assert.match(row, new RegExp(`>${label}</MenuItem>`), `missing menu item: ${label}`);
+  for (const key of ['users.emailAddress', 'users.accessScope', 'users.reset2fa', 'users.remove', 'users.enableSignIn', 'users.disableSignIn']) {
+    assert.ok(row.includes(`>{t('${key}')}</MenuItem>`), `missing menu item: ${key}`);
   }
   // No action may stay inline — that is the layout being replaced.
-  assert.doesNotMatch(row, /<Button[^>]*>(Email|Scope|Disable|Enable|Remove)</,
+  assert.doesNotMatch(row, /<Button[^>]*>\{t\('users\./,
     'row actions must be inside the menu, not inline buttons');
   // The kebab is a control, so it needs a name for anyone not using a mouse.
-  assert.match(row, /aria-label=\{'Actions for ' \+ u\.username\}/);
+  assert.match(row, /aria-label=\{t\('users\.actionsFor', \{ user: u\.username \}\)\}/);
 });
 
 // These menus open from rows inside cards that clip their overflow, so an

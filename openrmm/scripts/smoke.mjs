@@ -182,13 +182,13 @@ try {
   if (chrome) {
     assertBrowser(await runChrome(chrome, baseURL + '/'), /Sign in to your instance/);
     assertBrowser(await runChrome(chrome, baseURL + '/authenticated/'), /Fleet health at a glance/);
-    assertBrowser(await runChrome(chrome, baseURL + '/authenticated/?route=Devices'), /1 agents · 1 online/);
+    assertBrowser(await runChrome(chrome, baseURL + '/authenticated/?route=Devices'), /1 agent · 1 online/);
     assertBrowser(await runChrome(chrome, baseURL + '/authenticated/?route=AI%20Chat'), /Start a conversation/);
 
     const mobile = await runMobileChrome(chrome, baseURL + '/authenticated/?route=Open%20navigation');
     assertMobile(mobile, /smoke-admin/);
     assert.match(mobile.stdout, /translate-x-0/);
-    assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=Devices'), /1 agents · 1 online/);
+    assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=Devices'), /1 agent · 1 online/);
     assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=AI%20Chat'), /Start a conversation/);
 
     assertBrowser(await runChrome(chrome, baseURL + '/expired/'), /Sign in to your instance/);

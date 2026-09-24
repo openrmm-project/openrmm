@@ -35,7 +35,7 @@ const DeviceBulk = {
   },
 
   countLabel(n) {
-    return n === 1 ? '1 device' : `${n} devices`;
+    return tn('bulk.devices', n);
   },
 
   // The deletion is confirmed by typing how many devices it removes.
@@ -47,22 +47,22 @@ const DeviceBulk = {
   // alice, 'mcp:api' an external MCP client.
   proposer(by) {
     const s = String(by || '');
-    if (s.startsWith('ai:')) return `AI assistant (for ${s.slice(3) || 'unknown'})`;
-    if (s.startsWith('mcp:')) return `MCP client (${s.slice(4) || 'unknown'})`;
-    return s || 'unknown';
+    if (s.startsWith('ai:')) return t('bulk.proposer.ai', { user: s.slice(3) || t('bulk.unknown') });
+    if (s.startsWith('mcp:')) return t('bulk.proposer.mcp', { client: s.slice(4) || t('bulk.unknown') });
+    return s || t('bulk.unknown');
   },
 
   // One line describing a proposal, e.g. "Move 3 devices to HQ ▸ Finance".
   describe(op, names) {
     const n = DeviceBulk.countLabel((op && op.agent_ids ? op.agent_ids.length : 0));
     if (!op) return '';
-    if (op.kind === 'delete') return `Delete ${n}`;
+    if (op.kind === 'delete') return t('bulk.delete', { devices: n });
     // Without the site list (the dashboard does not load it) the destination
     // is left out rather than guessed.
-    if (!names || !names.site) return `Move ${n}`;
-    const site = (names && names.site && names.site(op.site_id)) || 'another site';
-    const dept = op.group_id ? ((names && names.group && names.group(op.group_id)) || 'a department') : '';
-    return `Move ${n} to ${site}${dept ? ' ▸ ' + dept : ''}`;
+    if (!names || !names.site) return t('bulk.move', { devices: n });
+    const site = (names && names.site && names.site(op.site_id)) || t('bulk.anotherSite');
+    const dept = op.group_id ? ((names && names.group && names.group(op.group_id)) || t('bulk.aDepartment')) : '';
+    return t('bulk.moveTo', { devices: n, dest: site + (dept ? ' ▸ ' + dept : '') });
   },
 
   // The permission deciding a proposal takes: the one the operation itself
@@ -74,9 +74,9 @@ const DeviceBulk = {
   // The dashboard's "Awaiting approval" line under the count: says what is
   // waiting when it is more than one kind of thing.
   approvalSummary(jobs, ops) {
-    if (ops > 0 && jobs > 0) return `${jobs} job${jobs === 1 ? '' : 's'} · ${ops} device operation${ops === 1 ? '' : 's'}`;
-    if (ops > 0) return ops === 1 ? '1 device operation' : `${ops} device operations`;
-    return 'needs a human';
+    if (ops > 0 && jobs > 0) return tn('bulk.jobs', jobs) + ' · ' + tn('bulk.ops', ops);
+    if (ops > 0) return tn('bulk.ops', ops);
+    return t('bulk.needsHuman');
   },
 
   awaiting(ops) {

@@ -52,18 +52,21 @@ test('categories can be renamed, merged and emptied', async () => {
   // two are not separable again.
   assert.match(manager, /categories\.some\(\(x\) => x\.name !== c\.name && x\.name\.toLowerCase\(\) === to\.toLowerCase\(\)\)/);
   assert.match(manager, /kind: merging \? 'merge' : 'rename'/);
-  assert.match(manager, /Merge the two categories\?/);
+  assert.match(manager, /t\('cats\.mergeTitle'\)/);
   // Removing keeps the scripts; only the filing goes.
   assert.match(manager, /kind: 'clear', from: c\.name, to: ''/);
   assert.match(manager, /api\.deleteScriptCategory\(confirm\.from\)/);
-  assert.match(manager, /The scripts themselves are kept/);
+  assert.match(manager, /t\('cats\.removeBody(Used|Empty)'/);
+  const en = await readFile(path.join(root, 'src/locales/en.jsx'), 'utf8');
+  assert.match(en, /'cats\.removeBodyUsed': '[^']*The scripts themselves are kept\.'/);
+  assert.match(en, /'cats\.removeBodyEmpty': '[^']*The scripts themselves are kept\.'/);
 
   // A category can be named before anything is filed under it — the whole point
   // of it being registered rather than inferred from the scripts.
   assert.match(api, /createScriptCategory\(name\) \{ return POST\('\/api\/script-categories', \{ name \}\); \}/);
   assert.match(api, /deleteScriptCategory\(name\) \{ return DELETE\('\/api\/script-categories\/' \+ encodeURIComponent\(name\)\); \}/);
   assert.match(manager, /api\.createScriptCategory\(name\)/);
-  assert.match(manager, />Add category</, 'the manager needs an Add affordance');
+  assert.match(manager, />\{t\('cats\.add'\)\}</, 'the manager needs an Add affordance');
 
   // And the library filters by category rather than only matching text.
   const screen = source.slice(source.indexOf('function ScriptsScreen('), source.indexOf('function CategoryManager('));

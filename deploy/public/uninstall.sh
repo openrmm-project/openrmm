@@ -66,14 +66,17 @@ if [ "$OS" = "darwin" ]; then
       launchctl bootout "gui/${CONSOLE_UID}/${label}" >/dev/null 2>&1 || true
     fi
     [ ! -f "$plist" ] || { rm -f "$plist"; echo "Removed $plist"; }
-    # Privacy rows survive the application and would keep listing an allowed app
-    # that no longer exists. Accessibility is system-wide, Screen Recording is
-    # the console user's, so both contexts are reset.
-    tccutil reset All "$label" >/dev/null 2>&1 || true
-    if [ "$CONSOLE_UID" != "0" ]; then
-      launchctl asuser "$CONSOLE_UID" tccutil reset All "$label" >/dev/null 2>&1 || true
-    fi
   done
+  # Privacy rows survive the application and would keep listing an allowed app
+  # that no longer exists. Accessibility is system-wide, Screen Recording is the
+  # console user's, so both contexts are reset — and it has to happen before the
+  # bundle below is deleted: tccutil resolves the identifier through the
+  # installed app and refuses one it cannot find. That is also why the retired
+  # identifier is not reset here; its app has been gone since the rename.
+  tccutil reset All "$REMOTE_LABEL" >/dev/null 2>&1 || true
+  if [ "$CONSOLE_UID" != "0" ]; then
+    launchctl asuser "$CONSOLE_UID" tccutil reset All "$REMOTE_LABEL" >/dev/null 2>&1 || true
+  fi
   if [ -d "/Library/Application Support/OpenRMM" ]; then
     rm -rf "/Library/Application Support/OpenRMM"
     echo "Removed the remote-desktop bundle"

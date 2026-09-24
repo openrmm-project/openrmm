@@ -39,8 +39,12 @@ function DevicesScreen({ navigate }) {
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const presence = useRemotePresence();
+  // Department names for the pending-operations panel. Moving and deleting
+  // devices themselves happen in Clients & Sites, not here.
+  const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
 
   const devices = devicesQ.data?.devices || [];
+  const groups = groupsQ.data?.groups || [];
   const sites = sitesQ.data?.sites || [];
   const clients = clientsQ.data?.clients || [];
   const siteName = (id) => sites.find((s) => s.id === id)?.name || '—';
@@ -80,6 +84,8 @@ function DevicesScreen({ navigate }) {
           </Select>
         </div>
       </Card>
+
+      <PendingDeviceOperations devices={devices} sites={sites} groups={groups} />
 
       <Card className="overflow-hidden">
         <table className="w-full text-left">
@@ -126,6 +132,110 @@ function DevicesScreen({ navigate }) {
       <DeviceDetail id={selected} onClose={() => setSelected(null)} navigate={navigate} sites={sites} clients={clients} />
       <BulkDeployModal open={bulkOpen} onClose={() => setBulkOpen(false)} devices={devices} sites={sites} clients={clients} navigate={navigate} />
     </Page>
+  );
+}
+
+// PendingDeviceOperations lists the moves and deletions the AI assistant or an
+// MCP client has proposed. Nothing in them has happened: a person reviews each
+// one here, and approving runs it with that person's permissions and scope.
+function PendingDeviceOperations({ devices, sites, groups }) {
+  const { can } = useAuth();
+  // A server without the feature, or a caller without access, simply shows
+  // nothing: this panel must never be what breaks the Devices screen.
+  const opsQ = useQuery(['device-ops'], () => api.listDeviceOperations().catch(() => ({ operations: [] })), { invalidateOn: ['devices', 'device-ops'], poll: 15000 });
+  const [review, setReview] = useState(null);
+  const pending = window.DeviceBulk.awaiting(opsQ.data?.operations);
+  if (!pending.length) return null;
+  const names = {
+    site: (id) => sites.find((s) => s.id === id)?.name,
+    group: (id) => groups.find((g) => g.id === id)?.name,
+  };
+  return (
+    <Card className="mb-3 border-warn/40">
+      <div className="px-4 py-2.5 border-b border-line flex items-center gap-2">
+        <Icon name="sparkle" size={15} className="text-warn" />
+        <span className="text-[13px] font-semibold text-ink">Pending operations</span>
+        <span className="text-[12px] text-muted">Proposed by the AI assistant or an MCP client. Nothing has changed until someone approves.</span>
+      </div>
+      <div className="divide-y divide-line">
+        {pending.map((op) => (
+          <div key={op.id} className="flex items-center gap-3 px-4 py-2.5">
+            <Icon name={op.kind === 'delete' ? 'trash' : 'building'} size={15} className={op.kind === 'delete' ? 'text-bad' : 'text-brandhi'} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] text-ink truncate">{window.DeviceBulk.describe(op, names)}</div>
+              <div className="text-[11.5px] text-faint truncate">{window.DeviceBulk.proposer(op.proposed_by)} · {timeAgo(op.created_at)}{op.description ? ' · ' + op.description : ''}</div>
+            </div>
+            <Button size="sm" onClick={() => setReview(op)}>Review</Button>
+          </div>
+        ))}
+      </div>
+      <DeviceOperationReview op={review} onClose={() => setReview(null)} devices={devices} names={names} canDecide={review ? can(window.DeviceBulk.decidePermission(review)) : false} />
+    </Card>
+  );
+}
+
+function DeviceOperationReview({ op, onClose, devices, names, canDecide }) {
+  const toast = useToast();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setTyped(''); }, [op && op.id]);
+  if (!op) return null;
+  const isDelete = op.kind === 'delete';
+  const n = op.agent_ids.length;
+  const listed = op.agent_ids.map((id) => devices.find((d) => d.id === id)).filter(Boolean);
+  const missing = n - listed.length;
+  const confirmed = !isDelete || window.DeviceBulk.confirmMatches(typed, n);
+  const decide = async (approve) => {
+    setBusy(true);
+    try {
+      if (approve) {
+        const r = await api.approveDeviceOperation(op.id, isDelete ? n : undefined);
+        if (r.failed && r.failed.length) toast.error('Partly done', r.failed.map((f) => f.hostname || f.agent_id).join(', ') + ' could not be deleted');
+        else toast.success('Approved', window.DeviceBulk.describe(op, names));
+      } else {
+        await api.rejectDeviceOperation(op.id);
+        toast.info('Rejected', 'Nothing was changed.');
+      }
+      window.dataBus.emit('device-ops'); window.dataBus.emit('devices');
+      onClose();
+    } catch (e) {
+      toast.error(approve ? 'Not approved' : 'Not rejected', e.message);
+      window.dataBus.emit('device-ops');
+    } finally { setBusy(false); }
+  };
+  return (
+    <Modal open={!!op} onClose={onClose} width="max-w-lg">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className={cx('h-9 w-9 rounded-xl flex items-center justify-center shrink-0', isDelete ? 'bg-badsoft text-bad' : 'bg-brandsoft text-brandhi')}><Icon name={isDelete ? 'trash' : 'building'} size={18} /></div>
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold text-ink">{window.DeviceBulk.describe(op, names)}</div>
+            <div className="text-[12.5px] text-muted">{window.DeviceBulk.proposer(op.proposed_by)} · {timeAgo(op.created_at)}</div>
+          </div>
+        </div>
+        {op.description && <div className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[12.5px] text-ink">{op.description}</div>}
+        <div className="rounded-xl border border-line max-h-56 overflow-y-auto scroll-area divide-y divide-line">
+          {listed.map((d) => (
+            <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px]">
+              <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
+              <span className="text-ink flex-1 truncate">{d.hostname}</span>
+              <span className="text-faint">{names.site(d.site_id) || 'unassigned'}</span>
+            </div>
+          ))}
+          {missing > 0 && <div className="px-3 py-1.5 text-[12px] text-faint">{window.DeviceBulk.countLabel(missing)} not in your list (deleted, or outside your view)</div>}
+        </div>
+        {isDelete && <div className="text-[12.5px] text-muted">Deleted devices disappear from the console and their credentials stop working. The agent stays installed on each machine until it is uninstalled there. This cannot be undone.</div>}
+        {!canDecide && <div className="text-[12.5px] text-warn">Deciding this needs the {window.DeviceBulk.decidePermission(op)} permission.</div>}
+        {canDecide && isDelete && (
+          <Field label={`Type ${n} to confirm`}><Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={String(n)} autoFocus /></Field>
+        )}
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Close</Button>
+          {canDecide && <Button variant="ghost" onClick={() => decide(false)} disabled={busy}>Reject</Button>}
+          {canDecide && <Button variant={isDelete ? 'danger' : 'primary'} loading={busy} disabled={!confirmed} onClick={() => decide(true)}>{isDelete ? 'Approve deletion' : 'Approve move'}</Button>}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

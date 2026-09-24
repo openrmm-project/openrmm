@@ -208,7 +208,7 @@ func Tools() []Tool {
 			},"additionalProperties":false}`),
 		}},
 	}
-	return append(base, highLevelTools()...)
+	return append(append(base, highLevelTools()...), deviceToolDefs...)
 }
 
 func ToolsForPermissions(perms map[string]bool) []Tool {
@@ -229,6 +229,9 @@ func ToolsForPermissions(perms map[string]bool) []Tool {
 func toolPermission(name string) string {
 	if highLevelNames[name] {
 		return models.PermJobsCreate
+	}
+	if permission, ok := deviceToolPermission(name); ok {
+		return permission
 	}
 	switch name {
 	case "list_devices", "get_inventory":
@@ -272,6 +275,9 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return errResult("missing permission: " + permission)
 	}
 	if res, ok := executeHighLevel(ctx, tc, name, args); ok {
+		return res
+	}
+	if res, ok := executeDeviceTool(ctx, tc, name, args); ok {
 		return res
 	}
 	switch name {
@@ -340,16 +346,20 @@ func listDevices(ctx context.Context, tc ToolContext) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Site and department ids let the model select "every device of site X"
+	// and resolve them against list_org, rather than asking for ids by hand.
 	type dev struct {
-		ID       string `json:"id"`
-		Hostname string `json:"hostname"`
-		OS       string `json:"os"`
-		Arch     string `json:"arch"`
-		Status   string `json:"status"`
+		ID       string  `json:"id"`
+		Hostname string  `json:"hostname"`
+		OS       string  `json:"os"`
+		Arch     string  `json:"arch"`
+		Status   string  `json:"status"`
+		SiteID   *string `json:"site_id,omitempty"`
+		GroupID  *string `json:"group_id,omitempty"`
 	}
 	out := make([]dev, 0, len(agents))
 	for _, a := range agents {
-		out = append(out, dev{a.ID, a.Hostname, a.OS, a.Arch, a.Status})
+		out = append(out, dev{a.ID, a.Hostname, a.OS, a.Arch, a.Status, a.SiteID, a.GroupID})
 	}
 	return map[string]any{"devices": out}, nil
 }

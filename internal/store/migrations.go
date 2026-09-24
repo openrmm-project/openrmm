@@ -69,6 +69,9 @@ var migrationV12SQL string
 //go:embed migrations/013_oidc_login.sql
 var migrationV13SQL string
 
+//go:embed migrations/014_device_operations.sql
+var migrationV14SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -83,6 +86,7 @@ var migrations = []migration{
 	{version: 11, name: "ai_config_proposals", sql: migrationV11SQL},
 	{version: 12, name: "audit_append_only", sql: migrationV12SQL},
 	{version: 13, name: "oidc_login", sql: migrationV13SQL},
+	{version: 14, name: "device_operations", sql: migrationV14SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

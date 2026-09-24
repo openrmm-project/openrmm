@@ -233,6 +233,14 @@ const api = {
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
   setDeviceGroup(id, group_id) { return PATCH('/api/devices/' + id + '/group', { group_id }); },
+  bulkMoveDevices(agent_ids, site_id, group_id) { return POST('/api/devices/bulk/move', { agent_ids, site_id, group_id: group_id || null }); },
+  // confirm_count is what the person typed: the server refuses a mismatch, so a
+  // selection that changed under the dialog cannot delete more than was shown.
+  bulkDeleteDevices(agent_ids, confirm_count) { return POST('/api/devices/bulk/delete', { agent_ids, confirm_count }); },
+  /* ---- device operations proposed by the AI / MCP clients ---- */
+  listDeviceOperations() { return GET('/api/device-operations'); },
+  approveDeviceOperation(id, confirm_count) { return POST('/api/device-operations/' + id + '/approve', confirm_count == null ? {} : { confirm_count }); },
+  rejectDeviceOperation(id) { return POST('/api/device-operations/' + id + '/reject', {}); },
 
   /* ---- departments (device groups, under a site) ---- */
   listGroups() { return GET('/api/groups'); },

@@ -74,9 +74,14 @@ func ensureRemoteAgent(uid string) error {
 	return nil
 }
 
-// retireLegacyRemoteAgent removes what the previous bundle identifier left on
-// the endpoint. Its privacy rows are cleared with it: left behind, they keep
-// showing an allowed application that nothing runs under any more.
+// retireLegacyRemoteAgent removes the LaunchAgent the previous bundle
+// identifier left on the endpoint.
+//
+// Its privacy rows are not touched, because nothing here can: tccutil resolves
+// an identifier through LaunchServices and refuses one whose app is gone ("No
+// such bundle identifier", OSStatus -10814), which by now it always is. The
+// reset this used to attempt never succeeded on any Mac. Only test machines
+// ever ran that identifier; docs/08 has the job that does clear the rows.
 func retireLegacyRemoteAgent(uid string) {
 	path := remoteAgentPlistPath(legacyRemoteAgentLabel)
 	if _, err := os.Stat(path); err != nil {
@@ -87,7 +92,6 @@ func retireLegacyRemoteAgent(uid string) {
 		log.Printf("remote: remove %s: %v", path, err)
 		return
 	}
-	resetStalePrivacyGrants(legacyRemoteAgentLabel)
 	log.Printf("remote: retired the %s LaunchAgent", legacyRemoteAgentLabel)
 }
 

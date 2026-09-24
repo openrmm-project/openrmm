@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +140,17 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.DeleteSite(r.Context(), id); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		// A site with devices is refused on purpose, and the reason has to reach
+		// the person: it used to surface as "internal server error".
+		var notEmpty *store.SiteNotEmptyError
+		switch {
+		case errors.As(err, &notEmpty):
+			writeErr(w, http.StatusConflict, notEmpty.Error())
+		case errors.Is(err, store.ErrNotFound):
+			writeErr(w, http.StatusNotFound, "site not found")
+		default:
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})

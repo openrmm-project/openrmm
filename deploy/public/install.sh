@@ -438,8 +438,9 @@ fi
 if [ "$OS" = "darwin" ]; then
   REMOTE_AGENT_PLIST=/Library/LaunchAgents/io.openrmm.remote.plist
   # Reinstall over a build that used the previous bundle identifier: drop its
-  # job and its privacy rows, which would otherwise keep listing an allowed
-  # application that nothing runs under any more.
+  # job. Its privacy rows cannot be reset from here — tccutil refuses an
+  # identifier whose app no longer exists — so they are left; docs/08 has the
+  # job that clears them.
   LEGACY_AGENT_PLIST=/Library/LaunchAgents/com.openrmm.remote.plist
   if [ -f "$LEGACY_AGENT_PLIST" ]; then
     LEGACY_UID="$(stat -f "%u" /dev/console 2>/dev/null || echo 0)"
@@ -447,11 +448,6 @@ if [ "$OS" = "darwin" ]; then
       launchctl bootout "gui/$LEGACY_UID/com.openrmm.remote" >/dev/null 2>&1 || true
     fi
     rm -f "$LEGACY_AGENT_PLIST"
-    # Accessibility is recorded system-wide, Screen Recording per user.
-    tccutil reset All com.openrmm.remote >/dev/null 2>&1 || true
-    if [ "$LEGACY_UID" != "0" ]; then
-      launchctl asuser "$LEGACY_UID" tccutil reset All com.openrmm.remote >/dev/null 2>&1 || true
-    fi
   fi
   cat > "$REMOTE_AGENT_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

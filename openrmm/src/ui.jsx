@@ -548,10 +548,11 @@ function downloadText(name, text, mime) {
 }
 
 /* confirm dialog hook-ish component */
-function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = 'Confirm', danger, requireType }) {
+function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = 'Confirm', danger, requireType, blocked }) {
   const [typed, setTyped] = useState('');
   useEffect(() => { if (open) setTyped(''); }, [open]);
-  const ok = !requireType || typed.trim().toUpperCase() === requireType.toUpperCase();
+  // blocked: the action cannot go ahead as things stand, and the body says why.
+  const ok = !blocked && (!requireType || typed.trim().toUpperCase() === requireType.toUpperCase());
   return (
     <Modal open={open} onClose={onClose} width="max-w-md">
       <div className="p-5">
@@ -562,7 +563,7 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = '
             <div className="text-[13px] text-muted mt-1 leading-relaxed">{body}</div>
           </div>
         </div>
-        {requireType && (
+        {requireType && !blocked && (
           <div className="mt-4">
             <Field label={`Type ${requireType} to confirm`}>
               <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={requireType} autoFocus />

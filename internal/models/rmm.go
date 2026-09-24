@@ -148,6 +148,29 @@ type Site struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// DeviceOperation is a request to move or delete several devices at once,
+// written by the AI or an MCP client and carried out only when a person
+// approves it. See migration 014 for why it exists.
+type DeviceOperation struct {
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"` // move | delete
+	AgentIDs    []string        `json:"agent_ids"`
+	SiteID      *string         `json:"site_id,omitempty"`
+	GroupID     *string         `json:"group_id,omitempty"`
+	Description string          `json:"description"`
+	Status      string          `json:"status"` // awaiting_approval | approved | completed | failed | rejected
+	ProposedBy  string          `json:"proposed_by"`
+	DecidedBy   string          `json:"decided_by"`
+	Result      json.RawMessage `json:"result"`
+	CreatedAt   time.Time       `json:"created_at"`
+	DecidedAt   *time.Time      `json:"decided_at,omitempty"`
+}
+
+const (
+	DeviceOpMove   = "move"
+	DeviceOpDelete = "delete"
+)
+
 // Script is a reusable script in the library.
 type Script struct {
 	ID          string    `json:"id"`

@@ -29,13 +29,35 @@ LEGACY_REMOTE_LABEL="com.openrmm.remote"
 
 # Both the current location and the one used before the agent moved out of
 # /usr/local/bin on macOS.
+AGENT_DIRS=""
 for candidate in /usr/local/libexec/openrmm/rmm-agent /usr/local/bin/rmm-agent; do
   if [ -x "$candidate" ]; then
     "$candidate" -action stop >/dev/null 2>&1 || true
     "$candidate" -action uninstall >/dev/null 2>&1 || true
-    rm -f "$candidate" "${candidate}.sig" "${candidate}.update-etag" \
-      "${candidate}.new" "${candidate}.update-pending" "${candidate}.install-old"
+    rm -f "$candidate" "${candidate}.sig" "${candidate}.update-etag" "${candidate}.new" \
+      "${candidate}.update-pending" "${candidate}.update-pending.new" "${candidate}.install-old" "${candidate}.old"
     echo "Removed $candidate"
+    AGENT_DIRS="$AGENT_DIRS $(dirname "$candidate")"
+  fi
+done
+
+# What the agent and the remote-desktop sidecar write beside the agent binary:
+# the agent's log, the sidecar itself on Linux (on macOS it is the bundle removed
+# below), what fetching it leaves, and the sidecar's log. None of it was removed,
+# and on macOS the leftovers kept /usr/local/libexec/openrmm — with the agent's
+# log inside — from being deleted at all. Only in a directory an agent was
+# found in, and only regular files: /usr/local/bin is shared, and an agent.log
+# there that no agent sat beside is someone else's.
+for dir in $AGENT_DIRS; do
+  for name in agent.log agent.log.1 rmm-remote rmm-remote.etag rmm-remote.new rmm-remote.log rmm-remote.log.1; do
+    file="$dir/$name"
+    if [ -f "$file" ] && [ ! -L "$file" ]; then
+      rm -f "$file"
+      echo "Removed $file"
+    fi
+  done
+  if [ -d "$dir/rmm-remote.new.stage" ] && [ ! -L "$dir/rmm-remote.new.stage" ]; then
+    rm -rf "$dir/rmm-remote.new.stage"
   fi
 done
 rmdir /usr/local/libexec/openrmm 2>/dev/null || true
@@ -81,6 +103,14 @@ if [ "$OS" = "darwin" ]; then
     rm -rf "/Library/Application Support/OpenRMM"
     echo "Removed the remote-desktop bundle"
   fi
+  # The bundle cannot write inside itself without breaking its signature, so the
+  # sidecar logs to the console user's ~/Library/Logs instead.
+  for log in /Users/*/Library/Logs/rmm-remote.log /Users/*/Library/Logs/rmm-remote.log.1; do
+    if [ -f "$log" ] && [ ! -L "$log" ]; then
+      rm -f "$log"
+      echo "Removed $log"
+    fi
+  done
   rm -f "${STATE_DIR}/remote-session.json"
 fi
 

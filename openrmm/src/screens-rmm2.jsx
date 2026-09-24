@@ -660,12 +660,41 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   const [confirmDelDept, setConfirmDelDept] = useState(null);
   const [renamingDept, setRenamingDept] = useState(null); // { id, value } while renaming
   const [enrollDept, setEnrollDept] = useState('');       // department the token binds to, '' = the site
-  const [moveDevice, setMoveDevice] = useState(null);
-  const [confirmDelDevice, setConfirmDelDevice] = useState(null);
   const [selected, setSelected] = useState(null); // device id -> open the full detail drawer (same as the Devices tab)
   useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); setRenamingDept(null); setEnrollDept(''); }, [site.id]);
   // Clear a generated enrollment command when the selected site/department changes.
   useEffect(() => { setEnrollToken(null); }, [site.id, focusDept]);
+  // Move / delete of this site's devices, one or many: tick them, and the two
+  // buttons appear. The checkboxes replace the per-device menu that did the
+  // same for a single device.
+  const canMoveDevices = can('clients.manage');
+  const canDeleteDevices = can('devices.delete');
+  const canBulk = canMoveDevices || canDeleteDevices;
+  const [picked, setPicked] = useState([]);
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  useEffect(() => { setPicked([]); }, [site.id]);
+  useEffect(() => { setPicked((cur) => window.DeviceBulk.prune(cur, devices.map((d) => d.id))); }, [devices]);
+  const visibleIds = (focusDept ? devices.filter((d) => d.group_id === focusDept) : devices).map((d) => d.id);
+  const pickedDevices = devices.filter((d) => picked.includes(d.id));
+  const tooMany = picked.length > window.DeviceBulk.LIMIT;
+  const moveSelected = async (target) => {
+    try {
+      const r = await api.bulkMoveDevices(picked, target.siteId, target.groupId || null);
+      const dest = sites.find((x) => x.id === target.siteId)?.name || 'the site';
+      toast.success('Devices moved', window.DeviceBulk.countLabel(r.moved) + ' now in ' + dest);
+      setBulkMoveOpen(false); setPicked([]);
+      window.dataBus.emit('devices'); window.dataBus.emit('org');
+    } catch (e) { toast.error('Nothing was moved', e.message); }
+  };
+  const deleteSelected = async () => {
+    try {
+      const r = await api.bulkDeleteDevices(picked, picked.length);
+      if (r.failed && r.failed.length) toast.error('Some devices were not deleted', r.failed.map((f) => f.hostname || f.agent_id).join(', '));
+      else toast.success('Devices deleted', window.DeviceBulk.countLabel(r.deleted));
+      setPicked([]); window.dataBus.emit('devices'); window.dataBus.emit('org');
+    } catch (e) { toast.error('Nothing was deleted', e.message); }
+  };
 
   const saveRename = async () => { const n = rename.trim(); if (!n || n === site.name) { setRenaming(false); return; } try { await api.updateSite(site.id, n); window.dataBus.emit('org'); toast.success('Site renamed'); setRenaming(false); } catch (e) { toast.error('Failed', e.message); } };
   const addDept = async () => { if (!newDept.trim()) return; try { await api.createGroup({ name: newDept.trim(), site_id: site.id }); setNewDept(''); setCreatingDept(false); window.dataBus.emit('groups'); toast.success('Department created'); } catch (e) { toast.error('Failed', e.message); } };
@@ -678,17 +707,6 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   };
   const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info('Department deleted'); } catch (e) { toast.error('Failed', e.message); } };
   const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info('Site deleted'); } catch (e) { toast.error('Failed', e.message); } };
-  const delDevice = async () => { const d = confirmDelDevice; if (!d) return; try { await api.deleteDevice(d.id); window.dataBus.emit('devices'); toast.info('Device deleted'); } catch (e) { toast.error('Failed to delete device', e.message); } };
-  const saveDeviceMove = async ({ siteId, groupId }) => {
-    const d = moveDevice;
-    if (!d) return;
-    try {
-      if ((d.group_id || '') && d.site_id !== siteId) await api.setDeviceGroup(d.id, null);
-      if ((d.site_id || '') !== (siteId || '')) await api.setDeviceSite(d.id, siteId || null);
-      if ((d.group_id || '') !== (groupId || '')) await api.setDeviceGroup(d.id, groupId || null);
-      window.dataBus.emit('devices'); setMoveDevice(null); toast.success('Device moved');
-    } catch (e) { toast.error('Failed to move device', e.message); }
-  };
   const genEnroll = async () => {
     setBusy(true);
     const dept = depts.find((g) => g.id === enrollDept);
@@ -707,21 +725,16 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   const deptIds = new Set(depts.map((g) => g.id));
   const unassigned = devices.filter((d) => !d.group_id || !deptIds.has(d.group_id));
   const renderDevice = (d) => (
-    <div key={d.id} onClick={() => setSelected(d.id)} title="Open device options"
-      className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2 cursor-pointer hover:border-line2 hover:bg-elevated/40 transition">
+    <div key={d.id} onClick={() => setSelected(d.id)} title="Open device details"
+      className={cx(canBulk ? 'grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto]' : 'grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto]',
+        'grid items-center gap-2.5 rounded-lg border px-3 py-2 cursor-pointer hover:border-line2 hover:bg-elevated/40 transition',
+        picked.includes(d.id) ? 'border-brand/40 bg-brandsoft/30' : 'border-line bg-card')}>
+      {canBulk && <input type="checkbox" aria-label={'Select ' + d.hostname} className="h-4 w-4 accent-brand cursor-pointer"
+        checked={picked.includes(d.id)} onClick={(e) => e.stopPropagation()} onChange={() => setPicked((cur) => window.DeviceBulk.toggle(cur, d.id))} />}
       <span className={cx('h-2 w-2 rounded-full', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
       <div className="min-w-0 flex items-center gap-2"><OsIcon os={d.os} size={14} className="text-muted shrink-0" /><span className="text-[12.5px] text-ink truncate">{d.hostname}</span></div>
       <div className="text-[12px] text-muted truncate">{d.description || <span className="text-faint">No description</span>}</div>
       <span className="text-[11px] text-faint whitespace-nowrap">{timeAgo(d.last_seen)}</span>
-      {(can('clients.manage') || can('devices.delete')) && (
-        <span onClick={(e) => e.stopPropagation()}>
-          <Dropdown align="right" width="w-44" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={15} fill /></button>}>
-            {can('clients.manage') && <MenuItem icon="pin" onClick={() => setMoveDevice(d)}>Move</MenuItem>}
-            {can('clients.manage') && can('devices.delete') && <div className="my-1 border-t border-line" />}
-            {can('devices.delete') && <MenuItem icon="trash" onClick={() => setConfirmDelDevice(d)}>Delete device</MenuItem>}
-          </Dropdown>
-        </span>
-      )}
     </div>
   );
   return (
@@ -745,10 +758,18 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
         )}
       </div>
       <div className="mb-5">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-[12px] font-semibold text-muted">Devices <span className="text-faint font-normal">· {devices.length}</span></div>
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          {canBulk && visibleIds.length > 0 && <input type="checkbox" aria-label="Select all devices shown" title="Select all devices shown" className="h-4 w-4 accent-brand cursor-pointer"
+            checked={window.DeviceBulk.allVisibleSelected(picked, visibleIds)} onChange={() => setPicked((cur) => window.DeviceBulk.toggleAllVisible(cur, visibleIds))} />}
+          <div className="text-[12px] font-semibold text-muted">Devices <span className="text-faint font-normal">· {devices.length}</span>
+            {canBulk && picked.length > 0 && <span className="text-ink font-normal"> · {picked.length} selected <button onClick={() => setPicked([])} className="text-faint hover:text-ink underline-offset-2 hover:underline">clear</button></span>}
+          </div>
+          <div className="flex-1" />
+          {canMoveDevices && picked.length > 0 && <Button size="sm" icon="pin" disabled={tooMany} onClick={() => setBulkMoveOpen(true)}>Move ({picked.length})</Button>}
+          {canDeleteDevices && picked.length > 0 && <Button size="sm" variant="danger" icon="trash" disabled={tooMany} onClick={() => setBulkDeleteOpen(true)}>Delete ({picked.length})</Button>}
           {can('clients.manage') && !creatingDept && <button onClick={() => setCreatingDept(true)} className="text-[11.5px] text-faint hover:text-ink flex items-center gap-1"><Icon name="plus" size={12} />Department</button>}
         </div>
+        {tooMany && <div className="text-[12px] text-bad mb-2">More than {window.DeviceBulk.LIMIT} selected; select fewer to act on them.</div>}
         {creatingDept && (
           <div className="flex items-center gap-2 mb-2.5">
             <Input value={newDept} onChange={(e) => setNewDept(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addDept(); if (e.key === 'Escape') { setCreatingDept(false); setNewDept(''); } }} placeholder="Department name (e.g. Finance)" className="h-8" autoFocus />
@@ -827,19 +848,29 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
       <ConfirmDialog open={confirmDelSite} onClose={() => setConfirmDelSite(false)} onConfirm={delSite} danger title="Delete site?"
         blocked={siteDeviceTotal > 0}
         body={siteDeviceTotal > 0
-          ? <><b>{site.name}</b> still has {window.DeviceBulk.countLabel(siteDeviceTotal)}. {siteDeviceTotal === 1 ? 'Move or delete it first.' : 'Move or delete them first — select them in Devices to move them all at once.'}</>
+          ? <><b>{site.name}</b> still has {window.DeviceBulk.countLabel(siteDeviceTotal)}. {siteDeviceTotal === 1 ? 'Move or delete it first.' : 'Move or delete them first — tick them in the list to move or delete them all at once.'}</>
           : <>This removes <b>{site.name}</b>, its departments and the enrollment tokens that point at it. This cannot be undone.</>}
         confirmLabel="Delete site" />
       <ConfirmDialog open={!!confirmDelDept} onClose={() => setConfirmDelDept(null)} onConfirm={delDept} danger title="Delete department?" body={<>This removes the department <b>{confirmDelDept?.name}</b>. Its devices stay, but their department is cleared.</>} confirmLabel="Delete department" />
-      <DeviceMoveModal open={!!moveDevice} onClose={() => setMoveDevice(null)} device={moveDevice} clients={clients} sites={sites} groups={groupsQ.data?.groups || []} onSave={saveDeviceMove} />
-      <ConfirmDialog open={!!confirmDelDevice} onClose={() => setConfirmDelDevice(null)} onConfirm={delDevice} danger title="Delete device?" body={<>This permanently removes <b>{confirmDelDevice?.hostname}</b> from OpenRMM. This cannot be undone.</>} confirmLabel="Delete device" />
+      <DeviceMoveModal open={bulkMoveOpen} onClose={() => setBulkMoveOpen(false)} bulkCount={picked.length}
+        device={{ id: 'bulk', hostname: window.DeviceBulk.countLabel(picked.length), site_id: '', group_id: '' }}
+        clients={clients} sites={sites} groups={groupsQ.data?.groups || []} onSave={moveSelected} />
+      <ConfirmDialog open={bulkDeleteOpen} onClose={() => setBulkDeleteOpen(false)} onConfirm={deleteSelected} danger
+        title={'Delete ' + window.DeviceBulk.countLabel(picked.length) + '?'}
+        body={<>
+          <span>{pickedDevices.slice(0, 8).map((d) => d.hostname).join(', ')}{pickedDevices.length > 8 ? ` and ${pickedDevices.length - 8} more` : ''}.</span>
+          <span className="block mt-2">They disappear from the console and their credentials stop working. The agent stays installed on each machine until it is uninstalled there. This cannot be undone.</span>
+        </>}
+        requireType={String(picked.length)} confirmLabel={'Delete ' + window.DeviceBulk.countLabel(picked.length)} />
     </Card>
     <DeviceDetail id={selected} onClose={() => setSelected(null)} sites={sites} clients={clients} />
     </>
   );
 }
 
-function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave }) {
+// bulkCount > 0 moves several devices at once: there is no current placement to
+// compare with, and "Unassigned" is not offered — a bulk move names a site.
+function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave, bulkCount = 0 }) {
   const [q, setQ] = useState('');
   const [siteId, setSiteId] = useState('');
   const [groupId, setGroupId] = useState('');
@@ -852,7 +883,7 @@ function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave
   const visibleClients = clients.filter((c) => matches(c.name) || sites.some((s) => s.client_id === c.id && (matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name)))));
   const chooseSite = (sid) => { setSiteId(sid); setGroupId(''); };
   const chooseGroup = (sid, gid) => { setSiteId(sid); setGroupId(gid); };
-  const changed = (siteId || '') !== (device.site_id || '') || (groupId || '') !== (device.group_id || '');
+  const changed = bulkCount > 0 ? !!siteId : (siteId || '') !== (device.site_id || '') || (groupId || '') !== (device.group_id || '');
   const save = async () => { setBusy(true); try { await onSave({ siteId, groupId }); } finally { setBusy(false); } };
 
   return (
@@ -860,11 +891,11 @@ function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave
       <div className="p-5 space-y-4">
         <div className="flex items-start gap-3">
           <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="pin" size={18} /></div>
-          <div><div className="text-[15px] font-semibold text-ink">Move device</div><div className="text-[12.5px] text-muted">Choose where <b className="text-ink">{device.hostname}</b> belongs in Clients & Sites.</div></div>
+          <div><div className="text-[15px] font-semibold text-ink">{bulkCount > 0 ? 'Move ' + device.hostname : 'Move device'}</div><div className="text-[12.5px] text-muted">{bulkCount > 0 ? <>Choose the site, and optionally the department, for the <b className="text-ink">{device.hostname}</b> you selected.</> : <>Choose where <b className="text-ink">{device.hostname}</b> belongs in Clients & Sites.</>}</div></div>
         </div>
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, site, or department…" autoFocus />
         <div className="rounded-xl border border-line max-h-80 overflow-y-auto scroll-area p-1">
-          <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>
+          {bulkCount === 0 && <button onClick={() => chooseSite('')} className={cx('w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition', !siteId ? 'bg-brandsoft text-ink' : 'text-muted hover:bg-elevated/50')}><Icon name="close" size={13} />Unassigned</button>}
           {visibleClients.map((c) => {
             const clientSites = sites.filter((s) => s.client_id === c.id && (matches(c.name) || matches(s.name) || groupsForSite(s.id).some((g) => matches(g.name))));
             return <div key={c.id} className="mt-1"><div className="px-3 py-1.5 text-[10.5px] uppercase tracking-wide text-faint font-semibold flex items-center gap-1.5"><Icon name="building" size={12} />{c.name}</div>{clientSites.map((s) => {
@@ -874,7 +905,7 @@ function DeviceMoveModal({ open, onClose, device, clients, sites, groups, onSave
           })}
           {visibleClients.length === 0 && <div className="px-3 py-8 text-center text-[12px] text-faint">No matches.</div>}
         </div>
-        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>Move device</Button></div>
+        <div className="flex items-center justify-end gap-2"><Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" loading={busy} disabled={!changed} onClick={save}>{bulkCount > 0 ? 'Move ' + device.hostname : 'Move device'}</Button></div>
       </div>
     </Modal>
   );

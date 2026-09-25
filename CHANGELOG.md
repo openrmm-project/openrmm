@@ -6,6 +6,16 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The OpenRMM logo shows on Windows and Linux.** The executables carried no
+  icon, so Explorer, Task Manager and Programs and Features (whose entry points
+  at the agent's icon) all showed Windows' blank one, and the chat window a host
+  user sees had none either. `rmm-agent.exe` and `rmm-remote.exe` now embed the
+  logo (`rsrc_windows_*.syso`), the Windows chat window uses it, and the Linux
+  chat window sets `_NET_WM_ICON` from icons built into the sidecar.
+  `make icons` regenerates all of them from the logo.
+
 ### Added
 
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and

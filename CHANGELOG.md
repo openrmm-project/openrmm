@@ -6,6 +6,15 @@ tag.
 
 ## [Unreleased]
 
+### Security
+
+- **The console's sign-in no longer accepts a pasted token.** Its "API token"
+  tab took `RMM_ADMIN_TOKEN` or any API token, skipping the second factor and
+  the SSO policy, recording the work as `admin` rather than as a person, and
+  turning a leaked automation token into a console login. People now sign in
+  with a password (and second factor) or SSO; tokens remain for the API and
+  automation, which accept them exactly as before.
+
 ### Fixed
 
 - **Enrollment commands from the console work on HTTPS servers.** The install

@@ -15,11 +15,14 @@ const AuthCtx = cCtx(null);
 function useAuth() { return uC(AuthCtx); }
 
 /* -------------------------------- Login ----------------------------------- */
+// People sign in as themselves: a password (with its second factor) or SSO.
+// There is no "paste a token" mode. It used to take RMM_ADMIN_TOKEN or any API
+// token, which skipped the second factor and the SSO policy, logged the work as
+// "admin" rather than as a person, and turned a leaked automation token into a
+// console. Tokens are for the API and automation.
 function LoginScreen({ onAuthed, onForgot }) {
-  const [mode, setMode] = useState('password'); // password | token
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [token, setToken] = useState('');
   const [code, setCode] = useState('');
   const [need2fa, setNeed2fa] = useState(false);
   const [err, setErr] = useState(null);
@@ -52,10 +55,10 @@ function LoginScreen({ onAuthed, onForgot }) {
   }, []);
 
   const doLogin = async () => {
-    if (busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)) return;
+    if (busy || !username.trim() || !password) return;
     setBusy(true); setErr(null);
     try {
-      const res = mode === 'token' ? await api.loginWithToken(token.trim()) : await api.login(username.trim(), password, code.trim() || undefined);
+      const res = await api.login(username.trim(), password, code.trim() || undefined);
       sessionStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] }));
       onAuthed(res);
     } catch (e) {
@@ -79,26 +82,12 @@ function LoginScreen({ onAuthed, onForgot }) {
           <div className="text-[15px] font-semibold text-ink">{t('auth.title')}</div>
           <div className="text-[12.5px] text-muted mt-1">{t('auth.selfHosted', { base: api.API_BASE })}</div>
 
-          <div className="flex gap-1 mt-5 p-0.5 bg-app rounded-lg border border-line">
-            {[['password', t('auth.mode.password')], ['token', t('auth.mode.token')]].map(([v, l]) => (
-              <button key={v} onClick={() => setMode(v)} className={cx('flex-1 h-8 rounded-md text-[12.5px] font-medium transition', mode === v ? 'bg-elevated text-ink shadow-sm' : 'text-faint hover:text-muted')}>{l}</button>
-            ))}
-          </div>
-
-          <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); doLogin(); }}>
-            {mode === 'password' ? (
-              <>
-                <Field label={t('auth.username')}><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus /></Field>
-                <Field label={t('auth.password')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></Field>
-                {need2fa && <Field label={t('auth.code')} hint={t('auth.code.hint')}><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder={t('auth.code.placeholder')} autoFocus className="mono tracking-widest" /></Field>}
-              </>
-            ) : (
-              <Field label={t('auth.token')} hint={t('auth.token.hint')}>
-                <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder={t('auth.token.placeholder')} autoFocus className="mono" />
-              </Field>
-            )}
+          <form className="mt-5 space-y-3" onSubmit={(e) => { e.preventDefault(); doLogin(); }}>
+            <Field label={t('auth.username')}><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus /></Field>
+            <Field label={t('auth.password')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></Field>
+            {need2fa && <Field label={t('auth.code')} hint={t('auth.code.hint')}><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder={t('auth.code.placeholder')} autoFocus className="mono tracking-widest" /></Field>}
             {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
-            <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || (mode === 'token' ? !token.trim() : !username.trim() || !password)}>{t('auth.signIn')}</Button>
+            <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || !username.trim() || !password}>{t('auth.signIn')}</Button>
           </form>
           {sso.enabled && (
             <>
@@ -113,9 +102,7 @@ function LoginScreen({ onAuthed, onForgot }) {
               </Button>
             </>
           )}
-          {mode === 'password' && (
-            <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.forgot')}</button>
-          )}
+          <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.forgot')}</button>
         </Card>
       </div>
     </div>

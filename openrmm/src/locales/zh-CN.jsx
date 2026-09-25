@@ -52,8 +52,7 @@
 
   'lang.label': '语言',
   'lang.hint': '立即生效，并记住在此浏览器中。',
-  'lang.draft': '草稿',
-  'lang.draftHint': '机器翻译，尚未经母语者审校。缺失的内容将显示英文。',
+  'lang.reviewHint': '此翻译尚未经过母语者审校。',
   // ---- 登录与重置密码
   'auth.brand.subtitle': '远程监控与管理',
   'auth.title': '登录到你的实例',

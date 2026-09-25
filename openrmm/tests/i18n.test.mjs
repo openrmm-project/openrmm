@@ -58,9 +58,8 @@ for (const locale of locales) {
   });
 }
 
-// The reviewed locales, only. de, zh-CN and ja are machine-drafted and marked
-// incomplete in i18n.jsx; holding them to this would be asserting a claim the
-// file itself refuses to make. A handful of values are identical in every
+// The linguistically reviewed locales, only. de, zh-CN and ja have full key
+// coverage but still await review by native speakers. A handful of values are identical in every
 // language on purpose — 'Patches', 'tok_…', 'OpenRMM' — so this asserts the
 // bulk was translated rather than every line.
 for (const locale of ['pt-BR', 'es']) {

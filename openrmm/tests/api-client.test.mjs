@@ -248,7 +248,7 @@ test('the console marks AI proposals awaiting review', async () => {
 //
 // A locale offered in the picker with no table behind it would render every
 // label as its own key — the failure the fallback exists to prevent.
-test('every offered locale has a table, and drafts are labelled', async () => {
+test('every offered locale has a table and unreviewed translations are explained', async () => {
   const core = await readFile(path.join(root, 'src', 'i18n.jsx'), 'utf8');
   const offered = [...core.matchAll(/code: '([^']+)'/g)].map((m) => m[1]);
   assert.ok(offered.includes('en'), 'English must be offered');
@@ -259,9 +259,11 @@ test('every offered locale has a table, and drafts are labelled', async () => {
     assert.ok(build.includes(`'src/locales/${code}.jsx'`), `the build must bundle src/locales/${code}.jsx`);
   }
 
-  // A locale nobody reviewed must say so, and the picker must render that mark.
+  // Full translation coverage and linguistic review are separate states.
   const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
-  assert.match(screens, /l\.complete \? '' :/, 'the picker must mark draft locales');
+  assert.match(screens, /!chosen\.nativeReviewed/, 'the picker must explain pending linguistic review');
+  assert.match(screens, /t\('lang\.reviewHint'\)/);
+  assert.doesNotMatch(screens, /lang\.draft/, 'the picker must not call a fully populated locale a draft');
 });
 
 // The nav labels must stay keys. Resolving them at module load would freeze the

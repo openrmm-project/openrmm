@@ -52,8 +52,7 @@
 
   'lang.label': 'Sprache',
   'lang.hint': 'Wird sofort angewendet und in diesem Browser gespeichert.',
-  'lang.draft': 'Entwurf',
-  'lang.draftHint': 'Maschinell übersetzt, noch nicht von einem Muttersprachler geprüft. Fehlendes erscheint auf Englisch.',
+  'lang.reviewHint': 'Diese Übersetzung wurde noch nicht von einer muttersprachlichen Person geprüft.',
   // ---- Anmeldung, Passwort zurücksetzen
   'auth.brand.subtitle': 'Fernüberwachung und -verwaltung',
   'auth.title': 'Bei Ihrer Instanz anmelden',

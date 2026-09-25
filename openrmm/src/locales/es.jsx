@@ -52,8 +52,7 @@
 
   'lang.label': 'Idioma',
   'lang.hint': 'Se aplica de inmediato y se recuerda en este navegador.',
-  'lang.draft': 'borrador',
-  'lang.draftHint': 'Traducción automática, aún sin revisión de un hablante nativo. Recurre al inglés donde falte.',
+  'lang.reviewHint': 'Esta traducción aún no ha sido revisada por un hablante nativo.',
   // ---- inicio de sesión, restablecer contraseña
   'auth.brand.subtitle': 'Monitorización y Gestión Remota',
   'auth.title': 'Entra en tu instancia',

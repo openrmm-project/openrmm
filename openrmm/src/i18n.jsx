@@ -20,19 +20,17 @@
  */
 
 // Locales offered in the picker, each with its table in src/locales/<code>.jsx.
-// `complete` says whether the table has been reviewed by someone who reads the
-// language; the picker marks the rest. That matters more here than in most
-// products: this console approves scripts that run as root on other people's
-// machines, and a confirmation that reads as "cancel" when it means "run" is not
-// a cosmetic bug. A half-translated console that claims to be Japanese is worse
-// than one that admits it is a draft.
+// Every offered locale has the full English key set (enforced by i18n.test.mjs).
+// `nativeReviewed` records the separate linguistic review status. The picker
+// explains that status when an unreviewed language is selected, without calling
+// a fully populated translation a draft.
 const LOCALES = [
-  { code: 'en',    name: 'English',    nativeName: 'English',  complete: true },
-  { code: 'pt-BR', name: 'Portuguese', nativeName: 'Português', complete: true },
-  { code: 'es',    name: 'Spanish',    nativeName: 'Español',  complete: true },
-  { code: 'de',    name: 'German',     nativeName: 'Deutsch',  complete: false },
-  { code: 'zh-CN', name: 'Chinese',    nativeName: '中文',      complete: false },
-  { code: 'ja',    name: 'Japanese',   nativeName: '日本語',     complete: false },
+  { code: 'en',    name: 'English',    nativeName: 'English',  nativeReviewed: true },
+  { code: 'pt-BR', name: 'Portuguese', nativeName: 'Português', nativeReviewed: true },
+  { code: 'es',    name: 'Spanish',    nativeName: 'Español',  nativeReviewed: true },
+  { code: 'de',    name: 'German',     nativeName: 'Deutsch',  nativeReviewed: false },
+  { code: 'zh-CN', name: 'Chinese',    nativeName: '中文',      nativeReviewed: false },
+  { code: 'ja',    name: 'Japanese',   nativeName: '日本語',     nativeReviewed: false },
 ];
 
 const STORAGE_KEY = 'rmm-locale';

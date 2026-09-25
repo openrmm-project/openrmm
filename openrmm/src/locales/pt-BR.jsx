@@ -58,8 +58,7 @@
 
   'lang.label': 'Idioma',
   'lang.hint': 'Aplica na hora, e fica lembrado neste navegador.',
-  'lang.draft': 'rascunho',
-  'lang.draftHint': 'Tradução automática, ainda sem revisão de falante nativo. Cai para o inglês no que faltar.',
+  'lang.reviewHint': 'Esta tradução ainda não foi revisada por um falante nativo.',
   // ---- entrada, redefinição de senha
   'auth.brand.subtitle': 'Monitoramento e Gestão Remota',
   'auth.title': 'Entre na sua instância',

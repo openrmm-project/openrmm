@@ -59,8 +59,7 @@
   // ---- language picker
   'lang.label': 'Language',
   'lang.hint': 'Applies immediately, and is remembered on this browser.',
-  'lang.draft': 'draft',
-  'lang.draftHint': 'Machine-translated and not yet reviewed by a native speaker. Falls back to English for anything missing.',
+  'lang.reviewHint': 'This translation has not yet been reviewed by a native speaker.',
   // ---- sign-in, password reset
   // The signed-out screens. These were literal English in app.jsx until the
   // demo made it obvious: the console would be opened in Portuguese and greet

@@ -1075,15 +1075,15 @@ function LanguagePicker() {
         <Select value={current} onChange={(e) => setLocale(e.target.value)}>
           {LOCALES.map((l) => (
             <option key={l.code} value={l.code}>
-              {l.nativeName}{l.complete ? '' : ` — ${t('lang.draft')}`}
+              {l.nativeName}
             </option>
           ))}
         </Select>
       </Field>
-      {chosen && !chosen.complete && (
+      {chosen && !chosen.nativeReviewed && (
         <div className="mt-2 text-[11.5px] text-faint flex items-start gap-1.5">
           <Icon name="info" size={13} className="mt-0.5 shrink-0" />
-          {t('lang.draftHint')}
+          {t('lang.reviewHint')}
         </div>
       )}
     </Card>

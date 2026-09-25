@@ -403,13 +403,28 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 	// by defer, so a dropped socket cannot leave a ghost claiming somebody is
 	// still connected.
 	if role == "viewer" {
-		leave := s.presence.Join(remote.Viewer{
+		viewer := remote.Viewer{
 			SessionID: sess.ID,
 			AgentID:   sess.AgentID,
 			User:      viewerSubject,
 			Kind:      sess.Provider,
 			Since:     time.Now().UTC(),
-		})
+		}
+		leave := func() {}
+		if sess.Provider == "native" {
+			// One desktop session per operator per endpoint. The start handler
+			// already asked; this is the check two tabs cannot both pass.
+			var existing *remote.Viewer
+			if leave, existing = s.presence.JoinExclusive(viewer); existing != nil {
+				remote.CloseViewer(conn, remote.CloseSessionActive, "remote_session_active")
+				// The endpoint may already be waiting on the other side.
+				s.relay.CloseSession(sess.ID, remote.CloseSessionActive, "remote_session_active")
+				_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
+				return
+			}
+		} else {
+			leave = s.presence.Join(viewer)
+		}
 		defer leave()
 	}
 	if err := s.relay.Join(sess.ID, sess.AgentID, role, conn); err != nil {

@@ -8,6 +8,19 @@ tag.
 
 ### Fixed
 
+- **One remote desktop session per operator per device.** The same operator
+  could open the same device's desktop in several tabs, each fighting the others
+  for mouse and keyboard while the endpoint captured the screen once per tab.
+  The server now refuses the second one (409 `remote_session_active`, and close
+  code 4409 at the relay, so simultaneous tabs cannot both get in); the console
+  offers **Continue here**, which moves the session and tells the old tab
+  instead of letting it reconnect and take it back (4410, audited as
+  `remote.replace`). Other operators on the same device, the same operator on
+  other devices, and terminal or file-transfer sessions are unaffected.
+- **The console smoke test no longer depends on the machine's language.**
+  Headless Chrome took the language from the environment, so on a non-English
+  machine every English assertion failed.
+
 - **Enrollment commands from the console work on HTTPS servers.** The install
   commands the console shows had no `--update-public-key` / `-UpdatePublicKey`,
   and both installers refuse a production install without one, so every

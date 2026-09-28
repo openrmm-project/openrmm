@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -109,7 +110,50 @@ func AlertSMTPConfig(ctx context.Context, st *store.Store, cfg *config.Config) (
 	if err != nil {
 		return notify.Config{}, err
 	}
-	return AlertTransport(smtpProfile(cfg, rows, ProfileAlerts)), nil
+	return alertDelivery(cfg, smtpProfile(cfg, rows, ProfileAlerts)), nil
+}
+
+// alertDelivery is AlertTransport plus the dial policy: the alerts relay was
+// typed into the console, so it may only be a public address unless the
+// operator allowed private ones (RMM_SMTP_ALERTS_ALLOW_PRIVATE).
+func alertDelivery(cfg *config.Config, alerts notify.Config) notify.Config {
+	out := AlertTransport(alerts)
+	if out.Host != "" {
+		out.PublicOnly = cfg == nil || !cfg.SMTPAlertsAllowPrivate
+	}
+	return out
+}
+
+// ErrAlertsHostNotPublic rejects an alerts relay that resolves to a private,
+// loopback or link-local address while those are not allowed.
+var ErrAlertsHostNotPublic = errors.New("the alerts SMTP server must be a public address (an internal relay needs RMM_SMTP_ALERTS_ALLOW_PRIVATE=true on the server)")
+
+// checkAlertsHost refuses, at save time, a host that resolves to a non-public
+// address. It is early feedback, not the guard — the dialer checks the address
+// it actually connects to. A name that does not resolve right now is let
+// through for the same reason: the dial decides.
+func checkAlertsHost(ctx context.Context, cfg *config.Config, host string) error {
+	if cfg != nil && cfg.SMTPAlertsAllowPrivate {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !notify.PublicIP(ip) {
+			return ErrAlertsHostNotPublic
+		}
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil {
+		return nil
+	}
+	for _, a := range addrs {
+		if !notify.PublicIP(a.IP) {
+			return ErrAlertsHostNotPublic
+		}
+	}
+	return nil
 }
 
 // AlertTransport is the rule on its own, so it can be tested without a
@@ -266,6 +310,9 @@ func SaveSMTP(ctx context.Context, st *store.Store, cfg *config.Config, profile 
 		return AlertSMTPConfig(ctx, st, cfg)
 	}
 	if err := next.Validate(); err != nil {
+		return current, err
+	}
+	if err := checkAlertsHost(ctx, cfg, next.Host); err != nil {
 		return current, err
 	}
 	for _, op := range [][2]string{

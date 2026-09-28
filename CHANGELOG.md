@@ -8,6 +8,23 @@ tag.
 
 ### Security
 
+- **Accounts linked to single sign-on have no password path while SSO is on.**
+  Password reset worked for them — by design — so whoever could read the
+  mailbox could set a password and sign in around the provider's MFA,
+  conditional access and offboarding. With `RMM_OIDC_ENABLED=true`, a linked
+  account is now refused password sign-in (console and MCP OAuth form) with
+  `sso_required`, gets no reset mail, and cannot redeem a link issued earlier.
+  `RMM_OIDC_ENABLED=false` is the break-glass. Keep a local admin that is never
+  used to sign in through the provider: the first SSO sign-in links it.
+- **Reset mail is throttled per account** (one per five minutes, five a day).
+  The per-IP limit alone let anyone flood one mailbox from many addresses
+  through the operator's relay. Extra requests get the same 202 and send nothing.
+- **The console's alerts relay must be a public address.** The server dialled
+  whatever a settings administrator typed and showed back the answer, a way to
+  probe its own network. Private, loopback, link-local and reserved addresses
+  are refused on save and on the address actually dialled;
+  `RMM_SMTP_ALERTS_ALLOW_PRIVATE=true` allows an internal relay.
+
 - **Alert mail no longer rides the account (password-reset) transport.** With
   no alerts server of its own, the alerts profile used the account relay — and
   honoured a sender of the tenant's choosing. On a hosted instance that relay
@@ -21,6 +38,13 @@ tag.
   must enter that server in Settings ▸ Email, or alert mail stops.
 
 ### Fixed
+
+- **A rejected password no longer burns the reset link.** The confirm step
+  redeemed the token before checking the password, then said "the link is still
+  valid, try again" — it was not. The password is now checked first.
+- **Screens now see the server's error codes**, so "alert mail needs your own
+  server" and "this account signs in with single sign-on" appear translated
+  instead of as the server's English sentence.
 
 - **Enrollment commands from the console work on HTTPS servers.** The install
   commands the console shows had no `--update-public-key` / `-UpdatePublicKey`,

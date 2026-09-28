@@ -78,6 +78,7 @@
   'auth.err.ssoExpired': 'Die Anmeldung hat zu lange gedauert. Bitte erneut versuchen.',
   'auth.err.ssoNoAccount': 'Diese Konsole hat noch kein Konto für Sie. Bitten Sie einen Administrator, eines anzulegen.',
   'auth.err.sso': 'Single Sign-on fehlgeschlagen.',
+  'auth.err.ssoRequired': 'Dieses Konto meldet sich per Single Sign-On an. Verwenden Sie die Single-Sign-On-Schaltfläche.',
   'auth.reset.title': 'Passwort zurücksetzen',
   'auth.reset.subtitle': 'Wir senden Ihnen per E-Mail einen Link für ein neues Passwort.',
   'auth.reset.sent': 'Falls ein Konto für {email} existiert, ist der Link unterwegs. Er läuft in einer Stunde ab und funktioniert einmal.',

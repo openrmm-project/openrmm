@@ -58,12 +58,11 @@ type Config struct {
 	// opens rustdesk://<id>. Off by default.
 	RustDeskEnabled bool
 
-	// SMTP* configure the account mail transport: password resets, and the
-	// fallback sender for alerts. Unlike the AI and MeshCentral settings this one
-	// is env-only and has no console form. The server operator controls the
-	// password-reset sender; an editable copy in app_settings would let a
-	// settings administrator redirect authentication mail. Alert mail stays
-	// editable in the console.
+	// SMTP* configure the account mail transport: password resets only. Unlike
+	// the AI and MeshCentral settings this one is env-only and has no console
+	// form. The server operator controls the password-reset sender; an editable
+	// copy in app_settings would let a settings administrator redirect
+	// authentication mail. Alert mail is the tenant's own, set in the console.
 	SMTPHost       string
 	SMTPPort       int
 	SMTPUsername   string
@@ -72,6 +71,13 @@ type Config struct {
 	SMTPFromName   string
 	SMTPTLSMode    string
 	SMTPSkipVerify bool
+	// SMTPAlertsAllowPrivate lets the console's alerts relay be a private,
+	// loopback or link-local address. Off by default: that relay is typed in by
+	// a settings administrator, and the server dialling wherever they point it
+	// — with the answer shown back by the test button — is a way to probe the
+	// network the server sits in. A self-hosted instance with an internal relay
+	// turns it on.
+	SMTPAlertsAllowPrivate bool
 
 	// Security.
 	// MCPAllowedIPs is an optional allowlist (comma-separated IPs/CIDRs) for the
@@ -269,6 +275,7 @@ func Load() (*Config, error) {
 		SMTPFromName:               env("RMM_SMTP_FROM_NAME", "OpenRMM"),
 		SMTPTLSMode:                env("RMM_SMTP_TLS_MODE", "starttls"),
 		SMTPSkipVerify:             os.Getenv("RMM_SMTP_SKIP_VERIFY") == "true",
+		SMTPAlertsAllowPrivate:     os.Getenv("RMM_SMTP_ALERTS_ALLOW_PRIVATE") == "true",
 		MCPAllowedIPs:              splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:        os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:          os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",

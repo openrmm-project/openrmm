@@ -17,6 +17,14 @@ import (
 const (
 	passwordResetTTL     = time.Hour
 	passwordResetTimeout = 30 * time.Second
+
+	// Per-account throttle on reset mail. The route's per-IP limit does not
+	// protect a mailbox: from many addresses, anyone could send one person an
+	// endless stream of reset mail through the operator's relay, spending its
+	// quota and its domain's reputation. Past these, requests are accepted and
+	// silently dropped, like any other reset request that sends nothing.
+	passwordResetCooldown = 5 * time.Minute
+	passwordResetsPerDay  = 5
 )
 
 // resetAccepted is returned to every reset request, whatever happens next.
@@ -65,6 +73,29 @@ func (s *Server) deliverPasswordReset(email string) {
 		}
 		return // no account: nothing to send, and the caller was already told nothing
 	}
+	// With single sign-on on, an account linked to it has no password to
+	// reset: minting one would let whoever reads the mailbox sign in around the
+	// provider's MFA and its offboarding.
+	if sso, err := s.signsInWithSSO(ctx, userID); err != nil || sso {
+		if err != nil {
+			log.Printf("password reset: SSO lookup failed: %v", err)
+		}
+		return
+	}
+	if recent, err := s.store.PasswordResetsSince(ctx, userID, time.Now().Add(-passwordResetCooldown)); err != nil || recent > 0 {
+		if err != nil {
+			log.Printf("password reset: throttle lookup failed: %v", err)
+		}
+		return
+	}
+	if today, err := s.store.PasswordResetsSince(ctx, userID, time.Now().Add(-24*time.Hour)); err != nil || today >= passwordResetsPerDay {
+		if err != nil {
+			log.Printf("password reset: throttle lookup failed: %v", err)
+		} else {
+			log.Printf("password reset: daily limit reached for user %s; request dropped", userID)
+		}
+		return
+	}
 	cfg := settings.AccountSMTPConfig(s.cfg)
 	if !cfg.Enabled() {
 		// Minting a token nobody can receive would let it expire unused while the
@@ -107,13 +138,17 @@ func (s *Server) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "reset token required")
 		return
 	}
-	// Consume before validating the password: the token is single-use either way,
-	// so an attacker cannot use a rejected password as a way to probe which
-	// tokens are live. The user simply asks for a new link.
-	userID, err := s.store.ConsumePasswordReset(r.Context(), auth.Hash(in.Token))
+	// Look the token up without redeeming it, so a password that fails the
+	// rules leaves the link usable — which is what the error below promises.
+	// This tells a caller nothing a redemption attempt would not: a token is
+	// 256 random bits, so "is this one live" is not a question anyone can ask
+	// of a guess.
+	const invalidLink = "this reset link is no longer valid — request a new one"
+	tokenHash := auth.Hash(in.Token)
+	userID, err := s.store.PasswordResetUser(r.Context(), tokenHash)
 	if err != nil {
 		// Expired, already used and never-existed are one answer on purpose.
-		writeErr(w, http.StatusBadRequest, "this reset link is no longer valid — request a new one")
+		writeErr(w, http.StatusBadRequest, invalidLink)
 		return
 	}
 	user, err := s.store.GetUserByID(r.Context(), userID)
@@ -121,8 +156,24 @@ func (s *Server) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
+	// A link issued before single sign-on was turned on must not set a
+	// password on an account that now signs in through the provider.
+	if sso, err := s.signsInWithSSO(r.Context(), userID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if sso {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this account signs in with single sign-on", "code": "sso_required"})
+		return
+	}
 	if problem := passwordProblem(in.Password, user.Username); problem != "" {
 		writeErr(w, http.StatusBadRequest, problem+" — the link is still valid, try again")
+		return
+	}
+	// Redeem only now. The UPDATE is what makes the link single-use: of two
+	// concurrent confirmations, one gets the row and the other is told the
+	// link is gone.
+	if consumed, err := s.store.ConsumePasswordReset(r.Context(), tokenHash); err != nil || consumed != userID {
+		writeErr(w, http.StatusBadRequest, invalidLink)
 		return
 	}
 	hash, err := auth.HashPassword(in.Password)
@@ -142,4 +193,17 @@ func (s *Server) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.AddAudit(r.Context(), userID, "user.password.reset_completed", userID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
+}
+
+// signsInWithSSO reports whether an account must sign in through the identity
+// provider: single sign-on is on and the account is linked to it. Such an
+// account gets no password sign-in and no password reset, or the provider's
+// MFA, conditional access and offboarding could all be stepped around with a
+// password. Turning single sign-on off (RMM_OIDC_ENABLED) is the break-glass:
+// the accounts sign in with their passwords again.
+func (s *Server) signsInWithSSO(ctx context.Context, userID string) (bool, error) {
+	if !s.cfg.OIDCEnabled {
+		return false, nil
+	}
+	return s.store.UserLinkedToSSO(ctx, userID)
 }

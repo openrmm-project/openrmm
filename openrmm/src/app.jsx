@@ -60,6 +60,7 @@ function LoginScreen({ onAuthed, onForgot }) {
       onAuthed(res);
     } catch (e) {
       if (e.totpRequired) { setNeed2fa(true); setErr(t(code ? 'auth.err.badCode' : 'auth.err.needCode')); }
+      else if (e.code === 'sso_required') setErr(t('auth.err.ssoRequired'));
       else setErr(e.message || t('auth.err.failed'));
     } finally { setBusy(false); }
   };
@@ -185,7 +186,7 @@ function ResetPasswordScreen({ token, onDone }) {
     if (!canSubmit) return;
     setBusy(true); setErr(null);
     try { await api.confirmPasswordReset(token, password); setDone(true); }
-    catch (e) { setErr(e.message || t('auth.new.err')); }
+    catch (e) { setErr(e.code === 'sso_required' ? t('auth.err.ssoRequired') : (e.message || t('auth.new.err'))); }
     finally { setBusy(false); }
   };
 

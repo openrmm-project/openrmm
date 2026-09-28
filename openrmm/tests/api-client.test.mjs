@@ -368,3 +368,20 @@ test('the alerts email screen offers no ride on the account relay', async () => 
   assert.match(panel, /e\.code === 'alerts_need_own_server'/);
   assert.match(panel, /disabled=\{!c\.enabled \|\| dirty\}/);
 });
+
+// An account linked to single sign-on is refused a password sign-in and a
+// reset with the code sso_required. Both screens must say "use SSO" in the
+// user's language rather than show the server's English sentence — which needs
+// the API client to carry the code on the error in the first place.
+test('sign-in and reset screens explain an SSO-only account', async () => {
+  const { api, sandbox } = await loadApi();
+  sandbox.fetch = async () => ({
+    ok: false, status: 403, statusText: 'Forbidden', headers: { get: () => null },
+    async json() { return { error: 'this account signs in with single sign-on', code: 'sso_required' }; },
+  });
+  await assert.rejects(api.login('someone', 'pw'), (e) => e.status === 403 && e.code === 'sso_required');
+
+  const app = await readFile(path.join(root, 'src', 'app.jsx'), 'utf8');
+  assert.equal((app.match(/e\.code === 'sso_required'/g) || []).length, 2, 'login and reset screens');
+  assert.match(app, /t\('auth\.err\.ssoRequired'\)/);
+});

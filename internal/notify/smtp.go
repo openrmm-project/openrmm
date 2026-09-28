@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +29,46 @@ type Config struct {
 	TLSMode    string // starttls | tls | none
 	SkipVerify bool
 	Timeout    time.Duration
+	// PublicOnly refuses to connect to anything but a public address. Set on
+	// relays a console user typed in; enforced on the address actually dialled,
+	// so a name that resolves somewhere else later (DNS rebinding) is caught too.
+	PublicOnly bool
+}
+
+// ErrNotPublic is returned when PublicOnly refuses an address.
+var ErrNotPublic = errors.New("not a public address")
+
+// PublicIP reports whether an address is on the public internet: not loopback,
+// private (RFC 1918, IPv6 ULA), link-local (cloud metadata lives there),
+// carrier-grade NAT, unspecified or multicast.
+func PublicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		switch {
+		case v4[0] == 0, // "this network"
+			v4[0] == 100 && v4[1]&0xc0 == 64,         // 100.64.0.0/10, carrier-grade NAT
+			v4[0] == 192 && v4[1] == 0 && v4[2] == 0, // 192.0.0.0/24, protocol assignments
+			v4[0] >= 240:                             // reserved and broadcast
+			return false
+		}
+	}
+	return true
+}
+
+// refuseNonPublic is a net.Dialer Control hook: it runs after resolution, on
+// the address about to be dialled.
+func refuseNonPublic(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	if !PublicIP(net.ParseIP(host)) {
+		return fmt.Errorf("refusing to connect to %s: %w", host, ErrNotPublic)
+	}
+	return nil
 }
 
 // Enabled reports whether email can be sent at all.
@@ -84,6 +125,9 @@ func Send(cfg Config, msg Message) error {
 	var conn net.Conn
 	var err error
 	dialer := &net.Dialer{Timeout: timeout}
+	if cfg.PublicOnly {
+		dialer.Control = refuseNonPublic
+	}
 	if cfg.TLSMode == "tls" {
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
 	} else {

@@ -78,6 +78,7 @@
   'auth.err.ssoExpired': 'El inicio de sesión tardó demasiado. Inténtalo de nuevo.',
   'auth.err.ssoNoAccount': 'Esta consola aún no tiene una cuenta para ti. Pide a un administrador que la cree.',
   'auth.err.sso': 'El inicio de sesión único falló.',
+  'auth.err.ssoRequired': 'Esta cuenta inicia sesión con inicio de sesión único (SSO). Usa el botón de inicio de sesión único.',
   'auth.reset.title': 'Restablece tu contraseña',
   'auth.reset.subtitle': 'Te enviaremos por correo un enlace para elegir otra.',
   'auth.reset.sent': 'Si existe una cuenta para {email}, el enlace de restablecimiento está en camino. Caduca en una hora y funciona una sola vez.',

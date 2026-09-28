@@ -139,10 +139,10 @@ test('the task toggle keeps the complete task when changing enabled state', asyn
   const screens = await readFile(path.join(root, 'src', 'screens-rmm.jsx'), 'utf8');
 
   assert.match(screens,
-    /api\.updateTask\(t\.id,\s*\{\s*\.\.\.t,\s*enabled:\s*!t\.enabled\s*\}\)/);
+    /api\.updateTask\(task\.id,\s*\{\s*\.\.\.task,\s*enabled:\s*!task\.enabled\s*\}\)/);
   assert.match(screens, /const \[confirmToggleTask, setConfirmToggleTask\] = useState\(null\)/);
-  assert.match(screens, /onChange=\{\(\) => setConfirmToggleTask\(t\)\}/);
-  assert.match(screens, /title=\{confirmToggleTask\?\.enabled \? 'Disable task\?' : 'Enable task\?'\}/);
+  assert.match(screens, /onChange=\{\(\) => setConfirmToggleTask\(task\)\}/);
+  assert.match(screens, /title=\{confirmToggleTask\?\.enabled \? t\('tasks\.disableTitle'\) : t\('tasks\.enableTitle'\)\}/);
   assert.match(screens, /onConfirm=\{\(\) => toggle\(confirmToggleTask\)\}/);
 });
 
@@ -158,18 +158,20 @@ test('checks can be enabled or disabled from the list and editor', async () => {
   assert.match(screens,
     /onClick=\{\(e\) => e\.stopPropagation\(\)\}\s*>\s*<Toggle checked=\{c\.enabled\}/);
   assert.match(screens, /const \[confirmToggle, setConfirmToggle\] = useState\(null\)/);
-  assert.match(screens, /title=\{confirmToggle\?\.enabled \? 'Disable check\?' : 'Enable check\?'\}/);
+  assert.match(screens, /title=\{confirmToggle\?\.enabled \? t\('checks\.disableTitle'\) : t\('checks\.enableTitle'\)\}/);
   assert.match(screens, /onConfirm=\{\(\) => toggle\(confirmToggle\)\}/);
   assert.match(screens, /const \[enabled, setEnabled\] = useState\(check\?\.enabled \?\? true\)/);
   assert.match(screens, /interval_sec: Number\(interval\), enabled/);
-  assert.match(screens, /Check will be disabled when saved/);
+  assert.match(screens, /t\('checks\.willDisable'\)/);
   assert.match(screens, /function checkAggregateStatus\(c\)/);
   assert.match(screens, /if \(!c\.enabled\) return 'disabled'/);
   assert.match(screens, /if \(x\.failing > 0\) return 'failing'/);
   assert.match(screens, /if \(x\.warning > 0\) return 'warning'/);
   assert.match(screens, /if \(x\.unknown > 0 \|\| !x\.total\) return 'unknown'/);
   assert.match(screens, /<StatusPill status=\{checkAggregateStatus\(c\)\}/);
-  assert.match(ui, /disabled: \{ c: 'muted', label: 'Disabled' \}/);
+  assert.match(ui, /disabled: 'muted'/);
+  const en = await readFile(path.join(root, 'src', 'locales', 'en.jsx'), 'utf8');
+  assert.match(en, /'status\.disabled': 'Disabled'/);
 });
 
 test('alerts client carries filters, optimistic versions, bulk actions and suppressions', async () => {
@@ -206,8 +208,11 @@ test('the software report exposes its manufacturer column', async () => {
   const reports = await readFile(path.join(root, 'src', 'screens-reports.jsx'), 'utf8');
 
   assert.match(reports,
-    /\{ key: 'name', label: 'Software',[^\n]+\n\s*\{ key: 'manufacturer', label: 'Manufacturer', text: \(r\) => r\.manufacturer \}/,
+    /\{ key: 'name',[^\n]+\n\s*\{ key: 'manufacturer', text: \(r\) => r\.manufacturer \}/,
     'Manufacturer should appear immediately after Software');
+  const en = await readFile(path.join(root, 'src', 'locales', 'en.jsx'), 'utf8');
+  assert.match(en, /'rep\.col\.name': 'Software'/);
+  assert.match(en, /'rep\.col\.manufacturer': 'Manufacturer'/);
 });
 
 // An AI proposal is a row nobody has reviewed: created disabled and stamped with
@@ -223,7 +228,7 @@ test('the console marks AI proposals awaiting review', async () => {
 
   // Both screens that own runnable configuration must show it.
   const taskRow = rmm.slice(rmm.indexOf('function TasksScreen'));
-  assert.match(taskRow, /awaitingReview\(t\) && <ProposalBadge \/>/,
+  assert.match(taskRow, /awaitingReview\(task\) && <ProposalBadge \/>/,
     'the tasks table should badge an unreviewed proposal');
   const checkRow = rmm.slice(rmm.indexOf('function ChecksScreen'), rmm.indexOf('function TasksScreen'));
   assert.match(checkRow, /awaitingReview\(c\) && <ProposalBadge \/>/,
@@ -238,47 +243,27 @@ test('the console marks AI proposals awaiting review', async () => {
     'a proposed policy should be badged on its card');
 });
 
-// i18n. A translation table is the one place where a silent gap is invisible in
-// review: a missing key falls back to English and the screen still looks fine,
-// so nothing prompts anyone to fix it. These assert the shape instead.
-test('every locale carries exactly the keys English defines', async () => {
-  const src = await readFile(path.join(root, 'src', 'i18n-strings.jsx'), 'utf8');
-  const blocks = [...src.matchAll(/const (\w+) = \{([\s\S]*?)\n\};/g)]
-    .reduce((acc, [, name, body]) => {
-      acc[name] = new Set([...body.matchAll(/'([^']+)':/g)].map((m) => m[1]));
-      return acc;
-    }, {});
-
-  assert.ok(blocks.en && blocks.en.size > 20, 'English must be the source table');
-  for (const [name, keys] of Object.entries(blocks)) {
-    if (name === 'en') continue;
-    const missing = [...blocks.en].filter((k) => !keys.has(k));
-    const extra = [...keys].filter((k) => !blocks.en.has(k));
-    assert.deepEqual(missing, [], `${name} is missing keys: ${missing.slice(0, 5)}`);
-    // An extra key is a typo or a string English lost — either way it is dead
-    // weight nobody will ever see.
-    assert.deepEqual(extra, [], `${name} has keys English does not: ${extra.slice(0, 5)}`);
-  }
-});
-
+// i18n. The key-set and placeholder checks live in i18n.test.mjs, which loads
+// every table from src/locales. What stays here is the picker's side of it.
+//
 // A locale offered in the picker with no table behind it would render every
 // label as its own key — the failure the fallback exists to prevent.
-test('every offered locale has a table, and drafts are labelled', async () => {
+test('every offered locale has a table and unreviewed translations are explained', async () => {
   const core = await readFile(path.join(root, 'src', 'i18n.jsx'), 'utf8');
-  const strings = await readFile(path.join(root, 'src', 'i18n-strings.jsx'), 'utf8');
-
   const offered = [...core.matchAll(/code: '([^']+)'/g)].map((m) => m[1]);
   assert.ok(offered.includes('en'), 'English must be offered');
-  const registered = strings.match(/window\.LOCALE_STRINGS = \{([^}]+)\}/)[1];
+  const build = await readFile(path.join(root, 'scripts', 'build.mjs'), 'utf8');
   for (const code of offered) {
-    assert.ok(registered.includes(`'${code}'`) || registered.includes(code.replace('-', '')),
-      `locale ${code} is offered but has no table`);
+    const table = await readFile(path.join(root, 'src', 'locales', `${code}.jsx`), 'utf8');
+    assert.match(table, new RegExp(`\\['${code}'\\] = \\{`), `src/locales/${code}.jsx must register ${code}`);
+    assert.ok(build.includes(`'src/locales/${code}.jsx'`), `the build must bundle src/locales/${code}.jsx`);
   }
 
-  // Machine-drafted locales must say so, and the picker must render that mark.
-  assert.match(core, /complete: false/, 'unreviewed locales must be flagged');
+  // Full translation coverage and linguistic review are separate states.
   const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
-  assert.match(screens, /l\.complete \? '' :/, 'the picker must mark draft locales');
+  assert.match(screens, /!chosen\.nativeReviewed/, 'the picker must explain pending linguistic review');
+  assert.match(screens, /t\('lang\.reviewHint'\)/);
+  assert.doesNotMatch(screens, /lang\.draft/, 'the picker must not call a fully populated locale a draft');
 });
 
 // The nav labels must stay keys. Resolving them at module load would freeze the
@@ -363,7 +348,7 @@ test('the audit screen filters and pages server-side', async () => {
   // record, so it pages the API and reports when it hits the ceiling.
   assert.match(audit, /for \(let offset = 0; offset < EXPORT_MAX/,
     'the export must cover the whole filtered set, not the page on screen');
-  assert.match(audit, /Export truncated/, 'a truncated export has to say so');
+  assert.match(audit, /t\('audit\.truncated'\)/, 'a truncated export has to say so');
 
   // A date input yields a local day; the end of a range must include that day.
   assert.match(audit, /next\.setDate\(next\.getDate\(\) \+ 1\)/,

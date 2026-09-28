@@ -5,9 +5,9 @@ const { useState: uS, useEffect: uE, useContext: uC, createContext: cCtx } = Rea
 // user's choice — including the standalone remote tab (?dev=…), which renders
 // before the console's theme effect runs and would otherwise fall back to dark.
 (function applyStoredTheme() {
-  const t = localStorage.getItem('rmm-theme') || 'dark';
-  document.documentElement.classList.toggle('dark', t === 'dark');
-  document.documentElement.classList.toggle('light', t !== 'dark');
+  const stored = localStorage.getItem('rmm-theme') || 'dark';
+  document.documentElement.classList.toggle('dark', stored === 'dark');
+  document.documentElement.classList.toggle('light', stored !== 'dark');
 })();
 
 const AUTH_KEY = 'rmm-ai-auth';
@@ -289,9 +289,9 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
         <BrandMark size={28} />
         <div className="min-w-0">
           <div className="text-[14px] font-semibold text-ink tracking-tight leading-none">OpenRMM</div>
-          <div className="text-[10.5px] text-faint mt-0.5">console</div>
+          <div className="text-[10.5px] text-faint mt-0.5">{t('app.console')}</div>
         </div>
-        <button aria-label="Close navigation" onClick={onClose} className="ml-auto p-1.5 text-faint hover:text-ink md:hidden"><Icon name="close" size={18} /></button>
+        <button aria-label={t('nav.close')} onClick={onClose} className="ml-auto p-1.5 text-faint hover:text-ink md:hidden"><Icon name="close" size={18} /></button>
       </div>
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden scroll-area px-2.5 py-3">
@@ -332,7 +332,7 @@ function Sidebar({ route, navigate, mobileOpen, onClose }) {
             <div className="text-[12.5px] text-ink font-medium truncate">{user.username}</div>
             <div className="mt-0.5"><RoleBadge role={role} /></div>
           </div>
-          <Tip label="Sign out"><button onClick={logout} className="text-faint hover:text-bad transition p-1"><Icon name="logout" size={16} /></button></Tip>
+          <Tip label={t('nav.signOut')}><button onClick={logout} className="text-faint hover:text-bad transition p-1"><Icon name="logout" size={16} /></button></Tip>
         </div>
       </div>
     </aside>
@@ -357,15 +357,15 @@ function Topbar({ route, navigate, onToggleTheme, theme, onOpenNav }) {
   };
   return (
     <header className="h-14 shrink-0 border-b border-line bg-panel/70 backdrop-blur flex items-center gap-3 px-3 sm:px-5">
-      <button aria-label="Open navigation" onClick={onOpenNav} className="h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line2 text-muted hover:text-ink md:hidden flex"><Icon name="menu" size={18} /></button>
+      <button aria-label={t('app.openNav')} onClick={onOpenNav} className="h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line2 text-muted hover:text-ink md:hidden flex"><Icon name="menu" size={18} /></button>
       <div className="text-[14.5px] font-semibold text-ink tracking-tight whitespace-nowrap">{titles[route.name] || ''}</div>
       <div className="flex-1" />
       {can('ai_chat.use') && <button onClick={() => navigate('chat')} className="hidden md:flex items-center gap-2 h-9 px-3 rounded-lg border border-line2 bg-elevated/60 hover:bg-elevated text-[12.5px] text-muted hover:text-ink transition group">
         <Icon name="sparkle" size={14} className="text-brandhi" />
-        <span>Ask the AI…</span>
+        <span>{t('app.askAi')}</span>
         <Kbd>⌘K</Kbd>
       </button>}
-      <Tip label={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
+      <Tip label={theme === 'dark' ? t('app.lightMode') : t('app.darkMode')}>
         <button onClick={onToggleTheme} className="h-9 w-9 flex items-center justify-center rounded-lg border border-line2 bg-elevated/60 hover:bg-elevated text-muted hover:text-ink transition">
           <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
         </button>
@@ -403,8 +403,8 @@ function Shell() {
   const screenMin = { devices: 'devices.view', clients: 'clients.view', chat: 'ai_chat.use', alerts: 'alerts.view', jobs: 'jobs.view', checks: 'checks.view', tasks: 'tasks.view', policies: 'policies.view', scripts: 'scripts.view', patches: 'patches.view', reports: 'reports.view', audit: 'audit.view' };
   const denied = screenMin[route.name] && !can(screenMin[route.name]);
   const Screen = denied
-    ? (() => <Page><EmptyState icon="shield" title="Access denied" msg="Your role does not have permission to open this screen." /></Page>)
-    : (screens[route.name] || (() => <EmptyState title="Coming soon" msg="This screen is part of the build." />));
+    ? (() => <Page><EmptyState icon="shield" title={t('app.denied')} msg={t('app.deniedMsg')} /></Page>)
+    : (screens[route.name] || (() => <EmptyState title={t('app.soon')} msg={t('app.soonMsg')} />));
   const fullBleed = route.name === 'chat';
 
   return (

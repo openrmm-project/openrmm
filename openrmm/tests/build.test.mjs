@@ -56,7 +56,7 @@ test('mobile navigation and pointer input are present', async () => {
   const app = await readFile(path.join(root, 'src/app.jsx'), 'utf8');
   const chat = await readFile(path.join(root, 'src/screens-chat.jsx'), 'utf8');
   const devices = await readFile(path.join(root, 'src/screens-devices.jsx'), 'utf8');
-  assert.match(app, /Open navigation/);
+  assert.match(app, /aria-label=\{t\('app\.openNav'\)\}/);
   assert.match(app, /md:hidden/);
   assert.match(chat, /sessionsOpen/);
   assert.match(devices, /pointerdown/);
@@ -70,11 +70,15 @@ test('native remote viewer exposes operator display controls and distinct chat r
   assert.match(devices, /isWin && <Button[^\n]+>UAC/);
   assert.match(devices, /disabled=\{status !== 'streaming' \|\| !shortcutAvailable\}/);
   assert.match(devices, /requestFullscreen/);
-  assert.match(devices, /Fit to window/);
-  assert.match(devices, /Remote screen resolution/);
-  assert.match(devices, /Technician · You/);
+  assert.match(devices, /t\('viewer\.fit'\)/);
+  assert.match(devices, /t\('viewer\.resolution'\)/);
+  assert.match(devices, /t\('viewer\.techYou'\)/);
   assert.match(devices, /monitors\.list\.length > 1/);
-  assert.match(devices, /monitors\.all !== false && <option value="0">All displays/);
+  assert.match(devices, /monitors\.all !== false && <option value="0">\{t\('viewer\.allDisplays'\)\}/);
+  const en = await readFile(path.join(root, 'src/locales/en.jsx'), 'utf8');
+  for (const [key, text] of [['viewer.fit', 'Fit to window'], ['viewer.resolution', 'Remote screen resolution'], ['viewer.techYou', 'Technician · You'], ['viewer.allDisplays', 'All displays']]) {
+    assert.ok(en.includes(`'${key}': '${text}'`), `${key} must read "${text}" in English`);
+  }
   assert.match(devices, /t: 'mon', id/);
   assert.match(devices, /bg-brand text-white/);
   assert.match(devices, /bg-elevated text-ink border border-line2/);

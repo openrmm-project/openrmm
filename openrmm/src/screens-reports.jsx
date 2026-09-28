@@ -9,50 +9,53 @@ function fmtBytes(b) {
   return (gb >= 100 ? Math.round(gb) : gb.toFixed(1)) + ' GB';
 }
 
-// COLUMNS defines, per report type, each column's CSV header (label), the plain
-// text used for CSV + search, and an optional rich cell renderer for display.
+// COLUMNS defines, per report type, each column's key (its header is
+// t('rep.col.<key>'), in the CSV too — this export is for people, not scripts),
+// the plain text used for CSV + search, and an optional rich cell renderer.
 const REPORT_COLUMNS = {
   software: [
-    { key: 'name', label: 'Software', text: (r) => r.name, className: 'text-ink font-medium' },
-    { key: 'manufacturer', label: 'Manufacturer', text: (r) => r.manufacturer },
-    { key: 'version', label: 'Version', text: (r) => r.version, className: 'mono text-muted' },
-    { key: 'hostname', label: 'Host', text: (r) => r.hostname },
-    { key: 'client', label: 'Client', text: (r) => r.client },
-    { key: 'site', label: 'Site', text: (r) => r.site },
-    { key: 'department', label: 'Department', text: (r) => r.department },
+    { key: 'name', text: (r) => r.name, className: 'text-ink font-medium' },
+    { key: 'manufacturer', text: (r) => r.manufacturer },
+    { key: 'version', text: (r) => r.version, className: 'mono text-muted' },
+    { key: 'hostname', text: (r) => r.hostname },
+    { key: 'client', text: (r) => r.client },
+    { key: 'site', text: (r) => r.site },
+    { key: 'department', text: (r) => r.department },
   ],
   hardware: [
-    { key: 'hostname', label: 'Host', text: (r) => r.hostname, className: 'text-ink font-medium' },
-    { key: 'os', label: 'OS', text: (r) => r.os, cell: (r) => <span className="inline-flex items-center gap-1.5"><OsIcon os={r.os} />{r.os}</span> },
-    { key: 'arch', label: 'Arch', text: (r) => r.arch, className: 'mono text-muted' },
-    { key: 'manufacturer', label: 'Manufacturer', text: (r) => r.manufacturer },
-    { key: 'model', label: 'Model', text: (r) => r.model },
-    { key: 'serial_number', label: 'Serial', text: (r) => r.serial_number, className: 'mono text-muted' },
-    { key: 'cpu_model', label: 'CPU', text: (r) => r.cpu_model },
-    { key: 'cpu_cores', label: 'Cores', text: (r) => (r.cpu_cores || ''), className: 'tabular' },
-    { key: 'mem', label: 'RAM', text: (r) => fmtBytes(r.mem_total_bytes), className: 'tabular' },
-    { key: 'gpu', label: 'GPU', text: (r) => r.gpu },
-    { key: 'storage', label: 'Storage', text: (r) => r.storage },
-    { key: 'storage_size', label: 'Disk total', text: (r) => fmtBytes(r.storage_bytes), className: 'tabular' },
-    { key: 'bios', label: 'BIOS', text: (r) => r.bios, className: 'mono text-muted' },
-    { key: 'platform', label: 'Platform', text: (r) => [r.platform, r.platform_version].filter(Boolean).join(' ') },
-    { key: 'kernel_version', label: 'Kernel', text: (r) => r.kernel_version, className: 'mono text-muted' },
-    { key: 'ip', label: 'IP address', text: (r) => r.ip, className: 'mono text-muted' },
-    { key: 'mac', label: 'MAC', text: (r) => r.mac, className: 'mono text-muted' },
-    { key: 'client', label: 'Client', text: (r) => r.client },
-    { key: 'site', label: 'Site', text: (r) => r.site },
-    { key: 'department', label: 'Department', text: (r) => r.department },
+    { key: 'hostname', text: (r) => r.hostname, className: 'text-ink font-medium' },
+    { key: 'os', text: (r) => r.os, cell: (r) => <span className="inline-flex items-center gap-1.5"><OsIcon os={r.os} />{r.os}</span> },
+    { key: 'arch', text: (r) => r.arch, className: 'mono text-muted' },
+    { key: 'manufacturer', text: (r) => r.manufacturer },
+    { key: 'model', text: (r) => r.model },
+    { key: 'serial_number', text: (r) => r.serial_number, className: 'mono text-muted' },
+    { key: 'cpu_model', text: (r) => r.cpu_model },
+    { key: 'cpu_cores', text: (r) => (r.cpu_cores || ''), className: 'tabular' },
+    { key: 'mem', text: (r) => fmtBytes(r.mem_total_bytes), className: 'tabular' },
+    { key: 'gpu', text: (r) => r.gpu },
+    { key: 'storage', text: (r) => r.storage },
+    { key: 'storage_size', text: (r) => fmtBytes(r.storage_bytes), className: 'tabular' },
+    { key: 'bios', text: (r) => r.bios, className: 'mono text-muted' },
+    { key: 'platform', text: (r) => [r.platform, r.platform_version].filter(Boolean).join(' ') },
+    { key: 'kernel_version', text: (r) => r.kernel_version, className: 'mono text-muted' },
+    { key: 'ip', text: (r) => r.ip, className: 'mono text-muted' },
+    { key: 'mac', text: (r) => r.mac, className: 'mono text-muted' },
+    { key: 'client', text: (r) => r.client },
+    { key: 'site', text: (r) => r.site },
+    { key: 'department', text: (r) => r.department },
   ],
   machines: [
-    { key: 'hostname', label: 'Host', text: (r) => r.hostname, className: 'text-ink font-medium' },
-    { key: 'status', label: 'Status', text: (r) => r.status, cell: (r) => <StatusPill status={r.status} size="sm" /> },
-    { key: 'agent_version', label: 'Agent', text: (r) => r.agent_version, className: 'mono text-muted' },
-    { key: 'client', label: 'Client', text: (r) => r.client },
-    { key: 'site', label: 'Site', text: (r) => r.site },
-    { key: 'department', label: 'Department', text: (r) => r.department },
-    { key: 'last_seen', label: 'Last seen', text: (r) => fmtTime(r.last_seen), cell: (r) => timeAgo(r.last_seen) },
+    { key: 'hostname', text: (r) => r.hostname, className: 'text-ink font-medium' },
+    { key: 'status', text: (r) => r.status, cell: (r) => <StatusPill status={r.status} size="sm" /> },
+    { key: 'agent_version', text: (r) => r.agent_version, className: 'mono text-muted' },
+    { key: 'client', text: (r) => r.client },
+    { key: 'site', text: (r) => r.site },
+    { key: 'department', text: (r) => r.department },
+    { key: 'last_seen', text: (r) => fmtTime(r.last_seen), cell: (r) => timeAgo(r.last_seen) },
   ],
 };
+
+const colLabel = (c) => t('rep.col.' + c.key);
 
 // ColumnPicker is a dropdown of checkboxes to show/hide table columns.
 function ColumnPicker({ columns, hidden, onToggle }) {
@@ -68,11 +71,11 @@ function ColumnPicker({ columns, hidden, onToggle }) {
   return (
     <div className="relative" ref={ref}>
       <Button variant="secondary" icon="list" iconRight="chevdown" onClick={() => setOpen((o) => !o)}>
-        Columns <span className="text-faint tabular ml-0.5">{shown}/{columns.length}</span>
+        {t('rep.columns')} <span className="text-faint tabular ml-0.5">{shown}/{columns.length}</span>
       </Button>
       {open && (
         <div className="absolute right-0 mt-1.5 z-30 w-60 rounded-xl border border-line bg-panel shadow-2xl p-1.5 max-h-[60vh] overflow-auto scroll-area">
-          <div className="px-2 py-1.5 text-[10.5px] uppercase tracking-wide text-faint">Show columns</div>
+          <div className="px-2 py-1.5 text-[10.5px] uppercase tracking-wide text-faint">{t('rep.showColumns')}</div>
           {columns.map((c) => {
             const vis = !hidden.includes(c.key);
             return (
@@ -81,7 +84,7 @@ function ColumnPicker({ columns, hidden, onToggle }) {
                 <span className={cx('h-4 w-4 rounded border flex items-center justify-center shrink-0', vis ? 'bg-brand border-brand text-white' : 'border-line2')}>
                   {vis && <Icon name="approve" size={12} />}
                 </span>
-                <span className="flex-1 text-left">{c.label}</span>
+                <span className="flex-1 text-left">{colLabel(c)}</span>
               </button>
             );
           })}
@@ -156,11 +159,11 @@ function ReportsScreen() {
   const onSite = (v) => { setSiteId(v); setDeptId(''); };
 
   const exportCSV = () => {
-    if (!filtered.length) { toast?.info?.('Nothing to export', 'The current report has no rows.'); return; }
-    const csv = toCSV(visibleCols.map((c) => c.label), filtered.map((r) => visibleCols.map((c) => c.text(r))));
+    if (!filtered.length) { toast?.info?.(t('rep.nothingToExport'), t('rep.noRows')); return; }
+    const csv = toCSV(visibleCols.map(colLabel), filtered.map((r) => visibleCols.map((c) => c.text(r))));
     const date = new Date().toISOString().slice(0, 10);
     downloadText('report-' + tab + '-' + date + '.csv', csv, 'text/csv');
-    toast?.success?.('CSV downloaded', filtered.length + ' row(s) exported.');
+    toast?.success?.(t('rep.csvDownloaded'), tn('rep.rowsExported', filtered.length));
   };
 
   return (
@@ -170,39 +173,39 @@ function ReportsScreen() {
         onChange={(v) => { setTab(v); setQ(''); }}
         className="mb-4"
         tabs={[
-          { value: 'software', label: 'Software' },
-          { value: 'hardware', label: 'Hardware & System' },
-          { value: 'machines', label: 'Agents' },
+          { value: 'software', label: t('rep.tab.software') },
+          { value: 'hardware', label: t('rep.tab.hardware') },
+          { value: 'machines', label: t('rep.tab.machines') },
         ]}
       />
 
       {/* filter bar */}
       <Card className="p-3.5 mb-4">
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Client" className="min-w-[180px] flex-1">
+          <Field label={t('rep.col.client')} className="min-w-[180px] flex-1">
             <Select value={clientId} onChange={(e) => onClient(e.target.value)}>
-              <option value="">All clients</option>
+              <option value="">{t('rep.allClients')}</option>
               {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
           </Field>
-          <Field label="Site" className="min-w-[180px] flex-1">
+          <Field label={t('rep.col.site')} className="min-w-[180px] flex-1">
             <Select value={siteId} onChange={(e) => onSite(e.target.value)} disabled={!clientId}>
-              <option value="">{clientId ? 'All sites' : 'Choose a client first'}</option>
+              <option value="">{clientId ? t('rep.allSites') : t('rep.chooseClient')}</option>
               {siteOpts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
           </Field>
-          <Field label="Department" className="min-w-[180px] flex-1">
+          <Field label={t('rep.col.department')} className="min-w-[180px] flex-1">
             <Select value={deptId} onChange={(e) => setDeptId(e.target.value)} disabled={!siteId}>
-              <option value="">{siteId ? 'All departments' : 'Choose a site first'}</option>
+              <option value="">{siteId ? t('rep.allDepartments') : t('rep.chooseSite')}</option>
               {deptOpts.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </Select>
           </Field>
-          <Field label="Search" className="min-w-[180px] flex-1">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter rows…" />
+          <Field label={t('rep.search')} className="min-w-[180px] flex-1">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('rep.filterRows')} />
           </Field>
           <ColumnPicker columns={cols} hidden={hidden} onToggle={toggleCol} />
           <Button variant="secondary" icon="download" onClick={exportCSV} disabled={dataQ.loading || !filtered.length}>
-            Download CSV
+            {t('chat.downloadCsv')}
           </Button>
         </div>
       </Card>
@@ -211,23 +214,23 @@ function ReportsScreen() {
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between px-4 h-11 border-b border-line">
           <div className="text-[12.5px] text-muted">
-            {dataQ.loading ? 'Loading…' : <>Showing <span className="text-ink font-semibold tabular">{firstShown}–{lastShown}</span> of <span className="text-ink font-semibold tabular">{filtered.length}</span>{ql && rows.length !== filtered.length ? <> filtered from {rows.length}</> : ''} row{filtered.length === 1 ? '' : 's'}</>}
+            {dataQ.loading ? t('common.loading') : <>{t('rep.showing', { range: `${firstShown}–${lastShown}`, total: filtered.length })}{ql && rows.length !== filtered.length ? ' ' + t('rep.filteredFrom', { n: rows.length }) : ''}</>}
           </div>
-          <Tip label="Refresh"><Button size="icon" variant="ghost" icon="refresh" onClick={() => dataQ.refetch()} /></Tip>
+          <Tip label={t('action.refresh')}><Button size="icon" variant="ghost" icon="refresh" onClick={() => dataQ.refetch()} /></Tip>
         </div>
 
         {dataQ.error ? (
-          <EmptyState icon="alert" title="Couldn't load the report" msg={dataQ.error.message} />
+          <EmptyState icon="alert" title={t('rep.loadFailed')} msg={dataQ.error.message} />
         ) : dataQ.loading ? (
           <div className="p-4 space-y-2">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
         ) : !filtered.length ? (
-          <EmptyState icon="report" title="No data" msg={rows.length ? 'No rows match your search.' : 'No inventory has been reported for the selected scope yet.'} />
+          <EmptyState icon="report" title={t('rep.noData')} msg={rows.length ? t('rep.noMatch') : t('rep.noInventory')} />
         ) : (
           <div className="overflow-auto scroll-area max-h-[calc(100vh-280px)]">
             <table className="w-full text-[12.5px] border-collapse">
               <thead className="sticky top-0 z-10 bg-elevated/95 backdrop-blur">
                 <tr className="text-left text-faint">
-                  {visibleCols.map((c) => <th key={c.key} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{c.label}</th>)}
+                  {visibleCols.map((c) => <th key={c.key} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{colLabel(c)}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -248,18 +251,20 @@ function ReportsScreen() {
         {!dataQ.loading && !dataQ.error && filtered.length > 0 && (
           <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-line">
             <div className="flex items-center gap-2 text-[12px] text-muted">
-              <span>Rows per page</span>
-              <Select value={String(pageSize)} onChange={(v) => setPageSize(Number(v))} className="h-7 w-[84px] text-[12px]">
+              <span>{t('rep.rowsPerPage')}</span>
+              {/* Select hands over the change event, not the value: Number(event)
+                  was NaN, and the table lost its paging the moment it was used. */}
+              <Select value={String(pageSize)} onChange={(e) => setPageSize(Number(e.target.value) || 100)} className="h-7 w-[84px] text-[12px]">
                 {[50, 100, 250, 500].map((n) => <option key={n} value={String(n)}>{n}</option>)}
               </Select>
               {/* The export covers the filtered report, not the page on screen —
                   said here because a paged table invites the opposite assumption. */}
-              <span className="text-faint hidden sm:inline">· CSV exports all {filtered.length} rows</span>
+              <span className="text-faint hidden sm:inline">{t('rep.csvAll', { n: filtered.length })}</span>
             </div>
             <div className="flex items-center gap-1.5 text-[12px] text-muted">
-              <Button size="icon" variant="ghost" icon="chevleft" disabled={current === 0} onClick={() => setPage(current - 1)} title="Previous page" />
-              <span className="tabular px-1">Page {current + 1} of {pageCount}</span>
-              <Button size="icon" variant="ghost" icon="chevright" disabled={current >= pageCount - 1} onClick={() => setPage(current + 1)} title="Next page" />
+              <Button size="icon" variant="ghost" icon="chevleft" disabled={current === 0} onClick={() => setPage(current - 1)} title={t('rep.prevPage')} />
+              <span className="tabular px-1">{t('audit.pageOf', { page: current + 1, pages: pageCount })}</span>
+              <Button size="icon" variant="ghost" icon="chevright" disabled={current >= pageCount - 1} onClick={() => setPage(current + 1)} title={t('rep.nextPage')} />
             </div>
           </div>
         )}

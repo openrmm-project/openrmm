@@ -29,24 +29,24 @@ function JobsScreen({ route }) {
 
   return (
     <Page wide>
-      <PageHeader title="Jobs & Approvals" subtitle="Every action runs only after a human approves it. Scripts are shown in full before they run." />
+      <PageHeader title={t('title.jobs')} subtitle={t('jobs.subtitle')} />
 
       <div className="flex items-center justify-between mb-4">
-        <Tabs value={tab} onChange={setTab} tabs={[{ value: 'awaiting', label: 'Awaiting approval', count: awaiting.length }, { value: 'all', label: 'All jobs', count: jobs.length }]} />
-        <div className="flex items-center gap-1.5 text-[11.5px] text-faint"><Spinner size={11} className="text-faint" />Live · polling</div>
+        <Tabs value={tab} onChange={setTab} tabs={[{ value: 'awaiting', label: t('jobs.tab.awaiting'), count: awaiting.length }, { value: 'all', label: t('jobs.tab.all'), count: jobs.length }]} />
+        <div className="flex items-center gap-1.5 text-[11.5px] text-faint"><Spinner size={11} className="text-faint" />{t('jobs.live')}</div>
       </div>
 
       {tab === 'awaiting' && awaiting.length > 0 && (
         <div className="flex items-start gap-2.5 rounded-xl border border-warn/25 bg-warnsoft px-4 py-3 mb-4">
           <Icon name="shield" size={17} className="text-warn mt-0.5 shrink-0" />
-          <div className="text-[12.5px] text-ink leading-relaxed">{awaiting.length} job{awaiting.length > 1 ? 's are' : ' is'} waiting for a decision. Review the full script for each before approving — approval is a deliberate action and is recorded in the audit log.</div>
+          <div className="text-[12.5px] text-ink leading-relaxed">{tn('jobs.waiting', awaiting.length)}</div>
         </div>
       )}
 
       <div className="space-y-3">
         {jobsQ.loading && Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 w-full rounded-2xl" />)}
         {!jobsQ.loading && list.length === 0 && (
-          <Card><EmptyState icon={tab === 'awaiting' ? 'approve' : 'flash'} title={tab === 'awaiting' ? 'Approval queue is clear' : 'No jobs yet'} msg={tab === 'awaiting' ? 'Nothing is waiting on you right now.' : 'Jobs created manually or by the AI will appear here.'} /></Card>
+          <Card><EmptyState icon={tab === 'awaiting' ? 'approve' : 'flash'} title={tab === 'awaiting' ? t('jobs.queueClear') : t('djobs.empty')} msg={tab === 'awaiting' ? t('jobs.queueClearMsg') : t('jobs.emptyMsg')} /></Card>
         )}
         {!jobsQ.loading && list.map((j) => {
           if (j.batch_id) {
@@ -79,23 +79,23 @@ function JobCard({ job, device, defaultOpen, focused }) {
 
   const approve = async () => {
     setBusy(true);
-    try { await api.approveJob(job.id); toast.success('Approved', 'Dispatching to ' + (device?.hostname || job.agent_id)); }
-    catch (e) { toast.error('Could not approve', e.message); } finally { setBusy(false); }
+    try { await api.approveJob(job.id); toast.success(t('devices.review.approved'), t('jobs.approvedDispatching', { host: device?.hostname || job.agent_id })); }
+    catch (e) { toast.error(t('jobs.couldNotApprove'), e.message); } finally { setBusy(false); }
   };
   const reject = async () => {
     setBusy(true);
-    try { await api.rejectJob(job.id); toast.info('Rejected', 'The job was discarded.'); }
-    catch (e) { toast.error('Could not reject', e.message); } finally { setBusy(false); }
+    try { await api.rejectJob(job.id); toast.info(t('devices.review.rejected'), t('jobs.discarded')); }
+    catch (e) { toast.error(t('jobs.couldNotReject'), e.message); } finally { setBusy(false); }
   };
   const cancel = async () => {
     setBusy(true);
-    try { await api.cancelJob(job.id); toast.info('Canceling', 'Stopping the job on ' + (device?.hostname || job.agent_id) + '…'); }
-    catch (e) { toast.error('Could not cancel', e.message); } finally { setBusy(false); }
+    try { await api.cancelJob(job.id); toast.info(t('jobs.canceling'), t('jobs.stoppingOn', { host: device?.hostname || job.agent_id })); }
+    catch (e) { toast.error(t('jobs.couldNotCancel'), e.message); } finally { setBusy(false); }
   };
   const complete = async () => {
     setBusy(true);
-    try { await api.completeJob(job.id, true); toast.success('Marked complete', 'Job finalized manually.'); }
-    catch (e) { toast.error('Could not complete', e.message); } finally { setBusy(false); }
+    try { await api.completeJob(job.id, true); toast.success(t('jobs.markedComplete'), t('jobs.finalizedManually')); }
+    catch (e) { toast.error(t('jobs.couldNotComplete'), e.message); } finally { setBusy(false); }
   };
 
   return (
@@ -107,15 +107,15 @@ function JobCard({ job, device, defaultOpen, focused }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[14px] font-semibold text-ink">{job.description}</span>
-            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">AI-proposed</span>}
-            {destructive && isAwaiting && <span className="inline-flex items-center gap-1 rounded-md bg-badsoft border border-bad/25 text-bad px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="alert" size={10} />Destructive</span>}
+            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">{t('jobs.aiProposed')}</span>}
+            {destructive && isAwaiting && <span className="inline-flex items-center gap-1 rounded-md bg-badsoft border border-bad/25 text-bad px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="alert" size={10} />{t('jobs.destructive')}</span>}
           </div>
           <div className="text-[12px] text-faint mt-1 flex items-center gap-1.5 flex-wrap">
             <OsIcon os={device?.os} size={12} /><span className="text-muted">{device?.hostname || job.agent_id}</span>
             <span>·</span><span className="mono">{job.shell}</span>
-            <span>·</span><span>by {ai ? <span className="text-brandhi">AI assistant</span> : job.created_by}</span>
+            <span>·</span><span>{ai ? <span className="text-brandhi">{t('jobs.by', { who: t('jobs.aiAssistant') })}</span> : t('jobs.by', { who: job.created_by })}</span>
             <span>·</span><span>{timeAgo(job.created_at)}</span>
-            {job.approved_by && <><span>·</span><span>approved by {job.approved_by}</span></>}
+            {job.approved_by && <><span>·</span><span>{t('jobs.approvedBy', { who: job.approved_by })}</span></>}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -131,12 +131,12 @@ function JobCard({ job, device, defaultOpen, focused }) {
 
           {isAwaiting && (
             <div className="flex items-center justify-between gap-3 pt-1">
-              <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — nothing has run yet.</div>
+              <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />{t('jobs.previewOnly')}</div>
               <div className="flex items-center gap-2">
                 {can('jobs.manage') && (
                   <>
-                    <Button variant="danger" icon="reject" onClick={reject} disabled={busy}>Reject</Button>
-                    <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approve()}>Approve & run</Button>
+                    <Button variant="danger" icon="reject" onClick={reject} disabled={busy}>{t('action.reject')}</Button>
+                    <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approve()}>{t('jobs.approveRun')}</Button>
                   </>
                 )}
               </div>
@@ -145,21 +145,22 @@ function JobCard({ job, device, defaultOpen, focused }) {
           {inFlight && (
             <div className="flex items-center justify-between gap-3 pt-1">
               <div className="flex items-center gap-2 text-[12.5px] text-run">
-                {job.status === 'running' ? <><Spinner size={14} className="text-run" />Executing on {device?.hostname}…</> : <><Icon name="clock" size={13} />{job.status === 'sent' ? 'Sent — starting…' : 'Queued (waiting for agent)'}</>}
+                {job.status === 'running' ? <><Spinner size={14} className="text-run" />{t('jobs.executingOn', { host: device?.hostname || job.agent_id })}</> : <><Icon name="clock" size={13} />{job.status === 'sent' ? t('jobs.sentStarting') : t('jobs.queuedAgent')}</>}
               </div>
               {can('jobs.manage') && <div className="flex items-center gap-2">
-                <Button variant="ghost" icon="approve" onClick={() => setAskComplete(true)} disabled={busy}>Mark complete</Button>
-                <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>Cancel</Button>
+                <Button variant="ghost" icon="approve" onClick={() => setAskComplete(true)} disabled={busy}>{t('jobs.markComplete')}</Button>
+                <Button variant="danger" icon="reject" onClick={cancel} loading={busy}>{t('action.cancel')}</Button>
               </div>}
             </div>
           )}
         </div>
       )}
 
-      <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approve} danger requireType="RUN" confirmLabel="Approve & run"
-        title="This script looks destructive" body={<>It matches patterns that modify or remove data on <b>{device?.hostname}</b>. Re-read the script above, then type <b>RUN</b> to confirm you want to execute it.</>} />
-      <ConfirmDialog open={askComplete} onClose={() => setAskComplete(false)} onConfirm={complete} confirmLabel="Mark complete"
-        title="Mark job as completed?" body={<>Only do this if you've confirmed on <b>{device?.hostname || job.agent_id}</b> that the script finished — the agent's result never arrived (it can be lost on a disconnect). This finalizes the job as completed and is recorded in the audit log.</>} />
+      {/* RUN stays RUN in every language: it is the word typed to confirm, not a label. */}
+      <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approve} danger requireType="RUN" confirmLabel={t('jobs.approveRun')}
+        title={t('jobs.destructiveTitle')} body={t('jobs.destructiveBody', { host: device?.hostname || job.agent_id })} />
+      <ConfirmDialog open={askComplete} onClose={() => setAskComplete(false)} onConfirm={complete} confirmLabel={t('jobs.markComplete')}
+        title={t('jobs.completeTitle')} body={t('jobs.completeBody', { host: device?.hostname || job.agent_id })} />
     </Card>
   );
 }
@@ -184,17 +185,17 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
 
   const approveAll = async () => {
     setBusy(true);
-    try { const r = await api.approveBatch(batchId); toast.success('Deployment approved', (r.approved ?? awaiting.length) + ' job(s) dispatching'); }
-    catch (e) { toast.error('Could not approve', e.message); } finally { setBusy(false); }
+    try { const r = await api.approveBatch(batchId); toast.success(t('jobs.deploymentApproved'), t('jobs.dispatchingN', { jobs: tn('bulk.jobs', r.approved ?? awaiting.length) })); }
+    catch (e) { toast.error(t('jobs.couldNotApprove'), e.message); } finally { setBusy(false); }
   };
   const rejectAll = async () => {
     setBusy(true);
-    try { const r = await api.rejectBatch(batchId); toast.info('Deployment rejected', (r.rejected ?? awaiting.length) + ' job(s) discarded'); }
-    catch (e) { toast.error('Could not reject', e.message); } finally { setBusy(false); }
+    try { const r = await api.rejectBatch(batchId); toast.info(t('jobs.deploymentRejected'), t('jobs.discardedN', { jobs: tn('bulk.jobs', r.rejected ?? awaiting.length) })); }
+    catch (e) { toast.error(t('jobs.couldNotReject'), e.message); } finally { setBusy(false); }
   };
   const removeOne = async (j) => {
-    try { await api.rejectJob(j.id); toast.info('Target removed', (devMap[j.agent_id]?.hostname || j.agent_id) + ' dropped from the deployment'); }
-    catch (e) { toast.error('Failed', e.message); }
+    try { await api.rejectJob(j.id); toast.info(t('jobs.targetRemoved'), t('jobs.droppedFrom', { host: devMap[j.agent_id]?.hostname || j.agent_id })); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
   };
 
   return (
@@ -205,14 +206,14 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[14px] font-semibold text-ink">{head.description || 'Bulk deployment'}</span>
-            <span className="inline-flex items-center gap-1 rounded-md bg-elevated border border-line text-muted px-1.5 py-0.5 text-[10px] font-semibold">Bulk · {jobs.length} device{jobs.length > 1 ? 's' : ''}</span>
-            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">AI-proposed</span>}
-            {destructive && isAwaiting && <span className="inline-flex items-center gap-1 rounded-md bg-badsoft border border-bad/25 text-bad px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="alert" size={10} />Destructive</span>}
+            <span className="text-[14px] font-semibold text-ink">{head.description || t('jobs.bulkDeployment')}</span>
+            <span className="inline-flex items-center gap-1 rounded-md bg-elevated border border-line text-muted px-1.5 py-0.5 text-[10px] font-semibold">{t('jobs.bulkN', { devices: tn('bulk.devices', jobs.length) })}</span>
+            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">{t('jobs.aiProposed')}</span>}
+            {destructive && isAwaiting && <span className="inline-flex items-center gap-1 rounded-md bg-badsoft border border-bad/25 text-bad px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="alert" size={10} />{t('jobs.destructive')}</span>}
           </div>
           <div className="text-[12px] text-faint mt-1 flex items-center gap-1.5 flex-wrap">
             <span className="mono">{head.shell}</span><span>·</span>
-            <span>by {ai ? <span className="text-brandhi">AI assistant</span> : head.created_by}</span><span>·</span>
+            <span>{ai ? <span className="text-brandhi">{t('jobs.by', { who: t('jobs.aiAssistant') })}</span> : t('jobs.by', { who: head.created_by })}</span><span>·</span>
             <span>{timeAgo(head.created_at)}</span>
             {Object.entries(counts).map(([s, n]) => <span key={s} className="inline-flex items-center gap-1"><span>·</span><StatusPill status={s} size="sm" /> {n}</span>)}
           </div>
@@ -229,18 +230,18 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
                 <OsIcon os={devMap[j.agent_id]?.os} size={13} />
                 <span className="text-ink truncate flex-1">{devMap[j.agent_id]?.hostname || j.agent_id}</span>
                 <StatusPill status={j.status} size="sm" />
-                {j.status === 'awaiting_approval' && can('jobs.manage') && <button onClick={() => removeOne(j)} title="Remove from deployment" className="text-faint hover:text-bad p-0.5"><Icon name="close" size={14} /></button>}
+                {j.status === 'awaiting_approval' && can('jobs.manage') && <button onClick={() => removeOne(j)} title={t('jobs.removeTarget')} className="text-faint hover:text-bad p-0.5"><Icon name="close" size={14} /></button>}
               </div>
             ))}
           </div>
           {isAwaiting && (
             <div className="flex items-center justify-between gap-3 pt-1">
-              <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />Preview only — review the targets, then approve once for all {awaiting.length}.</div>
+              <div className="text-[12px] text-faint flex items-center gap-1.5"><Icon name="eye" size={13} />{t('jobs.batchPreview', { n: awaiting.length })}</div>
               <div className="flex items-center gap-2">
                 {can('jobs.manage') && (
                   <>
-                    <Button variant="danger" icon="reject" onClick={rejectAll} disabled={busy}>Reject all</Button>
-                    <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approveAll()}>Approve {awaiting.length}</Button>
+                    <Button variant="danger" icon="reject" onClick={rejectAll} disabled={busy}>{t('jobs.rejectAll')}</Button>
+                    <Button variant="success" icon="approve" loading={busy} onClick={() => destructive ? setConfirm(true) : approveAll()}>{t('jobs.approveN', { n: awaiting.length })}</Button>
                   </>
                 )}
               </div>
@@ -249,8 +250,8 @@ function BatchCard({ jobs, devMap, defaultOpen }) {
         </div>
       )}
 
-      <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approveAll} danger requireType="RUN" confirmLabel={'Approve ' + awaiting.length}
-        title="This deployment looks destructive" body={<>It will run on <b>{awaiting.length} device(s)</b> and matches patterns that modify or remove data. Re-read the script, then type <b>RUN</b> to confirm.</>} />
+      <ConfirmDialog open={confirm} onClose={() => setConfirm(false)} onConfirm={approveAll} danger requireType="RUN" confirmLabel={t('jobs.approveN', { n: awaiting.length })}
+        title={t('jobs.batchDestructiveTitle')} body={t('jobs.batchDestructiveBody', { devices: tn('bulk.devices', awaiting.length) })} />
     </Card>
   );
 }
@@ -319,7 +320,7 @@ function AuditScreen() {
   (usersQ.data?.users || []).forEach((u) => { userMap[u.id] = u.username; });
   const displayActor = (a) => {
     if (!a) return a;
-    if (a.startsWith('ai:')) { const u = userMap[a.slice(3)]; return u ? 'AI · ' + u : 'AI assistant'; }
+    if (a.startsWith('ai:')) { const u = userMap[a.slice(3)]; return u ? t('audit.aiAs', { user: u }) : t('audit.aiAssistant'); }
     return userMap[a] || a;
   };
 
@@ -330,12 +331,12 @@ function AuditScreen() {
   // UUID always stays the unique key — shown on hover (title) and in the CSV.
   const devMap = useDeviceMap();
   const displayTarget = (e) => {
-    const t = e.target;
+    const target = e.target;
     const d = e.detail || {};
     const snap = d.hostname || d.host || d.name;
-    const live2 = t && (devMap[t]?.hostname || userMap[t]);
+    const live2 = target && (devMap[target]?.hostname || userMap[target]);
     const byAgent = d.agent && devMap[d.agent]?.hostname;
-    return snap || live2 || byAgent || t;
+    return snap || live2 || byAgent || target;
   };
 
   const resetFilters = () => {
@@ -362,16 +363,16 @@ function AuditScreen() {
       }
       const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
       const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+      // English on purpose: scripts read these columns, whatever the console's language.
       const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
       const rows = collected.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e), e.target, detailStr(e.detail)]);
       const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
       downloadText('audit-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv');
       if (total > collected.length) {
-        toast.info('Export truncated',
-          `${collected.length} of ${total} entries. Narrow the date range to export the rest.`);
+        toast.info(t('audit.truncated'), t('audit.truncatedMsg', { count: collected.length, total }));
       }
     } catch (err) {
-      toast.error('Export failed', err.message);
+      toast.error(t('audit.exportFailed'), err.message);
     } finally {
       setExporting(false);
     }
@@ -381,44 +382,44 @@ function AuditScreen() {
 
   return (
     <Page>
-      <PageHeader title="Audit log" subtitle="An immutable record of who did what. Read-only." />
+      <PageHeader title={t('title.audit')} subtitle={t('audit.subtitle')} />
 
       <Card className="mb-4"><div className="flex flex-wrap items-end gap-2 p-2.5">
-        <Field label="From" className="w-[150px]">
+        <Field label={t('audit.from')} className="w-[150px]">
           <Input type="date" value={since} onChange={onFilter(setSince)} max={until || undefined} />
         </Field>
-        <Field label="To" className="w-[150px]">
+        <Field label={t('audit.to')} className="w-[150px]">
           <Input type="date" value={until} onChange={onFilter(setUntil)} min={since || undefined} />
         </Field>
-        <Field label="Actor" className="w-auto min-w-[170px]">
+        <Field label={t('audit.actor')} className="w-auto min-w-[170px]">
           <Select value={actorF} onChange={onFilter(setActorF)}>
-            <option value="">All actors</option>
+            <option value="">{t('audit.allActors')}</option>
             {(facetsQ.data?.actors || []).map((a) => <option key={a} value={a}>{displayActor(a)}</option>)}
           </Select>
         </Field>
-        <Field label="Action" className="w-auto min-w-[150px]">
+        <Field label={t('audit.action')} className="w-auto min-w-[150px]">
           <Select value={actionF} onChange={onFilter(setActionF)}>
-            <option value="">All actions</option>
-            {(facetsQ.data?.actions || []).map((a) => <option key={a} value={a}>{a}</option>)}
+            <option value="">{t('audit.allActions')}</option>
+            {(facetsQ.data?.actions || []).map((a) => <option key={a} value={a}>{tEnum('audit.res', a)}</option>)}
           </Select>
         </Field>
-        <Field label="Target ID" className="flex-1 min-w-[200px]"
-          hint="Exact id of the device, job or user acted on">
-          <Input className="mono" value={targetF} onChange={onFilter(setTargetF)} placeholder="uuid…" />
+        <Field label={t('audit.targetId')} className="flex-1 min-w-[200px]"
+          hint={t('audit.targetIdHint')}>
+          <Input className="mono" value={targetF} onChange={onFilter(setTargetF)} placeholder="uuid…" /> {/* i18n-ignore: a format, not words */}
         </Field>
-        {hasFilters && <Button variant="ghost" onClick={resetFilters}>Clear</Button>}
+        {hasFilters && <Button variant="ghost" onClick={resetFilters}>{t('action.clear')}</Button>}
         <Button variant="secondary" icon="download" onClick={exportCSV}
           disabled={!total || exporting}>
-          {exporting ? 'Exporting…' : `Export CSV (${total})`}
+          {exporting ? t('audit.exporting') : t('audit.exportCsv', { n: total })}
         </Button>
       </div></Card>
 
       <Card className="overflow-hidden">
         <table className="w-full text-left">
           <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
-            <th className="font-semibold px-4 py-2.5">Time</th><th className="font-semibold px-3 py-2.5">Actor</th>
-            <th className="font-semibold px-3 py-2.5">Action</th><th className="font-semibold px-3 py-2.5">Target</th>
-            <th className="font-semibold px-4 py-2.5">Detail</th>
+            <th className="font-semibold px-4 py-2.5">{t('audit.col.time')}</th><th className="font-semibold px-3 py-2.5">{t('audit.actor')}</th>
+            <th className="font-semibold px-3 py-2.5">{t('audit.action')}</th><th className="font-semibold px-3 py-2.5">{t('audit.col.target')}</th>
+            <th className="font-semibold px-4 py-2.5">{t('audit.col.detail')}</th>
           </tr></thead>
           <tbody className="divide-y divide-line">
             {entries.map((e) => {
@@ -427,7 +428,7 @@ function AuditScreen() {
                 <tr key={e.id} className="hover:bg-elevated/40 transition align-top">
                   <td className="px-4 py-3 text-[12.5px] text-muted whitespace-nowrap" title={e.created_at}>{fmtTime(e.created_at)}</td>
                   <td className="px-3 py-3 text-[13px] text-ink" title={e.actor}>{displayActor(e.actor)}</td>
-                  <td className="px-3 py-3"><span className={cx('inline-flex items-center gap-1.5 text-[12.5px]', m.c)}><Icon name={m.icon} size={13} />{e.action}</span></td>
+                  <td className="px-3 py-3" title={e.action}><span className={cx('inline-flex items-center gap-1.5 text-[12.5px]', m.c)}><Icon name={m.icon} size={13} />{window.auditActionLabel(e.action)}</span></td>
                   <td className="px-3 py-3 text-[12.5px] text-muted" title={e.target}>{displayTarget(e)}</td>
                   <td className="px-4 py-3 text-[12px] text-faint">{Object.entries(e.detail || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')}</td>
                 </tr>
@@ -436,20 +437,20 @@ function AuditScreen() {
           </tbody>
         </table>
         {!auditQ.loading && !entries.length && (
-          <EmptyState icon="audit" title="No entries"
-            msg={hasFilters ? 'Nothing matches these filters.' : 'Nothing has been recorded yet.'} />
+          <EmptyState icon="audit" title={t('audit.empty')}
+            msg={hasFilters ? t('audit.noMatch') : t('audit.nothingYet')} />
         )}
       </Card>
 
       {(total > PAGE || page > 0) && (
         <div className="flex items-center justify-between mt-3 text-[12.5px] text-muted">
-          <span>{entries.length} shown of {total}</span>
+          <span>{t('audit.shownOf', { shown: entries.length, total })}</span>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" disabled={page === 0}
-              onClick={() => { setCursors(cursors.slice(0, -1)); setPage(page - 1); }}>Previous</Button>
-            <span className="text-faint">Page {page + 1} of {pages}</span>
+              onClick={() => { setCursors(cursors.slice(0, -1)); setPage(page - 1); }}>{t('audit.previous')}</Button>
+            <span className="text-faint">{t('audit.pageOf', { page: page + 1, pages })}</span>
             <Button size="sm" variant="ghost" disabled={!nextCursor}
-              onClick={() => { setCursors([...cursors, nextCursor]); setPage(page + 1); }}>Next</Button>
+              onClick={() => { setCursors([...cursors, nextCursor]); setPage(page + 1); }}>{t('audit.next')}</Button>
           </div>
         </div>
       )}

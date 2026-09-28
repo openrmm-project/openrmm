@@ -19,16 +19,18 @@
  * breaking the screen.
  */
 
-// Locales offered in the picker. `complete` says whether every key is present
-// and reviewed; the picker marks the rest, because a half-translated console
-// that claims to be Japanese is worse than one that admits it is a draft.
+// Locales offered in the picker, each with its table in src/locales/<code>.jsx.
+// Every offered locale has the full English key set (enforced by i18n.test.mjs).
+// `nativeReviewed` records the separate linguistic review status. The picker
+// explains that status when an unreviewed language is selected, without calling
+// a fully populated translation a draft.
 const LOCALES = [
-  { code: 'en',    name: 'English',    nativeName: 'English',  complete: true },
-  { code: 'pt-BR', name: 'Portuguese', nativeName: 'Português', complete: true },
-  { code: 'es',    name: 'Spanish',    nativeName: 'Español',  complete: true },
-  { code: 'de',    name: 'German',     nativeName: 'Deutsch',  complete: false },
-  { code: 'zh-CN', name: 'Chinese',    nativeName: '中文',      complete: false },
-  { code: 'ja',    name: 'Japanese',   nativeName: '日本語',     complete: false },
+  { code: 'en',    name: 'English',    nativeName: 'English',  nativeReviewed: true },
+  { code: 'pt-BR', name: 'Portuguese', nativeName: 'Português', nativeReviewed: true },
+  { code: 'es',    name: 'Spanish',    nativeName: 'Español',  nativeReviewed: true },
+  { code: 'de',    name: 'German',     nativeName: 'Deutsch',  nativeReviewed: false },
+  { code: 'zh-CN', name: 'Chinese',    nativeName: '中文',      nativeReviewed: false },
+  { code: 'ja',    name: 'Japanese',   nativeName: '日本語',     nativeReviewed: false },
 ];
 
 const STORAGE_KEY = 'rmm-locale';
@@ -79,6 +81,31 @@ function t(key, vars) {
   return interpolate(found, vars);
 }
 
+/* Plurals. tn('bulk.devices', 3) reads 'bulk.devices.one' or 'bulk.devices.other'
+ * as the language's own rules pick (Intl.PluralRules), with {n} filled in. Every
+ * language here needs only those two forms. Zero takes the plural everywhere —
+ * CLDR files 0 under "one" in Portuguese, but "0 dispositivo" reads as a typo. */
+function tn(key, n, vars) {
+  const form = n !== 0 && new Intl.PluralRules(currentLocale).select(n) === 'one' ? 'one' : 'other';
+  return t(key + '.' + form, { n, ...vars });
+}
+
+/* "a, b and c" in the console's language — the conjunction is the language's,
+ * which a join(', ') + ' and ' could never be. */
+function formatList(items) {
+  return new Intl.ListFormat(currentLocale, { style: 'long', type: 'conjunction' }).format(items.map(String));
+}
+
+/* Values the server sends — a status, a classification, a reason code — shown
+ * translated when the table knows them and as they came when it does not: a
+ * newer server's new value appears raw rather than as 'patch.status.whatever'. */
+function tEnum(prefix, value) {
+  if (value == null || value === '') return '';
+  const key = prefix + '.' + value;
+  const found = lookup(currentLocale, key) ?? lookup('en', key);
+  return found == null ? String(value) : found;
+}
+
 function getLocale() { return currentLocale; }
 
 function setLocale(code) {
@@ -105,4 +132,4 @@ function useLocale() {
 
 document.documentElement.lang = currentLocale;
 
-Object.assign(window, { t, getLocale, setLocale, useLocale, LOCALES });
+Object.assign(window, { t, tn, tEnum, formatList, getLocale, setLocale, useLocale, LOCALES });

@@ -59,7 +59,7 @@ async function request(method, path, body, attempt = 0) {
   try {
     res = await fetch(API_BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   } catch (e) {
-    throw apiError(0, 'cannot reach backend at ' + API_BASE);
+    throw apiError(0, t('api.unreachable', { base: API_BASE }));
   }
   // 429: the per-IP API limiter pushed back. The chatty SPA fires bursts on
   // navigation, so retry a few times with backoff (honoring Retry-After) before
@@ -74,7 +74,7 @@ async function request(method, path, body, attempt = 0) {
     setSession(null);
     if (hadSession && !path.startsWith('/api/auth/')) window.dispatchEvent(new Event('rmm-auth-expired'));
     let j = {}; try { j = await res.json(); } catch (e) {}
-    const err = apiError(401, j.error || 'unauthorized');
+    const err = apiError(401, j.error || t('api.unauthorized'));
     if (j.totp_required) err.totpRequired = true;
     throw err;
   }
@@ -279,7 +279,7 @@ const api = {
     if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
     const res = await fetch(API_BASE + path, { headers });
     if (!res.ok) {
-      let message = `download failed (${res.status})`;
+      let message = t('api.downloadFailed', { status: res.status });
       try { message = (await res.json()).error || message; } catch (_) {}
       throw new Error(message);
     }

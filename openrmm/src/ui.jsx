@@ -4,18 +4,24 @@ const { useState, useEffect, useRef, useCallback, useMemo, createContext, useCon
 const cx = (...a) => a.filter(Boolean).join(' ');
 
 /* ------------------------------ time helpers ------------------------------ */
+// Dates and relative times follow the console's language, not the browser's:
+// a console set to Portuguese on an English browser said "5m ago" next to
+// Portuguese labels. Intl does the wording, so no table entry is needed.
+function relTime(value, unit) {
+  return new Intl.RelativeTimeFormat(getLocale(), { style: 'narrow', numeric: 'auto' }).format(value, unit);
+}
 function timeAgo(iso) {
   if (!iso) return '—';
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 0) return 'just now';
-  if (s < 45) return s + 's ago';
-  const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
-  const h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
-  const d = Math.floor(h / 24); if (d < 30) return d + 'd ago';
-  return new Date(iso).toLocaleDateString();
+  if (s < 0) return relTime(0, 'second');
+  if (s < 45) return relTime(-s, 'second');
+  const m = Math.floor(s / 60); if (m < 60) return relTime(-m, 'minute');
+  const h = Math.floor(m / 60); if (h < 24) return relTime(-h, 'hour');
+  const d = Math.floor(h / 24); if (d < 30) return relTime(-d, 'day');
+  return new Date(iso).toLocaleDateString(getLocale());
 }
-function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-function fmtClock(iso) { if (!iso) return '—'; return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+function fmtTime(iso) { if (!iso) return '—'; return new Date(iso).toLocaleString(getLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+function fmtClock(iso) { if (!iso) return '—'; return new Date(iso).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
 // Undefined in, em dash out: a missing window on a policy is a blank field, not
 // "NaN:NaN" — and never an exception that takes the screen with it.
 function minuteToHHMM(m) {
@@ -39,8 +45,8 @@ function useQuery(deps, fn, opts = {}) {
     mounted.current = true; load();
     const invalidate = opts.invalidateOn;
     const off = window.dataBus.sub((k) => { if (k === '*' || !invalidate || invalidate.includes(k)) load(true); });
-    let t; if (opts.poll) t = setInterval(() => load(true), opts.poll);
-    return () => { mounted.current = false; off(); if (t) clearInterval(t); };
+    let timer; if (opts.poll) timer = setInterval(() => load(true), opts.poll);
+    return () => { mounted.current = false; off(); if (timer) clearInterval(timer); };
     // eslint-disable-next-line
   }, deps);
   return { ...state, refetch: () => load(true) };
@@ -57,10 +63,10 @@ const ToastCtx = createContext(null);
 function useToast() { return useContext(ToastCtx); }
 function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
-  const push = useCallback((t) => {
+  const push = useCallback((note) => {
     const id = Math.random().toString(36).slice(2);
-    setToasts((x) => [...x, { id, ...t }]);
-    setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), t.duration || 4200);
+    setToasts((x) => [...x, { id, ...note }]);
+    setTimeout(() => setToasts((x) => x.filter((y) => y.id !== id)), note.duration || 4200);
   }, []);
   const toast = useMemo(() => ({
     success: (title, msg) => push({ kind: 'success', title, msg }),
@@ -71,15 +77,15 @@ function ToastProvider({ children }) {
     <ToastCtx.Provider value={toast}>
       {children}
       <div className="fixed bottom-5 right-5 z-[200] flex flex-col gap-2.5 w-[360px] max-w-[calc(100vw-2rem)]">
-        {toasts.map((t) => {
-          const c = t.kind === 'success' ? 'ok' : t.kind === 'error' ? 'bad' : 'run';
-          const icon = t.kind === 'success' ? 'approve' : t.kind === 'error' ? 'alert' : 'info';
+        {toasts.map((note) => {
+          const c = note.kind === 'success' ? 'ok' : note.kind === 'error' ? 'bad' : 'run';
+          const icon = note.kind === 'success' ? 'approve' : note.kind === 'error' ? 'alert' : 'info';
           return (
-            <div key={t.id} className="animate-slide-in flex gap-3 items-start rounded-xl border border-line bg-elevated/95 backdrop-blur px-3.5 py-3 shadow-2xl shadow-black/40">
+            <div key={note.id} className="animate-slide-in flex gap-3 items-start rounded-xl border border-line bg-elevated/95 backdrop-blur px-3.5 py-3 shadow-2xl shadow-black/40">
               <span className={`mt-0.5 text-${c}`}><Icon name={icon} size={17} /></span>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold text-ink">{t.title}</div>
-                {t.msg && <div className="text-[12.5px] text-muted mt-0.5 leading-snug break-words">{t.msg}</div>}
+                <div className="text-[13px] font-semibold text-ink">{note.title}</div>
+                {note.msg && <div className="text-[12.5px] text-muted mt-0.5 leading-snug break-words">{note.msg}</div>}
               </div>
             </div>
           );
@@ -115,16 +121,18 @@ function Spinner({ size = 16, className = '' }) {
 }
 
 /* ------------------------------ status pill ------------------------------- */
+// Colour per status; the label is t('status.<name>'), looked up at render so a
+// language change reaches pills already on screen.
 const STATUS_META = {
-  online: { c: 'ok', label: 'Online' }, completed: { c: 'ok', label: 'Completed' }, passing: { c: 'ok', label: 'Passing' },
-  awaiting_approval: { c: 'warn', label: 'Awaiting approval' }, pending: { c: 'warn', label: 'Pending' }, warning: { c: 'warn', label: 'Warning' }, acked: { c: 'warn', label: 'Acked' }, new: { c: 'warn', label: 'New' },
-  running: { c: 'run', label: 'Running' }, sent: { c: 'run', label: 'Sent' }, info: { c: 'run', label: 'Info' },
-  failed: { c: 'bad', label: 'Failed' }, offline: { c: 'bad', label: 'Offline' }, rejected: { c: 'bad', label: 'Rejected' }, failing: { c: 'bad', label: 'Failing' }, error: { c: 'bad', label: 'Error' },
-  suppressed: { c: 'run', label: 'Suppressed' },
-  resolved: { c: 'muted', label: 'Resolved' }, disabled: { c: 'muted', label: 'Disabled' }, unknown: { c: 'muted', label: 'Unknown' },
+  online: 'ok', completed: 'ok', passing: 'ok',
+  awaiting_approval: 'warn', pending: 'warn', warning: 'warn', acked: 'warn', new: 'warn',
+  running: 'run', sent: 'run', info: 'run', suppressed: 'run',
+  failed: 'bad', offline: 'bad', rejected: 'bad', failing: 'bad', error: 'bad',
+  resolved: 'muted', disabled: 'muted', unknown: 'muted',
 };
+function statusLabel(status) { return STATUS_META[status] ? t('status.' + status) : status; }
 function StatusPill({ status, label, size = 'md', pulse }) {
-  const m = STATUS_META[status] || { c: 'muted', label: label || status };
+  const m = STATUS_META[status] ? { c: STATUS_META[status], label: t('status.' + status) } : { c: 'muted', label: label || status };
   const c = m.c;
   const animate = pulse && (status === 'running' || status === 'sent' || status === 'pending');
   const colorMap = {
@@ -183,11 +191,11 @@ function Modal({ open, onClose, children, width = 'max-w-lg' }) {
 function Tabs({ tabs, value, onChange, className = '' }) {
   return (
     <div className={cx('flex items-center gap-1 border-b border-line', className)}>
-      {tabs.map((t) => (
-        <button key={t.value} onClick={() => onChange(t.value)}
+      {tabs.map((tab) => (
+        <button key={tab.value} onClick={() => onChange(tab.value)}
           className={cx('relative px-3.5 h-9 text-[13px] font-medium transition-colors -mb-px border-b-2',
-            value === t.value ? 'text-ink border-brand' : 'text-faint border-transparent hover:text-muted')}>
-          {t.label}{t.count != null && <span className="ml-1.5 text-[11px] text-faint tabular">{t.count}</span>}
+            value === tab.value ? 'text-ink border-brand' : 'text-faint border-transparent hover:text-muted')}>
+          {tab.label}{tab.count != null && <span className="ml-1.5 text-[11px] text-faint tabular">{tab.count}</span>}
         </button>
       ))}
     </div>
@@ -225,7 +233,7 @@ function Select({ children, ...props }) {
 // two that differ by a keystroke.
 // With creatable the value need not appear in options, so it is displayed as
 // typed rather than falling back to the placeholder.
-function Combobox({ value, onChange, options = [], placeholder = 'Select…', disabled, className, creatable }) {
+function Combobox({ value, onChange, options = [], placeholder = t('ui.select'), disabled, className, creatable }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef(null);
@@ -265,7 +273,7 @@ function Combobox({ value, onChange, options = [], placeholder = 'Select…', di
           <div className="p-1.5 border-b border-line">
             <div className="relative">
               <Icon name="search" size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint" />
-              <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder={creatable ? 'Search or type a new one…' : 'Search…'}
+              <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder={creatable ? t('ui.searchOrCreate') : t('ui.search')}
                 className={cx(inputCls, 'h-8 pl-8')}
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') { setOpen(false); return; }
@@ -276,12 +284,12 @@ function Combobox({ value, onChange, options = [], placeholder = 'Select…', di
             </div>
           </div>
           <div className="max-h-60 overflow-auto py-1">
-            {groups.length === 0 && !canCreate && <div className="px-3 py-2 text-[12px] text-faint">No matches</div>}
+            {groups.length === 0 && !canCreate && <div className="px-3 py-2 text-[12px] text-faint">{t('ui.noMatches')}</div>}
             {canCreate && (
               <button type="button" onClick={() => pick(typed)}
                 className="w-full text-left px-3 py-1.5 text-[13px] flex items-center gap-2 text-brandhi hover:bg-app transition">
                 <Icon name="plus" size={14} className="shrink-0" />
-                <span className="truncate">Create “{typed}”</span>
+                <span className="truncate">{t('ui.createNamed', { name: typed })}</span>
               </button>
             )}
             {canCreate && groups.length > 0 && <div className="my-1 border-t border-line" />}
@@ -320,7 +328,8 @@ function Avatar({ name, size = 28 }) {
 }
 function RoleBadge({ role }) {
   const map = { admin: 'text-brandhi bg-brandsoft border-brand/30', tech: 'text-run bg-runsoft border-run/25', readonly: 'text-faint bg-elevated border-line2' };
-  return <span className={cx('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide', map[role] || map.readonly)}>{role}</span>;
+  const builtin = role === 'admin' || role === 'tech' || role === 'readonly';
+  return <span className={cx('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide', map[role] || map.readonly)}>{builtin ? t('role.' + role) : role}</span>;
 }
 function Kbd({ children }) { return <kbd className="inline-flex items-center h-5 px-1.5 rounded border border-line2 bg-elevated text-[10.5px] text-muted font-sans">{children}</kbd>; }
 
@@ -378,7 +387,7 @@ function execCopy(value) {
   }
 }
 
-function CopyButton({ value, label = 'Copy', size = 'sm', variant = 'subtle' }) {
+function CopyButton({ value, label = t('action.copy'), size = 'sm', variant = 'subtle' }) {
   const [done, setDone] = useState(false);
   const toast = useToast();
   const onCopy = () => {
@@ -386,12 +395,12 @@ function CopyButton({ value, label = 'Copy', size = 'sm', variant = 'subtle' }) 
       setDone(true);
       setTimeout(() => setDone(false), 1500);
     } else {
-      toast?.error?.('Could not copy', 'Select the text and copy it manually (Ctrl+C).');
+      toast?.error?.(t('ui.copyFailed'), t('ui.copyFailedHint'));
     }
   };
   return (
     <Button size={size} variant={variant} icon={done ? 'approve' : 'copy'} onClick={onCopy}>
-      {done ? 'Copied' : label}
+      {done ? t('action.copied') : label}
     </Button>
   );
 }
@@ -448,7 +457,7 @@ function CodeBlock({ code = '', shell = 'bash', maxHeight = 320, showCopy = true
           <div className="flex items-center gap-2 min-w-0">
             <Icon name="terminal" size={13} className="text-faint" />
             <span className="text-[11.5px] text-muted font-medium">{label || shell}</span>
-            {dryRun && <span className="inline-flex items-center gap-1 rounded-md bg-warnsoft border border-warn/25 text-warn px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap"><Icon name="eye" size={11} />Dry-run preview</span>}
+            {dryRun && <span className="inline-flex items-center gap-1 rounded-md bg-warnsoft border border-warn/25 text-warn px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap"><Icon name="eye" size={11} />{t('ui.dryRun')}</span>}
           </div>
           {showCopy && <CopyButton value={code} variant="ghost" size="sm" />}
         </div>
@@ -499,13 +508,13 @@ function OutputBlock({ stdout, stderr, exitCode }) {
   return (
     <div className="rounded-xl border border-line2 bg-[#0a0b0e] overflow-hidden">
       <div className="flex items-center justify-between px-3 h-8 border-b border-line bg-elevated/40">
-        <span className="text-[11.5px] text-muted font-medium flex items-center gap-1.5"><Icon name="terminal" size={12} />Output</span>
+        <span className="text-[11.5px] text-muted font-medium flex items-center gap-1.5"><Icon name="terminal" size={12} />{t('ui.output')}</span>
         {exitCode != null && <span className={cx('text-[11px] font-semibold mono', exitCode === 0 ? 'text-ok' : 'text-bad')}>exit {exitCode}</span>}
       </div>
       <div className="p-3 mono text-[12px] leading-relaxed max-h-64 overflow-auto scroll-area whitespace-pre-wrap">
         {stdout && <div className="text-[#c8d0e0]">{stdout}</div>}
         {stderr && <div className="text-bad mt-1">{stderr}</div>}
-        {!has && <div className="text-faint">no output</div>}
+        {!has && <div className="text-faint">{t('ui.noOutput')}</div>}
       </div>
     </div>
   );
@@ -548,7 +557,7 @@ function downloadText(name, text, mime) {
 }
 
 /* confirm dialog hook-ish component */
-function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = 'Confirm', danger, requireType, blocked }) {
+function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t('ui.confirm'), danger, requireType, blocked }) {
   const [typed, setTyped] = useState('');
   useEffect(() => { if (open) setTyped(''); }, [open]);
   // blocked: the action cannot go ahead as things stand, and the body says why.
@@ -565,13 +574,13 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = '
         </div>
         {requireType && !blocked && (
           <div className="mt-4">
-            <Field label={`Type ${requireType} to confirm`}>
+            <Field label={t('ui.typeToConfirm', { word: requireType })}>
               <Input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={requireType} autoFocus />
             </Field>
           </div>
         )}
         <div className="flex justify-end gap-2 mt-5">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
           <Button variant={danger ? 'danger' : 'primary'} disabled={!ok} onClick={() => { onConfirm(); onClose(); }}>{confirmLabel}</Button>
         </div>
       </div>
@@ -581,7 +590,7 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = '
 
 Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, useQuery, useMutation, useToast, ToastProvider,
-  Button, Spinner, StatusPill, STATUS_META, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
+  Button, Spinner, StatusPill, STATUS_META, statusLabel, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
   Avatar, RoleBadge, Kbd, Skeleton, EmptyState, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
   csvEscape, toCSV, downloadText,
 });

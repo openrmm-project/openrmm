@@ -10,14 +10,15 @@ const PATCH_CLASS_STYLE = {
   other: 'text-faint bg-elevated border-line2',
 };
 function ClassBadge({ c }) {
-  return <span className={cx('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide', PATCH_CLASS_STYLE[c] || PATCH_CLASS_STYLE.other)}>{c}</span>;
+  return <span className={cx('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide', PATCH_CLASS_STYLE[c] || PATCH_CLASS_STYLE.other)}>{tEnum('patch.class', c)}</span>;
 }
 
+// Label: t('comp.<status>').
 const COMPLIANCE_STYLE = {
-  compliant: { c: 'text-ok bg-oksoft border-ok/25', label: 'Compliant' },
-  at_risk: { c: 'text-warn bg-warnsoft border-warn/25', label: 'At risk' },
-  critical: { c: 'text-bad bg-badsoft border-bad/25', label: 'Critical' },
-  unknown: { c: 'text-faint bg-elevated border-line2', label: 'Not scanned' },
+  compliant: 'text-ok bg-oksoft border-ok/25',
+  at_risk: 'text-warn bg-warnsoft border-warn/25',
+  critical: 'text-bad bg-badsoft border-bad/25',
+  unknown: 'text-faint bg-elevated border-line2',
 };
 // A single field of the wrong shape used to blank the whole screen: a policy
 // whose auto_approve arrived as "security" instead of ["security"] threw on
@@ -30,26 +31,27 @@ function asList(value) {
 }
 
 function ComplianceBadge({ s }) {
-  const m = COMPLIANCE_STYLE[s] || COMPLIANCE_STYLE.unknown;
-  return <span className={cx('inline-flex items-center gap-1.5 rounded-full border px-2 py-[3px] text-[11.5px] font-medium', m.c)}>{m.label}</span>;
+  const key = COMPLIANCE_STYLE[s] ? s : 'unknown';
+  return <span className={cx('inline-flex items-center gap-1.5 rounded-full border px-2 py-[3px] text-[11.5px] font-medium', COMPLIANCE_STYLE[key])}>{t('comp.' + key)}</span>;
 }
 
 const PATCH_CLASSES = ['security', 'critical', 'important', 'moderate', 'optional', 'other'];
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Sunday first, the index the server stores; names come from weekdayShort().
+const WEEKDAY_INDEXES = [0, 1, 2, 3, 4, 5, 6];
 
 function PatchesScreen({ navigate }) {
   const { can } = useAuth();
   const [tab, setTab] = useState('compliance');
   const tabs = [
-    { value: 'compliance', label: 'Compliance' },
-    { value: 'catalog', label: 'Catalog' },
-    ...(can('patches.policies.manage') ? [{ value: 'policies', label: 'Policies' }] : []),
+    { value: 'compliance', label: t('patches.tab.compliance') },
+    { value: 'catalog', label: t('patches.tab.catalog') },
+    ...(can('patches.policies.manage') ? [{ value: 'policies', label: t('patches.tab.policies') }] : []),
   ];
   return (
     <div className="p-5 max-w-[1400px] mx-auto">
       <div className="mb-4">
-        <h1 className="text-[18px] font-semibold text-ink">Patches</h1>
-        <p className="text-[13px] text-muted mt-0.5">Inventory, approve and roll out OS updates across the fleet — with maintenance windows, auto-approval and reboot orchestration.</p>
+        <h1 className="text-[18px] font-semibold text-ink">{t('title.patches')}</h1>
+        <p className="text-[13px] text-muted mt-0.5">{t('patches.subtitle')}</p>
       </div>
       <Tabs value={tab} onChange={setTab} className="mb-4" tabs={tabs} />
       {tab === 'compliance' && <ComplianceTab navigate={navigate} />}
@@ -65,27 +67,30 @@ function ComplianceTab() {
   const q = useQuery(['compliance'], () => api.compliance(), { invalidateOn: ['devices', 'patches'], poll: 15000 });
   const [search, setSearch] = useState('');
   const rows = (q.data?.rows || []).filter((r) => !search || (r.hostname || '').toLowerCase().includes(search.toLowerCase()));
-  const scan = async (id) => { try { await api.scanDevicePatches(id); toast.info('Scan requested', 'Results arrive shortly.'); } catch (e) { toast.error('Scan failed', e.message); } };
-  const scanAll = async () => { for (const r of rows) { try { await api.scanDevicePatches(r.agent_id); } catch (e) { /* offline */ } } toast.info('Scan requested for online devices'); };
-  const install = async (r) => { try { await api.installDevicePatches(r.agent_id, []); toast.info('Installing approved patches', 'on ' + r.hostname); window.dataBus.emit('patches'); } catch (e) { toast.error('Install failed', e.message); } };
-  const reboot = async (r) => { try { await api.rebootDevice(r.agent_id); toast.info('Reboot requested', 'on ' + r.hostname); window.dataBus.emit('patches'); } catch (e) { toast.error('Reboot failed', e.message); } };
+  const scan = async (id) => { try { await api.scanDevicePatches(id); toast.info(t('dpatch.scanRequested'), t('patches.scanRequestedMsg')); } catch (e) { toast.error(t('patches.scanFailed'), e.message); } };
+  const scanAll = async () => { for (const r of rows) { try { await api.scanDevicePatches(r.agent_id); } catch (e) { /* offline */ } } toast.info(t('patches.scanAllRequested')); };
+  const install = async (r) => { try { await api.installDevicePatches(r.agent_id, []); toast.info(t('dpatch.installing'), t('patches.installingOn', { host: r.hostname })); window.dataBus.emit('patches'); } catch (e) { toast.error(t('patches.installFailed'), e.message); } };
+  // A reboot takes the machine away from whoever is using it, so it is asked
+  // for, not fired on the first click.
+  const [rebootRow, setRebootRow] = useState(null);
+  const reboot = async (r) => { try { await api.rebootDevice(r.agent_id); toast.info(t('reboot.requested'), t('reboot.requestedOn', { host: r.hostname })); window.dataBus.emit('patches'); } catch (e) { toast.error(t('reboot.failed'), e.message); } };
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
         <div className="relative flex-1 max-w-xs">
           <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter devices…" className="pl-9 h-8" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('patches.filterDevices')} className="pl-9 h-8" />
         </div>
         <div className="flex-1" />
-        {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={scanAll}>Scan all</Button>}
+        {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={scanAll}>{t('patches.scanAll')}</Button>}
       </div>
       {q.loading ? <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
-        : !rows.length ? <EmptyState icon="shield" title="No devices" msg="No in-scope devices have reported patch state yet." />
+        : !rows.length ? <EmptyState icon="shield" title={t('patches.noDevices')} msg={t('patches.noDevicesMsg')} />
           : (
             <div className="overflow-auto scroll-area max-h-[calc(100vh-260px)]">
               <table className="w-full text-[12.5px] border-collapse">
                 <thead className="sticky top-0 bg-elevated/95 backdrop-blur text-left text-faint">
-                  <tr>{['Host', 'OS', 'Status', 'Missing', 'Security', 'Approved', 'Failed', 'Reboot', 'Last scan', ''].map((h) => <th key={h} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
+                  <tr>{[t('patches.col.host'), t('devices.col.os'), t('patches.col.status'), t('patches.col.missing'), t('patches.col.security'), t('patches.col.approved'), t('patches.col.failed'), t('patches.col.reboot'), t('patches.col.lastScan'), ''].map((h, i) => <th key={i} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
@@ -97,13 +102,13 @@ function ComplianceTab() {
                       <td className={cx('px-4 py-2 tabular', r.missing_security > 0 && 'text-bad font-semibold')}>{r.missing_security}</td>
                       <td className={cx('px-4 py-2 tabular', r.approved > 0 && 'text-ok font-semibold')}>{r.approved || '—'}</td>
                       <td className={cx('px-4 py-2 tabular', r.failed > 0 && 'text-bad')}>{r.failed}</td>
-                      <td className="px-4 py-2">{r.reboot_pending ? <span className="text-warn inline-flex items-center gap-1"><Icon name="refresh" size={12} />pending</span> : <span className="text-faint">—</span>}</td>
-                      <td className="px-4 py-2 text-faint whitespace-nowrap">{r.last_scan ? timeAgo(r.last_scan) : 'never'}</td>
+                      <td className="px-4 py-2">{r.reboot_pending ? <span className="text-warn inline-flex items-center gap-1"><Icon name="refresh" size={12} />{t('patches.pending')}</span> : <span className="text-faint">—</span>}</td>
+                      <td className="px-4 py-2 text-faint whitespace-nowrap">{r.last_scan ? timeAgo(r.last_scan) : t('patches.never')}</td>
                       <td className="px-4 py-2 text-right whitespace-nowrap">{can('patches.manage') && (
                         <span className="inline-flex gap-1.5 justify-end">
-                          <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>Scan</Button>
-                          <Button size="sm" variant="primary" icon="download" disabled={!r.approved} title={r.approved ? '' : 'Approve patches first (Catalog tab)'} onClick={() => install(r)}>Install{r.approved ? ` (${r.approved})` : ''}</Button>
-                          {r.reboot_pending && <Button size="sm" variant="secondary" icon="refresh" onClick={() => reboot(r)}>Reboot</Button>}
+                          <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>{t('dpatch.scan')}</Button>
+                          <Button size="sm" variant="primary" icon="download" disabled={!r.approved} title={r.approved ? '' : t('patches.approveFirst')} onClick={() => install(r)}>{r.approved ? t('patches.installN', { n: r.approved }) : t('patches.install')}</Button>
+                          {r.reboot_pending && <Button size="sm" variant="secondary" icon="refresh" onClick={() => setRebootRow(r)}>{t('reboot.button')}</Button>}
                         </span>
                       )}</td>
                     </tr>
@@ -112,6 +117,9 @@ function ComplianceTab() {
               </table>
             </div>
           )}
+      <ConfirmDialog open={!!rebootRow} onClose={() => setRebootRow(null)} danger
+        title={t('reboot.title', { host: rebootRow?.hostname || '' })} body={t('reboot.body')}
+        confirmLabel={t('reboot.confirm')} onConfirm={() => reboot(rebootRow)} />
     </Card>
   );
 }
@@ -123,28 +131,28 @@ function CatalogTab() {
   const [search, setSearch] = useState('');
   const rows = (q.data?.patches || []).filter((p) => !search || (p.title || '').toLowerCase().includes(search.toLowerCase()) || (p.identifier || '').toLowerCase().includes(search.toLowerCase()));
   const decide = async (p, decision) => {
-    try { await api.approvePatch(p.id, { scope_type: '', scope_id: '', decision }); toast.success(decision === 'approve' ? 'Patch approved' : 'Patch declined', decision === 'approve' ? 'Now install it per device in the Compliance tab (or via a patch policy).' : undefined); window.dataBus.emit('patches'); }
-    catch (e) { toast.error('Failed', e.message); }
+    try { await api.approvePatch(p.id, { scope_type: '', scope_id: '', decision }); toast.success(decision === 'approve' ? t('patches.approved') : t('patches.declined'), decision === 'approve' ? t('patches.approvedHint') : undefined); window.dataBus.emit('patches'); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
   };
   return (
     <Card className="overflow-hidden">
       <div className="flex items-start gap-2.5 px-4 py-2.5 border-b border-line bg-brandsoft/40 text-[12px] text-muted">
         <Icon name="info" size={14} className="text-brandhi mt-0.5 shrink-0" />
-        <span>Approving a patch marks it <b className="text-ink">eligible</b> across the fleet — it does not install. Install approved patches per device in the <b className="text-ink">Compliance</b> tab, or automatically via a <b className="text-ink">Patch policy</b> (maintenance window).</span>
+        <span>{t('patches.catalogInfo')}</span>
       </div>
       <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
         <div className="relative flex-1 max-w-xs">
           <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Filter patches…" className="pl-9 h-8" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('patches.filterPatches')} className="pl-9 h-8" />
         </div>
       </div>
       {q.loading ? <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
-        : !rows.length ? <EmptyState icon="shield" title="No patches" msg="No missing patches in scope. Run a scan from the Compliance tab." />
+        : !rows.length ? <EmptyState icon="shield" title={t('patches.none')} msg={t('patches.noneMsg')} />
           : (
             <div className="overflow-auto scroll-area max-h-[calc(100vh-260px)]">
               <table className="w-full text-[12.5px] border-collapse">
                 <thead className="sticky top-0 bg-elevated/95 backdrop-blur text-left text-faint">
-                  <tr>{['Class', 'Title', 'OS', 'KB', 'Devices', 'Approved', 'Reboot', ''].map((h) => <th key={h} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
+                  <tr>{[t('patches.col.class'), t('patches.col.title'), t('devices.col.os'), 'KB', t('patches.col.devices'), t('patches.col.approved'), t('patches.col.reboot'), ''].map((h, i) => <th key={i} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {rows.map((p) => (
@@ -162,9 +170,9 @@ function CatalogTab() {
                           return (
                             <span className="inline-flex gap-1.5 items-center justify-end">
                               {fullyApproved
-                                ? <span className="inline-flex items-center gap-1 text-[11.5px] text-ok font-medium"><Icon name="approve" size={13} />Approved</span>
-                                : <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>Approve</Button>}
-                              <Button size="sm" variant="ghost" icon="reject" title={fullyApproved ? 'Revoke approval / exclude' : 'Decline'} onClick={() => decide(p, 'decline')}>Decline</Button>
+                                ? <span className="inline-flex items-center gap-1 text-[11.5px] text-ok font-medium"><Icon name="approve" size={13} />{t('patches.approvedBadge')}</span>
+                                : <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>{t('action.approve')}</Button>}
+                              <Button size="sm" variant="ghost" icon="reject" title={fullyApproved ? t('patches.revoke') : t('patches.decline')} onClick={() => decide(p, 'decline')}>{t('patches.decline')}</Button>
                             </span>
                           );
                         })()}
@@ -185,30 +193,30 @@ function PoliciesTab() {
   const q = useQuery(['patch-pol'], () => api.listPatchPolicies(), { invalidateOn: ['patch-pol'] });
   const [editing, setEditing] = useState(null);
   const pols = q.data?.policies || [];
-  const del = async (p) => { try { await api.deletePatchPolicy(p.id); window.dataBus.emit('patch-pol'); toast.info('Policy deleted'); } catch (e) { toast.error('Failed', e.message); } };
+  const del = async (p) => { try { await api.deletePatchPolicy(p.id); window.dataBus.emit('patch-pol'); toast.info(t('patchpol.deleted')); } catch (e) { toast.error(t('common.failed'), e.message); } };
   return (
     <div className="space-y-3">
-      {can('patches.policies.manage') && <div className="flex justify-end"><Button variant="primary" icon="plus" onClick={() => setEditing({})}>New policy</Button></div>}
+      {can('patches.policies.manage') && <div className="flex justify-end"><Button variant="primary" icon="plus" onClick={() => setEditing({})}>{t('patchpol.new')}</Button></div>}
       {q.loading ? <Card className="p-4"><Skeleton className="h-16 w-full" /></Card>
-        : !pols.length ? <Card><EmptyState icon="policy" title="No patch policies" msg="Create one to auto-approve patches and define maintenance windows." /></Card>
+        : !pols.length ? <Card><EmptyState icon="policy" title={t('patchpol.empty')} msg={t('patchpol.emptyMsg')} /></Card>
           : pols.map((p) => (
             <Card key={p.id} className="p-4">
               <div className="flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[14px] font-semibold text-ink">{p.name}</span>
-                    {!p.enabled && <span className="text-[10.5px] uppercase text-faint border border-line2 rounded px-1.5 py-0.5">disabled</span>}
+                    {!p.enabled && <span className="text-[10.5px] uppercase text-faint border border-line2 rounded px-1.5 py-0.5">{t('patchpol.disabled')}</span>}
                   </div>
                   <div className="text-[12px] text-muted mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                    <span>Auto-approve: {asList(p.auto_approve).length ? asList(p.auto_approve).join(', ') : '—'} {asList(p.auto_approve).length && p.auto_approve_age_days ? `(after ${p.auto_approve_age_days}d)` : ''}</span>
-                    <span>Window: {asList(p.window_days).length ? asList(p.window_days).map((d) => WEEKDAYS[d]).join(',') : 'any day'} {minuteToHHMM(p.window_start_min)}–{minuteToHHMM(p.window_end_min)}</span>
-                    <span>Reboot: {p.reboot || '—'}</span>
-                    {asList(p.exclusions).length ? <span>Excludes: {asList(p.exclusions).join(', ')}</span> : null}
+                    <span>{t('patchpol.autoApprove', { classes: asList(p.auto_approve).length ? asList(p.auto_approve).map((c) => tEnum('patch.class', c)).join(', ') : '—' })} {asList(p.auto_approve).length && p.auto_approve_age_days ? t('patchpol.afterDays', { n: p.auto_approve_age_days }) : ''}</span>
+                    <span>{t('patchpol.window', { days: asList(p.window_days).length ? asList(p.window_days).map((d) => weekdayShort(Number(d))).join(', ') : t('patchpol.anyDay'), start: minuteToHHMM(p.window_start_min), end: minuteToHHMM(p.window_end_min) })}</span>
+                    <span>{t('patchpol.reboot', { mode: p.reboot ? tEnum('patchpol.reboot', p.reboot) : '—' })}</span>
+                    {asList(p.exclusions).length ? <span>{t('patchpol.excludes', { list: asList(p.exclusions).join(', ') })}</span> : null}
                   </div>
                 </div>
                 {can('patches.policies.manage') && (
                   <div className="flex gap-1.5 shrink-0">
-                    <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(p)}>Edit</Button>
+                    <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(p)}>{t('action.edit')}</Button>
                     <Button size="sm" variant="ghost" icon="trash" onClick={() => del(p)} />
                   </div>
                 )}
@@ -244,48 +252,48 @@ function PolicyModal({ policy, onClose }) {
     };
     try {
       if (isNew) await api.createPatchPolicy(body); else await api.updatePatchPolicy(policy.id, body);
-      window.dataBus.emit('patch-pol'); toast.success('Policy saved'); onClose();
-    } catch (e) { toast.error('Save failed', e.message); } finally { setBusy(false); }
+      window.dataBus.emit('patch-pol'); toast.success(t('patchpol.saved')); onClose();
+    } catch (e) { toast.error(t('patchpol.saveFailed'), e.message); } finally { setBusy(false); }
   };
   return (
     <Modal open onClose={onClose} width="max-w-2xl">
       <div className="p-5 space-y-4 max-h-[85vh] overflow-auto scroll-area">
-        <div className="text-[15px] font-semibold text-ink">{isNew ? 'New patch policy' : 'Edit patch policy'}</div>
-        <Field label="Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Monthly security patching" autoFocus /></Field>
-        <label className="flex items-center gap-2 text-[13px] text-ink"><Toggle checked={enabled} onChange={setEnabled} />Enabled</label>
+        <div className="text-[15px] font-semibold text-ink">{isNew ? t('patchpol.newTitle') : t('patchpol.editTitle')}</div>
+        <Field label={t('patchpol.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('patchpol.namePlaceholder')} autoFocus /></Field>
+        <label className="flex items-center gap-2 text-[13px] text-ink"><Toggle checked={enabled} onChange={setEnabled} />{t('patchpol.enabled')}</label>
 
-        <Field label="Auto-approve classifications" hint="Patches of these classes are approved automatically once old enough.">
+        <Field label={t('patchpol.autoClasses')} hint={t('patchpol.autoClassesHint')}>
           <div className="flex flex-wrap gap-1.5">
             {PATCH_CLASSES.map((c) => (
               <button key={c} type="button" onClick={() => toggle(auto, c, setAuto)}
-                className={cx('px-2.5 py-1 rounded-lg border text-[12px] capitalize transition', auto.includes(c) ? 'border-brand bg-brandsoft text-ink' : 'border-line2 text-muted hover:text-ink')}>{c}</button>
+                className={cx('px-2.5 py-1 rounded-lg border text-[12px] capitalize transition', auto.includes(c) ? 'border-brand bg-brandsoft text-ink' : 'border-line2 text-muted hover:text-ink')}>{tEnum('patch.class', c)}</button>
             ))}
           </div>
         </Field>
-        <Field label="Auto-approve after (days)"><Input type="number" min="0" value={age} onChange={(e) => setAge(e.target.value)} className="w-32" /></Field>
+        <Field label={t('patchpol.afterDaysLabel')}><Input type="number" min="0" value={age} onChange={(e) => setAge(e.target.value)} className="w-32" /></Field>
 
-        <Field label="Maintenance window — days" hint="Empty = any day.">
+        <Field label={t('patchpol.windowDays')} hint={t('patchpol.windowDaysHint')}>
           <div className="flex flex-wrap gap-1.5">
-            {WEEKDAYS.map((d, i) => (
-              <button key={d} type="button" onClick={() => toggle(days, i, setDays)}
-                className={cx('px-2.5 py-1 rounded-lg border text-[12px] transition', days.includes(i) ? 'border-brand bg-brandsoft text-ink' : 'border-line2 text-muted hover:text-ink')}>{d}</button>
+            {WEEKDAY_INDEXES.map((i) => (
+              <button key={i} type="button" onClick={() => toggle(days, i, setDays)}
+                className={cx('px-2.5 py-1 rounded-lg border text-[12px] transition', days.includes(i) ? 'border-brand bg-brandsoft text-ink' : 'border-line2 text-muted hover:text-ink')}>{weekdayShort(i)}</button>
             ))}
           </div>
         </Field>
         <div className="flex gap-3">
-          <Field label="Window start" className="flex-1"><Input type="time" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
-          <Field label="Window end" className="flex-1"><Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
-          <Field label="Reboot" className="flex-1"><Select value={reboot} onChange={(e) => setReboot(e.target.value)}>
-            <option value="never">never</option><option value="if_required">if required</option><option value="always">always</option>
+          <Field label={t('patchpol.windowStart')} className="flex-1"><Input type="time" value={start} onChange={(e) => setStart(e.target.value)} /></Field>
+          <Field label={t('patchpol.windowEnd')} className="flex-1"><Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></Field>
+          <Field label={t('patchpol.rebootLabel')} className="flex-1"><Select value={reboot} onChange={(e) => setReboot(e.target.value)}>
+            <option value="never">{t('patchpol.reboot.never')}</option><option value="if_required">{t('patchpol.reboot.if_required')}</option><option value="always">{t('patchpol.reboot.always')}</option>
           </Select></Field>
         </div>
-        <Field label="Exclusions" hint="Comma-separated patch identifiers or classifications to never install."><Input value={excl} onChange={(e) => setExcl(e.target.value)} placeholder="KB5001234, optional" /></Field>
+        <Field label={t('patchpol.exclusions')} hint={t('patchpol.exclusionsHint')}><Input value={excl} onChange={(e) => setExcl(e.target.value)} placeholder="KB5001234, optional" /></Field>{/* i18n-ignore: example of the values the server accepts */}
 
         {!isNew && <PolicyAssignments policyId={policy.id} />}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={busy} disabled={!name.trim()} onClick={save}>Save policy</Button>
+          <Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button>
+          <Button variant="primary" loading={busy} disabled={!name.trim()} onClick={save}>{t('patchpol.save')}</Button>
         </div>
       </div>
     </Modal>
@@ -302,17 +310,17 @@ function PolicyAssignments({ policyId }) {
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
   const assigns = q.data?.assignments || [];
   const label = (a) => {
-    if (a.scope_type === 'client') return 'Client: ' + (clients.find((c) => c.id === a.scope_id)?.name || a.scope_id);
-    if (a.scope_type === 'site') return 'Site: ' + (sites.find((s) => s.id === a.scope_id)?.name || a.scope_id);
+    if (a.scope_type === 'client') return t('patchpol.clientScope', { name: clients.find((c) => c.id === a.scope_id)?.name || a.scope_id });
+    if (a.scope_type === 'site') return t('patchpol.siteScope', { name: sites.find((s) => s.id === a.scope_id)?.name || a.scope_id });
     return a.scope_type + ': ' + a.scope_id;
   };
   const add = async () => {
     if (!val) return; const [scope_type, scope_id] = val.split(':');
-    try { await api.addPatchAssignment(policyId, { scope_type, scope_id }); setVal(''); window.dataBus.emit('patch-assign'); } catch (e) { toast.error('Failed', e.message); }
+    try { await api.addPatchAssignment(policyId, { scope_type, scope_id }); setVal(''); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); }
   };
-  const remove = async (a) => { try { await api.deletePatchAssignment(a.id); window.dataBus.emit('patch-assign'); } catch (e) { toast.error('Failed', e.message); } };
+  const remove = async (a) => { try { await api.deletePatchAssignment(a.id); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); } };
   return (
-    <Field label="Assigned to" hint="Agents inherit this policy via their client/site.">
+    <Field label={t('patchpol.assignedTo')} hint={t('patchpol.assignedHint')}>
       <div className="space-y-1.5">
         {assigns.map((a) => (
           <div key={a.id} className="flex items-center gap-2 text-[12.5px] bg-elevated/50 rounded-lg px-2.5 py-1.5">
@@ -322,11 +330,11 @@ function PolicyAssignments({ policyId }) {
         ))}
         <div className="flex gap-2">
           <Select value={val} onChange={(e) => setVal(e.target.value)} className="flex-1">
-            <option value="">Add assignment…</option>
-            <optgroup label="Clients">{clients.map((c) => <option key={c.id} value={'client:' + c.id}>{c.name}</option>)}</optgroup>
-            <optgroup label="Sites">{sites.map((s) => <option key={s.id} value={'site:' + s.id}>{s.name}</option>)}</optgroup>
+            <option value="">{t('patchpol.addAssignment')}</option>
+            <optgroup label={t('patchpol.clients')}>{clients.map((c) => <option key={c.id} value={'client:' + c.id}>{c.name}</option>)}</optgroup>
+            <optgroup label={t('patchpol.sites')}>{sites.map((s) => <option key={s.id} value={'site:' + s.id}>{s.name}</option>)}</optgroup>
           </Select>
-          <Button variant="secondary" onClick={add} disabled={!val}>Add</Button>
+          <Button variant="secondary" onClick={add} disabled={!val}>{t('action.add')}</Button>
         </div>
       </div>
     </Field>

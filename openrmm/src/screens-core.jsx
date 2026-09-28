@@ -114,12 +114,13 @@ function Gate({ min, children, fallback = null }) {
 // Dashboard sections the user can show/hide via "Customize". Each also has a
 // permission gate; a widget only appears when permitted AND not hidden. The
 // hidden set is persisted per browser in localStorage.
+// Labels are t('dash.widget.<id>'), read at render.
 const DASH_WIDGETS = [
-  { id: 'ai', label: 'AI assistant', perm: 'ai_chat.use' },
-  { id: 'stats', label: 'Stat tiles', perm: null },
-  { id: 'awaiting', label: 'Awaiting approval', perm: 'jobs.view' },
-  { id: 'activity', label: 'Recent activity', perm: 'audit.view' },
-  { id: 'alerts', label: 'Open alerts', perm: 'alerts.view' },
+  { id: 'ai', perm: 'ai_chat.use' },
+  { id: 'stats', perm: null },
+  { id: 'awaiting', perm: 'jobs.view' },
+  { id: 'activity', perm: 'audit.view' },
+  { id: 'alerts', perm: 'alerts.view' },
 ];
 const DASH_HIDDEN_KEY = 'rmm-dash-hidden';
 function loadDashHidden() {
@@ -163,15 +164,15 @@ function DashboardScreen({ navigate }) {
   return (
     <Page wide>
       <PageHeader title={t('title.dashboard')} subtitle={t('dash.subtitle')} actions={
-        <Dropdown align="right" width="w-56" trigger={<Button variant="ghost" icon="settings">Customize</Button>}>
-          <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">Show panels</div>
+        <Dropdown align="right" width="w-56" trigger={<Button variant="ghost" icon="settings">{t('dash.customize')}</Button>}>
+          <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-faint">{t('dash.showPanels')}</div>
           {customizable.map((w) => (
             <button key={w.id} onClick={(e) => { e.stopPropagation(); toggleWidget(w.id); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-muted hover:text-ink hover:bg-card transition">
               <span className={cx('h-4 w-4 rounded border flex items-center justify-center shrink-0', show(w.id) ? 'bg-brand border-brand text-white' : 'border-line2')}>
                 {show(w.id) && <Icon name="check" size={12} />}
               </span>
-              <span className="flex-1">{w.label}</span>
+              <span className="flex-1">{t('dash.widget.' + w.id)}</span>
             </button>
           ))}
         </Dropdown>
@@ -182,20 +183,20 @@ function DashboardScreen({ navigate }) {
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/30 flex items-center justify-center text-brandhi shrink-0"><Icon name="sparkle" size={18} /></div>
             <input value={ask} onChange={(e) => setAsk(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submitAsk()}
-              placeholder="Ask the AI to inspect or act on your fleet — e.g. “install 7-zip on the finance group”"
+              placeholder={t('dash.askPlaceholder')}
               className="flex-1 bg-transparent text-[14px] text-ink placeholder:text-faint outline-none min-w-0" />
-            <Button variant="primary" icon="arrowright" onClick={submitAsk} disabled={!ask.trim()}>Ask</Button>
+            <Button variant="primary" icon="arrowright" onClick={submitAsk} disabled={!ask.trim()}>{t('dash.ask')}</Button>
           </div>
         </Card>
       )}
 
       {show('stats') && (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-        {can('devices.view') && <StatTile label="Total devices" value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
-        {can('devices.view') && <StatTile label="Online" value={online} icon="dot" tone="ok" sub={`${devices.length - online} offline`} onClick={() => navigate('devices')} />}
-        {canSeeApprovals && <StatTile label="Awaiting approval" value={awaitingTotal} icon="flash" tone="warn" highlight={awaitingTotal > 0} onClick={() => navigate(awaiting.length === 0 && pendingOps.length > 0 ? 'devices' : 'jobs')} sub={window.DeviceBulk.approvalSummary(awaiting.length, pendingOps.length)} />}
-        {can('alerts.view') && <StatTile label="Open alerts" value={openAlertCount} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
-        {can('jobs.view') && <StatTile label="Recent failures" value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
+        {can('devices.view') && <StatTile label={t('dash.totalDevices')} value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
+        {can('devices.view') && <StatTile label={t('status.online')} value={online} icon="dot" tone="ok" sub={t('dash.offlineCount', { n: devices.length - online })} onClick={() => navigate('devices')} />}
+        {canSeeApprovals && <StatTile label={t('dash.widget.awaiting')} value={awaitingTotal} icon="flash" tone="warn" highlight={awaitingTotal > 0} onClick={() => navigate(awaiting.length === 0 && pendingOps.length > 0 ? 'devices' : 'jobs')} sub={window.DeviceBulk.approvalSummary(awaiting.length, pendingOps.length)} />}
+        {can('alerts.view') && <StatTile label={t('dash.widget.alerts')} value={openAlertCount} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
+        {can('jobs.view') && <StatTile label={t('dash.recentFailures')} value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
       </div>
       )}
 
@@ -209,7 +210,7 @@ function DashboardScreen({ navigate }) {
           // also gone — otherwise the grid just collapses silently.
           const nothingElse = !show('stats') && !(show('ai') && can('ai_chat.use'));
           return nothingElse
-            ? <Card className="p-10"><EmptyState icon="dashboard" title="All panels hidden" msg="Use Customize (top-right) to bring dashboard panels back." /></Card>
+            ? <Card className="p-10"><EmptyState icon="dashboard" title={t('dash.allHidden')} msg={t('dash.allHiddenMsg')} /></Card>
             : null;
         }
         return (
@@ -218,17 +219,17 @@ function DashboardScreen({ navigate }) {
         {leftHasContent && <div className={cx(showAlerts ? 'lg:col-span-2' : 'lg:col-span-3', 'space-y-5')}>
           {showAwaiting && <Card>
             <div className="flex items-center justify-between px-4 h-12 border-b border-line">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="flash" size={15} className="text-warn" />Awaiting approval</div>
-              <button onClick={() => navigate('jobs')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">View all <Icon name="chevright" size={13} /></button>
+              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="flash" size={15} className="text-warn" />{t('dash.widget.awaiting')}</div>
+              <button onClick={() => navigate('jobs')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">{t('dash.viewAll')} <Icon name="chevright" size={13} /></button>
             </div>
             <div className="divide-y divide-line">
-              {awaitingTotal === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">Nothing waiting. The queue is clear.</div>}
+              {awaitingTotal === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">{t('dash.queueClear')}</div>}
               {pendingOps.slice(0, 4).map((op) => (
                 <button key={op.id} onClick={() => navigate('devices')} className="w-full text-left px-4 py-3 hover:bg-elevated/50 transition flex items-center gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-[13px] text-ink font-medium truncate">{window.DeviceBulk.describe(op)}</span>
-                      <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{String(op.proposed_by).startsWith('mcp:') ? 'MCP' : 'AI'}</span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{String(op.proposed_by).startsWith('mcp:') ? 'MCP' : t('dash.aiBadge')}</span>
                     </div>
                     <div className="text-[11.5px] text-faint mt-0.5 flex items-center gap-1.5"><Icon name={op.kind === 'delete' ? 'trash' : 'building'} size={12} />{op.description || window.DeviceBulk.proposer(op.proposed_by)} · {timeAgo(op.created_at)}</div>
                   </div>
@@ -243,7 +244,7 @@ function DashboardScreen({ navigate }) {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[13px] text-ink font-medium truncate">{j.description}</span>
-                        {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />AI</span>}
+                        {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{t('dash.aiBadge')}</span>}
                       </div>
                       <div className="text-[11.5px] text-faint mt-0.5 flex items-center gap-1.5"><OsIcon os={dev?.os} size={12} />{dev?.hostname || j.agent_id} · {timeAgo(j.created_at)}</div>
                     </div>
@@ -257,8 +258,8 @@ function DashboardScreen({ navigate }) {
           {showActivity && (
             <Card>
               <div className="px-4 h-12 flex items-center justify-between border-b border-line">
-                <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="history" size={15} className="text-muted" />Recent activity</div>
-                <button onClick={() => navigate('audit')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">Audit log <Icon name="chevright" size={13} /></button>
+                <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="history" size={15} className="text-muted" />{t('dash.widget.activity')}</div>
+                <button onClick={() => navigate('audit')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">{t('dash.auditLog')} <Icon name="chevright" size={13} /></button>
               </div>
               <div className="p-2">
                 {(auditQ.data?.entries || []).map((e) => <ActivityRow key={e.id} entry={e} />)}
@@ -270,11 +271,11 @@ function DashboardScreen({ navigate }) {
         {showAlerts && <div className="space-y-5">
           <Card>
             <div className="px-4 h-12 flex items-center justify-between border-b border-line">
-              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="alert" size={15} className="text-bad" />Open alerts</div>
-              <button onClick={() => navigate('alerts')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">All <Icon name="chevright" size={13} /></button>
+              <div className="flex items-center gap-2 text-[13.5px] font-semibold text-ink"><Icon name="alert" size={15} className="text-bad" />{t('dash.widget.alerts')}</div>
+              <button onClick={() => navigate('alerts')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">{t('dash.all')} <Icon name="chevright" size={13} /></button>
             </div>
             <div className="divide-y divide-line">
-              {openAlerts.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">No open alerts.</div>}
+              {openAlerts.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">{t('dash.noAlerts')}</div>}
               {openAlerts.slice(0, 5).map((a) => {
                 const dev = devices.find((d) => d.id === a.agent_id);
                 return (
@@ -282,7 +283,7 @@ function DashboardScreen({ navigate }) {
                     <span className={cx('mt-1 h-1.5 w-1.5 rounded-full shrink-0', a.severity === 'error' ? 'bg-bad' : a.severity === 'warning' ? 'bg-warn' : 'bg-run')} />
                     <div className="min-w-0 flex-1">
                       <div className="text-[12.5px] text-ink leading-snug">{a.message}</div>
-                      <div className="text-[11px] text-faint mt-0.5">{dev?.hostname || 'fleet'} · {timeAgo(a.created_at)}</div>
+                      <div className="text-[11px] text-faint mt-0.5">{dev?.hostname || t('dash.fleet')} · {timeAgo(a.created_at)}</div>
                     </div>
                   </button>
                 );
@@ -315,8 +316,8 @@ function ActivityRow({ entry }) {
       <div className={cx('mt-0.5 h-6 w-6 rounded-lg bg-elevated border border-line flex items-center justify-center shrink-0', m.c)}><Icon name={m.icon} size={13} /></div>
       <div className="min-w-0 flex-1">
         <div className="text-[12.5px] text-ink">
-          <span className={cx('font-medium', ai && 'text-brandhi')}>{ai ? 'AI assistant' : entry.actor}</span>
-          <span className="text-muted"> {entry.action.replace('.', ' ')}</span>
+          <span className={cx('font-medium', ai && 'text-brandhi')}>{ai ? t('dash.widget.ai') : entry.actor}</span>
+          <span className="text-muted"> {auditActionLabel(entry.action)}</span>
           {desc && <span className="text-faint"> · {desc}</span>}
         </div>
       </div>

@@ -20,11 +20,18 @@ const assetsOut = path.join(outputRoot, 'assets');
 const sources = [
   // i18n first: everything below it calls t() at render time.
   'src/i18n.jsx',
-  'src/i18n-strings.jsx',
+  // One table per language; English first, as the fallback the others lean on.
+  'src/locales/en.jsx',
+  'src/locales/pt-BR.jsx',
+  'src/locales/es.jsx',
+  'src/locales/de.jsx',
+  'src/locales/zh-CN.jsx',
+  'src/locales/ja.jsx',
   'src/icons.jsx',
   'src/mockapi.jsx',
   'src/remote-input.jsx',
   'src/device-bulk.jsx',
+  'src/labels.jsx',
   'src/ui.jsx',
   'src/screens-core.jsx',
   'src/screens-devices.jsx',

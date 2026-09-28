@@ -111,8 +111,8 @@ point.
 
 | Profile | Configured in | Carries |
 |---|---|---|
-| Account | `RMM_SMTP_*` env, **no console form** | password resets — and alerts, unless the alerts profile overrides them |
-| Alerts | `smtp.alerts.*` in the database, editable in Settings > Email | notifications |
+| Account | `RMM_SMTP_*` env, **no console form** | password resets, and nothing else |
+| Alerts | `smtp.alerts.*` in the database, editable in Settings > Email | notifications — only through a server set there |
 
 ### Why account mail is env-only
 
@@ -146,35 +146,38 @@ configured.
 
 ### The alerts transport
 
-Alert mail is genuinely the tenant's choice, so it stays editable in the console
-and lives in the database under `smtp.alerts.*`. It is read fresh on every use,
-so a correction takes effect on the next queued message.
+Alert mail is the tenant's own: their relay, their sender, edited in the
+console and stored in the database under `smtp.alerts.*`. It is read fresh on
+every use, so a correction takes effect on the next message.
 
-The alerts profile is optional, and how much of it you fill in decides how much
-separates the two:
+**Alerts never use the account transport** — not its relay, not its
+credentials, not its sender. On a hosted instance the account transport is the
+operator's relay, signing for the operator's domain. When alerts could ride it
+with a sender of their own choosing, any tenant administrator could set
+`billing@<operator domain>` and mail anyone, DKIM-signed, as the operator. So:
 
-- **Nothing set** — alerts leave exactly like account mail. This is the upgrade
-  default, so an existing instance keeps behaving as it did.
-- **A From address (no host)** — same relay, different sender: `alerts@` for
-  monitoring, `no-reply@` for account mail. The display name travels with the
-  address, so a new `From` clears an inherited `From name` rather than rendering
-  a mismatched `OpenRMM <alerts@…>`.
-- **A host** — a genuinely separate relay, and then **nothing is inherited**.
-  Carrying the account profile's username and password to a host the operator
-  named separately would hand one server's mailbox credentials to another. An
-  alerts profile with no host of its own stores no password at all.
+- **No host** — alert mail is **off**. Nothing is queued while it is off (a
+  backlog would otherwise be sent all at once the day a relay appears); the
+  alerts themselves are still in the console.
+- **A host** — alerts leave through that relay, with its own credentials and
+  sender.
+- **A sender or login without a host** is refused on save
+  (`alerts_need_own_server`). A sender stored that way by an older version is
+  ignored.
 
 If the alerts relay fails, alerts retry on it and are **never rerouted** through
-the account transport. A silent fallback would send mail through a path the
-operator deliberately chose not to use, and would hide that the alerts relay is
-broken.
+the account transport.
+
+**Hosted on Civo:** outbound 25, 465 and 587 are blocked there, so a tenant's
+relay has to accept another port (Resend, SendGrid and Mailgun offer 2525/2587;
+Microsoft 365 and Gmail do not).
 
 Settings are under **Users & Settings → Email** (`settings.manage`), one tab per
 profile:
 
 | Field | Notes |
 |---|---|
-| Host | Account: clearing it turns email off **and discards the stored password**. Alerts: blank means "use the account transport" |
+| Host | Account: clearing it turns email off **and discards the stored password**. Alerts: blank turns alert mail off and clears the profile |
 | Port | Defaults to 587 |
 | Encryption | `starttls` (default) · `tls` (implicit, usually 465) · `none` |
 | Certificate check | Skip only for a private CA on a trusted network |
@@ -194,7 +197,10 @@ authenticated server to `none` fails while a password is stored**; clear the hos
 **Send test** delivers one message synchronously with the *stored* settings, so
 save before testing. Each tab tests **its own** transport, resolved the way
 delivery resolves it — testing the account transport and calling it an alert test
-is how a broken alerts relay stays hidden. It is the only place mail is sent on a
+is how a broken alerts relay stays hidden. The account transport's test mails
+**only the caller's own address** (the bootstrap admin token excepted): it is the
+operator's relay, and an open recipient would let a settings administrator send
+the operator's mail to anyone. It is the only place mail is sent on a
 request path; the transport timeout (20s) bounds it.
 
 ## Endpoints
@@ -202,9 +208,9 @@ request path; the transport timeout (20s) bounds it.
 ```
 GET    /api/config/smtp             settings.manage   account transport (read-only, from env); "read_only": true
                                                      no PUT: the account profile is env-backed
-POST   /api/config/smtp/test        settings.manage   {"to": "…"}, blank = caller's own address
-GET    /api/config/smtp/alerts      settings.manage   alerts profile as stored + "effective"
-PUT    /api/config/smtp/alerts      settings.manage   blank host = ride the account transport
+POST   /api/config/smtp/test        settings.manage   caller's own address only (blank = it)
+GET    /api/config/smtp/alerts      settings.manage   alerts profile; "enabled" = alert mail will leave
+PUT    /api/config/smtp/alerts      settings.manage   blank host = alert mail off; sender without host = 400
 POST   /api/config/smtp/alerts/test settings.manage   tests the alerts transport
 GET    /api/me/notifications        any user          address (read-only) + merged preferences
 PUT    /api/me/notifications        any user          {"subscriptions": {…}}

@@ -101,11 +101,10 @@ func TestChangedSMTPRecordsFieldsNotValues(t *testing.T) {
 		t.Error("a submitted password should be recorded as a changed field")
 	}
 
-	// A blank host is not a clear: the sender may still be set and the profile
-	// now rides the account transport.
-	inherited := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{})
-	if len(inherited) != 2 || inherited[0] != "smtp.alerts.transport_inherited" {
-		t.Errorf("withdrawing the host should audit as inheritance, got %v", inherited)
+	// A blank host can only be a clear: alert mail is off.
+	cleared := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{})
+	if len(cleared) != 1 || cleared[0] != "smtp.alerts.cleared" {
+		t.Errorf("withdrawing the host should audit as a clear, got %v", cleared)
 	}
 
 	alerts := changedSMTP(settings.ProfileAlerts, settings.SMTPSaveRequest{Host: "relay.example.test", Password: "s3cret"})

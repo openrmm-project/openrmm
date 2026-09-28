@@ -60,6 +60,16 @@ func (s *Service) Queue(ctx context.Context, ev Event) error {
 	if s == nil || ev.AgentID == "" {
 		return nil
 	}
+	// No alerts transport means alert mail is off — the default on a hosted
+	// tenant until they configure their own relay. Queuing anyway would bank up
+	// to a retention period of stale alerts and send them all the moment a
+	// relay appears. The alert itself is still in the console. A settings read
+	// error is not "off": queue, and let the worker retry.
+	if s.config != nil {
+		if cfg, _, err := s.config(ctx); err == nil && !cfg.Enabled() {
+			return nil
+		}
+	}
 	var recipients []store.NotificationRecipient
 	var err error
 	if ev.AlertID != "" {

@@ -17,11 +17,11 @@ import (
 
 // ---------- SMTP transport (instance-wide) ----------
 
-// Two transports: /api/config/smtp is the account profile that carries password
-// resets, /api/config/smtp/alerts the optional one that carries notifications.
-// The alerts profile falls back to the account transport when it names no host
-// of its own, which is how "same relay, different sender" is expressed — see
-// settings.AlertSMTPConfig.
+// Two transports: /api/config/smtp is the operator's account profile that carries
+// password resets, /api/config/smtp/alerts the tenant's own one that carries
+// notifications. They never mix: alerts do not fall back to the account relay
+// (see settings.AlertSMTPConfig), and the account relay's test button mails only
+// the caller.
 //
 // Each handler is bound to its profile at route registration rather than
 // deriving it from the request path. Deriving it meant one string comparison
@@ -47,22 +47,17 @@ func smtpView(cfg notify.Config) map[string]any {
 	}
 }
 
-// smtpConfigFor resolves one profile. The alerts profile is returned as stored
-// *and* as it will actually be used, because a screen showing only the stored
-// fields would leave an operator guessing what an empty host means.
+// smtpConfigFor resolves one profile. "enabled" on the alerts profile is
+// whether alert mail will actually leave, which a sender stored without a host
+// (by an older version) does not make true.
 func (s *Server) smtpConfigFor(r *http.Request, profile string) (view map[string]any, err error) {
 	if profile == settings.ProfileAlerts {
 		stored, err := settings.SMTPProfile(r.Context(), s.store, s.cfg, settings.ProfileAlerts)
 		if err != nil {
 			return nil, err
 		}
-		effective, err := settings.AlertSMTPConfig(r.Context(), s.store, s.cfg)
-		if err != nil {
-			return nil, err
-		}
 		out := smtpView(stored)
-		out["inherits_transport"] = stored.Host == ""
-		out["effective"] = smtpView(effective)
+		out["enabled"] = settings.AlertTransport(stored).Enabled()
 		return out, nil
 	}
 	// The account profile is env-backed and read-only, so there is no stored
@@ -107,6 +102,10 @@ func (s *Server) updateSMTPConfig(profile string) http.HandlerFunc {
 				writeErr(w, http.StatusConflict, err.Error())
 				return
 			}
+			if errors.Is(err, settings.ErrAlertsNeedOwnServer) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "code": "alerts_need_own_server"})
+				return
+			}
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -126,9 +125,8 @@ func changedSMTP(profile string, in settings.SMTPSaveRequest) []string {
 	// The audit records which fields were submitted, never their values: the
 	// point is a trail of who touched mail delivery, not a copy of the config.
 	if strings.TrimSpace(in.Host) == "" {
-		// Not "cleared": the sender identity may still be set, and the profile now
-		// rides the account transport.
-		return []string{profile + "transport_inherited", profile + "from"}
+		// Only a clear gets this far without a host: alert mail is now off.
+		return []string{profile + "cleared"}
 	}
 	out := []string{profile + "host", profile + "port", profile + "from", profile + "tls_mode"}
 	if strings.TrimSpace(in.Password) != "" {
@@ -152,11 +150,13 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 		}
 		_ = decode(r, &in)
 		to := strings.TrimSpace(in.To)
+		own := ""
+		if u, err := s.store.GetUserByID(r.Context(), actorOf(r)); err == nil {
+			own = u.Email
+		}
 		if to == "" {
 			// Default to the caller's own address so the common case is one click.
-			if u, err := s.store.GetUserByID(r.Context(), actorOf(r)); err == nil {
-				to = u.Email
-			}
+			to = own
 		}
 		if to == "" {
 			writeErr(w, http.StatusBadRequest, "no recipient: pass \"to\", or set an address on your account")
@@ -167,9 +167,8 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 			return
 		}
 		// Each button tests the transport it sits next to, resolved the same way
-		// delivery resolves it — including the alerts profile's fallback. Testing the
-		// account transport and calling it an alert test is how a broken alert relay
-		// stays hidden.
+		// delivery resolves it. Testing the account transport and calling it an
+		// alert test is how a broken alert relay stays hidden.
 		var cfg notify.Config
 		var err error
 		if profile == settings.ProfileAlerts {
@@ -183,6 +182,14 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 		}
 		if !cfg.Enabled() {
 			writeErr(w, http.StatusBadRequest, "configure an SMTP host and sender address first")
+			return
+		}
+		// The account relay is the operator's, signing for the operator's
+		// domain. A tenant administrator may check that it works, but only by
+		// mailing themselves: an open "to" makes it a way to send the
+		// operator's mail to anyone. The bootstrap admin token is the operator.
+		if profile == settings.ProfileAccount && actorOf(r) != "admin" && to != "" && !strings.EqualFold(to, own) {
+			writeErr(w, http.StatusForbidden, "the account transport sends test mail only to your own address")
 			return
 		}
 		what := "Password reset and account mail leaves through this transport."

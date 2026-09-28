@@ -119,8 +119,8 @@ func main() {
 	chat := ai.NewEngine(aiClient, st, jobSvc, patchSvc, cfg)
 	// SMTP is resolved per use, not captured here: settings are DB-backed and an
 	// operator fixing a rejected password must not need a restart.
-	// Alerts leave through the alerts profile, which is the account transport
-	// unless an operator gave notifications a sender or a relay of their own.
+	// Alerts leave through the tenant's own alerts profile, never the account
+	// transport: with no alerts server configured, alert mail is off.
 	notifier := notify.New(st, func(ctx context.Context) (notify.Config, string, error) {
 		smtpCfg, err := settings.AlertSMTPConfig(ctx, st, cfg)
 		return smtpCfg, cfg.PublicURL, err

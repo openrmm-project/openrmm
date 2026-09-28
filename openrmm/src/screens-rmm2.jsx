@@ -1952,8 +1952,9 @@ function ConfigPanel() {
 //
 // Only one transport is editable here. Account mail — password resets — is set
 // with RMM_SMTP_* in the server environment and has no form, so a settings
-// administrator cannot repoint authentication mail. Alerts stay editable;
-// leaving the host blank sends them through the account transport.
+// administrator cannot repoint authentication mail. Alerts are the tenant's own:
+// they leave only through the server set here, never the account transport, and
+// with no server alert mail is off.
 function SMTPPanel() {
   return <SMTPProfilePanel />;
 }
@@ -1976,10 +1977,6 @@ function SMTPProfilePanel() {
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  // The alerts profile with no host of its own rides the account transport, so
-  // the connection fields below are inert and say so rather than lying.
-  const inherits = !(form?.host || '').trim();
-  const effective = c?.effective || {};
 
   const save = async () => {
     setSaving(true);
@@ -1987,8 +1984,8 @@ function SMTPProfilePanel() {
       const body = { ...form, port: Number(form.port) || 587 };
       await api.updateAlertSMTPConfig(body);
       set('password', ''); cfgQ.refetch();
-      toast.success(t('mail.saved'), body.host ? t('mail.ownRelay') : t('mail.accountTransport'));
-    } catch (e) { toast.error(t('mail.saveFailed'), e.message); }
+      toast.success(t('mail.saved'), body.host ? t('mail.ownRelay') : t('mail.alertsOffSaved'));
+    } catch (e) { toast.error(t('mail.saveFailed'), e.code === 'alerts_need_own_server' ? t('mail.needOwnServer') : e.message); }
     finally { setSaving(false); }
   };
   // The test sends with the STORED settings, so unsaved edits are not covered.
@@ -2012,8 +2009,8 @@ function SMTPProfilePanel() {
         <div className="md:col-span-2 flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2.5">
           <Icon name="info" size={14} className="text-muted mt-0.5 shrink-0" />
           <div className="text-[11.5px] text-muted">
-            {inherits ? t('mail.inheritsInfo') : t('mail.ownInfo')}
-            {effective.from && <> {t('mail.sendingAs', { from: effective.from })}</>}
+            {t('mail.ownInfo')}
+            {c.enabled ? <> {t('mail.sendingAs', { from: c.from })}</> : <> {t('mail.alertsOff')}</>}
           </div>
         </div>
       }
@@ -2021,22 +2018,22 @@ function SMTPProfilePanel() {
         <div className="flex items-center gap-2 mb-3">
           <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="send" size={15} /></div>
           <div className="text-[13px] font-semibold text-ink">{t('mail.server')}</div>
-          <span className="ml-auto"><StatusPill status={effective.enabled ? 'online' : 'warning'} label={effective.enabled ? (inherits ? t('mail.inherited') : t('cfg.configured')) : t('mail.notConfigured')} size="sm" /></span>
+          <span className="ml-auto"><StatusPill status={c.enabled ? 'online' : 'warning'} label={c.enabled ? t('cfg.configured') : t('mail.notConfigured')} size="sm" /></span>
         </div>
         <div className="space-y-3">
           <Field label={t('mail.host')} hint={t('mail.hostHint')}>
             <Input className="mono" value={form.host} onChange={(e) => set('host', e.target.value)} placeholder={t('mail.hostPlaceholder')} />
           </Field>
-          <Field label={t('mail.port')}><Input className="mono" type="number" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="587" disabled={inherits} /></Field>
+          <Field label={t('mail.port')}><Input className="mono" type="number" value={form.port} onChange={(e) => set('port', e.target.value)} placeholder="587" /></Field>
           <Field label={t('mail.encryption')} hint={t('mail.encryptionHint')}>
-            <Select value={form.tls_mode} onChange={(e) => set('tls_mode', e.target.value)} disabled={inherits}>
+            <Select value={form.tls_mode} onChange={(e) => set('tls_mode', e.target.value)}>
               <option value="starttls">STARTTLS</option>
               <option value="tls">{t('mail.tlsImplicit')}</option>
               <option value="none">{t('mail.none')}</option>
             </Select>
           </Field>
           <Field label={t('mail.certCheck')} hint={t('mail.certHint')}>
-            <Select value={form.skip_verify ? 'skip' : 'verify'} onChange={(e) => set('skip_verify', e.target.value === 'skip')} disabled={inherits}>
+            <Select value={form.skip_verify ? 'skip' : 'verify'} onChange={(e) => set('skip_verify', e.target.value === 'skip')}>
               <option value="verify">{t('mail.verify')}</option>
               <option value="skip">{t('mail.skip')}</option>
             </Select>
@@ -2054,15 +2051,10 @@ function SMTPProfilePanel() {
             <Input className="mono" type="email" value={form.from} onChange={(e) => set('from', e.target.value)} placeholder="alerts@example.com" />
           </Field>
           <Field label={t('mail.fromName')}><Input value={form.from_name} onChange={(e) => set('from_name', e.target.value)} placeholder={t('mail.fromNamePlaceholder')} /></Field>
-          {/* Credentials belong to a host. An alerts profile that names none must not
-              keep a password, so the fields go away instead of quietly doing nothing. */}
-          {!inherits && <>
-            <Field label={t('mail.username')} hint={t('mail.usernameHint')}><Input className="mono" value={form.username} onChange={(e) => set('username', e.target.value)} placeholder="rmm@example.com" autoComplete="off" /></Field>
-            <Field label={t('mail.password')} hint={c.password_set ? t('mail.passwordSet') : t('cfg.writeOnly')}>
-              <Input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} placeholder={c.password_set ? '••••••••••••••••' : ''} autoComplete="new-password" />
-            </Field>
-          </>}
-          {inherits && <div className="text-[11.5px] text-faint flex items-start gap-1.5"><Icon name="info" size={13} className="mt-0.5 shrink-0" />{t('mail.credsInherited')}</div>}
+          <Field label={t('mail.username')} hint={t('mail.usernameHint')}><Input className="mono" value={form.username} onChange={(e) => set('username', e.target.value)} placeholder="rmm@example.com" autoComplete="off" /></Field>
+          <Field label={t('mail.password')} hint={c.password_set ? t('mail.passwordSet') : t('cfg.writeOnly')}>
+            <Input type="password" value={form.password} onChange={(e) => set('password', e.target.value)} placeholder={c.password_set ? '••••••••••••••••' : ''} autoComplete="new-password" />
+          </Field>
         </div>
       </Card>
 
@@ -2075,7 +2067,7 @@ function SMTPProfilePanel() {
           <Field label={t('mail.testTo')} className="flex-1 min-w-[240px]" hint={t('mail.testToHint')}>
             <Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" />
           </Field>
-          <Button variant="secondary" icon="send" loading={testing} disabled={!effective.enabled || dirty} onClick={test}
+          <Button variant="secondary" icon="send" loading={testing} disabled={!c.enabled || dirty} onClick={test}
             title={dirty ? t('mail.saveFirst') : undefined}>{t('mail.sendTest')}</Button>
         </div>
         <div className="flex items-center justify-between gap-3 mt-4">

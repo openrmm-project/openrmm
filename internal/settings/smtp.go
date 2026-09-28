@@ -21,16 +21,25 @@ import (
 // an editable copy in the database would let a settings administrator redirect
 // it. A reset link is an authentication artefact, not a preference.
 //
-// The alerts transport carries notifications and stays fully editable in the
-// console, because who a tenant's monitoring mail comes from is genuinely their
-// choice. When it names no host of its own it rides the account transport.
+// The alerts transport carries notifications and is the tenant's own: their
+// relay, their sender, edited in the console. It never rides the account
+// transport. On a hosted instance the account transport is the operator's relay,
+// signing for the operator's domain; letting a tenant send through it — even
+// only with a sender of their choosing — would let any tenant admin mail
+// strangers as the operator. Without a host of its own, alert mail is off.
 const (
-	// ProfileAccount is the env-backed transport: password resets, and the
-	// fallback for alerts. Read-only through the API.
+	// ProfileAccount is the env-backed transport: password resets only.
+	// Read-only through the API.
 	ProfileAccount = "smtp."
-	// ProfileAlerts is the optional, DB-backed notification transport.
+	// ProfileAlerts is the DB-backed notification transport, configured by the
+	// tenant. Alert mail is off until it names a host.
 	ProfileAlerts = "smtp.alerts."
 )
+
+// ErrAlertsNeedOwnServer rejects an alerts profile that sets a sender or
+// credentials without naming a server: there is no shared relay to send them
+// through.
+var ErrAlertsNeedOwnServer = errors.New("alert mail leaves only through your own SMTP server: set a host, or clear the sender to turn alert mail off")
 
 // ErrAccountProfileReadOnly is returned when a caller tries to write the account
 // profile, which only the environment can set.
@@ -61,8 +70,8 @@ func SMTPKeys(profile string) []string {
 // smtpSecret reports whether a key holds a password, which is stored encrypted.
 func smtpSecret(key string) bool { return strings.HasSuffix(key, ".password") }
 
-// AccountSMTPConfig resolves the account mail transport — password resets, and
-// the fallback for alerts when no alerts profile is configured.
+// AccountSMTPConfig resolves the account mail transport — password resets. It is
+// never used for alerts; see AlertSMTPConfig.
 //
 // Pure, and reads nothing from the database: the environment is the only source.
 // An empty host means email is off, which is the correct default for a fresh
@@ -92,49 +101,31 @@ func AccountSMTPConfig(cfg *config.Config) notify.Config {
 	}
 }
 
-// AlertSMTPConfig resolves the transport that carries notifications.
-//
-// Inheritance is deliberately all-or-nothing on the connection, and per-field
-// only on the sender identity:
-//
-//   - No alerts host means "the same server": the account transport is used with
-//     the alert sender identity layered on top, which is the common case of
-//     alerts@ and no-reply@ leaving through one relay.
-//   - An alerts host means a genuinely separate transport, and then nothing is
-//     inherited. Carrying the account profile's username and password over to a
-//     host the operator named separately would hand one server's mailbox
-//     credentials to another.
+// AlertSMTPConfig resolves the transport that carries notifications: the
+// alerts profile and nothing else. Nothing is inherited from the account
+// transport — not the relay, not its credentials, not its sender.
 func AlertSMTPConfig(ctx context.Context, st *store.Store, cfg *config.Config) (notify.Config, error) {
 	rows, err := st.ListAppSettings(ctx)
 	if err != nil {
 		return notify.Config{}, err
 	}
-	return MergeAlertProfile(AccountSMTPConfig(cfg), smtpProfile(cfg, rows, ProfileAlerts)), nil
+	return AlertTransport(smtpProfile(cfg, rows, ProfileAlerts)), nil
 }
 
-// MergeAlertProfile applies the inheritance rule described on AlertSMTPConfig.
-// Split out from the settings lookup so the rule that keeps one server's
-// credentials off another server can be tested on its own.
-func MergeAlertProfile(account, alerts notify.Config) notify.Config {
-	if alerts.Host != "" {
-		return alerts
+// AlertTransport is the rule on its own, so it can be tested without a
+// database: an alerts profile that names no host is no transport at all. A
+// sender stored by an older version, which used to ride the account relay, is
+// ignored rather than honoured.
+func AlertTransport(alerts notify.Config) notify.Config {
+	if alerts.Host == "" {
+		return notify.Config{}
 	}
-	out := account
-	if alerts.From != "" {
-		out.From = alerts.From
-		// The display name travels with the address it belongs to: keeping the
-		// account profile's name next to the alert address would read as a
-		// mismatched "OpenRMM Account <alerts@…>".
-		out.FromName = alerts.FromName
-	} else if alerts.FromName != "" {
-		out.FromName = alerts.FromName
-	}
-	return out
+	return alerts
 }
 
-// SMTPProfile resolves one profile exactly as stored, with no inheritance. The
-// settings screen needs this to show an operator what they typed; delivery uses
-// SMTPConfig or AlertSMTPConfig, which apply the fallback rules.
+// SMTPProfile resolves one profile exactly as stored. The settings screen needs
+// this to show an operator what they typed; delivery uses AccountSMTPConfig or
+// AlertSMTPConfig.
 func SMTPProfile(ctx context.Context, st *store.Store, cfg *config.Config, profile string) (notify.Config, error) {
 	if !ValidSMTPProfile(profile) {
 		return notify.Config{}, fmt.Errorf("unknown SMTP profile %q", profile)
@@ -214,10 +205,9 @@ type SMTPSaveRequest struct {
 // Only the alerts profile is writable; the account transport comes from the
 // environment and is rejected here.
 //
-// A blank host means "use the account transport", so the sender identity is kept
-// while the connection fields — credentials included — are cleared: an alerts
-// profile with no host of its own must not hold a password for a server it does
-// not name.
+// A blank host turns alert mail off and clears the whole profile. A sender or
+// credentials without a host are refused (ErrAlertsNeedOwnServer): there is no
+// shared relay they could be meant for.
 func SaveSMTP(ctx context.Context, st *store.Store, cfg *config.Config, profile string, in SMTPSaveRequest) (notify.Config, error) {
 	if !ValidSMTPProfile(profile) {
 		return notify.Config{}, fmt.Errorf("unknown SMTP profile %q", profile)
@@ -263,17 +253,15 @@ func SaveSMTP(ctx context.Context, st *store.Store, cfg *config.Config, profile 
 	}
 
 	if next.Host == "" {
-		// No host here means "send alerts through the account transport". The
-		// sender identity survives — it is the whole point of the profile in this
-		// shape — while every connection field goes, credentials first: a profile
-		// that names no server must not keep a password for one.
-		if err := clear("host", "port", "username", "password", "tls_mode", "skip_verify"); err != nil {
-			return current, err
+		// No host: alert mail off. A sender or a login here would have been
+		// meant for some relay, and the only other one is the operator's.
+		// The display name alone is harmless — the console fills it in by
+		// default — so it is dropped with the rest rather than refused.
+		if next.From != "" || next.Username != "" || strings.TrimSpace(in.Password) != "" {
+			return current, ErrAlertsNeedOwnServer
 		}
-		for _, op := range [][2]string{{"from", next.From}, {"from_name", next.FromName}} {
-			if err := st.UpsertAppSetting(ctx, profile+op[0], op[1], false); err != nil {
-				return current, err
-			}
+		if err := clear(smtpFields...); err != nil {
+			return current, err
 		}
 		return AlertSMTPConfig(ctx, st, cfg)
 	}

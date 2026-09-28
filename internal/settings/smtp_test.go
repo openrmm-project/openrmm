@@ -6,58 +6,24 @@ import (
 	"github.com/p1ngu/rmm/internal/notify"
 )
 
-// account is the transport an instance must have: password resets ride it, and
-// alerts do too unless the alerts profile says otherwise.
-func account() notify.Config {
-	return notify.Config{
-		Host: "smtp.account.test", Port: 587, Username: "rmm@account.test",
-		Password: "account-secret", From: "no-reply@account.test", FromName: "OpenRMM",
-		TLSMode: "starttls",
+// Alerts never inherit from the account transport — not the relay, not its
+// credentials, not its sender. An alerts profile without a host is no transport.
+func TestAlertTransportWithoutHostIsOff(t *testing.T) {
+	for _, alerts := range []notify.Config{
+		{},
+		// A sender stored by an older version, which rode the account relay.
+		{From: "billing@operator.test", FromName: "Operator Billing"},
+	} {
+		if got := AlertTransport(alerts); got.Enabled() || got.Host != "" || got.From != "" {
+			t.Errorf("AlertTransport(%+v) = %+v, want no transport", alerts, got)
+		}
 	}
 }
 
-func TestMergeAlertProfileInheritsWholeTransport(t *testing.T) {
-	got := MergeAlertProfile(account(), notify.Config{})
-	if got.Host != "smtp.account.test" || got.From != "no-reply@account.test" {
-		t.Fatalf("an empty alerts profile should be the account transport, got %+v", got)
-	}
-}
-
-// The common case: one relay, two sender identities.
-func TestMergeAlertProfileOverridesSenderOnly(t *testing.T) {
-	got := MergeAlertProfile(account(), notify.Config{From: "alerts@account.test", FromName: "OpenRMM Alerts"})
-	if got.From != "alerts@account.test" || got.FromName != "OpenRMM Alerts" {
-		t.Errorf("the alert sender should win, got %q <%q>", got.FromName, got.From)
-	}
-	if got.Host != "smtp.account.test" || got.Password != "account-secret" {
-		t.Errorf("the connection should still be the account one, got host=%q", got.Host)
-	}
-}
-
-// A sender set without a display name must not keep the account profile's name,
-// which would render as a mismatched "OpenRMM <alerts@…>".
-func TestMergeAlertProfileDropsStaleFromName(t *testing.T) {
-	if got := MergeAlertProfile(account(), notify.Config{From: "alerts@account.test"}); got.FromName != "" {
-		t.Errorf("FromName = %q, want it cleared alongside a new From", got.FromName)
-	}
-}
-
-// The security property of the whole design: naming a separate relay must not
-// carry the account mailbox's credentials over to it.
-func TestMergeAlertProfileNeverLeaksCredentialsToAnotherHost(t *testing.T) {
-	alerts := notify.Config{
-		Host: "relay.alerts.test", Port: 2525, From: "alerts@alerts.test", TLSMode: "tls",
-	}
-	got := MergeAlertProfile(account(), alerts)
-	if got.Host != "relay.alerts.test" {
-		t.Fatalf("host = %q, want the alerts relay", got.Host)
-	}
-	if got.Username != "" || got.Password != "" {
-		t.Fatalf("the account credentials reached %s (user=%q, password set=%t)",
-			got.Host, got.Username, got.Password != "")
-	}
-	if got.Port != 2525 || got.TLSMode != "tls" {
-		t.Errorf("connection settings should come from the alerts profile, got port=%d tls=%q", got.Port, got.TLSMode)
+func TestAlertTransportIsTheTenantsOwnRelay(t *testing.T) {
+	alerts := notify.Config{Host: "relay.tenant.test", Port: 2525, Username: "u", Password: "p", From: "alerts@tenant.test", TLSMode: "tls"}
+	if got := AlertTransport(alerts); got != alerts {
+		t.Errorf("AlertTransport changed the tenant's relay: %+v", got)
 	}
 }
 

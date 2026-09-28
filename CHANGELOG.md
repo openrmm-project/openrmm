@@ -8,6 +8,17 @@ tag.
 
 ### Security
 
+- **Revoking an MCP application now kills its tokens at once.** OAuth tokens
+  carried no link to their application, so removing one would have left its
+  tokens working until they expired — and there was no way to remove one at
+  all. Revocation deletes the application's tokens, codes and SSO grants in one
+  transaction, and authentication joins the application, so a token of a
+  removed or unapproved application stops working immediately.
+- **The consent page warns about unknown applications.** Anyone can register an
+  application under any name; when it returns to a host that is neither a
+  known MCP client nor on the administrator's list, the page says so before the
+  user authorizes it.
+
 - **The MCP OAuth consent page can no longer be framed** (`X-Frame-Options:
   DENY`, `frame-ancestors 'none'`), so its Authorize button cannot be hidden
   under another page and clicked by deception. It also names the host the
@@ -57,6 +68,11 @@ tag.
   created the first user anonymously must add the header.
 
 ### Fixed
+
+- **Ten audit actions showed as raw identifiers in the console** (two-factor
+  changes, reboot requests, remote sessions moved between tabs, MCP
+  application approvals and revocations). They now read in every language,
+  and a test ties every action the server records to a label.
 
 - **A rejected password no longer burns the reset link.** The confirm step
   redeemed the token before checking the password, then said "the link is still
@@ -169,6 +185,15 @@ tag.
   created by a failed fresh install instead of leaving another orphan.
 
 ### Added
+
+- **MCP applications screen.** Settings ▸ API tokens lists every registered
+  MCP application (hosts it returns to, status, active tokens, last use) with
+  Approve and Revoke, and sets the policy: any application, or only those on
+  allowed hosts, and optionally approval for new ones. The default stays open,
+  without approval. New migration `016_oauth_app_controls`. Registrations,
+  consent refused for lack of `mcp.use`, and rejected SSO grants (with the
+  reason: replayed, carried to another client, expired) are audited;
+  refusals before sign-in go to the server log.
 
 - **Single sign-on on the MCP OAuth consent page.** Accounts linked to SSO
   have no password path while SSO is on, so they could not authorize MCP

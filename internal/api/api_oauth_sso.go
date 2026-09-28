@@ -58,6 +58,9 @@ func (s *Server) oauthAuthorizeSSO(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "single sign-on is not enabled", http.StatusNotFound)
 		return
 	}
+	if s.refuseOAuthApp(w, r, p) {
+		return
+	}
 	// Opportunistic cleanup, as on the console's start route.
 	if _, err := s.store.PurgeExpiredOIDCStates(r.Context()); err != nil {
 		log.Printf("oidc: could not purge expired sign-in states: %v", err)
@@ -100,6 +103,9 @@ func (s *Server) finishOAuthSSO(w http.ResponseWriter, r *http.Request, provider
 		renderOAuthMessage(w, http.StatusBadRequest, oauthSSOFailed)
 		return
 	}
+	if s.refuseOAuthApp(w, r, p) {
+		return
+	}
 	ctx := oidc.WithHTTPClient(r.Context(), oidc.HTTPClient())
 	identity, err := provider.Exchange(ctx, code, login.CodeVerifier, login.Nonce)
 	if err != nil {
@@ -120,6 +126,7 @@ func (s *Server) finishOAuthSSO(w http.ResponseWriter, r *http.Request, provider
 			renderOAuthMessage(w, http.StatusInternalServerError, oauthSSOFailed)
 			return
 		}
+		s.auditMCPRefusal(r.Context(), user.ID, p.ClientID)
 		renderOAuthMessage(w, http.StatusForbidden, noMCPPermission)
 		return
 	}
@@ -133,9 +140,11 @@ func (s *Server) finishOAuthSSO(w http.ResponseWriter, r *http.Request, provider
 		auditDetail(map[string]string{"issuer": identity.Issuer, "for": "mcp_authorize", "client": p.ClientID}))
 
 	name, _, _, _ := s.store.GetOAuthClient(r.Context(), p.ClientID)
+	host := redirectHost(p.RedirectURI)
 	renderConsentPage(w, consentView{
 		P: p, ClientName: name, Action: s.oauthAuthorizeAction(),
-		SSOUser: user.Username, Ticket: ticket, RedirectHost: redirectHost(p.RedirectURI),
+		SSOUser: user.Username, Ticket: ticket, RedirectHost: host,
+		UnknownHost: s.hostUnknown(r.Context(), host),
 	})
 }
 
@@ -146,15 +155,42 @@ func (s *Server) finishOAuthSSO(w http.ResponseWriter, r *http.Request, provider
 func (s *Server) redeemOAuthSSOGrant(ctx context.Context, ticket string, p authzParams) (userID string, ok bool, err error) {
 	g, err := s.store.ConsumeOAuthSSOGrant(ctx, auth.Hash(ticket))
 	if errors.Is(err, store.ErrNotFound) {
+		// Already spent, never issued, or its application revoked. The only
+		// legitimate way here is a double submit; anything else is a replay.
+		s.rejectOAuthSSOGrant(ctx, "", p.ClientID, "unknown_or_spent")
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, err
 	}
-	if !g.Live || !g.UserActive || g.ClientID != p.ClientID || g.RedirectURI != p.RedirectURI || g.CodeChallenge != p.CodeChallenge {
+	reason := ""
+	switch {
+	case g.ClientID != p.ClientID || g.RedirectURI != p.RedirectURI || g.CodeChallenge != p.CodeChallenge:
+		// Presented for a request it was not minted for: the signature of a
+		// ticket carried to another client.
+		reason = "request_mismatch"
+	case !g.Live:
+		reason = "expired"
+	case !g.UserActive:
+		reason = "user_disabled"
+	}
+	if reason != "" {
+		s.rejectOAuthSSOGrant(ctx, g.UserID, p.ClientID, reason)
 		return "", false, nil
 	}
 	return g.UserID, true, nil
+}
+
+// rejectOAuthSSOGrant records a grant ticket that did not authorize. It goes
+// to the audit trail, not only the log: a mismatched or replayed ticket is
+// what an attempt to reuse someone's single sign-on looks like.
+func (s *Server) rejectOAuthSSOGrant(ctx context.Context, userID, clientID, reason string) {
+	log.Printf("oauth sso: grant rejected (%s) for client %s", reason, clientID)
+	actor := userID
+	if actor == "" {
+		actor = "unknown"
+	}
+	_ = s.store.AddAudit(ctx, actor, "oauth.sso_grant.reject", clientID, auditDetail(map[string]string{"reason": reason}))
 }
 
 // oauthAuthorizeAction is where the signed-in consent page posts. It is shown
@@ -167,6 +203,12 @@ func (s *Server) oauthAuthorizeAction() string {
 }
 
 const oauthSSOFailed = "Single sign-on did not complete. Close this window and connect again from your MCP client."
+
+// auditMCPRefusal records a consent refused because the user's role lacks
+// mcp.use: an attempt to hand an MCP client access the role does not grant.
+func (s *Server) auditMCPRefusal(ctx context.Context, userID, clientID string) {
+	_ = s.store.AddAudit(ctx, userID, "oauth.authorize.refuse", clientID, auditDetail(map[string]string{"reason": "no_mcp_permission"}))
+}
 
 const noMCPPermission = "Your role does not allow connecting MCP clients. Ask an administrator for the MCP permission."
 

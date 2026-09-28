@@ -149,6 +149,10 @@ func TestMCPAuthorizationThroughSSOEndToEndIntegration(t *testing.T) {
 	if res.Header.Get("X-Frame-Options") != "DENY" {
 		t.Error("the signed-in consent page can be framed")
 	}
+	// client.example.test is no known MCP client: the signed-in page warns too.
+	if !strings.Contains(body, "not a known MCP client") {
+		t.Error("the signed-in consent page does not warn about an unknown host")
+	}
 	m := ticketRE.FindStringSubmatch(body)
 	if m == nil {
 		t.Fatal("no grant ticket on the signed-in consent page")
@@ -272,6 +276,9 @@ func TestMCPConsentRequiresTheMCPPermissionIntegration(t *testing.T) {
 		if res.StatusCode != http.StatusForbidden || !strings.Contains(body, "does not allow connecting MCP clients") {
 			t.Fatalf("status %d, want the missing-permission page", res.StatusCode)
 		}
+		if f.auditCount("oauth.authorize.refuse", f.clientID) != 1 {
+			t.Error("the refusal is not on the audit trail")
+		}
 	})
 	t.Run("password", func(t *testing.T) {
 		f := newSSOFlow(t, func(c *config.Config) { c.OIDCEnabled = false })
@@ -288,6 +295,9 @@ func TestMCPConsentRequiresTheMCPPermissionIntegration(t *testing.T) {
 		res.Body.Close()
 		if res.StatusCode == http.StatusFound || !strings.Contains(string(body), "does not allow connecting MCP clients") {
 			t.Fatalf("status %d: a role without mcp.use was authorized", res.StatusCode)
+		}
+		if f.auditCount("oauth.authorize.refuse", f.clientID) != 1 {
+			t.Error("the refusal is not on the audit trail")
 		}
 	})
 }
@@ -321,4 +331,22 @@ func mustURL(t *testing.T, raw string) *url.URL {
 		t.Fatal(err)
 	}
 	return u
+}
+
+// A pending application cannot be authorized through single sign-on either:
+// the refusal comes before the trip to the provider.
+func TestPendingAppCannotStartSSOIntegration(t *testing.T) {
+	f := newSSOFlow(t)
+	if _, err := f.store.GetOAuthClientInfo(f.ctx, f.clientID); err != nil {
+		t.Fatal(err)
+	}
+	pending := uuid.NewString()
+	if err := f.store.CreateOAuthClientWithStatus(f.ctx, pending, "Pending", []string{f.redirectURI}, "pending"); err != nil {
+		t.Fatal(err)
+	}
+	f.clientID = pending
+	res, body := f.get(f.url + "/oauth/authorize/sso?" + f.authzQuery().Encode())
+	if res.StatusCode != http.StatusForbidden || !strings.Contains(body, "waiting for an administrator") {
+		t.Fatalf("SSO start for a pending application: %d", res.StatusCode)
+	}
 }

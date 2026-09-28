@@ -1033,6 +1033,141 @@ function APITokensPanel() {
   );
 }
 
+// OAuthAppsPanel lists the MCP applications that registered themselves
+// (Dynamic Client Registration) and lets an administrator approve or revoke
+// them, and set which may register: any, or only those on listed hosts, with or
+// without approval. Revoking kills the application's tokens at once.
+function OAuthAppsPanel() {
+  const toast = useToast();
+  const appsQ = useQuery(['oauthapps'], () => api.listOAuthApps(), { invalidateOn: ['oauthapps'] });
+  const data = appsQ.data || {};
+  const apps = data.apps || [];
+  const known = data.known_hosts || [];
+  const [policy, setPolicy] = useState(null);
+  const [hostsText, setHostsText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(null);
+
+  useEffect(() => {
+    if (!data.policy) return;
+    setPolicy(data.policy);
+    setHostsText((data.policy.allowed_hosts || []).join('\n'));
+  }, [appsQ.data]);
+
+  const parseHosts = (txt) => txt.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
+  const hostOf = (uri) => { try { return new URL(uri).host; } catch (e) { return uri; } };
+  const matches = (host, list) => list.some((e) => e.startsWith('*.') ? (host.endsWith(e.slice(1)) && host.length > e.length - 1) : host === e);
+  const isKnown = (host) => matches(host, known) || matches(host, policy?.allowed_hosts || []);
+
+  const savePolicy = async () => {
+    setSaving(true);
+    try {
+      await api.updateMCPOAuthPolicy({ ...policy, allowed_hosts: parseHosts(hostsText) });
+      toast.success(t('oauthApps.policySaved'));
+      appsQ.refetch();
+    } catch (e) { toast.error(t('oauthApps.policyFailed'), e.code === 'invalid_host' ? t('oauthApps.invalidHost') : e.message); }
+    finally { setSaving(false); }
+  };
+  const approve = async (app) => {
+    try { await api.approveOAuthApp(app.client_id); toast.success(t('oauthApps.approved'), app.name || app.client_id); appsQ.refetch(); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  const revoke = async (app) => {
+    try { await api.revokeOAuthApp(app.client_id); toast.info(t('oauthApps.revoked'), app.name || app.client_id); appsQ.refetch(); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+
+  return (
+    <Card className="overflow-hidden mt-4">
+      <div className="flex items-center justify-between px-4 h-12 border-b border-line">
+        <div className="text-[13px] font-semibold text-ink">{t('oauthApps.title')} <span className="text-faint font-normal">({apps.length})</span></div>
+      </div>
+      <div className="px-4 py-2.5 text-[12px] text-muted bg-elevated/30 border-b border-line flex items-start gap-1.5">
+        <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+        <span>{t('oauthApps.info')}</span>
+      </div>
+
+      {policy && (
+        <div className="px-4 py-4 border-b border-line grid md:grid-cols-2 gap-4">
+          <div className="space-y-3">
+            <Field label={t('oauthApps.registration')}>
+              <Select value={policy.registration} onChange={(e) => setPolicy({ ...policy, registration: e.target.value })}>
+                <option value="open">{t('oauthApps.regOpen')}</option>
+                <option value="allowlist">{t('oauthApps.regAllowlist')}</option>
+              </Select>
+            </Field>
+            <div className="flex items-start gap-3">
+              <Toggle checked={!!policy.require_approval} onChange={(v) => setPolicy({ ...policy, require_approval: v })} />
+              <div>
+                <div className="text-[12.5px] text-ink font-medium">{t('oauthApps.requireApproval')}</div>
+                <div className="text-[11.5px] text-faint">{t('oauthApps.requireApprovalHint')}</div>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Field label={t('oauthApps.allowedHosts')} hint={t('oauthApps.allowedHostsHint', { known: known.join(', ') })}>
+              <Textarea rows={4} className="mono text-[12px]" value={hostsText} onChange={(e) => setHostsText(e.target.value)} placeholder={'claude.ai\n*.example.com'} />
+            </Field>
+            {policy.registration === 'allowlist' && parseHosts(hostsText).length === 0 && (
+              <div className="text-[11.5px] text-warn flex items-start gap-1.5"><Icon name="alert" size={13} className="mt-0.5 shrink-0" />{t('oauthApps.emptyAllowlist')}</div>
+            )}
+            <div className="flex justify-end"><Button size="sm" variant="primary" icon="check" loading={saving} onClick={savePolicy}>{t('oauthApps.savePolicy')}</Button></div>
+          </div>
+        </div>
+      )}
+
+      {apps.length === 0
+        ? <div className="px-4 py-10 text-center text-[12.5px] text-faint">{t('oauthApps.none')}</div>
+        : (
+          <table className="w-full text-left">
+            <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
+              <th className="font-semibold px-4 py-2.5">{t('oauthApps.col.app')}</th>
+              <th className="font-semibold px-3 py-2.5">{t('oauthApps.col.returnsTo')}</th>
+              <th className="font-semibold px-3 py-2.5">{t('oauthApps.col.status')}</th>
+              <th className="font-semibold px-3 py-2.5">{t('oauthApps.col.tokens')}</th>
+              <th className="font-semibold px-3 py-2.5">{t('oauthApps.col.lastUsed')}</th>
+              <th className="font-semibold px-4 py-2.5 text-right">{t('alerts.col.actions')}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-line">
+              {apps.map((app) => {
+                const hosts = [...new Set((app.redirect_uris || []).map(hostOf))];
+                return (
+                  <tr key={app.client_id} className="hover:bg-elevated/40 transition">
+                    <td className="px-4 py-3">
+                      <div className="text-[13px] text-ink font-medium">{app.name || <span className="text-faint">{t('oauthApps.unnamed')}</span>}</div>
+                      <div className="text-[11px] text-faint">{t('oauthApps.registered', { when: fmtTime(app.created_at) })}</div>
+                    </td>
+                    <td className="px-3 py-3">
+                      {hosts.map((h) => (
+                        <div key={h} className="flex items-center gap-1.5 text-[12px] mono text-muted">
+                          {h}
+                          {!isKnown(h) && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-warnsoft text-warn font-sans" title={t('oauthApps.unknownHostHint')}>{t('oauthApps.unknownHost')}</span>}
+                        </div>
+                      ))}
+                    </td>
+                    <td className="px-3 py-3">
+                      <StatusPill status={app.status === 'approved' ? 'online' : 'warning'} label={app.status === 'approved' ? t('oauthApps.statusApproved') : t('oauthApps.statusPending')} size="sm" />
+                    </td>
+                    <td className="px-3 py-3 text-[12px] text-muted tabular">{app.active_tokens}</td>
+                    <td className="px-3 py-3 text-[12px] text-muted tabular">{app.last_used_at ? fmtTime(app.last_used_at) : <span className="text-faint">{t('oauthApps.never')}</span>}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {app.status !== 'approved' && <Button size="sm" variant="primary" icon="check" onClick={() => approve(app)}>{t('oauthApps.approve')}</Button>}
+                      <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirmRevoke(app)}>{t('oauthApps.revoke')}</Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      <ConfirmDialog open={!!confirmRevoke} onClose={() => setConfirmRevoke(null)} onConfirm={() => { revoke(confirmRevoke); setConfirmRevoke(null); }} danger
+        title={t('oauthApps.revokeTitle')}
+        body={t('oauthApps.revokeBody', { name: confirmRevoke?.name || t('oauthApps.unnamed'), tokens: tn('oauthApps.tokens', confirmRevoke?.active_tokens || 0) })}
+        confirmLabel={t('oauthApps.revokeConfirm')} />
+    </Card>
+  );
+}
+
 function SettingsScreen() {
   const { can } = useAuth();
   const [tab, setTab] = useState('users');
@@ -1050,7 +1185,7 @@ function SettingsScreen() {
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={tabs} />
       {tab === 'users' && <><LanguagePicker /><ChangePasswordCard /><TwoFactorCard /><NotificationsCard />{can('users.manage') && <UsersPanel canAdmin />}</>}
       {tab === 'roles' && can('roles.manage') && <RolesPanel />}
-      {tab === 'tokens' && can('api_tokens.manage') && <APITokensPanel />}
+      {tab === 'tokens' && can('api_tokens.manage') && <><APITokensPanel /><OAuthAppsPanel /></>}
       {tab === 'config' && can('settings.manage') && <ConfigPanel />}
       {tab === 'email' && can('settings.manage') && <SMTPPanel />}
       {tab === 'enroll' && can('enrollment.manage') && <EnrollPanel canAdmin={can('enrollment.manage')} />}

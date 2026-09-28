@@ -70,6 +70,10 @@ per-user access scope.
 | `POST /oauth/register` | none | Dynamic Client Registration |
 | `GET/POST /oauth/authorize` | user login + consent | authorization code |
 | `GET /oauth/authorize/sso` | none (starts a provider sign-in) | single sign-on for the consent form |
+| `GET /api/oauth-apps` | `api_tokens.manage` | registered applications + policy |
+| `POST /api/oauth-apps/{id}/approve` | `api_tokens.manage`, unscoped | approve a pending application |
+| `DELETE /api/oauth-apps/{id}` | `api_tokens.manage`, unscoped | revoke an application and all it holds |
+| `PUT /api/config/mcp-oauth` | `api_tokens.manage`, unscoped | registration policy |
 | `POST /oauth/token` | PKCE | code→token, refresh with rotation |
 | `POST /mcp` | Bearer (API token **or** OAuth access token) | permission/scope-filtered tools |
 
@@ -97,6 +101,54 @@ access token → `refresh_token` rotation.
 The supported deployment remains one server replica. OAuth state is durable in
 PostgreSQL, but the wider agent hub, relay and scheduler are process-local; OAuth
 storage does not make the control plane distributed or HA.
+
+## Controlling which applications connect
+
+Applications register themselves (Dynamic Client Registration): that is how
+Claude and ChatGPT connect without setup, and also how anyone can register an
+application named "Claude" that sends users back to their own site. Settings ▸
+API tokens ▸ **MCP applications** (`api_tokens.manage`) shows every registered
+application — name, the hosts it returns to, status, active tokens, last use —
+and sets the policy. Changes are instance-wide, so they also need an unscoped
+principal, and they are audited (`oauth.app.approve`, `oauth.app.revoke`,
+`config.mcp_oauth.update`).
+
+- **Revoke** removes the application and everything it holds — access and
+  refresh tokens, unredeemed codes, single sign-on grants — in one transaction.
+  Tokens carry no foreign key to the application, so authentication also joins
+  it: a token of a removed or unapproved application stops working at once,
+  and a refresh token cannot mint another. The application may register again,
+  under the policy then in force.
+- **Who may register**: *any application* (the default) or *only applications
+  on allowed hosts*. With the allowlist, registration from another host is
+  refused, and an application registered earlier from one can no longer
+  authorize. Entries are host names — `claude.ai`, or `*.example.com` for its
+  subdomains (not the domain itself). An empty allowlist is refused, since it
+  would lock out every application in use.
+- **Require approval**: a newly registered application is *pending*. Its
+  consent page says it is waiting for an administrator and issues nothing, and
+  a code or refresh for it is refused, until an administrator approves it.
+  Applications that existed before stay approved.
+- **Warning on the consent page**: whatever the policy, when an application
+  returns to a host that is neither a known MCP client (`claude.ai`,
+  `claude.com`, `chatgpt.com`, `chat.openai.com`) nor on the allowed list, the
+  consent page says so prominently, before anyone clicks Authorize. The list
+  shows the same hosts as *unknown*.
+
+### What is recorded
+
+| Event | Where | Why |
+|---|---|---|
+| `oauth.app.register` | audit | an application appeared: name, hosts, approved or pending |
+| `oauth.app.approve`, `oauth.app.revoke` | audit | who let an application in or threw it out (revoke records how many tokens died) |
+| `config.mcp_oauth.update` | audit | who changed the policy |
+| `oauth.authorize`, `oauth.token` | audit | a user authorized an application; a token was issued or refreshed |
+| `oauth.authorize.refuse` | audit | consent refused because the user's role lacks `mcp.use` |
+| `oauth.sso_grant.reject` | audit | a single sign-on grant that did not authorize, with its reason: `request_mismatch` (carried to another client), `unknown_or_spent` (replayed), `expired`, `user_disabled` |
+| registration refused by the allowlist, authorization refused (pending or unlisted application) | server log | before anyone has signed in, so the log and not the audit trail: an unauthenticated caller must not be able to fill the trail |
+
+The console labels every audit action in every language; a test fails when the
+server records one it cannot name.
 
 ## Signing in through single sign-on
 

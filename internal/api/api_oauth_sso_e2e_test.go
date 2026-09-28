@@ -16,6 +16,7 @@ import (
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 type ssoOAuthFixture struct {
@@ -181,5 +182,50 @@ func TestOIDCStateCarriesTheOAuthRequestIntegration(t *testing.T) {
 	}
 	if console.OAuthRequest != nil || console.RedirectTo != "/devices" {
 		t.Fatalf("a console sign-in picked up an OAuth request: %+v", console)
+	}
+}
+
+// auditCount counts audit entries of one action on one target.
+func (e *smtpE2E) auditCount(action, target string) int {
+	e.t.Helper()
+	rows, _, err := e.store.ListAudit(e.ctx, store.AuditFilter{Action: action, Target: target, Limit: 50})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	n := 0
+	for _, r := range rows {
+		if r.Action == action {
+			n++
+		}
+	}
+	return n
+}
+
+// A grant that does not authorize is on the audit trail with its reason: a
+// replayed or mismatched ticket is what an attempt to reuse someone's single
+// sign-on looks like.
+func TestRejectedSSOGrantsAreAuditedIntegration(t *testing.T) {
+	f := newSSOOAuthFixture(t)
+	ticket := f.grant(f.clientID, f.challenge, time.Minute)
+	f.submit(ticket, "allow", "another-challenge") // mismatch
+	f.submit(ticket, "allow", f.challenge)         // replay of a spent ticket
+	f.submit(f.grant(f.clientID, f.challenge, -time.Second), "allow", f.challenge)
+	if n := f.auditCount("oauth.sso_grant.reject", f.clientID); n != 3 {
+		t.Fatalf("rejected grants audited %d times, want 3", n)
+	}
+	rows, _, err := f.store.ListAudit(f.ctx, store.AuditFilter{Action: "oauth.sso_grant.reject", Target: f.clientID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := map[string]bool{}
+	for _, r := range rows {
+		var d map[string]string
+		_ = json.Unmarshal(r.Detail, &d)
+		reasons[d["reason"]] = true
+	}
+	for _, want := range []string{"request_mismatch", "unknown_or_spent", "expired"} {
+		if !reasons[want] {
+			t.Errorf("no audit entry with reason %q (got %v)", want, reasons)
+		}
 	}
 }

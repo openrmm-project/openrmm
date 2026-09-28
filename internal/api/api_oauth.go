@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,17 +85,43 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_client_metadata", "error_description": "redirect_uris is required"})
 		return
 	}
+	policy, err := settings.LoadMCPOAuthPolicy(r.Context(), s.store)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for _, u := range in.RedirectURIs {
 		if !validRedirectURI(u) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_redirect_uri"})
 			return
 		}
+		// Only listed hosts, when the administrator chose that.
+		if !policy.HostAllowed(redirectHost(u)) {
+			// Logged, not audited: registration is unauthenticated, and the
+			// trail should not be something anyone can fill from outside.
+			log.Printf("oauth: registration refused for host %q (not on the allowed list)", redirectHost(u))
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_redirect_uri",
+				"error_description": "this OpenRMM instance only accepts applications on hosts its administrator allowed"})
+			return
+		}
+	}
+	status := store.OAuthClientApproved
+	if policy.RequireApproval {
+		status = store.OAuthClientPending
 	}
 	clientID := uuid.NewString()
-	if err := s.store.CreateOAuthClient(r.Context(), clientID, in.ClientName, in.RedirectURIs); err != nil {
+	if err := s.store.CreateOAuthClientWithStatus(r.Context(), clientID, in.ClientName, in.RedirectURIs, status); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	hosts := []string{}
+	for _, u := range in.RedirectURIs {
+		hosts = append(hosts, redirectHost(u))
+	}
+	// Audited: an application appearing is what an administrator reviews,
+	// and "when, and pending or not" is the first question about one.
+	_ = s.store.AddAudit(r.Context(), "oauth:registration", "oauth.app.register", clientID,
+		auditDetail(map[string]string{"name": in.ClientName, "hosts": strings.Join(hosts, ","), "status": status}))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"client_id":                  clientID,
 		"client_name":                in.ClientName,
@@ -182,8 +209,11 @@ func (s *Server) oauthAuthorize(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if s.refuseOAuthApp(w, r, p) {
+		return
+	}
 	name, _, _, _ := s.store.GetOAuthClient(r.Context(), p.ClientID)
-	s.renderConsent(w, p, name, "")
+	s.renderConsent(r.Context(), w, p, name, "")
 }
 
 func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +252,10 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.refuseOAuthApp(w, r, p) {
+		return
+	}
+
 	// Who is authorizing: someone who just signed in through the identity
 	// provider for this very request (see api_oauth_sso.go), or someone typing
 	// a password here.
@@ -233,7 +267,7 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok {
-			s.renderConsent(w, p, name, "Your single sign-on expired or was for another request. Sign in again.")
+			s.renderConsent(r.Context(), w, p, name, "Your single sign-on expired or was for another request. Sign in again.")
 			return
 		}
 		userID = id
@@ -252,7 +286,7 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, errSSORequired) {
 				msg = "This account signs in with single sign-on. Use the button above."
 			}
-			s.renderConsent(w, p, name, msg)
+			s.renderConsent(r.Context(), w, p, name, msg)
 			return
 		}
 		userID = id
@@ -264,7 +298,8 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	} else if !ok {
-		s.renderConsent(w, p, name, noMCPPermission)
+		s.auditMCPRefusal(r.Context(), userID, p.ClientID)
+		s.renderConsent(r.Context(), w, p, name, noMCPPermission)
 		return
 	}
 
@@ -380,6 +415,10 @@ func (s *Server) oauthTokenFromCode(w http.ResponseWriter, r *http.Request) {
 		oauthTokenErr(w, "invalid_grant")
 		return
 	}
+	if app, err := s.store.GetOAuthClientInfo(r.Context(), clientID); err != nil || app.Status != store.OAuthClientApproved {
+		oauthTokenErr(w, "invalid_grant")
+		return
+	}
 	s.issueOAuthTokens(w, r, clientID, userID, scope)
 }
 
@@ -413,6 +452,7 @@ func (s *Server) issueOAuthTokens(w http.ResponseWriter, r *http.Request, client
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), userID, "oauth.token", clientID, nil)
+	_ = s.store.TouchOAuthClient(r.Context(), clientID)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token":  access,
@@ -448,6 +488,7 @@ var consentTmpl = template.Must(template.New("consent").Parse(`<!doctype html>
  .row{display:flex;gap:10px;margin-top:18px}
  button{flex:1;border:0;border-radius:8px;padding:10px;font-size:14px;font-weight:600;cursor:pointer}
  .primary{background:#4c7dff;color:#fff}.ghost{background:#232a3a;color:#e6e9ef}
+ .warn{background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.45);color:#fcd34d;font-size:12.5px;line-height:1.45;border-radius:8px;padding:9px 11px;margin-bottom:12px}
  .err{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3);color:#fca5a5;font-size:12.5px;border-radius:8px;padding:8px 10px;margin-bottom:12px}
  .sso{display:block;text-align:center;text-decoration:none;background:#232a3a;color:#e6e9ef;border-radius:8px;padding:10px;font-size:14px;font-weight:600}
  .or{text-align:center;color:#94a0b4;font-size:12px;margin:14px 0 2px}
@@ -459,6 +500,7 @@ var consentTmpl = template.Must(template.New("consent").Parse(`<!doctype html>
  <h1>Authorize access</h1>
  <p class="sub">Allow <b>{{if .ClientName}}{{.ClientName}}{{else}}this MCP client{{end}}</b> to access OpenRMM as you. It can only propose actions — you still approve every job.</p>
  {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+ {{if .UnknownHost}}<div class="warn"><b>Check this application before you authorize it.</b> It sends you back to <b>{{.RedirectHost}}</b>, which is not a known MCP client. Anyone can register an application with any name. Authorize it only if you started this connection yourself and trust {{.RedirectHost}}.</div>{{end}}
  {{if .SSOUser}}
  <div class="who">Signed in as <b>{{.SSOUser}}</b> through single sign-on.</div>
  <input type="hidden" name="sso_ticket" value="{{.Ticket}}">
@@ -490,17 +532,28 @@ type consentView struct {
 	SSOURL, SSOLabel  string // the single sign-on button, when SSO is available
 	SSOUser, Ticket   string // set once the user has signed in through SSO
 	RedirectHost      string
+	// UnknownHost: the application sends the user back to a host that is
+	// neither a known MCP client nor on the administrator's list.
+	UnknownHost bool
 }
 
 // renderConsent shows the password form, with the single sign-on button when a
 // provider is available.
-func (s *Server) renderConsent(w http.ResponseWriter, p authzParams, clientName, errMsg string) {
+func (s *Server) renderConsent(ctx context.Context, w http.ResponseWriter, p authzParams, clientName, errMsg string) {
+	v := s.passwordConsent(p, clientName, errMsg)
+	v.UnknownHost = s.hostUnknown(ctx, v.RedirectHost)
+	renderConsentPage(w, v)
+}
+
+// passwordConsent is the consent page before anyone has signed in: the
+// password form, and the single sign-on button when a provider is available.
+func (s *Server) passwordConsent(p authzParams, clientName, errMsg string) consentView {
 	v := consentView{P: p, ClientName: clientName, Error: errMsg, Action: "/oauth/authorize", RedirectHost: redirectHost(p.RedirectURI)}
 	if s.oidcProvider() != nil {
 		v.SSOURL = "/oauth/authorize/sso?" + authzQuery(p).Encode()
 		v.SSOLabel = s.cfg.OIDCButtonLabel
 	}
-	renderConsentPage(w, v)
+	return v
 }
 
 // renderConsentPage writes the page. It must never be framed: a consent button
@@ -512,6 +565,16 @@ func renderConsentPage(w http.ResponseWriter, v consentView) {
 	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	_ = consentTmpl.Execute(w, v)
+}
+
+// hostUnknown reports whether the consent page must warn about host. A policy
+// that cannot be read warns rather than stays quiet.
+func (s *Server) hostUnknown(ctx context.Context, host string) bool {
+	policy, err := settings.LoadMCPOAuthPolicy(ctx, s.store)
+	if err != nil {
+		return true
+	}
+	return !policy.HostKnown(host)
 }
 
 // redirectHost is the host the client will be sent back to, shown on the page

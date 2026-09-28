@@ -40,6 +40,7 @@ type smtpE2E struct {
 	store *store.Store
 	url   string
 	admin string // bearer token for an unscoped admin
+	srv   *Server
 }
 
 // withAccountSMTP configures the env-backed account transport for a test. It is
@@ -75,7 +76,7 @@ func newSMTPE2E(t *testing.T, opts ...func(*config.Config)) *smtpE2E {
 	ts := httptest.NewServer(srv.Router())
 	t.Cleanup(ts.Close)
 
-	e := &smtpE2E{t: t, ctx: ctx, store: st, url: ts.URL}
+	e := &smtpE2E{t: t, ctx: ctx, store: st, url: ts.URL, srv: srv}
 	e.admin = e.session(models.RoleAdmin, nil)
 	return e
 }

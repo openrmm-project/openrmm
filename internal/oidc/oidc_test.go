@@ -4,124 +4,25 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"encoding/base64"
-	"encoding/json"
-	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/p1ngu/rmm/internal/oidc/oidctest"
 )
 
-// A whole identity provider, in a test.
-//
-// Verification is the part of this feature that must not be improvised, so the
-// tests exercise it against real signed tokens rather than a stub that always
-// says yes: a fake provider that never rejects anything proves the code calls a
-// function, not that the function protects anything.
+// The provider these tests sign in against is oidctest.FakeIDP: real keys,
+// real signatures, a nonce that must match. See that package for why.
+type fakeIDP = oidctest.FakeIDP
 
-type fakeIDP struct {
-	server *httptest.Server
-	key    *rsa.PrivateKey
-	keyID  string
-	issuer string
-
-	// Overridable per test so a token can be made wrong in exactly one way.
-	claims func(base map[string]any) map[string]any
-	signer *rsa.PrivateKey // signing key, when different from the published one
-}
-
-func newFakeIDP(t *testing.T) *fakeIDP {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	idp := &fakeIDP{key: key, keyID: "test-key-1"}
-
-	mux := http.NewServeMux()
-	idp.server = httptest.NewServer(mux)
-	idp.issuer = idp.server.URL
-	t.Cleanup(idp.server.Close)
-
-	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
-			"issuer":                                idp.issuer,
-			"authorization_endpoint":                idp.issuer + "/authorize",
-			"token_endpoint":                        idp.issuer + "/token",
-			"jwks_uri":                              idp.issuer + "/jwks",
-			"id_token_signing_alg_values_supported": []string{"RS256"},
-		})
-	})
-
-	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"keys": []any{map[string]any{
-			"kty": "RSA", "use": "sig", "alg": "RS256", "kid": idp.keyID,
-			"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
-			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
-		}}})
-	})
-
-	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		base := map[string]any{
-			"iss": idp.issuer,
-			"sub": "provider-subject-123",
-			"aud": "test-client",
-			"exp": time.Now().Add(5 * time.Minute).Unix(),
-			"iat": time.Now().Unix(),
-			// The nonce echoed here is the one the test asked for via the code.
-			"nonce":          r.Form.Get("code"),
-			"email":          "alice@example.com",
-			"email_verified": true,
-			"name":           "Alice Example",
-		}
-		if idp.claims != nil {
-			base = idp.claims(base)
-		}
-		writeJSON(w, map[string]any{
-			"access_token": "at",
-			"token_type":   "Bearer",
-			"id_token":     idp.sign(t, base),
-		})
-	})
-	return idp
-}
-
-func (idp *fakeIDP) sign(t *testing.T, claims map[string]any) string {
-	t.Helper()
-	key := idp.key
-	if idp.signer != nil {
-		key = idp.signer
-	}
-	signer, err := jose.NewSigner(
-		jose.SigningKey{Algorithm: jose.RS256, Key: key},
-		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", idp.keyID))
-	if err != nil {
-		t.Fatalf("signer: %v", err)
-	}
-	raw, err := jwt.Signed(signer).Claims(claims).Serialize()
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-	return raw
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
-}
+func newFakeIDP(t *testing.T) *fakeIDP { return oidctest.New(t) }
 
 func discover(t *testing.T, idp *fakeIDP, usernameClaim string) *Provider {
 	t.Helper()
 	p, err := Discover(context.Background(), Config{
-		Issuer:        idp.issuer,
+		Issuer:        idp.Issuer,
 		ClientID:      "test-client",
 		ClientSecret:  "test-secret",
 		RedirectURL:   "https://rmm.example.com/api/auth/oidc/callback",
@@ -150,7 +51,7 @@ func TestExchangeVerifiesAndReturnsIdentity(t *testing.T) {
 	if id.Username != "alice@example.com" {
 		t.Errorf("username = %q, want the email claim", id.Username)
 	}
-	if id.Issuer != idp.issuer {
+	if id.Issuer != idp.Issuer {
 		t.Errorf("issuer = %q", id.Issuer)
 	}
 	if !id.EmailVerified {
@@ -181,7 +82,7 @@ func TestExchangeRejectsWrongSigningKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idp.signer = other
+	idp.Signer = other
 	p := discover(t, idp, "email")
 
 	if _, err := p.Exchange(context.Background(), "n", "v", "n"); err == nil {
@@ -193,7 +94,7 @@ func TestExchangeRejectsWrongSigningKey(t *testing.T) {
 // any other application at the same provider would sign someone in here.
 func TestExchangeRejectsWrongAudience(t *testing.T) {
 	idp := newFakeIDP(t)
-	idp.claims = func(c map[string]any) map[string]any { c["aud"] = "some-other-app"; return c }
+	idp.Claims = func(c map[string]any) map[string]any { c["aud"] = "some-other-app"; return c }
 	p := discover(t, idp, "email")
 
 	if _, err := p.Exchange(context.Background(), "n", "v", "n"); err == nil {
@@ -203,7 +104,7 @@ func TestExchangeRejectsWrongAudience(t *testing.T) {
 
 func TestExchangeRejectsExpiredToken(t *testing.T) {
 	idp := newFakeIDP(t)
-	idp.claims = func(c map[string]any) map[string]any {
+	idp.Claims = func(c map[string]any) map[string]any {
 		c["exp"] = time.Now().Add(-2 * time.Hour).Unix()
 		return c
 	}
@@ -217,7 +118,7 @@ func TestExchangeRejectsExpiredToken(t *testing.T) {
 // The claim named in configuration wins.
 func TestUsernameClaimIsHonoured(t *testing.T) {
 	idp := newFakeIDP(t)
-	idp.claims = func(c map[string]any) map[string]any {
+	idp.Claims = func(c map[string]any) map[string]any {
 		c["preferred_username"] = "alice"
 		return c
 	}
@@ -354,7 +255,7 @@ func TestAuthenticationContextPolicy(t *testing.T) {
 		{"OTP proof", "urn:example:acr:mfa", []string{"pwd", "otp", "mfa"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			idp.claims = func(c map[string]any) map[string]any { c["acr"] = tc.acr; c["amr"] = tc.amr; return c }
+			idp.Claims = func(c map[string]any) map[string]any { c["acr"] = tc.acr; c["amr"] = tc.amr; return c }
 			id, err := p.Exchange(context.Background(), "n", "v", "n")
 			if (err == nil) != tc.allowed {
 				t.Fatalf("allowed=%v, error=%v", tc.allowed, err)

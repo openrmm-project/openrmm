@@ -127,6 +127,10 @@ the mailbox, would step around the provider's MFA, conditional access and
 offboarding. Setting `RMM_OIDC_ENABLED=false` is the break-glass: linked accounts
 sign in with their passwords again.
 
+Connecting an MCP client works through the provider too: the OAuth consent page
+offers the same single sign-on button, see
+[17-mcp-oauth](17-mcp-oauth.md#signing-in-through-single-sign-on).
+
 ## What is checked
 
 Verification is delegated to `github.com/coreos/go-oidc`, which does the part
@@ -191,5 +195,10 @@ an RMM that has adopted their outage.
 - **Disabling a user** in the console is still enough. A disabled account is not
   returned by the SSO lookup, so someone removed here cannot sign back in
   through the provider.
-- **Two-factor** is the provider's business for SSO accounts. The console's own
-  TOTP still guards local sign-in.
+- **Two-factor** is the provider's business for SSO accounts — in the console
+  and when authorizing MCP clients alike. The console's own TOTP still guards
+  local sign-in. So **require MFA at the provider**: set
+  `RMM_OIDC_REQUIRED_AMR` (for example `mfa`) or `RMM_OIDC_ACR_VALUES`, as
+  described above. Without either the console accepts whatever the provider
+  did, a single password included, and the server says so in its log at
+  startup.

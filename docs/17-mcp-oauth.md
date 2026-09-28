@@ -44,7 +44,7 @@ per-user access scope.
    GET /.well-known/oauth-authorization-server     -> authorize/token/register URLs
 2. POST /oauth/register (DCR)                       -> client_id
 3. browser -> GET /oauth/authorize?client_id&redirect_uri&code_challenge&state
-      user logs in to OpenRMM (password + 2FA) and CONSENTS
+      user logs in to OpenRMM (password + 2FA, or single sign-on) and CONSENTS
    <- 302 redirect_uri?code=...&state=...           (short-lived code)
 4. POST /oauth/token {code, code_verifier, ...}     -> access_token (+ refresh_token)
 5. POST /mcp  Authorization: Bearer <access_token>  -> tools, bound to the user's
@@ -69,6 +69,7 @@ per-user access scope.
 | `GET /.well-known/oauth-protected-resource` | none | RFC 9728 resource metadata **(done)** |
 | `POST /oauth/register` | none | Dynamic Client Registration |
 | `GET/POST /oauth/authorize` | user login + consent | authorization code |
+| `GET /oauth/authorize/sso` | none (starts a provider sign-in) | single sign-on for the consent form |
 | `POST /oauth/token` | PKCE | code→token, refresh with rotation |
 | `POST /mcp` | Bearer (API token **or** OAuth access token) | permission/scope-filtered tools |
 
@@ -97,7 +98,46 @@ The supported deployment remains one server replica. OAuth state is durable in
 PostgreSQL, but the wider agent hub, relay and scheduler are process-local; OAuth
 storage does not make the control plane distributed or HA.
 
+## Signing in through single sign-on
+
+When single sign-on is configured, the consent page offers **Continue with
+&lt;provider&gt;** above the password form. Accounts linked to SSO must use it:
+while SSO is on they have no password path (see
+[21-single-sign-on](21-single-sign-on.md)).
+
+1. The button opens `GET /oauth/authorize/sso` with the same request. It is
+   validated like `/oauth/authorize`, and an ordinary provider sign-in starts,
+   with the request stored beside its state (`oidc_login_states.oauth_request`)
+   instead of a console destination.
+2. The provider returns to the usual callback. Seeing a request on the state, it
+   resolves the account exactly as a console sign-in does — the provider's MFA
+   (`RMM_OIDC_ACR_VALUES` / `RMM_OIDC_REQUIRED_AMR`), disabled accounts, the
+   linking rules — and, instead of opening a console session, mints a **grant
+   ticket** and shows the consent page again, signed in.
+3. **Authorize** posts the ticket to `/oauth/authorize`, which redeems it and
+   issues the code as it would after a password.
+
+A ticket (`oauth_sso_grants`) is bound to the client, the redirect URI and the
+PKCE challenge of the request it was minted for, lives five minutes, is stored
+as a hash, and is **deleted on first use, whatever that use is** — a mismatched
+attempt spends it, so it cannot be retried, replayed or carried to another
+client. A user disabled between signing in and clicking Authorize is refused.
+The ticket travels in the form body, never a URL, so it stays out of proxy and
+access logs. The callback page is on the console origin and posts to the MCP
+origin, which a top-level form submission may do without any cross-origin
+permission. As on the console, the provider's own second factor replaces the
+console TOTP for these accounts.
+
 ## Security notes
+
+- Consent is refused, with a message, to a role without `mcp.use` — through
+  either sign-in — rather than issuing a token `/mcp` would refuse on first use.
+- A consent-form sign-in that fails at the provider (refused, no code, MFA not
+  satisfied, account disabled or not allowed) ends on a page of its own, not on
+  the console's login screen.
+- The consent page and its messages are sent with `X-Frame-Options: DENY` and
+  `frame-ancestors 'none'`: a consent button under someone else's page is how a
+  click is stolen. The page also names the host the client redirects to.
 
 - Codes are single-use, short-TTL, PKCE-bound; tokens are hashed at rest and
   expire; refresh rotates. Redirect URIs are validated against the registered set.

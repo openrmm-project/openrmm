@@ -111,7 +111,9 @@ func TestOIDCCallbackRejectsIncompleteOrDeniedResponses(t *testing.T) {
 	}{
 		{"provider denied", "?error=access_denied&error_description=no", "sso_denied"},
 		{"missing state", "?code=code", "sso_failed"},
-		{"missing code", "?state=state", "sso_failed"},
+		// A state without a code is looked up first — it may be an MCP consent
+		// sign-in, which ends on a page of its own — so that case needs a
+		// database: TestSSOCallbackFailuresLandWhereTheyStartedIntegration.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()

@@ -25,6 +25,9 @@ type OIDCLogin struct {
 	Nonce        string
 	CodeVerifier string
 	RedirectTo   string
+	// OAuthRequest is the MCP authorization request (JSON) this sign-in was
+	// started for, or nil for a console sign-in.
+	OAuthRequest []byte
 }
 
 // CreateOIDCState records a sign-in that has just been started.
@@ -40,6 +43,17 @@ func (s *Store) CreateOIDCState(ctx context.Context, stateHash, nonce, codeVerif
 	return err
 }
 
+// CreateOIDCStateForOAuth records a sign-in started from the MCP consent form.
+// The authorization request travels with it, so the callback can finish that
+// authorization instead of opening a console session.
+func (s *Store) CreateOIDCStateForOAuth(ctx context.Context, stateHash, nonce, codeVerifier string, oauthRequest []byte, expires time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO oidc_login_states (state_hash, nonce, code_verifier, oauth_request, expires_at)
+		 VALUES ($1,$2,$3,$4,$5)`,
+		stateHash, nonce, codeVerifier, oauthRequest, expires)
+	return err
+}
+
 // ConsumeOIDCState returns a pending sign-in and deletes it in the same
 // statement.
 //
@@ -52,8 +66,8 @@ func (s *Store) ConsumeOIDCState(ctx context.Context, stateHash string) (*OIDCLo
 	err := s.pool.QueryRow(ctx,
 		`DELETE FROM oidc_login_states
 		  WHERE state_hash = $1 AND expires_at > now()
-		  RETURNING nonce, code_verifier, redirect_to`, stateHash).
-		Scan(&out.Nonce, &out.CodeVerifier, &out.RedirectTo)
+		  RETURNING nonce, code_verifier, redirect_to, oauth_request`, stateHash).
+		Scan(&out.Nonce, &out.CodeVerifier, &out.RedirectTo, &out.OAuthRequest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -132,4 +146,55 @@ func (s *Store) CreateOIDCUser(ctx context.Context, username, role, issuer, subj
 		return nil, err
 	}
 	return &models.User{ID: id, Username: username, Role: role, CreatedAt: time.Now()}, nil
+}
+
+// ===================== MCP authorization through SSO =====================
+
+// OAuthSSOGrant is what redeeming a grant ticket returns. The caller decides;
+// the store only reports, so that every use — a match or not — spends it.
+type OAuthSSOGrant struct {
+	UserID, ClientID, RedirectURI, CodeChallenge string
+	Live                                         bool // not expired
+	UserActive                                   bool // not disabled
+}
+
+// CreateOAuthSSOGrant records that a user just signed in through the provider
+// for one authorization request. Only the ticket's hash is stored.
+func (s *Store) CreateOAuthSSOGrant(ctx context.Context, ticketHash, userID, clientID, redirectURI, codeChallenge string, expires time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO oauth_sso_grants (ticket_hash, user_id, client_id, redirect_uri, code_challenge, expires_at)
+		 VALUES ($1,$2,$3,$4,$5,$6)`,
+		ticketHash, userID, clientID, redirectURI, codeChallenge, expires)
+	return err
+}
+
+// ConsumeOAuthSSOGrant deletes a grant and returns what it was bound to.
+//
+// Deleted on any use, in the same statement: a ticket presented with the wrong
+// client or challenge is spent, not left for another try, and two concurrent
+// submissions cannot both redeem it.
+func (s *Store) ConsumeOAuthSSOGrant(ctx context.Context, ticketHash string) (*OAuthSSOGrant, error) {
+	var g OAuthSSOGrant
+	err := s.pool.QueryRow(ctx,
+		`WITH g AS (DELETE FROM oauth_sso_grants WHERE ticket_hash = $1 RETURNING *)
+		 SELECT g.user_id, g.client_id, g.redirect_uri, g.code_challenge,
+		        g.expires_at > now(), u.disabled_at IS NULL
+		   FROM g JOIN users u ON u.id = g.user_id`, ticketHash).
+		Scan(&g.UserID, &g.ClientID, &g.RedirectURI, &g.CodeChallenge, &g.Live, &g.UserActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &g, nil
+}
+
+// PurgeExpiredOAuthSSOGrants drops grants nobody came back for.
+func (s *Store) PurgeExpiredOAuthSSOGrants(ctx context.Context) (int64, error) {
+	ct, err := s.pool.Exec(ctx, `DELETE FROM oauth_sso_grants WHERE expires_at <= now()`)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
 }

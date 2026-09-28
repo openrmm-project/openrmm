@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -96,6 +97,9 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request) {
 		}
 		// Only listed hosts, when the administrator chose that.
 		if !policy.HostAllowed(redirectHost(u)) {
+			// Logged, not audited: registration is unauthenticated, and the
+			// trail should not be something anyone can fill from outside.
+			log.Printf("oauth: registration refused for host %q (not on the allowed list)", redirectHost(u))
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_redirect_uri",
 				"error_description": "this OpenRMM instance only accepts applications on hosts its administrator allowed"})
 			return
@@ -110,6 +114,14 @@ func (s *Server) oauthRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	hosts := []string{}
+	for _, u := range in.RedirectURIs {
+		hosts = append(hosts, redirectHost(u))
+	}
+	// Audited: an application appearing is what an administrator reviews,
+	// and "when, and pending or not" is the first question about one.
+	_ = s.store.AddAudit(r.Context(), "oauth:registration", "oauth.app.register", clientID,
+		auditDetail(map[string]string{"name": in.ClientName, "hosts": strings.Join(hosts, ","), "status": status}))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"client_id":                  clientID,
 		"client_name":                in.ClientName,
@@ -286,6 +298,7 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server error", http.StatusInternalServerError)
 		return
 	} else if !ok {
+		s.auditMCPRefusal(r.Context(), userID, p.ClientID)
 		s.renderConsent(r.Context(), w, p, name, noMCPPermission)
 		return
 	}

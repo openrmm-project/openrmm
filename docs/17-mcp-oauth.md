@@ -135,6 +135,21 @@ principal, and they are audited (`oauth.app.approve`, `oauth.app.revoke`,
   consent page says so prominently, before anyone clicks Authorize. The list
   shows the same hosts as *unknown*.
 
+### What is recorded
+
+| Event | Where | Why |
+|---|---|---|
+| `oauth.app.register` | audit | an application appeared: name, hosts, approved or pending |
+| `oauth.app.approve`, `oauth.app.revoke` | audit | who let an application in or threw it out (revoke records how many tokens died) |
+| `config.mcp_oauth.update` | audit | who changed the policy |
+| `oauth.authorize`, `oauth.token` | audit | a user authorized an application; a token was issued or refreshed |
+| `oauth.authorize.refuse` | audit | consent refused because the user's role lacks `mcp.use` |
+| `oauth.sso_grant.reject` | audit | a single sign-on grant that did not authorize, with its reason: `request_mismatch` (carried to another client), `unknown_or_spent` (replayed), `expired`, `user_disabled` |
+| registration refused by the allowlist, authorization refused (pending or unlisted application) | server log | before anyone has signed in, so the log and not the audit trail: an unauthenticated caller must not be able to fill the trail |
+
+The console labels every audit action in every language; a test fails when the
+server records one it cannot name.
+
 ## Signing in through single sign-on
 
 When single sign-on is configured, the consent page offers **Continue with

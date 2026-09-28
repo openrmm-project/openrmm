@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -56,6 +57,8 @@ func (s *Server) refuseOAuthApp(w http.ResponseWriter, r *http.Request, p authzP
 		return true
 	}
 	if msg != "" {
+		// Logged, not audited: this is before anyone has signed in.
+		log.Printf("oauth: authorization refused for client %s: %s", p.ClientID, msg)
 		renderOAuthMessage(w, http.StatusForbidden, msg)
 		return true
 	}

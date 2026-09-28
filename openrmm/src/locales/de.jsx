@@ -566,6 +566,19 @@
   // ---- audit actions read as a whole
   'audit.action.auth.login': 'Anmeldung',
   'audit.action.user.sso.login': 'Anmeldung per SSO',
+  'audit.action.oauth.app.register': "MCP-Anwendung registriert",
+  'audit.action.oauth.app.approve': "MCP-Anwendung genehmigt",
+  'audit.action.oauth.app.revoke': "MCP-Anwendung widerrufen",
+  'audit.action.config.mcp_oauth.update': "Richtlinie für MCP-Anwendungen geändert",
+  'audit.action.oauth.authorize.refuse': "MCP-Autorisierung abgelehnt (keine MCP-Berechtigung)",
+  'audit.action.oauth.sso_grant.reject': "SSO-Ticket für MCP abgelehnt",
+  'audit.action.remote.replace': "Remotesitzung in anderen Tab verschoben",
+  'audit.action.user.2fa.enable': "Zwei-Faktor aktiviert",
+  'audit.action.user.2fa.disable': "Zwei-Faktor deaktiviert",
+  'audit.action.user.2fa.reset': "Zwei-Faktor von einem Administrator zurückgesetzt",
+  'audit.action.user.2fa.recovery.regenerate': "Wiederherstellungscodes neu erzeugt",
+  'audit.action.user.2fa.recovery.used': "Wiederherstellungscode verwendet",
+  'audit.action.reboot': "Neustart angefordert",
 
   // ---- patches (screens-patches.jsx)
   'comp.compliant': 'Konform',

@@ -69,6 +69,11 @@ tag.
 
 ### Fixed
 
+- **Ten audit actions showed as raw identifiers in the console** (two-factor
+  changes, reboot requests, remote sessions moved between tabs, MCP
+  application approvals and revocations). They now read in every language,
+  and a test ties every action the server records to a label.
+
 - **A rejected password no longer burns the reset link.** The confirm step
   redeemed the token before checking the password, then said "the link is still
   valid, try again" — it was not. The password is now checked first.
@@ -185,7 +190,10 @@ tag.
   MCP application (hosts it returns to, status, active tokens, last use) with
   Approve and Revoke, and sets the policy: any application, or only those on
   allowed hosts, and optionally approval for new ones. The default stays open,
-  without approval. New migration `016_oauth_app_controls`.
+  without approval. New migration `016_oauth_app_controls`. Registrations,
+  consent refused for lack of `mcp.use`, and rejected SSO grants (with the
+  reason: replayed, carried to another client, expired) are audited;
+  refusals before sign-in go to the server log.
 
 - **Single sign-on on the MCP OAuth consent page.** Accounts linked to SSO
   have no password path while SSO is on, so they could not authorize MCP

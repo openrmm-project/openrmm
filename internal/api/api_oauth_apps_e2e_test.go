@@ -238,6 +238,9 @@ func TestMCPAppApprovalIntegration(t *testing.T) {
 	if code != http.StatusCreated || f.app(id).Status != store.OAuthClientPending {
 		t.Fatalf("a new application should register as pending: %d", code)
 	}
+	if f.auditCount("oauth.app.register", id) != 1 {
+		t.Error("the registration is not on the audit trail")
+	}
 	status, body := f.consentPage(id, cb)
 	if status != http.StatusForbidden || !strings.Contains(body, "waiting for an administrator") || strings.Contains(body, `name="password"`) {
 		t.Fatalf("pending application's consent page: %d", status)
@@ -335,5 +338,15 @@ func TestMCPAppRoutesArePermissionedIntegration(t *testing.T) {
 	}
 	if f.app(id).Status != store.OAuthClientApproved {
 		t.Error("a refused request changed the application")
+	}
+	// An application that does not exist is a 404, not a silent success.
+	if code, _ := f.do(http.MethodPost, "/api/oauth-apps/no-such-app/approve", "", f.admin); code != http.StatusNotFound {
+		t.Errorf("approve unknown app: %d, want 404", code)
+	}
+	if code, _ := f.do(http.MethodDelete, "/api/oauth-apps/no-such-app", "", f.admin); code != http.StatusNotFound {
+		t.Errorf("revoke unknown app: %d, want 404", code)
+	}
+	if code := f.policy(`{"registration":"whatever","allowed_hosts":[],"require_approval":false}`); code != http.StatusBadRequest {
+		t.Errorf("an unknown registration mode was accepted: %d", code)
 	}
 }

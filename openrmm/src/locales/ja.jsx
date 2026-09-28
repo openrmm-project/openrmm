@@ -566,6 +566,19 @@
   // ---- audit actions read as a whole
   'audit.action.auth.login': 'サインイン',
   'audit.action.user.sso.login': 'SSO でサインイン',
+  'audit.action.oauth.app.register': "MCP アプリケーションを登録",
+  'audit.action.oauth.app.approve': "MCP アプリケーションを承認",
+  'audit.action.oauth.app.revoke': "MCP アプリケーションを取り消し",
+  'audit.action.config.mcp_oauth.update': "MCP アプリケーションのポリシーを変更",
+  'audit.action.oauth.authorize.refuse': "MCP の認可を拒否（MCP 権限なし）",
+  'audit.action.oauth.sso_grant.reject': "MCP 用の SSO チケットを拒否",
+  'audit.action.remote.replace': "リモートセッションを別のタブに移動",
+  'audit.action.user.2fa.enable': "2 要素認証を有効化",
+  'audit.action.user.2fa.disable': "2 要素認証を無効化",
+  'audit.action.user.2fa.reset': "管理者が 2 要素認証をリセット",
+  'audit.action.user.2fa.recovery.regenerate': "リカバリーコードを再生成",
+  'audit.action.user.2fa.recovery.used': "リカバリーコードを使用",
+  'audit.action.reboot': "再起動を要求",
 
   // ---- patches (screens-patches.jsx)
   'comp.compliant': '準拠',

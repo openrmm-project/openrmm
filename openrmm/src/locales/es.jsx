@@ -566,6 +566,19 @@
   // ---- audit actions read as a whole
   'audit.action.auth.login': 'Inicio de sesión',
   'audit.action.user.sso.login': 'Inicio de sesión con SSO',
+  'audit.action.oauth.app.register': "Aplicación MCP registrada",
+  'audit.action.oauth.app.approve': "Aplicación MCP aprobada",
+  'audit.action.oauth.app.revoke': "Aplicación MCP revocada",
+  'audit.action.config.mcp_oauth.update': "Política de aplicaciones MCP actualizada",
+  'audit.action.oauth.authorize.refuse': "Autorización MCP rechazada (sin permiso de MCP)",
+  'audit.action.oauth.sso_grant.reject': "Ticket de SSO para MCP rechazado",
+  'audit.action.remote.replace': "Sesión remota movida a otra pestaña",
+  'audit.action.user.2fa.enable': "Doble factor activado",
+  'audit.action.user.2fa.disable': "Doble factor desactivado",
+  'audit.action.user.2fa.reset': "Doble factor restablecido por un administrador",
+  'audit.action.user.2fa.recovery.regenerate': "Códigos de recuperación regenerados",
+  'audit.action.user.2fa.recovery.used': "Código de recuperación usado",
+  'audit.action.reboot': "Reinicio solicitado",
 
   // ---- patches (screens-patches.jsx)
   'comp.compliant': 'Conforme',

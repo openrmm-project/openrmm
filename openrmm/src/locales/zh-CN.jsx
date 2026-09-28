@@ -566,6 +566,19 @@
   // ---- audit actions read as a whole
   'audit.action.auth.login': '登录',
   'audit.action.user.sso.login': '通过 SSO 登录',
+  'audit.action.oauth.app.register': "已注册 MCP 应用",
+  'audit.action.oauth.app.approve': "已批准 MCP 应用",
+  'audit.action.oauth.app.revoke': "已撤销 MCP 应用",
+  'audit.action.config.mcp_oauth.update': "已更新 MCP 应用策略",
+  'audit.action.oauth.authorize.refuse': "MCP 授权被拒绝（无 MCP 权限）",
+  'audit.action.oauth.sso_grant.reject': "MCP 的 SSO 票据被拒绝",
+  'audit.action.remote.replace': "远程会话已移至其他标签页",
+  'audit.action.user.2fa.enable': "已启用双重验证",
+  'audit.action.user.2fa.disable': "已停用双重验证",
+  'audit.action.user.2fa.reset': "管理员已重置双重验证",
+  'audit.action.user.2fa.recovery.regenerate': "已重新生成恢复码",
+  'audit.action.user.2fa.recovery.used': "已使用恢复码",
+  'audit.action.reboot': "已请求重启",
 
   // ---- patches (screens-patches.jsx)
   'comp.compliant': '合规',

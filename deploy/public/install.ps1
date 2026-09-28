@@ -254,15 +254,58 @@ function Set-AgentDirectoryAcl {
     }
 }
 
+# The program a service runs, from its ImagePath: quoted ("C:\x y\a.exe" -args)
+# or bare (C:\a.exe -args).
+function Get-ServiceProgram([string]$PathName) {
+    if (-not $PathName) { return $null }
+    if ($PathName.StartsWith('"')) {
+        $end = $PathName.IndexOf('"', 1)
+        if ($end -gt 1) { return $PathName.Substring(1, $end - 1) }
+        return $null
+    }
+    $m = [regex]::Match($PathName, '^(.+?\.exe)(\s|$)', 'IgnoreCase')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return $PathName.Split(' ')[0]
+}
+
+function Test-OwnedAgentService([string]$PathName, [string]$ExpectedExe) {
+    $program = Get-ServiceProgram $PathName
+    if (-not $program -or -not [IO.Path]::IsPathRooted($program)) { return $false }
+    return [string]::Equals([IO.Path]::GetFullPath($program), [IO.Path]::GetFullPath($ExpectedExe),
+        [StringComparison]::OrdinalIgnoreCase)
+}
+
+# Deletes the rmm-agent service and waits until Windows has actually removed
+# it. `sc.exe delete` only marks a service for deletion: while anything holds a
+# handle to it — the Services console, Task Manager's Services tab — it stays
+# registered with its program already gone. That leftover is what used to stop
+# every later install with "Service exists but its executable is missing".
+function Remove-AgentService {
+    Stop-Service -Name 'rmm-agent' -Force -ErrorAction SilentlyContinue
+    & sc.exe delete rmm-agent | Out-Null
+    for ($i = 0; $i -lt 30; $i++) {
+        if (-not (Get-CimInstance Win32_Service -Filter "Name='rmm-agent'" -ErrorAction SilentlyContinue)) { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
 function Restore-Install {
-    Write-Warning 'Install did not become healthy; rolling back.'
+    Write-Warning 'Install failed; rolling back.'
     if ($serviceExisted) {
         Stop-Service -Name 'rmm-agent' -Force -ErrorAction SilentlyContinue
         $service = Get-Service -Name 'rmm-agent' -ErrorAction SilentlyContinue
         if ($service) { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }
-    } elseif ($serviceInstalledByThisRun -and (Test-Path $Exe)) {
-        Invoke-Agent -action stop | Out-Null
-        Invoke-Agent -action uninstall | Out-Null
+    } elseif ($serviceInstalledByThisRun) {
+        if (Test-Path $Exe) {
+            Invoke-Agent -action stop | Out-Null
+            Invoke-Agent -action uninstall | Out-Null
+        }
+        # The service this run created must not outlive the program it points
+        # at, or the next install finds an orphan.
+        if ((Get-CimInstance Win32_Service -Filter "Name='rmm-agent'" -ErrorAction SilentlyContinue) -and -not (Remove-AgentService)) {
+            Write-Warning 'The rmm-agent service is marked for deletion but still registered. Close the Services console (or reboot) before installing again.'
+        }
     }
     if (Test-Path $Backup) {
         Remove-Item -Force -ErrorAction SilentlyContinue $Exe
@@ -392,10 +435,25 @@ try {
         $hadOld = $true
     }
 
+    # Only take over a service that points at this installer's own executable.
+    # A service with the same name in another directory belongs to a different
+    # installation, even if its program is currently missing.
+    $existingService = Get-CimInstance Win32_Service -Filter "Name='rmm-agent'" -ErrorAction SilentlyContinue
+    if ($existingService) {
+        if (-not (Test-OwnedAgentService $existingService.PathName $Exe)) {
+            throw "The rmm-agent service points outside $Dir. Remove that installation before continuing."
+        }
+        if (-not $hadOld) {
+            Write-Warning 'Removing a leftover rmm-agent service whose executable is missing.'
+            if (-not (Remove-AgentService)) {
+                throw 'A leftover rmm-agent service is marked for deletion but still registered. Close the Services console and Task Manager (or reboot), then run the installer again.'
+            }
+            $existingService = $null
+        }
+    }
+
     Write-Host 'Installing agent transactionally...'
     $transactionStarted = $true
-    $existingService = Get-CimInstance Win32_Service -Filter "Name='rmm-agent'" -ErrorAction SilentlyContinue
-    if ($existingService -and -not $hadOld) { throw 'Service exists but its executable is missing' }
     if ($existingService) {
         $serviceExisted = $true
     }
@@ -446,8 +504,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Service configuration update failed' }
         Start-Service -Name 'rmm-agent'
     } else {
-        if ((Invoke-Agent @installArgs -action install) -ne 0) { throw 'Service install failed' }
+        # The command can create the service and then fail. Rollback must check
+        # for and remove it even when its exit code is nonzero.
         $serviceInstalledByThisRun = $true
+        if ((Invoke-Agent @installArgs -action install) -ne 0) { throw 'Service install failed' }
         if ((Invoke-Agent -action start) -ne 0) { throw 'Service start failed' }
     }
 

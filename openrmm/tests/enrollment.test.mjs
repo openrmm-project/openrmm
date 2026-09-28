@@ -23,3 +23,17 @@ test('the enrollment command is readable without scrolling sideways', async () =
   // corrupt what lands on the clipboard.
   assert.match(enroll, /<CopyButton value=\{cmd\}/);
 });
+
+// install.sh and install.ps1 refuse an HTTPS install without an update key to
+// pin. The command used to omit it, so every production enrollment copied from
+// here failed with "production install requires --update-public-key".
+test('the install commands carry the server\'s update keys, and say so when there are none', async () => {
+  const screens = await readFile(path.join(root, 'src/screens-rmm2.jsx'), 'utf8');
+  const enroll = screens.slice(screens.indexOf('function EnrollCommands('), screens.indexOf('function SiteDetail('));
+  assert.match(enroll, /server\?\.update_public_keys/, 'the keys come from the server config');
+  assert.match(enroll, /--update-public-key \$\{shellQuote\(keyList\)\}/);
+  assert.match(enroll, /-UpdatePublicKey '\$\{keyList\}'/);
+  assert.match(enroll, /--token \$\{token\}\$\{keyArg\}/, 'the Linux/macOS command includes the key');
+  assert.match(enroll, /-Token \$\{token\}\$\{winKeyArg\}/, 'the Windows command includes the key');
+  assert.match(enroll, /missingKey && \(/, 'an HTTPS server without keys is called out, not left to fail');
+});

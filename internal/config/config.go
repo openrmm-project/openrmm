@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
@@ -19,7 +21,13 @@ type Config struct {
 	// MCPPublicURL is the externally reachable OAuth issuer/resource origin.
 	// It is intentionally separate from PublicURL in split-ingress deployments.
 	MCPPublicURL string
-	DatabaseURL  string // PostgreSQL connection string
+	// UpdatePublicKeys are the Ed25519 keys this server's /dl artifacts are
+	// signed with (RMM_UPDATE_PUBLIC_KEY, comma/space separated during a key
+	// rotation). The console puts them in the install command it shows, because
+	// the installers refuse a production install without a key to pin — and a
+	// command a technician copies must work as copied.
+	UpdatePublicKeys []string
+	DatabaseURL      string // PostgreSQL connection string
 
 	// Bootstrap admin API token. On first start this is accepted as a valid
 	// bearer token so you can create real tokens / enroll agents.
@@ -289,6 +297,11 @@ func Load() (*Config, error) {
 		OIDCDefaultRole:   env("RMM_OIDC_DEFAULT_ROLE", "readonly"),
 		OIDCButtonLabel:   env("RMM_OIDC_BUTTON_LABEL", "Single sign-on"),
 	}
+	keys, err := parseUpdatePublicKeys(os.Getenv("RMM_UPDATE_PUBLIC_KEY"))
+	if err != nil {
+		return nil, err
+	}
+	c.UpdatePublicKeys = keys
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")
 	}
@@ -354,4 +367,26 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseUpdatePublicKeys takes base64 Ed25519 public keys, separated by commas,
+// semicolons or whitespace — the form every signing tool here prints. Hex is
+// refused although the agent's flag mentions it: a 64-character hex key is also
+// valid base64, which the agent tries first and then rejects as 48 bytes, so a
+// hex key would produce a command that fails on every endpoint. A bad key stops
+// the server instead of reaching a technician's clipboard.
+func parseUpdatePublicKeys(raw string) ([]string, error) {
+	var keys []string
+	for i, k := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	}) {
+		b, err := base64.StdEncoding.DecodeString(k)
+		if err != nil || len(b) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("RMM_UPDATE_PUBLIC_KEY: entry %d is not a base64 Ed25519 public key", i+1)
+		}
+		if !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
 }

@@ -597,10 +597,17 @@ function EnrollCommands({ token, site }) {
   const base = configQ.data?.server?.base_url;
   if (!base) return <div className="text-[12px] text-bad py-2">Could not load the agents install URL. Refresh the page before copying an enrollment command.</div>;
   const agentsBase = base.replace(/\/$/, '');
+  // The installers refuse an HTTPS install without an update key to pin, so a
+  // command without one fails on every endpoint it is pasted into. The server
+  // publishes its keys (RMM_UPDATE_PUBLIC_KEY); a rotation carries two.
+  const keyList = (configQ.data?.server?.update_public_keys || []).join(',');
+  const missingKey = /^https:\/\//i.test(agentsBase) && !keyList;
+  const keyArg = keyList ? ` \\\n  --update-public-key ${shellQuote(keyList)}` : '';
+  const winKeyArg = keyList ? ` -UpdatePublicKey '${keyList}'` : '';
   const siteArg = site ? ` \\\n  --site ${shellQuote(site.name)}` : '';
   const bundleArg = os === 'macos' && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
-  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${siteArg}${bundleArg}`;
-  const winCmd = `# Run PowerShell as Administrator\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}`;
+  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${keyArg}${siteArg}${bundleArg}`;
+  const winCmd = `# Run PowerShell as Administrator\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}${winKeyArg}`;
   const isWin = os === 'windows';
   const cmd = isWin ? winCmd : nixCmd;
   const OSES = [{ v: 'linux', l: 'Linux' }, { v: 'macos', l: 'macOS' }, { v: 'windows', l: 'Windows' }];
@@ -619,6 +626,12 @@ function EnrollCommands({ token, site }) {
           single line and ran off the right edge, so it had to be scrolled to be
           read — and this is a command people run as Administrator. */}
       <CodeBlock code={cmd} shell={isWin ? 'powershell' : 'bash'} label="install agent" showCopy={false} maxHeight={180} wrap />
+      {missingKey && (
+        <div className="text-[11.5px] text-bad mt-2">
+          This server does not publish its update signing key (<span className="font-mono">RMM_UPDATE_PUBLIC_KEY</span>),
+          and the installer refuses an HTTPS install without one. Ask whoever runs the server to set it; this command will fail until then.
+        </div>
+      )}
       {isWin && <div className="text-[11.5px] text-faint mt-2">Run in an <span className="text-ink font-medium">elevated PowerShell</span> (Run as Administrator).</div>}
       {os === 'macos' && <div className="text-[11.5px] text-faint mt-2">Same installer as Linux — it auto-detects macOS (Intel &amp; Apple Silicon).</div>}
       {os === 'macos' && (

@@ -17,13 +17,13 @@ tag.
 
 ### Fixed
 
-- **A leftover Windows service no longer blocks installing the agent.** An
-  `rmm-agent` service whose program was gone — left by `sc.exe delete` while the
-  Services console held it open — made every later `install.ps1` stop with
-  "Service exists but its executable is missing", after a misleading "rolling
-  back". The installer now removes an orphan only when it points at the expected
-  agent path, refuses a service from another folder, and deletes a service
-  created by a failed fresh install instead of leaving another orphan.
+- **The OpenRMM logo shows on Windows and Linux.** The executables carried no
+  icon, so Explorer, Task Manager and Programs and Features (whose entry points
+  at the agent's icon) all showed Windows' blank one, and the chat window a host
+  user sees had none either. `rmm-agent.exe` and `rmm-remote.exe` now embed the
+  logo (`rsrc_windows_*.syso`), the Windows chat window uses it, and the Linux
+  chat window sets `_NET_WM_ICON` from icons built into the sidecar.
+  `make icons` regenerates all of them from the logo.
 
 - **A root service no longer runs from a directory another account can own.**
   On Windows a standard user may create folders under `C:\ProgramData` and owns
@@ -88,6 +88,14 @@ tag.
   The block now soft-wraps where it is used for install commands; what the Copy
   button puts on the clipboard is unchanged, because it copies the command rather
   than the rendering.
+
+- **A leftover Windows service no longer blocks installing the agent.** An
+  `rmm-agent` service whose program was gone — left by `sc.exe delete` while the
+  Services console held it open — made every later `install.ps1` stop with
+  "Service exists but its executable is missing", after a misleading "rolling
+  back". The installer now removes an orphan only when it points at the expected
+  agent path, refuses a service from another folder, and deletes a service
+  created by a failed fresh install instead of leaving another orphan.
 
 - **Enrollment commands from the console work on HTTPS servers.** The install
   commands the console shows had no `--update-public-key` / `-UpdatePublicKey`,

@@ -38,6 +38,7 @@ var (
 	procSetTextColor     = gdi32.NewProc("SetTextColor")
 	procSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
 	procCallWindowProc   = user32.NewProc("CallWindowProcW")
+	procLoadImage        = user32.NewProc("LoadImageW")
 
 	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
 	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
@@ -161,6 +162,22 @@ func newChatWindow(title string, onSend func(string)) *chatWindow {
 	return cw
 }
 
+const (
+	appIconID  = 1 // the icon group rsrc_windows_*.syso embeds (make winres)
+	imageIcon  = 1 // IMAGE_ICON
+	smCxIcon   = 11
+	smCxSmIcon = 49
+)
+
+// appIcon loads the embedded OpenRMM icon at the size the shell asks for
+// (title bar and taskbar use different ones). 0 — no icon in this build —
+// leaves Windows' default, as before.
+func appIcon(hInst uintptr, metric uintptr) uintptr {
+	size, _, _ := procGetSystemMetrics.Call(metric)
+	h, _, _ := procLoadImage.Call(hInst, appIconID, imageIcon, size, size, 0)
+	return h
+}
+
 func (cw *chatWindow) create(title string) {
 	hInst, _, _ := procGetModuleH.Call(0)
 	bgBrush, _, _ = procCreateSolidBrush.Call(clrWinBg)
@@ -170,6 +187,8 @@ func (cw *chatWindow) create(title string) {
 		style:         0,
 		lpfnWndProc:   syscall.NewCallback(wndProc),
 		hInstance:     hInst,
+		hIcon:         appIcon(hInst, smCxIcon),
+		hIconSm:       appIcon(hInst, smCxSmIcon),
 		hbrBackground: bgBrush,
 		lpszClassName: className,
 	}

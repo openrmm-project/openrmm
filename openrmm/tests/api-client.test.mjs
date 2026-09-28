@@ -367,6 +367,7 @@ test('the alerts email screen offers no ride on the account relay', async () => 
   assert.doesNotMatch(panel, /disabled=\{inherits\}/);
   assert.match(panel, /e\.code === 'alerts_need_own_server'/);
   assert.match(panel, /disabled=\{!c\.enabled \|\| dirty\}/);
+});
 
 // One desktop session per operator per device. The server says why it refused
 // in a code, and the viewer acts on that code rather than on the English

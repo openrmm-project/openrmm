@@ -106,6 +106,10 @@ func (s *Server) updateSMTPConfig(profile string) http.HandlerFunc {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "code": "alerts_need_own_server"})
 				return
 			}
+			if errors.Is(err, settings.ErrAlertsHostNotPublic) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "code": "alerts_host_not_public"})
+				return
+			}
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}

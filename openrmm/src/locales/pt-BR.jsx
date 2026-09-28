@@ -79,6 +79,7 @@
   'auth.err.ssoExpired': 'A entrada demorou demais. Tente de novo.',
   'auth.err.ssoNoAccount': 'Este console ainda não tem uma conta para você. Peça a um administrador para criá-la.',
   'auth.err.sso': 'O login único falhou.',
+  'auth.err.ssoRequired': 'Esta conta entra com login único (SSO). Use o botão de login único.',
   'auth.reset.title': 'Redefina sua senha',
   'auth.reset.subtitle': 'Enviaremos por e-mail um link para escolher outra.',
   'auth.reset.sent': 'Se existir uma conta para {email}, o link de redefinição está a caminho. Ele expira em uma hora e funciona uma única vez.',

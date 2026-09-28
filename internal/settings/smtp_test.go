@@ -1,8 +1,11 @@
 package settings
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/notify"
 )
 
@@ -59,5 +62,38 @@ func TestSMTPKeysAreProfileScoped(t *testing.T) {
 	}
 	if smtpSecret("smtp.alerts.host") {
 		t.Error("only password keys are secrets")
+	}
+}
+
+// The alerts relay is typed into the console, so delivery dials only public
+// addresses unless the operator allowed private ones.
+func TestAlertDeliveryIsPublicOnlyUnlessAllowed(t *testing.T) {
+	relay := notify.Config{Host: "relay.tenant.test", Port: 2587, From: "alerts@tenant.test", TLSMode: "starttls"}
+	if got := alertDelivery(&config.Config{}, relay); !got.PublicOnly {
+		t.Error("a console-set alerts relay must be public-only by default")
+	}
+	if got := alertDelivery(&config.Config{SMTPAlertsAllowPrivate: true}, relay); got.PublicOnly {
+		t.Error("RMM_SMTP_ALERTS_ALLOW_PRIVATE should lift the restriction")
+	}
+	if got := alertDelivery(&config.Config{}, notify.Config{}); got.Enabled() || got.PublicOnly {
+		t.Errorf("no alerts relay is no transport: %+v", got)
+	}
+}
+
+func TestCheckAlertsHostRefusesPrivateAddresses(t *testing.T) {
+	ctx := context.Background()
+	deny := &config.Config{}
+	for _, host := range []string{"127.0.0.1", "10.0.0.5", "192.168.0.10", "169.254.169.254", "::1", "localhost"} {
+		if err := checkAlertsHost(ctx, deny, host); !errors.Is(err, ErrAlertsHostNotPublic) {
+			t.Errorf("checkAlertsHost(%s) = %v, want ErrAlertsHostNotPublic", host, err)
+		}
+	}
+	for _, host := range []string{"8.8.8.8", "nonexistent.invalid"} {
+		if err := checkAlertsHost(ctx, deny, host); err != nil {
+			t.Errorf("checkAlertsHost(%s) = %v, want nil (public, or left to the dial)", host, err)
+		}
+	}
+	if err := checkAlertsHost(ctx, &config.Config{SMTPAlertsAllowPrivate: true}, "10.0.0.5"); err != nil {
+		t.Errorf("allowed private relay refused: %v", err)
 	}
 }

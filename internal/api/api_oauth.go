@@ -38,6 +38,7 @@ const (
 var (
 	errBadCredentials = errors.New("invalid credentials")
 	errTOTPRequired   = errors.New("two-factor code required")
+	errSSORequired    = errors.New("this account signs in with single sign-on")
 	errAuthStore      = errors.New("authentication store unavailable")
 )
 
@@ -227,6 +228,9 @@ func (s *Server) oauthAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errTOTPRequired) {
 			msg = "Enter your two-factor code."
 		}
+		if errors.Is(err, errSSORequired) {
+			msg = "This account signs in with single sign-on."
+		}
 		renderConsent(w, p, name, msg)
 		return
 	}
@@ -278,6 +282,11 @@ func (s *Server) verifyUserCredentials(ctx context.Context, username, password, 
 	}
 	if !auth.CheckPassword(hash, password) {
 		return "", "", errBadCredentials
+	}
+	if sso, e := s.signsInWithSSO(ctx, id); e != nil {
+		return "", "", errAuthStore
+	} else if sso {
+		return "", "", errSSORequired
 	}
 	encSecret, enabled, e := s.store.GetUserTOTP(ctx, id)
 	if e != nil {

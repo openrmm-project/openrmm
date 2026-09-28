@@ -551,7 +551,10 @@ func TestPasswordResetUsesTheAccountTransportIntegration(t *testing.T) {
 	accountRelay := newDialRecorder(t)
 	alertsRelay := newDialRecorder(t)
 
-	e := newSMTPE2E(t, withAccountSMTP("127.0.0.1", accountRelay.port, "no-reply@account.test"))
+	// Both fake relays are on loopback, which an alerts relay may only be when
+	// the operator allows private hosts.
+	e := newSMTPE2E(t, withAccountSMTP("127.0.0.1", accountRelay.port, "no-reply@account.test"),
+		func(c *config.Config) { c.SMTPAlertsAllowPrivate = true })
 
 	body := fmt.Sprintf(`{"host":"127.0.0.1","port":%d,"from":%q,"tls_mode":"none"}`, alertsRelay.port, "alerts@alerts.test")
 	if code, out := e.do(http.MethodPut, "/api/config/smtp/alerts", body, e.admin); code != http.StatusOK {
@@ -620,4 +623,20 @@ func (d *dialRecorder) dialled() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.conns
+}
+
+// An alerts relay is typed in by a settings administrator; pointing it at the
+// server's own network is refused unless the operator allowed private hosts.
+func TestSMTPAlertsRelayMustBePublicIntegration(t *testing.T) {
+	e := newSMTPE2E(t)
+	for _, host := range []string{"127.0.0.1", "10.0.0.5", "169.254.169.254"} {
+		body := fmt.Sprintf(`{"host":%q,"port":2587,"from":"alerts@tenant.test","tls_mode":"starttls"}`, host)
+		code, out := e.do(http.MethodPut, "/api/config/smtp/alerts", body, e.admin)
+		if code != http.StatusBadRequest || out["code"] != "alerts_host_not_public" {
+			t.Errorf("alerts relay %s: status %d (%v), want 400 alerts_host_not_public", host, code, out)
+		}
+	}
+	if _, view := e.do(http.MethodGet, "/api/config/smtp/alerts", "", e.admin); view["host"] != "" {
+		t.Errorf("a refused relay was stored: %v", view)
+	}
 }

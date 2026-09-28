@@ -83,6 +83,7 @@
   'auth.err.ssoExpired': 'That sign-in took too long. Try again.',
   'auth.err.ssoNoAccount': 'This console has no account for you yet. Ask an administrator to create one.',
   'auth.err.sso': 'Single sign-on failed.',
+  'auth.err.ssoRequired': 'This account signs in with single sign-on. Use the single sign-on button.',
   'auth.reset.title': 'Reset your password',
   'auth.reset.subtitle': "We'll email you a link to choose a new one.",
   'auth.reset.sent': 'If an account exists for {email}, a reset link is on its way. It expires in one hour and works once.',

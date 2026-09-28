@@ -144,6 +144,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	// Checked after the password, so it tells nothing to someone who does not
+	// already hold it. See signsInWithSSO.
+	if sso, err := s.signsInWithSSO(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if sso {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this account signs in with single sign-on", "code": "sso_required"})
+		return
+	}
 	// Second factor: if enabled, a valid TOTP code — or a one-time recovery
 	// code — is required.
 	encSecret, enabled, err := s.store.GetUserTOTP(r.Context(), id)

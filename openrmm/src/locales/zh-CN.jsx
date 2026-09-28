@@ -73,6 +73,7 @@
   'auth.err.ssoExpired': '登录耗时过长，请重试。',
   'auth.err.ssoNoAccount': '此控制台尚无你的账户，请让管理员创建。',
   'auth.err.sso': '单点登录失败。',
+  'auth.err.ssoRequired': '此账户通过单点登录（SSO）登录。请使用单点登录按钮。',
   'auth.reset.title': '重置密码',
   'auth.reset.subtitle': '我们会通过邮件发送一个链接，用于设置新密码。',
   'auth.reset.sent': '如果 {email} 存在账户，重置链接已在路上。它一小时后过期，且仅可使用一次。',

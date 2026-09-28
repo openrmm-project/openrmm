@@ -117,7 +117,15 @@ refused at startup rather than warned about.
 
 An account created this way has **no password**: bcrypt cannot verify against
 the empty hash it is given, so local sign-in for it fails the way any wrong
-password does. Give it one through the normal reset if you want both.
+password does.
+
+**While SSO is on, an account linked to it has no password path at all** —
+created by SSO or linked on its first SSO sign-in alike. Password sign-in (the
+console and the MCP OAuth form) is refused with `sso_required`, and password
+reset sends nothing. Otherwise a password, or a reset mail read by whoever holds
+the mailbox, would step around the provider's MFA, conditional access and
+offboarding. Setting `RMM_OIDC_ENABLED=false` is the break-glass: linked accounts
+sign in with their passwords again.
 
 ## What is checked
 
@@ -173,9 +181,12 @@ an RMM that has adopted their outage.
 
 ## What did not change
 
-- **Local sign-in still works**, always. Keep at least one local admin: it is
-  the way back in when the provider is unreachable or misconfigured, and
-  locking yourself out of your own fleet to save one password is a bad trade.
+- **Local sign-in still works** for accounts not linked to SSO. Keep at least
+  one local admin that is never used to sign in through the provider — the
+  first SSO sign-in with a matching username links the account, and a linked
+  account loses password sign-in while SSO is on. That admin is the way back in
+  when the provider is unreachable or misconfigured; `RMM_OIDC_ENABLED=false` is
+  the other.
 - **Roles, scopes and permissions** are unchanged and still local.
 - **Disabling a user** in the console is still enough. A disabled account is not
   returned by the SSO lookup, so someone removed here cannot sign back in

@@ -69,3 +69,38 @@ func (s *Store) ConsumePasswordReset(ctx context.Context, tokenHash string) (use
 	}
 	return userID, err
 }
+
+// PasswordResetUser returns the user a live reset token belongs to, without
+// redeeming it. The confirm step checks the new password against it first, so
+// a rejected password leaves the link usable — ConsumePasswordReset still makes
+// the redemption itself single-use.
+func (s *Store) PasswordResetUser(ctx context.Context, tokenHash string) (userID string, err error) {
+	err = s.pool.QueryRow(ctx,
+		`SELECT user_id FROM password_resets
+		 WHERE token_hash=$1 AND used_at IS NULL AND expires_at > now()`, tokenHash).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return userID, err
+}
+
+// PasswordResetsSince counts the resets issued to a user since a moment, used
+// and superseded ones included: it is how many reset mails were sent, which is
+// what a per-account throttle has to bound.
+func (s *Store) PasswordResetsSince(ctx context.Context, userID string, since time.Time) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM password_resets WHERE user_id=$1 AND created_at > $2`, userID, since).Scan(&n)
+	return n, err
+}
+
+// UserLinkedToSSO reports whether an account is linked to an identity-provider
+// identity.
+func (s *Store) UserLinkedToSSO(ctx context.Context, userID string) (bool, error) {
+	var linked bool
+	err := s.pool.QueryRow(ctx, `SELECT oidc_subject <> '' FROM users WHERE id=$1`, userID).Scan(&linked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return linked, err
+}

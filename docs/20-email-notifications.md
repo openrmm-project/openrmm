@@ -168,6 +168,17 @@ with a sender of their own choosing, any tenant administrator could set
 If the alerts relay fails, alerts retry on it and are **never rerouted** through
 the account transport.
 
+**The alerts relay must be a public address.** It is typed in by a settings
+administrator, and the server dialling wherever they point it — with the answer
+shown back by the test button — is a way to probe the network the server sits
+in. Loopback, private (RFC 1918, IPv6 ULA), link-local (cloud metadata),
+carrier-grade NAT and reserved addresses are refused on save
+(`alerts_host_not_public`) and again at connect time, on the address actually
+dialled, so a name that later resolves somewhere private is caught too. A
+self-hosted instance with an internal relay sets
+`RMM_SMTP_ALERTS_ALLOW_PRIVATE=true`. The account transport, set by the operator
+in the environment, is not restricted.
+
 **Hosted on Civo:** outbound 25, 465 and 587 are blocked there, so a tenant's
 relay has to accept another port (Resend, SendGrid and Mailgun offer 2525/2587;
 Microsoft 365 and Gmail do not).
@@ -279,9 +290,23 @@ already-used and never-issued are one indistinguishable answer.
 
 Consuming a link **signs out every session**. Unlike a self-service password
 change there is no caller session to preserve, and whoever prompted the reset may
-be the person already holding a stolen one. The token is consumed before the new
-password is validated: it is single-use either way, so a rejected password cannot
-be used to probe which tokens are live — the user just asks for a new link.
+be the person already holding a stolen one. The new password is checked
+**before** the token is redeemed, so a password that fails the rules leaves the
+link usable, as the error says. Looking a token up without redeeming it tells a
+caller nothing: a token is 256 random bits, so whether a guess is live is not a
+question anyone can ask.
+
+**Reset mail is throttled per account**: one mail per account every five
+minutes and five a day. The route's per-IP limit does not protect a mailbox —
+from many addresses anyone could send one person an endless stream of reset
+mail through the operator's relay, spending its quota and its domain's
+reputation. Requests past the limit get the same `202` and send nothing.
+
+**Accounts linked to single sign-on get no reset** while SSO is on
+(`RMM_OIDC_ENABLED=true`): no mail is sent, and a link issued before SSO was
+turned on is refused with `sso_required`. A password would otherwise let whoever
+reads the mailbox sign in around the provider's MFA and its offboarding. See
+[21-single-sign-on](21-single-sign-on.md).
 
 The link is `<RMM_PUBLIC_URL>/?reset=<token>`; the console strips the token from
 the address bar on load so it does not linger in history or leak as a `Referer`.

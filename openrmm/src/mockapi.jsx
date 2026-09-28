@@ -80,8 +80,11 @@ async function request(method, path, body, attempt = 0) {
   }
   if (!res.ok) {
     let msg = res.statusText;
-    try { const j = await res.json(); msg = j.error || j.message || msg; } catch (e) {}
-    throw apiError(res.status, msg);
+    let code;
+    try { const j = await res.json(); msg = j.error || j.message || msg; code = j.code; } catch (e) {}
+    const err = apiError(res.status, msg);
+    if (code) err.code = code; // a reason the screen acts on, not only shows
+    throw err;
   }
   let out;
   if (res.status === 204) {

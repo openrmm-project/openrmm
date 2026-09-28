@@ -354,3 +354,17 @@ test('the audit screen filters and pages server-side', async () => {
   assert.match(audit, /next\.setDate\(next\.getDate\(\) \+ 1\)/,
     '`until` must be the start of the following day, or the chosen day is excluded');
 });
+
+// Alerts are the tenant's own mail. The screen must not describe, or offer, a
+// way to send them through the operator's account relay: no "inherited" state,
+// the connection and login fields always editable, and the server's refusal of a
+// sender without a host shown in words.
+test('the alerts email screen offers no ride on the account relay', async () => {
+  const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
+  const panel = screens.slice(screens.indexOf('function SMTPProfilePanel('), screens.indexOf('function EnrollPanel('));
+  assert.ok(panel.length > 0, 'SMTPProfilePanel not found');
+  assert.doesNotMatch(panel, /inherits|effective|mail\.inherited|mail\.credsInherited|mail\.accountTransport/);
+  assert.doesNotMatch(panel, /disabled=\{inherits\}/);
+  assert.match(panel, /e\.code === 'alerts_need_own_server'/);
+  assert.match(panel, /disabled=\{!c\.enabled \|\| dirty\}/);
+});

@@ -160,8 +160,8 @@ func TestSMTPAlertsRouteWritesOnlyItsOwnProfileIntegration(t *testing.T) {
 	if alerts["host"] != "relay.alerts.test" {
 		t.Fatalf("the alerts profile did not persist through its own route: %v", alerts)
 	}
-	if alerts["inherits_transport"] != false {
-		t.Error("a profile with its own host does not inherit")
+	if alerts["enabled"] != true {
+		t.Error("a profile with its own host and sender is deliverable")
 	}
 }
 
@@ -187,32 +187,96 @@ func TestAccountSMTPRouteIsReadOnlyIntegration(t *testing.T) {
 	}
 }
 
-// A blank host on the alerts route means "ride the account transport", and the
-// response says what will actually be used — an operator reading only the stored
-// fields would be left guessing what an empty host means.
-func TestSMTPAlertsInheritanceIsVisibleIntegration(t *testing.T) {
-	e := newSMTPE2E(t, accountEnv)
+// Alerts are the tenant's own mail and never ride the operator's account relay.
+// On a hosted instance that relay signs for the operator's domain: a tenant admin
+// who could send through it — even only choosing the sender — could mail anyone
+// as the operator. So a sender without a server of its own is refused, an empty
+// profile means alert mail is off, and nothing reaches the account relay.
+func TestSMTPAlertsNeverRideTheAccountRelayIntegration(t *testing.T) {
+	accountRelay := newDialRecorder(t)
+	e := newSMTPE2E(t, withAccountSMTP("127.0.0.1", accountRelay.port, "no-reply@account.test"))
 
-	code, alerts := e.do(http.MethodPut, "/api/config/smtp/alerts",
-		`{"from":"alerts@account.test","from_name":"OpenRMM Alerts"}`, e.admin)
+	for _, body := range []string{
+		`{"from":"billing@account.test","from_name":"Operator Billing"}`, // the operator's own domain
+		`{"from":"alerts@tenant.test"}`,
+		`{"username":"someone","password":"p"}`,
+	} {
+		code, out := e.do(http.MethodPut, "/api/config/smtp/alerts", body, e.admin)
+		if code != http.StatusBadRequest || out["code"] != "alerts_need_own_server" {
+			t.Errorf("saving %s without a host: status %d (%v), want 400 alerts_need_own_server", body, code, out)
+		}
+	}
+
+	// An empty profile is how alert mail is turned off, and it says so.
+	code, alerts := e.do(http.MethodPut, "/api/config/smtp/alerts", `{"from_name":"OpenRMM"}`, e.admin)
 	if code != http.StatusOK {
-		t.Fatalf("saving the inherited alerts profile: status %d", code)
+		t.Fatalf("clearing the alerts profile: status %d (%v)", code, alerts)
 	}
-	if alerts["inherits_transport"] != true {
-		t.Errorf("a profile with no host of its own should report inheritance: %v", alerts)
+	if alerts["enabled"] != false || alerts["host"] != "" || alerts["from"] != "" {
+		t.Errorf("an alerts profile with no host must be off and empty: %v", alerts)
 	}
-	effective, ok := alerts["effective"].(map[string]any)
-	if !ok {
-		t.Fatalf("the alerts view should carry the effective transport, got %v", alerts)
+	if _, ok := alerts["effective"]; ok {
+		t.Error("the alerts view must not describe an inherited transport any more")
 	}
-	if effective["host"] != "smtp.account.test" {
-		t.Errorf("effective host = %v, want the account relay", effective["host"])
+
+	// Its test button has nothing to send with, and the account relay is not a
+	// stand-in.
+	if code, out := e.do(http.MethodPost, "/api/config/smtp/alerts/test", `{"to":"victim@example.test"}`, e.admin); code != http.StatusBadRequest {
+		t.Errorf("alerts test with no alerts server: status %d (%v), want 400", code, out)
 	}
-	if effective["from"] != "alerts@account.test" {
-		t.Errorf("effective from = %v, want the alert sender", effective["from"])
+	if n := accountRelay.dialled(); n != 0 {
+		t.Fatalf("alert mail reached the account relay (%d dials)", n)
 	}
-	if effective["enabled"] != true {
-		t.Error("an inherited transport with a sender is deliverable")
+}
+
+// A sender stored by an older version, which used to ride the account relay, is
+// ignored rather than honoured after the upgrade.
+func TestSMTPLegacyAlertSenderIsIgnoredIntegration(t *testing.T) {
+	e := newSMTPE2E(t, accountEnv)
+	if err := e.store.UpsertAppSetting(e.ctx, settings.ProfileAlerts+"from", "billing@account.test", false); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := settings.AlertSMTPConfig(e.ctx, e.store, &config.Config{SMTPHost: "smtp.account.test", SMTPFrom: "no-reply@account.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Enabled() || cfg.Host != "" {
+		t.Fatalf("a legacy sender without a host still produced a transport: %+v", cfg)
+	}
+	if _, view := e.do(http.MethodGet, "/api/config/smtp/alerts", "", e.admin); view["enabled"] != false {
+		t.Errorf("the console would show a legacy sender as working: %v", view)
+	}
+}
+
+// The account relay's test button mails only the caller. An open recipient made
+// it a way for any settings administrator to send the operator's mail to anyone.
+func TestAccountSMTPTestMailsOnlyTheCallerIntegration(t *testing.T) {
+	accountRelay := newDialRecorder(t)
+	e := newSMTPE2E(t, withAccountSMTP("127.0.0.1", accountRelay.port, "no-reply@account.test"))
+	u, err := e.store.CreateUser(e.ctx, "admin-"+uuid.NewString(), "hash", models.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateUserEmail(e.ctx, u.ID, "me@tenant.test"); err != nil {
+		t.Fatal(err)
+	}
+	token := auth.NewToken()
+	if err := e.store.CreateSession(e.ctx, u.ID, auth.Hash(token), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, out := e.do(http.MethodPost, "/api/config/smtp/test", `{"to":"stranger@example.test"}`, token); code != http.StatusForbidden {
+		t.Fatalf("account test to someone else: status %d (%v), want 403", code, out)
+	}
+	if n := accountRelay.dialled(); n != 0 {
+		t.Fatalf("the refused test still reached the relay (%d dials)", n)
+	}
+	// To the caller's own address it goes out (the recorder hangs up, so the
+	// send itself fails; what matters is that it was attempted).
+	e.do(http.MethodPost, "/api/config/smtp/test", `{"to":"ME@tenant.test"}`, token)
+	e.do(http.MethodPost, "/api/config/smtp/test", `{}`, token)
+	if n := accountRelay.dialled(); n != 2 {
+		t.Errorf("tests to the caller's own address: %d dials, want 2", n)
 	}
 }
 

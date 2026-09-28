@@ -6,6 +6,20 @@ tag.
 
 ## [Unreleased]
 
+### Security
+
+- **Alert mail no longer rides the account (password-reset) transport.** With
+  no alerts server of its own, the alerts profile used the account relay — and
+  honoured a sender of the tenant's choosing. On a hosted instance that relay
+  signs for the operator's domain, so any tenant administrator could set
+  `billing@<operator domain>` and mail anyone as the operator. Alerts now leave
+  only through a server set in Settings ▸ Email: with none, alert mail is off
+  and nothing is queued; a sender or login without a host is refused on save
+  (`alerts_need_own_server`); a sender stored that way before is ignored. The
+  account transport's test button now mails only the caller's own address.
+  **Upgrading:** an instance that relied on alerts sharing the account relay
+  must enter that server in Settings ▸ Email, or alert mail stops.
+
 ### Fixed
 
 - **Enrollment commands from the console work on HTTPS servers.** The install

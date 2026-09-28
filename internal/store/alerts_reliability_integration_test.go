@@ -468,7 +468,11 @@ func TestScheduledAndCanceledSuppressionsReconcileActiveAlert(t *testing.T) {
 	if err := f.store.CancelAlertSuppression(ctx, active.ID, "operator"); err != nil {
 		t.Fatal(err)
 	}
-	reactivated, err = f.store.ReactivateExpiredSuppressedAlerts(ctx, base.Add(time.Second), 20)
+	// The cancellation is stamped with the database's clock, so the check
+	// that follows must come after it on that clock: base, taken when the
+	// test started, is already in the past on a slow link, and the canceled
+	// silence would still look active at base+1s.
+	reactivated, err = f.store.ReactivateExpiredSuppressedAlerts(ctx, time.Now().UTC().Add(time.Second), 20)
 	if err != nil || len(reactivated) != 1 || reactivated[0].Status != models.AlertNew {
 		t.Fatalf("reactivation after cancel=%#v err=%v", reactivated, err)
 	}

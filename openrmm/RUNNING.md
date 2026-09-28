@@ -14,10 +14,12 @@ docker compose up -d --build
 curl -fsS http://localhost:3005/healthz
 ```
 
-Create the first user only while the database has no users:
+Create the first user only while the database has no users. It takes the
+admin token from `.env`, so nobody else who can reach the instance can claim it:
 
 ```bash
 curl -X POST http://localhost:3005/api/auth/bootstrap \
+  -H "Authorization: Bearer $RMM_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<a-strong-password>"}'
 ```

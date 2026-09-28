@@ -37,8 +37,9 @@ Authentication accepts three credential types as `Authorization: Bearer <token>`
 3. **Bootstrap admin token** — `RMM_ADMIN_TOKEN` (always admin; for first setup
    and automation).
 
-First-run: `POST /api/auth/bootstrap` creates the first admin user (only allowed
-while no users exist).
+First-run: `POST /api/auth/bootstrap` creates the first admin user. It needs
+`Authorization: Bearer $RMM_ADMIN_TOKEN` and is refused once any user exists —
+an empty instance is otherwise claimable by whoever reaches it first.
 
 ## Script library
 

@@ -20,6 +20,20 @@ tag.
   **Upgrading:** an instance that relied on alerts sharing the account relay
   must enter that server in Settings ▸ Email, or alert mail stops.
 
+- **The console's sign-in no longer accepts a pasted token.** Its "API token"
+  tab took `RMM_ADMIN_TOKEN` or any API token, skipping the second factor and
+  the SSO policy, recording the work as `admin` rather than as a person, and
+  turning a leaked automation token into a console login. People now sign in
+  with a password (and second factor) or SSO; tokens remain for the API and
+  automation, which accept them exactly as before.
+
+- **The first admin needs the operator's admin token.** `POST
+  /api/auth/bootstrap` now requires `Authorization: Bearer $RMM_ADMIN_TOKEN`.
+  Before, an empty instance belonged to whoever called it first — and a hosted
+  instance is reachable before its owner knows the URL (Certificate
+  Transparency logs, the load balancer answering by Host header). Scripts that
+  created the first user anonymously must add the header.
+
 ### Fixed
 
 - **Enrollment commands from the console work on HTTPS servers.** The install
@@ -30,6 +44,100 @@ tag.
   to start on a malformed one, and publishes it in `/api/config`; the console
   adds it to both commands and warns when an HTTPS server has none.
   `docker-compose.prod.yml` now requires it.
+
+- **A root service no longer runs from a directory another account can own.**
+  On Windows a standard user may create folders under `C:\ProgramData` and owns
+  what they create, so pre-creating `C:\ProgramData\rmm-agent` left the
+  directory of a SYSTEM service — and of the script an administrator runs to
+  uninstall it — under their control. The installer now breaks ACL inheritance
+  and writes the entries explicitly (SYSTEM and Administrators full control,
+  Users read and execute), on every run, which also repairs endpoints installed
+  earlier. On macOS the agent moved to `/usr/local/libexec/openrmm/`, because
+  Homebrew gives `/usr/local` to the logged-in administrator; existing installs
+  are migrated on the next run and the installer refuses a target directory that
+  is not root-owned. The update signature is checked at download and says
+  nothing about a binary swapped afterwards, which is what these directories
+  allowed. The macOS remote-desktop bundle's parent directory is taken over the
+  same way: it lives under `/Library/Application Support`, which is
+  group-writable by administrators, and the bundle holds Screen Recording and
+  Accessibility.
+
+- **Linux and macOS can be uninstalled.** `deploy/public/uninstall.sh` (served at
+  `/uninstall.sh`) stops and removes the service, the binaries, the enrolment
+  state and, on macOS, the remote-desktop bundle, its LaunchAgent and the privacy
+  grants. `-action uninstall` only ever removed the service definition, so a
+  decommissioned endpoint kept credentials that still authenticated to the
+  server. `--keep-state` preserves the enrolment. Removal is local and revokes
+  nothing: the device still has to be deleted in the console.
+
+- **macOS remote access stopped claiming a permission it did not have.** A
+  privacy grant includes the bundle's code identity: after an ad-hoc-signed
+  sidecar update the Privacy panes could still list OpenRMM as allowed while
+  macOS denied capture and input to the new build. The archive now carries the
+  sealed designated requirement when a persistent signing identity is used. The
+  agent keeps grants only when that marker matches and otherwise clears the stale
+  rows after a successful replacement, so System Settings can ask for the new
+  build instead of showing a switch that no longer authorizes it.
+
+- **macOS remote keyboard shortcuts use the endpoint's conventions.** Control is
+  translated to Command for a Mac endpoint, so Ctrl+C from a Windows or Linux
+  technician reaches the Mac as ⌘C. Paste releases locally-held modifiers,
+  writes the Mac pasteboard synchronously and queues ⌘V with the rest of the
+  input stream. The Force Quit button (the Mac equivalent of Ctrl+Alt+Delete)
+  continues to send ⌘⌥Esc and reports stale Accessibility grants explicitly.
+  Permission requests now run on AppKit's main thread, and a host-side alert
+  links directly to Screen Recording and Accessibility when macOS suppresses
+  its own consent sheet. The Force Quit button can retry after Accessibility is
+  granted during an open session instead of staying disabled until reconnect.
+
+- **The macOS sidecar's bundle identifier is `io.openrmm.remote`.** Reverse-DNS
+  should name a domain the project controls, and `com.openrmm.remote` did not.
+  Endpoints installed under the old name are migrated: the old LaunchAgent is
+  booted out, its plist removed and its privacy rows reset. The agent also
+  rewrites its LaunchAgent plist whenever it drifts, because agents update
+  themselves and installers do not re-run. Sidecar 0.13.1.
+
+- **A refused or failed macOS sidecar update no longer takes remote access with
+  it.** When an update cannot be installed and a working module is present, the
+  session uses the installed one and the update is retried later.
+
+- **The Windows enrollment command had to be scrolled to be read.** It is a
+  single line carrying the server URL and the token, and the code block scrolls
+  long lines sideways rather than wrapping them — right for a script, wrong for a
+  command an operator has to check before pasting it into an elevated PowerShell.
+  The block now soft-wraps where it is used for install commands; what the Copy
+  button puts on the clipboard is unchanged, because it copies the command rather
+  than the rendering.
+
+- **One remote desktop session per operator per device.** The same operator
+  could open the same device's desktop in several tabs, each fighting the others
+  for mouse and keyboard while the endpoint captured the screen once per tab.
+  The server now refuses the second one (409 `remote_session_active`, and close
+  code 4409 at the relay, so simultaneous tabs cannot both get in); the console
+  offers **Continue here**, which moves the session and tells the old tab
+  instead of letting it reconnect and take it back (4410, audited as
+  `remote.replace`). Other operators on the same device, the same operator on
+  other devices, and terminal or file-transfer sessions are unaffected.
+
+- **The console smoke test no longer depends on the machine's language.**
+  Headless Chrome took the language from the environment, so on a non-English
+  machine every English assertion failed.
+
+- **The OpenRMM logo shows on Windows and Linux.** The executables carried no
+  icon, so Explorer, Task Manager and Programs and Features (whose entry points
+  at the agent's icon) all showed Windows' blank one, and the chat window a host
+  user sees had none either. `rmm-agent.exe` and `rmm-remote.exe` now embed the
+  logo (`rsrc_windows_*.syso`), the Windows chat window uses it, and the Linux
+  chat window sets `_NET_WM_ICON` from icons built into the sidecar.
+  `make icons` regenerates all of them from the logo.
+
+- **A leftover Windows service no longer blocks installing the agent.** An
+  `rmm-agent` service whose program was gone — left by `sc.exe delete` while the
+  Services console held it open — made every later `install.ps1` stop with
+  "Service exists but its executable is missing", after a misleading "rolling
+  back". The installer now removes an orphan only when it points at the expected
+  agent path, refuses a service from another folder, and deletes a service
+  created by a failed fresh install instead of leaving another orphan.
 
 ### Added
 
@@ -66,9 +174,6 @@ tag.
   under it — and building it again. `PATCH /api/groups/{id}` moves only the
   label; the devices and the site it belongs to are untouched. Audited as
   `group.rename`.
-
-
-### Added
 
 - **Monitoring and alerts survive the things that used to lose them.** The old
   loop dispatched a check, waited for a result, and raised an alert the moment
@@ -143,8 +248,6 @@ tag.
   counts, which is the honest answer when there is nothing to deduplicate
   against.
 
-### Added
-
 - **macOS asks for the permissions it needs, and keeps the answers.** The sidecar
   never requested Screen Recording or Accessibility — it only checked them, and
   macOS neither prompts nor lists an app that does not ask, so every Mac needed
@@ -163,72 +266,9 @@ tag.
   cap, and strictly one direction: the endpoint's clipboard is never read back.
   Sidecar 0.14.0.
 
-### Fixed
-
-- **A root service no longer runs from a directory another account can own.**
-  On Windows a standard user may create folders under `C:\ProgramData` and owns
-  what they create, so pre-creating `C:\ProgramData\rmm-agent` left the
-  directory of a SYSTEM service — and of the script an administrator runs to
-  uninstall it — under their control. The installer now breaks ACL inheritance
-  and writes the entries explicitly (SYSTEM and Administrators full control,
-  Users read and execute), on every run, which also repairs endpoints installed
-  earlier. On macOS the agent moved to `/usr/local/libexec/openrmm/`, because
-  Homebrew gives `/usr/local` to the logged-in administrator; existing installs
-  are migrated on the next run and the installer refuses a target directory that
-  is not root-owned. The update signature is checked at download and says
-  nothing about a binary swapped afterwards, which is what these directories
-  allowed. The macOS remote-desktop bundle's parent directory is taken over the
-  same way: it lives under `/Library/Application Support`, which is
-  group-writable by administrators, and the bundle holds Screen Recording and
-  Accessibility.
-
-- **Linux and macOS can be uninstalled.** `deploy/public/uninstall.sh` (served at
-  `/uninstall.sh`) stops and removes the service, the binaries, the enrolment
-  state and, on macOS, the remote-desktop bundle, its LaunchAgent and the privacy
-  grants. `-action uninstall` only ever removed the service definition, so a
-  decommissioned endpoint kept credentials that still authenticated to the
-  server. `--keep-state` preserves the enrolment. Removal is local and revokes
-  nothing: the device still has to be deleted in the console.
-
-- **macOS remote access stopped claiming a permission it did not have.** A
-  privacy grant includes the bundle's code identity: after an ad-hoc-signed
-  sidecar update the Privacy panes could still list OpenRMM as allowed while
-  macOS denied capture and input to the new build. The archive now carries the
-  sealed designated requirement when a persistent signing identity is used. The
-  agent keeps grants only when that marker matches and otherwise clears the stale
-  rows after a successful replacement, so System Settings can ask for the new
-  build instead of showing a switch that no longer authorizes it.
-
-- **macOS remote keyboard shortcuts use the endpoint's conventions.** Control is
-  translated to Command for a Mac endpoint, so Ctrl+C from a Windows or Linux
-  technician reaches the Mac as ⌘C. Paste releases locally-held modifiers,
-  writes the Mac pasteboard synchronously and queues ⌘V with the rest of the
-  input stream. The Force Quit button (the Mac equivalent of Ctrl+Alt+Delete)
-  continues to send ⌘⌥Esc and reports stale Accessibility grants explicitly.
-  Permission requests now run on AppKit's main thread, and a host-side alert
-  links directly to Screen Recording and Accessibility when macOS suppresses
-  its own consent sheet. The Force Quit button can retry after Accessibility is
-  granted during an open session instead of staying disabled until reconnect.
-
-- **The macOS sidecar's bundle identifier is `io.openrmm.remote`.** Reverse-DNS
-  should name a domain the project controls, and `com.openrmm.remote` did not.
-  Endpoints installed under the old name are migrated: the old LaunchAgent is
-  booted out, its plist removed and its privacy rows reset. The agent also
-  rewrites its LaunchAgent plist whenever it drifts, because agents update
-  themselves and installers do not re-run. Sidecar 0.13.1.
-
-- **A refused or failed macOS sidecar update no longer takes remote access with
-  it.** When an update cannot be installed and a working module is present, the
-  session uses the installed one and the update is retried later.
-
-- **The Windows enrollment command had to be scrolled to be read.** It is a
-  single line carrying the server URL and the token, and the code block scrolls
-  long lines sideways rather than wrapping them — right for a script, wrong for a
-  command an operator has to check before pasting it into an elevated PowerShell.
-  The block now soft-wraps where it is used for install commands; what the Copy
-  button puts on the clipboard is unchanged, because it copies the command rather
-  than the rendering.
-
+- **`openrmm-artifacts` image on every release.** The release workflow packages
+  the signed files it just published into `ghcr.io/<owner>/openrmm-artifacts`
+  (`X.Y.Z`, `X.Y`, `latest`), which Kubernetes tenants serve at `/dl/`.
 
 ## [0.5.0] - 2026-08-11
 

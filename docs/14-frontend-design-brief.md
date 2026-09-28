@@ -140,7 +140,7 @@ WebSocket can come later.
 
 ## 8. First build target (MVP UI)
 
-1. Login (paste token) → Devices list → Device detail (inventory + run script).
+1. Login (username + password, or SSO) → Devices list → Device detail (inventory + run script).
 2. Jobs / Approval queue with script preview + approve/reject.
 3. AI Chat with proposed-job cards.
 4. Audit log.
@@ -159,8 +159,9 @@ Design these additional areas. Background and semantics:
 
 - **Login screen**: username + password → `POST /api/auth/login` → store the
   returned `token`, `role`, and `permissions`; attach as bearer. (`POST
-  /api/auth/bootstrap` for first-run admin creation when the instance is empty —
-  show a setup screen if login reports no users.)
+  /api/auth/bootstrap` creates the first admin, but only with the server's
+  `RMM_ADMIN_TOKEN` — an operator step, not a console screen: an empty instance
+  must not be claimable by whoever opens it first.)
 - **Roles** are permission sets. The built-ins are `readonly`, `tech`, and
   `admin`, and custom roles can be managed from Settings → Roles. The UI asks for
   a display name and generates the technical role key automatically. Hide/disable

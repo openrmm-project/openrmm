@@ -124,7 +124,7 @@ func (s *Server) Router() http.Handler {
 	// Unauthenticated auth endpoints — strictly rate-limited (anti brute-force).
 	authLimiter := s.rateLimit(authRateLimit)
 	r.With(authLimiter, maxBody).Post("/api/auth/login", s.login)
-	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first-admin (only when no users exist)
+	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first admin: admin token + no users yet
 	// Unauthenticated by nature — someone who cannot sign in is the only caller.
 	// Rate limited like login: this endpoint sends mail on demand, so it is both
 	// an enumeration target and a way to use the instance as a mail relay.
@@ -1161,6 +1161,13 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Provider string `json:"provider"`
+		// Replace ends the operator's desktop session on this endpoint so this
+		// one can take its place ("continue here").
+		Replace bool `json:"replace"`
+		// Resume names the session this viewer had before its connection
+		// dropped. That one may be replaced without asking; any other is the
+		// operator's other tab, which is not ours to take.
+		Resume string `json:"resume"`
 	}
 	_ = decode(r, &in)
 	if in.Provider == "" {
@@ -1199,12 +1206,39 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "remote session requires an authenticated principal")
 		return
 	}
+	if in.Provider == "native" {
+		live := s.presence.ForUser(agent.ID, principal, "native")
+		for _, v := range live {
+			if v.SessionID != in.Resume && !in.Replace {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"error": "you already have a remote session open on this device",
+					"code":  "remote_session_active",
+					"since": v.Since,
+				})
+				return
+			}
+		}
+		for _, v := range live {
+			s.endReplacedSession(r.Context(), v, principal)
+		}
+	}
 	sess, err := s.remote.Start(r.Context(), in.Provider, agent, principal, remote.StartOptions{AllowFiles: hasPermission(r, models.PermDevicesFiles)})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, sess)
+}
+
+// endReplacedSession closes an operator's earlier desktop session on an
+// endpoint so a new one can take its place. The old tab is told it was moved,
+// which stops it from reconnecting and taking the session back.
+func (s *Server) endReplacedSession(ctx context.Context, v remote.Viewer, principal string) {
+	s.presence.Remove(v.AgentID, v.SessionID)
+	s.relay.CloseSession(v.SessionID, remote.CloseSessionReplaced, "remote_session_replaced")
+	_ = s.store.SetRemoteSessionStatus(ctx, v.SessionID, "ended")
+	detail, _ := json.Marshal(map[string]string{"session": v.SessionID, "agent": v.AgentID})
+	_ = s.store.AddAudit(ctx, principal, "remote.replace", v.AgentID, detail)
 }
 
 // ---------- jobs ----------

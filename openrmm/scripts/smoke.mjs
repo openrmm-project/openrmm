@@ -73,9 +73,14 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const { port } = server.address();
 const baseURL = `http://127.0.0.1:${port}`;
 
+// The console follows the browser's language, and headless Chrome takes that
+// from the environment on Linux: on a pt_BR machine every assertion below read
+// Portuguese and failed. The checks are written in English, so pin it.
+const chromeEnv = { ...process.env, LANG: 'en_US.UTF-8', LANGUAGE: 'en_US', LC_ALL: 'en_US.UTF-8' };
+
 function runChrome(chrome, url, width = 1280, height = 800) {
   return new Promise((resolve, reject) => {
-    const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', `--window-size=${width},${height}`, '--virtual-time-budget=1800', '--dump-dom', url], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--lang=en-US', `--window-size=${width},${height}`, '--virtual-time-budget=1800', '--dump-dom', url], { stdio: ['ignore', 'pipe', 'pipe'], env: chromeEnv });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (data) => { stdout += data; });
@@ -98,7 +103,7 @@ async function freePort() {
 async function runMobileChrome(chrome, url) {
   const port = await freePort();
   const profile = await mkdtemp(path.join(os.tmpdir(), 'openrmm-smoke-'));
-  const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--lang=en-US', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: chromeEnv });
   let chromeErrors = '';
   child.stderr.on('data', (data) => { chromeErrors += data; });
   let socket;

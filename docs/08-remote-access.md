@@ -261,6 +261,30 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   encryption is still open (today the relay is the trust boundary; terminate
   WSS — see `07`).
 
+### One desktop session per operator per device
+
+Several operators may be on the same device at once — each is told who else
+is there — and one operator may work on several devices at once. What is
+refused is the **same operator twice on the same device's desktop**: that is a
+forgotten tab, whose mouse and keyboard fight the tab in use while the endpoint
+captures the screen twice.
+
+- `POST /api/devices/{id}/remote` with `provider: native` answers **409**
+  `{"code": "remote_session_active"}` when the operator already has a desktop
+  session there. The console then offers **Continue here**, which repeats the
+  request with `replace: true`: the old session ends, its tab shows "session
+  moved" and does not reconnect, and `remote.replace` is written to the audit
+  log.
+- A viewer whose own connection dropped reconnects with `resume: <its last
+  session id>` and takes that session back without asking; naming any other
+  session does not get past the rule.
+- The relay repeats the check when the viewer socket joins, under one lock, so
+  two tabs connecting at the same moment cannot both get in. A refused socket is
+  closed with code **4409**, a replaced one with **4410**; the console stops
+  reconnecting on either.
+- Terminal and file-transfer sessions are not limited: several shells on one
+  machine are ordinary.
+
 ### Multiple monitors
 
 Windows and Linux stream **every monitor at once**, as one image. Windows

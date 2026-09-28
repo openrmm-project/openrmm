@@ -108,10 +108,11 @@ func TestSaveSMTPAlertsDoesNotTouchAccountKeysIntegration(t *testing.T) {
 	}
 }
 
-// A blank host on the alerts profile means "ride the account transport". The
-// sender identity must survive that, and the credentials must not: a profile
-// that names no server has no business holding a password for one.
-func TestSaveSMTPAlertsBlankHostKeepsSenderDropsCredentialsIntegration(t *testing.T) {
+// Alerts never ride the account transport. On the alerts profile a blank host
+// means alert mail is off: a sender or login without a host is refused (the
+// only other relay is the operator's), and clearing the profile drops
+// everything, credentials first.
+func TestSaveSMTPAlertsBlankHostTurnsAlertMailOffIntegration(t *testing.T) {
 	ctx, st, cfg := smtpStore(t)
 
 	// First give alerts a relay of its own, so there is a password to drop.
@@ -121,37 +122,38 @@ func TestSaveSMTPAlertsBlankHostKeepsSenderDropsCredentialsIntegration(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Now withdraw the host, keeping the sender.
+	// A sender without a host: refused, and the stored relay left as it was.
 	if _, err := SaveSMTP(ctx, st, cfg, ProfileAlerts, SMTPSaveRequest{
-		From: "alerts@account.test", FromName: "OpenRMM Alerts",
-	}); err != nil {
-		t.Fatalf("save inherited alerts profile: %v", err)
+		From: "billing@account.test", FromName: "Operator Billing",
+	}); !errors.Is(err, ErrAlertsNeedOwnServer) {
+		t.Fatalf("a sender without a host: err = %v, want ErrAlertsNeedOwnServer", err)
+	}
+	if stored, _ := SMTPProfile(ctx, st, cfg, ProfileAlerts); stored.Host != "relay.alerts.test" {
+		t.Fatalf("a refused save changed the stored relay: %+v", stored)
 	}
 
+	// Clearing it (the console sends its default display name along): off.
+	if _, err := SaveSMTP(ctx, st, cfg, ProfileAlerts, SMTPSaveRequest{FromName: "OpenRMM"}); err != nil {
+		t.Fatalf("clear the alerts profile: %v", err)
+	}
 	stored, err := SMTPProfile(ctx, st, cfg, ProfileAlerts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Host != "" {
-		t.Errorf("host = %q, want it cleared", stored.Host)
+	if stored.Host != "" || stored.From != "" || stored.FromName != "" {
+		t.Errorf("the profile was not cleared: %+v", stored)
 	}
 	if stored.Username != "" || stored.Password != "" {
 		t.Errorf("credentials survived a host withdrawal: user=%q password-set=%t", stored.Username, stored.Password != "")
 	}
-	if stored.From != "alerts@account.test" || stored.FromName != "OpenRMM Alerts" {
-		t.Errorf("the sender identity should survive, got %q <%q>", stored.FromName, stored.From)
-	}
 
-	// Effectively: the account connection, under the alert sender.
+	// And delivery has no transport — not the account one.
 	effective, err := AlertSMTPConfig(ctx, st, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if effective.Host != "smtp.account.test" || effective.Password != "account-secret" {
-		t.Errorf("alerts should now ride the account transport, got host=%q", effective.Host)
-	}
-	if effective.From != "alerts@account.test" {
-		t.Errorf("From = %q, want the alert sender", effective.From)
+	if effective.Enabled() || effective.Host != "" {
+		t.Errorf("alerts should be off, not on the account transport: host=%q", effective.Host)
 	}
 }
 

@@ -17,6 +17,14 @@ tag.
 
 ### Fixed
 
+- **A leftover Windows service no longer blocks installing the agent.** An
+  `rmm-agent` service whose program was gone — left by `sc.exe delete` while the
+  Services console held it open — made every later `install.ps1` stop with
+  "Service exists but its executable is missing", after a misleading "rolling
+  back". The installer now removes an orphan only when it points at the expected
+  agent path, refuses a service from another folder, and deletes a service
+  created by a failed fresh install instead of leaving another orphan.
+
 - **A root service no longer runs from a directory another account can own.**
   On Windows a standard user may create folders under `C:\ProgramData` and owns
   what they create, so pre-creating `C:\ProgramData\rmm-agent` left the
@@ -91,10 +99,6 @@ tag.
   `docker-compose.prod.yml` now requires it.
 
 ### Added
-
-- **`openrmm-artifacts` image on every release.** The release workflow packages
-  the signed files it just published into `ghcr.io/<owner>/openrmm-artifacts`
-  (`X.Y.Z`, `X.Y`, `latest`), which Kubernetes tenants serve at `/dl/`.
 
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and
   validates acceptable signed `acr` values; `RMM_OIDC_REQUIRED_AMR` requires
@@ -220,6 +224,10 @@ tag.
   elsewhere. Forwarding a raw Ctrl+V pasted nothing on a Mac. Text only, 256 KB
   cap, and strictly one direction: the endpoint's clipboard is never read back.
   Sidecar 0.14.0.
+
+- **`openrmm-artifacts` image on every release.** The release workflow packages
+  the signed files it just published into `ghcr.io/<owner>/openrmm-artifacts`
+  (`X.Y.Z`, `X.Y`, `latest`), which Kubernetes tenants serve at `/dl/`.
 
 ## [0.5.0] - 2026-08-11
 

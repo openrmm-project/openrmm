@@ -8,6 +8,11 @@ tag.
 
 ### Security
 
+- **The MCP OAuth consent page can no longer be framed** (`X-Frame-Options:
+  DENY`, `frame-ancestors 'none'`), so its Authorize button cannot be hidden
+  under another page and clicked by deception. It also names the host the
+  client redirects to.
+
 - **Accounts linked to single sign-on have no password path while SSO is on.**
   Password reset worked for them — by design — so whoever could read the
   mailbox could set a password and sign in around the provider's MFA,
@@ -164,6 +169,16 @@ tag.
   created by a failed fresh install instead of leaving another orphan.
 
 ### Added
+
+- **Single sign-on on the MCP OAuth consent page.** Accounts linked to SSO
+  have no password path while SSO is on, so they could not authorize MCP
+  clients. The consent page now offers the provider: the sign-in goes through
+  it with the same MFA and account rules as the console, and comes back with a
+  five-minute, single-use grant bound to that client, redirect URI and PKCE
+  challenge. New migration `015_oauth_sso`. Consent is now refused, with a
+  message, to a role without `mcp.use` (either sign-in path) instead of issuing
+  a token `/mcp` would refuse. The server warns at startup when SSO requires no
+  MFA from the provider, since SSO accounts skip the console's own 2FA.
 
 - **OIDC authentication-context policy.** `RMM_OIDC_ACR_VALUES` requests and
   validates acceptable signed `acr` values; `RMM_OIDC_REQUIRED_AMR` requires

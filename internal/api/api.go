@@ -143,6 +143,7 @@ func (s *Server) Router() http.Handler {
 	if s.cfg.MCPOAuthEnabled {
 		r.With(authLimiter, maxBody).Post("/oauth/register", s.oauthRegister)
 		r.With(authLimiter).Get("/oauth/authorize", s.oauthAuthorize)
+		r.With(authLimiter).Get("/oauth/authorize/sso", s.oauthAuthorizeSSO)
 		r.With(authLimiter, maxBody).Post("/oauth/authorize", s.oauthAuthorizeSubmit)
 		r.With(authLimiter, maxBody).Post("/oauth/token", s.oauthToken)
 	}

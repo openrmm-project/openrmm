@@ -88,6 +88,13 @@ func (s *Server) InitOIDC(ctx context.Context) {
 	s.oidcMu.Unlock()
 	log.Printf("oidc: single sign-on ready (issuer %s, auto-provision=%v, default role %q)",
 		s.cfg.OIDCIssuer, s.cfg.OIDCAutoProvision, s.cfg.OIDCDefaultRole)
+	// SSO accounts skip the console's own two-factor code — the provider is
+	// their second factor — and they authorize MCP clients the same way. With
+	// neither setting, the console trusts whatever the provider did, one factor
+	// included.
+	if len(s.cfg.OIDCACRValues) == 0 && len(s.cfg.OIDCRequiredAMR) == 0 {
+		log.Printf("oidc: WARNING no MFA is required from the provider; SSO accounts bypass the console's own 2FA. Set RMM_OIDC_REQUIRED_AMR (e.g. mfa) or RMM_OIDC_ACR_VALUES")
+	}
 }
 
 // oidcStatus tells the console whether to offer the button, and what to put on
@@ -151,11 +158,17 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	// browser; it goes to the log where an operator can read it.
 	if e := q.Get("error"); e != "" {
 		log.Printf("oidc: provider refused the sign-in: %s (%s)", e, q.Get("error_description"))
+		if s.oauthCallbackFailure(w, r, q.Get("state")) {
+			return
+		}
 		s.oidcFail(w, r, "", "sso_denied")
 		return
 	}
 	state, code := q.Get("state"), q.Get("code")
 	if state == "" || code == "" {
+		if code == "" && s.oauthCallbackFailure(w, r, state) {
+			return
+		}
 		s.oidcFail(w, r, "", "sso_failed")
 		return
 	}
@@ -165,6 +178,12 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("oidc: callback with an unknown or expired state")
 		s.oidcFail(w, r, "", "sso_expired")
+		return
+	}
+	// Started from the MCP consent form: finish that authorization instead of
+	// opening a console session. See api_oauth_sso.go.
+	if login.OAuthRequest != nil {
+		s.finishOAuthSSO(w, r, provider, login, code)
 		return
 	}
 

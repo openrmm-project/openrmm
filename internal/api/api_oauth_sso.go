@@ -58,6 +58,9 @@ func (s *Server) oauthAuthorizeSSO(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "single sign-on is not enabled", http.StatusNotFound)
 		return
 	}
+	if s.refuseOAuthApp(w, r, p) {
+		return
+	}
 	// Opportunistic cleanup, as on the console's start route.
 	if _, err := s.store.PurgeExpiredOIDCStates(r.Context()); err != nil {
 		log.Printf("oidc: could not purge expired sign-in states: %v", err)
@@ -100,6 +103,9 @@ func (s *Server) finishOAuthSSO(w http.ResponseWriter, r *http.Request, provider
 		renderOAuthMessage(w, http.StatusBadRequest, oauthSSOFailed)
 		return
 	}
+	if s.refuseOAuthApp(w, r, p) {
+		return
+	}
 	ctx := oidc.WithHTTPClient(r.Context(), oidc.HTTPClient())
 	identity, err := provider.Exchange(ctx, code, login.CodeVerifier, login.Nonce)
 	if err != nil {
@@ -133,9 +139,11 @@ func (s *Server) finishOAuthSSO(w http.ResponseWriter, r *http.Request, provider
 		auditDetail(map[string]string{"issuer": identity.Issuer, "for": "mcp_authorize", "client": p.ClientID}))
 
 	name, _, _, _ := s.store.GetOAuthClient(r.Context(), p.ClientID)
+	host := redirectHost(p.RedirectURI)
 	renderConsentPage(w, consentView{
 		P: p, ClientName: name, Action: s.oauthAuthorizeAction(),
-		SSOUser: user.Username, Ticket: ticket, RedirectHost: redirectHost(p.RedirectURI),
+		SSOUser: user.Username, Ticket: ticket, RedirectHost: host,
+		UnknownHost: s.hostUnknown(r.Context(), host),
 	})
 }
 

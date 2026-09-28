@@ -416,3 +416,31 @@ test('a refused remote session reaches the viewer as a code it acts on', async (
   assert.match(viewer, new RegExp(`ev\\.code === ${active} \\|\\| ev\\.code === ${replaced}\\)`));
   assert.match(viewer, new RegExp(`ev\\.code === ${replaced} \\? 'replaced' : 'active'`));
 });
+
+// MCP applications: the client reaches the admin routes, and the panel keeps
+// the two safety properties an administrator relies on — revoking always asks
+// first (it kills tokens), and Approve is offered only for a pending app.
+test('the MCP applications panel drives its admin routes safely', async () => {
+  const { api, last } = await loadApi();
+  await api.listOAuthApps();
+  assert.equal(last().url, 'https://console.test/api/oauth-apps');
+  await api.approveOAuthApp('app/1');
+  assert.equal(last().url, 'https://console.test/api/oauth-apps/app%2F1/approve');
+  assert.equal(last().method, 'POST');
+  await api.revokeOAuthApp('app-1');
+  assert.equal(last().url, 'https://console.test/api/oauth-apps/app-1');
+  assert.equal(last().method, 'DELETE');
+  await api.updateMCPOAuthPolicy({ registration: 'allowlist', allowed_hosts: ['claude.ai'], require_approval: true });
+  assert.equal(last().url, 'https://console.test/api/config/mcp-oauth');
+  assert.equal(last().method, 'PUT');
+  assert.deepEqual(JSON.parse(last().body), { registration: 'allowlist', allowed_hosts: ['claude.ai'], require_approval: true });
+
+  const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
+  const panel = screens.slice(screens.indexOf('function OAuthAppsPanel('), screens.indexOf('function SettingsScreen('));
+  assert.ok(panel.length > 0, 'OAuthAppsPanel not found');
+  assert.match(panel, /onClick=\{\(\) => setConfirmRevoke\(app\)\}/, 'revoke must go through the confirmation');
+  assert.doesNotMatch(panel, /onClick=\{\(\) => revoke\(app\)\}/, 'revoke must never fire straight from the row');
+  assert.match(panel, /app\.status !== 'approved' && <Button[^>]*onClick=\{\(\) => approve\(app\)\}/);
+  assert.match(panel, /e\.code === 'invalid_host'/);
+  assert.match(screens, /<APITokensPanel \/><OAuthAppsPanel \/>/);
+});

@@ -22,7 +22,7 @@ func sampleAuthz() authzParams {
 // else's page is how a click is stolen.
 func TestConsentPageRefusesToBeFramed(t *testing.T) {
 	rr := httptest.NewRecorder()
-	(&Server{cfg: &config.Config{}}).renderConsent(rr, sampleAuthz(), "Client", "")
+	renderConsentPage(rr, (&Server{cfg: &config.Config{}}).passwordConsent(sampleAuthz(), "Client", ""))
 	if rr.Header().Get("X-Frame-Options") != "DENY" || !strings.Contains(rr.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("consent page can be framed: %v", rr.Header())
 	}
@@ -36,14 +36,14 @@ func TestConsentPageRefusesToBeFramed(t *testing.T) {
 func TestConsentPageOffersSSOOnlyWithAProvider(t *testing.T) {
 	s := &Server{cfg: &config.Config{OIDCButtonLabel: "Okta"}}
 	rr := httptest.NewRecorder()
-	s.renderConsent(rr, sampleAuthz(), "", "")
+	renderConsentPage(rr, s.passwordConsent(sampleAuthz(), "", ""))
 	if strings.Contains(rr.Body.String(), "/oauth/authorize/sso") {
 		t.Fatal("SSO button shown with no provider")
 	}
 
 	s.oidc = &oidc.Provider{}
 	rr = httptest.NewRecorder()
-	s.renderConsent(rr, sampleAuthz(), "", "")
+	renderConsentPage(rr, s.passwordConsent(sampleAuthz(), "", ""))
 	body := rr.Body.String()
 	if !strings.Contains(body, "Continue with Okta") {
 		t.Fatal("SSO button missing with a provider")
@@ -86,5 +86,23 @@ func TestOAuthAuthorizeSSORouteIsGated(t *testing.T) {
 	(&Server{cfg: &config.Config{}}).Router().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/oauth/authorize/sso", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("with MCP OAuth off the route must not exist: status %d", rr.Code)
+	}
+}
+
+// The warning is part of the page whenever the view says the host is unknown,
+// and absent otherwise; which hosts are unknown is the policy's business
+// (settings.MCPOAuthPolicy.HostKnown).
+func TestConsentPageWarnsAboutAnUnknownHost(t *testing.T) {
+	v := (&Server{cfg: &config.Config{}}).passwordConsent(sampleAuthz(), "Claude", "")
+	rr := httptest.NewRecorder()
+	renderConsentPage(rr, v)
+	if strings.Contains(rr.Body.String(), "not a known MCP client") {
+		t.Fatal("warned about a host the view marked as known")
+	}
+	v.UnknownHost = true
+	rr = httptest.NewRecorder()
+	renderConsentPage(rr, v)
+	if !strings.Contains(rr.Body.String(), "not a known MCP client") || !strings.Contains(rr.Body.String(), "client.example.test") {
+		t.Fatal("no warning naming the unknown host")
 	}
 }

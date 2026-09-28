@@ -351,6 +351,11 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/api-tokens", s.listAPITokens)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/api-tokens", s.createAPIToken)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Delete("/api-tokens/{id}", s.deleteAPIToken)
+		// MCP applications (OAuth clients) and the policy that admits them.
+		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/oauth-apps", s.listOAuthApps)
+		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/oauth-apps/{id}/approve", s.approveOAuthApp)
+		r.With(s.requirePermission(models.PermAPITokensManage)).Delete("/oauth-apps/{id}", s.revokeOAuthApp)
+		r.With(s.requirePermission(models.PermAPITokensManage)).Put("/config/mcp-oauth", s.updateMCPOAuthPolicy)
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users", s.listUsers)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users", s.createUser)
 		r.With(s.requirePermission(models.PermUsersManage)).Patch("/users/{id}", s.updateUser)

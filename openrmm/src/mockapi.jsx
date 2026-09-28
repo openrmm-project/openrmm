@@ -300,6 +300,11 @@ const api = {
   listAPITokens() { return GET('/api/api-tokens'); },
   createAPIToken(body) { return POST('/api/api-tokens', body); },
   deleteAPIToken(id) { return DELETE('/api/api-tokens/' + id); },
+  /* ---- MCP applications (OAuth clients) and the policy that admits them ---- */
+  listOAuthApps() { return GET('/api/oauth-apps'); },
+  approveOAuthApp(id) { return POST('/api/oauth-apps/' + encodeURIComponent(id) + '/approve'); },
+  revokeOAuthApp(id) { return DELETE('/api/oauth-apps/' + encodeURIComponent(id)); },
+  updateMCPOAuthPolicy(policy) { return PUT('/api/config/mcp-oauth', policy); },
 
   /* ---- chat ---- */
   listSessions() { return GET('/api/chat/sessions'); },

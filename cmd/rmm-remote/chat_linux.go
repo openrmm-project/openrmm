@@ -99,6 +99,7 @@ func newChatWindowLinux(display, authPath, title string, onSend func(string)) *c
 	userTime := c.internAtom("_NET_WM_USER_TIME")
 	winType := c.internAtom("_NET_WM_WINDOW_TYPE")
 	utility := c.internAtom("_NET_WM_WINDOW_TYPE_UTILITY")
+	wmIcon := c.internAtom("_NET_WM_ICON")
 
 	c.font = c.newXID()
 	c.openFont(c.font, "fixed")
@@ -107,6 +108,9 @@ func newChatWindowLinux(display, authPath, title string, onSend func(string)) *c
 	c.gc = c.newXID()
 	c.createGC()
 	c.setTitle(title)
+	if icon := embeddedIcon(); wmIcon != 0 && len(icon) > 0 {
+		c.write(changePropCardinals(c.win, wmIcon, icon))
+	}
 	// Don't grab keyboard focus when the window maps: the technician injects
 	// input into whatever host window is focused, so a chat window that stole
 	// focus would swallow their keystrokes until they clicked back on the

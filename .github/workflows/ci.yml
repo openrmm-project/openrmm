@@ -332,6 +332,9 @@ jobs:
       - name: Build rmm-sign
         shell: pwsh
         run: go build -buildvcs=false -o rmm-sign.exe ./cmd/rmm-sign
+      - name: Orphaned service ownership (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./scripts/test-windows-service-reinstall.ps1
       # The installer verifies Ed25519 signatures in-process (no OpenSSL). These
       # steps cross-check that embedded verifier against the real signer on both
       # PowerShell editions: 7 (.NET) and Windows PowerShell 5.1 (.NET Framework,

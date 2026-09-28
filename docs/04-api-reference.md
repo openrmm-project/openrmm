@@ -196,7 +196,7 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
-| POST | `/api/auth/bootstrap` | none | Create the first admin only when no users exist; password must meet the current 12-character policy |
+| POST | `/api/auth/bootstrap` | admin token | Create the first admin only when no users exist; `Authorization: Bearer $RMM_ADMIN_TOKEN` is required so an empty instance cannot be claimed by whoever reaches it first; password must meet the current 12-character policy |
 | POST | `/api/auth/login` | none | `{username,password,code?}` → seven-day session `{token, role, permissions, user}`. `code` is a TOTP **or** a one-time recovery code. If 2FA is on and `code` is missing/invalid → `401 {totp_required:true}` |
 | POST | `/api/auth/logout` | any | Revoke the session token |
 | GET | `/api/me` | any | Current user/principal with `role` and `permissions` |

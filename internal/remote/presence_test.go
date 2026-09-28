@@ -71,3 +71,74 @@ func TestPresenceIsSafeUnderConcurrentSessions(t *testing.T) {
 		t.Fatalf("attachments outlived their sessions: %+v", viewers)
 	}
 }
+
+func TestPresenceRefusesTheSameOperatorTwiceOnOneScreen(t *testing.T) {
+	p := NewPresence()
+	leave, existing := p.JoinExclusive(Viewer{SessionID: "s1", AgentID: "agent-a", User: "ana", Kind: "native"})
+	if existing != nil {
+		t.Fatalf("the first session was refused: %+v", existing)
+	}
+	_, existing = p.JoinExclusive(Viewer{SessionID: "s2", AgentID: "agent-a", User: "ana", Kind: "native"})
+	if existing == nil || existing.SessionID != "s1" {
+		t.Fatalf("a second desktop for the same operator was admitted (existing=%+v)", existing)
+	}
+	if viewers := p.ForAgent("agent-a"); len(viewers) != 1 {
+		t.Fatalf("the refused session was still recorded: %+v", viewers)
+	}
+	leave()
+	if _, existing = p.JoinExclusive(Viewer{SessionID: "s3", AgentID: "agent-a", User: "ana", Kind: "native"}); existing != nil {
+		t.Fatal("leaving did not free the operator's slot")
+	}
+}
+
+func TestPresenceExclusiveStillAllowsWhatIsNotADuplicate(t *testing.T) {
+	p := NewPresence()
+	p.JoinExclusive(Viewer{SessionID: "s1", AgentID: "agent-a", User: "ana", Kind: "native"})
+	for _, v := range []Viewer{
+		{SessionID: "s2", AgentID: "agent-a", User: "bruno", Kind: "native"}, // a colleague: a hand-off
+		{SessionID: "s3", AgentID: "agent-b", User: "ana", Kind: "native"},   // another machine
+		{SessionID: "s4", AgentID: "agent-a", User: "ana", Kind: "files"},    // not a second screen
+	} {
+		if _, existing := p.JoinExclusive(v); existing != nil {
+			t.Errorf("%s/%s/%s was refused as a duplicate of %s", v.User, v.AgentID, v.Kind, existing.SessionID)
+		}
+	}
+}
+
+func TestPresenceRemoveFreesAReplacedSessionAtOnce(t *testing.T) {
+	p := NewPresence()
+	leave, _ := p.JoinExclusive(Viewer{SessionID: "old", AgentID: "agent-a", User: "ana", Kind: "native"})
+	if got := p.ForUser("agent-a", "ana", "native"); len(got) != 1 || got[0].SessionID != "old" {
+		t.Fatalf("ForUser = %+v", got)
+	}
+	p.Remove("agent-a", "old")
+	if _, existing := p.JoinExclusive(Viewer{SessionID: "new", AgentID: "agent-a", User: "ana", Kind: "native"}); existing != nil {
+		t.Fatal("the replacing session was refused by the one it replaced")
+	}
+	leave() // the old socket's late cleanup must not remove the new session
+	if got := p.ForUser("agent-a", "ana", "native"); len(got) != 1 || got[0].SessionID != "new" {
+		t.Fatalf("after the old cleanup ForUser = %+v", got)
+	}
+}
+
+func TestPresenceExclusiveAdmitsOneOfManySimultaneousTabs(t *testing.T) {
+	p := NewPresence()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	admitted := 0
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, existing := p.JoinExclusive(Viewer{SessionID: string(rune('A' + i)), AgentID: "agent-a", User: "ana", Kind: "native"}); existing == nil {
+				mu.Lock()
+				admitted++
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+	if admitted != 1 {
+		t.Fatalf("%d tabs got in at once, want 1", admitted)
+	}
+}

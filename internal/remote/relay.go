@@ -166,6 +166,44 @@ func (r *Relay) CloseAgent(agentID string) {
 	}
 }
 
+// Close codes the console acts on. A viewer closed with one of these must not
+// reconnect by itself: the operator has the session somewhere else.
+const (
+	// CloseSessionActive: the operator already has a desktop session on this
+	// endpoint, and this one was refused.
+	CloseSessionActive = 4409
+	// CloseSessionReplaced: the operator moved the session to another tab.
+	CloseSessionReplaced = 4410
+)
+
+// CloseViewer ends a viewer's socket with a code the console reads, rather
+// than a bare drop that its reconnect loop would retry.
+func CloseViewer(conn *websocket.Conn, code int, reason string) {
+	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
+	_ = conn.Close()
+}
+
+// CloseSession ends one session. Its viewer is told why, so the tab it was in
+// says so instead of reconnecting and taking the session back.
+func (r *Relay) CloseSession(sessionID string, code int, reason string) {
+	r.mu.Lock()
+	p, ok := r.pairs[sessionID]
+	if ok {
+		delete(r.pairs, sessionID)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	p.mu.Lock()
+	viewer := p.viewer
+	p.mu.Unlock()
+	if viewer != nil {
+		_ = viewer.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
+	}
+	closeConnections(p.close())
+}
+
 // copyFrames forwards every message from src to dst until either side errors.
 func copyFrames(src, dst *websocket.Conn) error {
 	for {

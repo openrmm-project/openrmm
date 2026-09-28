@@ -385,3 +385,34 @@ test('sign-in and reset screens explain an SSO-only account', async () => {
   assert.equal((app.match(/e\.code === 'sso_required'/g) || []).length, 2, 'login and reset screens');
   assert.match(app, /t\('auth\.err\.ssoRequired'\)/);
 });
+
+// One desktop session per operator per device. The server says why it refused
+// in a code, and the viewer acts on that code rather than on the English
+// message: it offers "continue here" instead of retrying 40 times into the same
+// refusal, and a tab that was moved elsewhere must not reconnect and take the
+// session back.
+test('a refused remote session reaches the viewer as a code it acts on', async () => {
+  const { api, sandbox, last } = await loadApi();
+
+  await api.startRemote('dev-1', 'native', { replace: true, resume: 'sess-1' });
+  assert.equal(last().url, 'https://console.test/api/devices/dev-1/remote');
+  assert.deepEqual(JSON.parse(last().body), { provider: 'native', replace: true, resume: 'sess-1' });
+  await api.startRemote('dev-1', 'terminal');
+  assert.deepEqual(JSON.parse(last().body), { provider: 'terminal' });
+
+  sandbox.fetch = async () => ({
+    ok: false, status: 409, statusText: 'Conflict', headers: { get: () => null },
+    async json() { return { error: 'you already have a remote session open on this device', code: 'remote_session_active' }; },
+  });
+  await assert.rejects(api.startRemote('dev-1', 'native'), (e) => e.status === 409 && e.code === 'remote_session_active');
+
+  const viewer = await readFile(path.join(root, 'src', 'screens-devices.jsx'), 'utf8');
+  assert.match(viewer, /e\.code === 'remote_session_active'/);
+  // The close codes are the relay's; a mismatch would turn "moved to another
+  // tab" into a reconnect loop that steals the session back.
+  const relay = await readFile(path.join(root, '..', 'internal', 'remote', 'relay.go'), 'utf8');
+  const active = relay.match(/CloseSessionActive = (\d+)/)[1];
+  const replaced = relay.match(/CloseSessionReplaced = (\d+)/)[1];
+  assert.match(viewer, new RegExp(`ev\\.code === ${active} \\|\\| ev\\.code === ${replaced}\\)`));
+  assert.match(viewer, new RegExp(`ev\\.code === ${replaced} \\? 'replaced' : 'active'`));
+});

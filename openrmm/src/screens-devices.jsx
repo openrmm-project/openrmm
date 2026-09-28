@@ -601,6 +601,11 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   const [scale, setScale] = useState('fit');
   const [fullscreen, setFullscreen] = useState(false);
   const [notice, setNotice] = useState(null); // host-side notice (e.g. Wayland can't be captured)
+  // One desktop session per operator per device: 'active' when this tab was
+  // refused because another has it, 'replaced' when another tab took it over.
+  // Either way this tab stops reconnecting until the operator chooses.
+  const [conflict, setConflict] = useState(null);
+  const takeOverRef = useRef(() => {});
   const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
@@ -716,7 +721,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
     // Broker a session and connect. On drop (e.g. user logoff tears the session
     // down) re-broker and reconnect — the agent re-spawns the SYSTEM sidecar into
     // the now-active session (login screen included).
-    const connect = async () => {
+    let sessionId = null; // this tab's last session, taken back without asking after a drop
+    const connect = async (replace) => {
+      setConflict(null);
       setCad({ available: false, reason: t('viewer.waitingModule') });
       setMonitors({ list: [], selected: 0, all: true });
       setVer(null);
@@ -724,11 +731,13 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       setStatus(retries ? 'reconnecting' : 'connecting');
       let wsUrl, viewerTicket;
       try {
-        const s = await api.startRemote(deviceId, filesOnly ? 'files' : 'native');
+        const s = await api.startRemote(deviceId, filesOnly ? 'files' : 'native', filesOnly ? undefined : { replace: !!replace, resume: sessionId || undefined });
         wsUrl = api.websocketURL('/ws/remote?session=' + encodeURIComponent(s.id) + '&role=viewer');
         viewerTicket = s.viewer_ticket;
+        sessionId = s.id;
       } catch (e) {
-        if (!stopped && retries++ < 40) setTimeout(connect, 3000);
+        if (e.code === 'remote_session_active') { if (!stopped) { setConflict('active'); setStatus('closed'); } return; }
+        if (!stopped && retries++ < 40) setTimeout(() => connect(), 3000);
         else setStatus('closed');
         return;
       }
@@ -748,13 +757,17 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         }
       };
       ws.onerror = () => {};
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (stopped) return;
-        if (retries++ < 40) { setStatus('reconnecting'); setTimeout(connect, 2000); }
+        // Codes from the relay (internal/remote/relay.go): the session is in
+        // another tab. Reconnecting here would take it back from there.
+        if (ev.code === 4409 || ev.code === 4410) { setConflict(ev.code === 4410 ? 'replaced' : 'active'); setStatus('closed'); return; }
+        if (retries++ < 40) { setStatus('reconnecting'); setTimeout(() => connect(), 2000); }
         else setStatus('closed');
       };
       ws.onmessage = onMsg;
     };
+    takeOverRef.current = () => { retries = 0; connect(true); };
 
     const send = (o) => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
     const norm = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }; };
@@ -1005,6 +1018,19 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         ) : (<>
         <div className="relative flex-1 overflow-auto p-2 scroll-area">
           <canvas ref={canvasRef} tabIndex={0} style={canvasStyle} className={cx('outline-none remote-canvas', scale === 'fit' ? 'absolute inset-0 m-auto max-w-full max-h-full' : 'block mx-auto')} />
+          {conflict && (
+            <div className="absolute inset-0 z-[3] flex items-center justify-center bg-black/70 p-4">
+              <div className="max-w-sm rounded-xl border border-line bg-card p-5 text-center shadow-2xl">
+                <Icon name="remote" size={22} className="mx-auto text-warn" />
+                <div className="mt-2 text-[14px] font-semibold text-ink">{t(conflict === 'replaced' ? 'viewer.replacedTitle' : 'viewer.activeTitle')}</div>
+                <p className="mt-1.5 text-[12.5px] text-muted">{t(conflict === 'replaced' ? 'viewer.replacedBody' : 'viewer.activeBody', { host: hostname })}</p>
+                <div className="mt-4 flex justify-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={onClose}>{t('action.close')}</Button>
+                  <Button variant="primary" size="sm" icon="remote" onClick={() => takeOverRef.current()}>{t('viewer.continueHere')}</Button>
+                </div>
+              </div>
+            </div>
+          )}
           {notice && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
               <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />

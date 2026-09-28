@@ -229,7 +229,7 @@ const api = {
   listDevices(params) { return GET('/api/devices' + qs(params || {})); },
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
-  startRemote(id, provider) { return POST('/api/devices/' + id + '/remote', { provider }); },
+  startRemote(id, provider, opts) { return POST('/api/devices/' + id + '/remote', { provider, ...(opts || {}) }); },
   getRemoteCapabilities(id) { return GET('/api/devices/' + id + '/remote-capabilities'); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
   deleteDevice(id) { return DELETE('/api/devices/' + id); },

@@ -140,7 +140,7 @@ WebSocket can come later.
 
 ## 8. First build target (MVP UI)
 
-1. Login (paste token) → Devices list → Device detail (inventory + run script).
+1. Login (username + password, or SSO) → Devices list → Device detail (inventory + run script).
 2. Jobs / Approval queue with script preview + approve/reject.
 3. AI Chat with proposed-job cards.
 4. Audit log.

@@ -8,6 +8,13 @@ tag.
 
 ### Security
 
+- **The console's sign-in no longer accepts a pasted token.** Its "API token"
+  tab took `RMM_ADMIN_TOKEN` or any API token, skipping the second factor and
+  the SSO policy, recording the work as `admin` rather than as a person, and
+  turning a leaked automation token into a console login. People now sign in
+  with a password (and second factor) or SSO; tokens remain for the API and
+  automation, which accept them exactly as before.
+
 - **The first admin needs the operator's admin token.** `POST
   /api/auth/bootstrap` now requires `Authorization: Bearer $RMM_ADMIN_TOKEN`.
   Before, an empty instance belonged to whoever called it first — and a hosted
@@ -16,20 +23,6 @@ tag.
   created the first user anonymously must add the header.
 
 ### Fixed
-
-- **One remote desktop session per operator per device.** The same operator
-  could open the same device's desktop in several tabs, each fighting the others
-  for mouse and keyboard while the endpoint captured the screen once per tab.
-  The server now refuses the second one (409 `remote_session_active`, and close
-  code 4409 at the relay, so simultaneous tabs cannot both get in); the console
-  offers **Continue here**, which moves the session and tells the old tab
-  instead of letting it reconnect and take it back (4410, audited as
-  `remote.replace`). Other operators on the same device, the same operator on
-  other devices, and terminal or file-transfer sessions are unaffected.
-
-- **The console smoke test no longer depends on the machine's language.**
-  Headless Chrome took the language from the environment, so on a non-English
-  machine every English assertion failed.
 
 - **Enrollment commands from the console work on HTTPS servers.** The install
   commands the console shows had no `--update-public-key` / `-UpdatePublicKey`,
@@ -103,6 +96,20 @@ tag.
   The block now soft-wraps where it is used for install commands; what the Copy
   button puts on the clipboard is unchanged, because it copies the command rather
   than the rendering.
+
+- **One remote desktop session per operator per device.** The same operator
+  could open the same device's desktop in several tabs, each fighting the others
+  for mouse and keyboard while the endpoint captured the screen once per tab.
+  The server now refuses the second one (409 `remote_session_active`, and close
+  code 4409 at the relay, so simultaneous tabs cannot both get in); the console
+  offers **Continue here**, which moves the session and tells the old tab
+  instead of letting it reconnect and take it back (4410, audited as
+  `remote.replace`). Other operators on the same device, the same operator on
+  other devices, and terminal or file-transfer sessions are unaffected.
+
+- **The console smoke test no longer depends on the machine's language.**
+  Headless Chrome took the language from the environment, so on a non-English
+  machine every English assertion failed.
 
 - **The OpenRMM logo shows on Windows and Linux.** The executables carried no
   icon, so Explorer, Task Manager and Programs and Features (whose entry points

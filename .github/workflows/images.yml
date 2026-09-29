@@ -5,7 +5,7 @@ name: Container images
 # Registry images let operators deploy builds traceable to a source commit.
 #
 # Tags land as:
-#   ghcr.io/<owner>/openrmm-server:0.5.0   (from the git tag)
+#   ghcr.io/<owner>/openrmm-server:0.6.0   (from the git tag)
 #   ghcr.io/<owner>/openrmm-server:0.5     (minor, moves with patches)
 #   ghcr.io/<owner>/openrmm-server:latest  (release tags only)
 #   ghcr.io/<owner>/openrmm-server:main    (every push to main)

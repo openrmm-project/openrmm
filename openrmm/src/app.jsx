@@ -204,6 +204,44 @@ function ResetPasswordScreen({ token, onDone }) {
   );
 }
 
+// VerifyEmailScreen redeems ?verify-email=<token>: someone confirming that
+// their address may receive alerts through the shared alert service. No
+// session is needed — holding the link is the proof — and the answer is shown
+// before anything else, whoever is signed in.
+function VerifyEmailScreen({ token, onDone }) {
+  const [state, setState] = useState('working'); // working | done | failed
+  const [err, setErr] = useState('');
+  // A link works once: redeem it once, even if the effect runs twice.
+  const sent = React.useRef(false);
+  uE(() => {
+    if (sent.current) return;
+    sent.current = true;
+    api.confirmEmailVerification(token)
+      .then(() => setState('done'))
+      .catch((e) => { setErr(e.message || ''); setState('failed'); });
+  }, [token]);
+  return (
+    <AuthShell title={t('verify.title')} subtitle={state === 'working' ? t('verify.working') : state === 'done' ? t('verify.done') : t('verify.failed')}>
+      <div className="mt-4 space-y-4">
+        {state === 'working' && <div className="flex justify-center py-2"><Spinner size={20} /></div>}
+        {state === 'done' && (
+          <div className="flex items-start gap-2 rounded-lg border border-ok/25 bg-oksoft px-3 py-2.5">
+            <Icon name="check" size={14} className="text-ok mt-0.5 shrink-0" />
+            <div className="text-[12.5px] text-muted">{t('verify.doneBody')}</div>
+          </div>
+        )}
+        {state === 'failed' && (
+          <div className="flex items-start gap-2 rounded-lg border border-bad/25 bg-badsoft px-3 py-2.5">
+            <Icon name="alert" size={14} className="text-bad mt-0.5 shrink-0" />
+            <div className="text-[12.5px] text-muted">{t('verify.failedBody')}{err ? <div className="text-faint mt-1">{err}</div> : null}</div>
+          </div>
+        )}
+        {state !== 'working' && <Button variant="primary" size="lg" className="w-full" onClick={onDone}>{t('verify.continue')}</Button>}
+      </div>
+    </AuthShell>
+  );
+}
+
 // AuthShell is the signed-out page frame shared by the reset screens, so they
 // match the login card instead of drifting from it.
 function AuthShell({ title, subtitle, children }) {
@@ -432,14 +470,16 @@ function App() {
   // A reset link is opened cold, in whatever browser the mail client picked, so
   // the token arrives in the URL with no session behind it.
   const [resetToken, setResetToken] = useState(() => params.get('reset') || '');
+  const [verifyToken, setVerifyToken] = useState(() => params.get('verify-email') || '');
   const [forgot, setForgot] = useState(false);
 
   // Drop the token from the address bar once it is in state: it should not stay
   // in history, or be re-sent as a Referer when the page loads anything.
   uE(() => {
-    if (!resetToken) return;
+    if (!resetToken && !verifyToken) return;
     const url = new URL(window.location.href);
     url.searchParams.delete('reset');
+    url.searchParams.delete('verify-email');
     window.history.replaceState({}, '', url);
   }, []);
 
@@ -482,6 +522,9 @@ function App() {
   // and an already-signed-in tab must not swallow the link.
   if (resetToken) {
     return <ToastProvider><ResetPasswordScreen token={resetToken} onDone={() => { setResetToken(''); setAuth(null); }} /></ToastProvider>;
+  }
+  if (verifyToken) {
+    return <ToastProvider><VerifyEmailScreen token={verifyToken} onDone={() => setVerifyToken('')} /></ToastProvider>;
   }
   if (auth === undefined) return <div className="h-full flex items-center justify-center text-faint"><Spinner size={22} /></div>;
   if (auth === null) {

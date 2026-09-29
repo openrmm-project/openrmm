@@ -97,3 +97,40 @@ func TestCheckAlertsHostRefusesPrivateAddresses(t *testing.T) {
 		t.Errorf("allowed private relay refused: %v", err)
 	}
 }
+
+// Alert mail's transport, in order: the tenant's own relay, then the
+// operator's shared alert service, then nothing — never the account relay.
+func TestAlertDeliveryOrder(t *testing.T) {
+	operator := &config.Config{
+		SMTPHost: "smtp.account.test", SMTPFrom: "no-reply@account.test", // the account relay: never for alerts
+		AlertsSMTPHost: "smtp.alerts.test", AlertsSMTPPort: 2587, AlertsSMTPFrom: "alerts@notify.test",
+		AlertsSMTPFromName: "OpenRMM Alerts · acme", AlertsHourlyLimit: 50,
+	}
+	tenantRelay := notify.Config{Host: "relay.tenant.test", Port: 2525, From: "it@tenant.test", TLSMode: "tls"}
+
+	if got := alertDelivery(operator, tenantRelay); got.Host != "relay.tenant.test" || got.Operator {
+		t.Errorf("the tenant's own relay must win: %+v", got)
+	}
+	got := alertDelivery(operator, notify.Config{})
+	if got.Host != "smtp.alerts.test" || !got.Operator || got.From != "alerts@notify.test" || got.HourlyLimit != 50 {
+		t.Errorf("without a relay of its own the instance uses the shared service: %+v", got)
+	}
+	// A sender stored by an older version cannot become the shared service's.
+	if got := alertDelivery(operator, notify.Config{From: "billing@operator.test"}); got.From != "alerts@notify.test" {
+		t.Errorf("the shared service's sender is fixed, got %q", got.From)
+	}
+	accountOnly := &config.Config{SMTPHost: "smtp.account.test", SMTPFrom: "no-reply@account.test"}
+	if got := alertDelivery(accountOnly, notify.Config{}); got.Enabled() {
+		t.Errorf("alerts must never ride the account relay: %+v", got)
+	}
+}
+
+func TestOperatorAlertSMTPConfigDefaults(t *testing.T) {
+	if OperatorAlertSMTPConfig(&config.Config{}).Enabled() {
+		t.Fatal("no RMM_ALERTS_SMTP_HOST means no shared service")
+	}
+	got := OperatorAlertSMTPConfig(&config.Config{AlertsSMTPHost: "h", AlertsSMTPFrom: "a@b.test"})
+	if got.Port != 587 || got.TLSMode != "starttls" || got.HourlyLimit != 120 || !got.Operator {
+		t.Errorf("defaults: %+v", got)
+	}
+}

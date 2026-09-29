@@ -339,6 +339,10 @@ const api = {
   // and need settings.manage.
   getMyNotifications() { return GET('/api/me/notifications'); },
   updateMyNotifications(body) { return PUT('/api/me/notifications', body); },
+  // Confirming an alert recipient's address (needed only through the shared alert service).
+  requestMyEmailVerification() { return POST('/api/me/email/verify'); },
+  requestUserEmailVerification(id) { return POST('/api/users/' + encodeURIComponent(id) + '/email/verify'); },
+  confirmEmailVerification(token) { return POST('/api/auth/verify-email', { token }); },
   // Two transports: the account one carries password resets, the alerts one
   // carries notifications and falls back to the account one when it has no host.
   // Read-only: the account transport comes from RMM_SMTP_* in the server env.

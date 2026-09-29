@@ -366,7 +366,8 @@ test('the alerts email screen offers no ride on the account relay', async () => 
   assert.doesNotMatch(panel, /inherits|effective|mail\.inherited|mail\.credsInherited|mail\.accountTransport/);
   assert.doesNotMatch(panel, /disabled=\{inherits\}/);
   assert.match(panel, /e\.code === 'alerts_need_own_server'/);
-  assert.match(panel, /disabled=\{!c\.enabled \|\| dirty\}/);
+  // Testable with its own relay or, without one, through the shared service.
+  assert.match(panel, /disabled=\{!\(c\.enabled \|\| viaService\) \|\| dirty\}/);
 });
 
 // An account linked to single sign-on is refused a password sign-in and a
@@ -443,4 +444,30 @@ test('the MCP applications panel drives its admin routes safely', async () => {
   assert.match(panel, /app\.status !== 'approved' && <Button[^>]*onClick=\{\(\) => approve\(app\)\}/);
   assert.match(panel, /e\.code === 'invalid_host'/);
   assert.match(screens, /<APITokensPanel \/><OAuthAppsPanel \/>/);
+});
+
+// Confirming alert recipients: the client reaches the three routes, the landing
+// page redeems its one-use link exactly once, and both the user's own
+// preferences and the users screen offer to send the confirmation again.
+test('address confirmation is wired from the link to the screens', async () => {
+  const { api, last } = await loadApi();
+  await api.confirmEmailVerification('tok-1');
+  assert.equal(last().url, 'https://console.test/api/auth/verify-email');
+  assert.deepEqual(JSON.parse(last().body), { token: 'tok-1' });
+  await api.requestMyEmailVerification();
+  assert.equal(last().url, 'https://console.test/api/me/email/verify');
+  assert.equal(last().method, 'POST');
+  await api.requestUserEmailVerification('u/1');
+  assert.equal(last().url, 'https://console.test/api/users/u%2F1/email/verify');
+
+  const app = await readFile(path.join(root, 'src', 'app.jsx'), 'utf8');
+  const screen = app.slice(app.indexOf('function VerifyEmailScreen('), app.indexOf('function AuthShell('));
+  assert.match(screen, /if \(sent\.current\) return;/, 'the link must be redeemed once even if the effect runs twice');
+  assert.match(app, /params\.get\('verify-email'\)/);
+  assert.match(app, /url\.searchParams\.delete\('verify-email'\)/, 'the token must leave the address bar');
+
+  const screens = await readFile(path.join(root, 'src', 'screens-rmm2.jsx'), 'utf8');
+  assert.match(screens, /data\?\.verification_required && email && !data\?\.email_verified/);
+  assert.match(screens, /api\.requestMyEmailVerification\(\)/);
+  assert.match(screens, /canEmail && u\.email && !u\.email_verified_at && <MenuItem/);
 });

@@ -79,6 +79,21 @@ type Config struct {
 	// turns it on.
 	SMTPAlertsAllowPrivate bool
 
+	// AlertsSMTP* configure the operator's shared alert service: the relay an
+	// instance's alert mail uses when its administrators set none of their
+	// own. Env-only, like the account transport, and with a fixed sender the
+	// tenant cannot change — the alert text is the tenant's, the domain is the
+	// operator's. Through it, mail goes only to confirmed addresses, and at
+	// most AlertsHourlyLimit messages an hour leave an instance.
+	AlertsSMTPHost     string
+	AlertsSMTPPort     int
+	AlertsSMTPUsername string
+	AlertsSMTPPassword string
+	AlertsSMTPFrom     string
+	AlertsSMTPFromName string
+	AlertsSMTPTLSMode  string
+	AlertsHourlyLimit  int
+
 	// Security.
 	// MCPAllowedIPs is an optional allowlist (comma-separated IPs/CIDRs) for the
 	// /mcp endpoint. Empty = no app-level IP restriction (deployer's choice).
@@ -242,6 +257,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	alertsSMTPPassword, err := secretEnv("RMM_ALERTS_SMTP_PASSWORD")
+	if err != nil {
+		return nil, err
+	}
 	databasePassword, err := secretEnv("RMM_DATABASE_PASSWORD")
 	if err != nil {
 		return nil, err
@@ -276,6 +295,14 @@ func Load() (*Config, error) {
 		SMTPTLSMode:                env("RMM_SMTP_TLS_MODE", "starttls"),
 		SMTPSkipVerify:             os.Getenv("RMM_SMTP_SKIP_VERIFY") == "true",
 		SMTPAlertsAllowPrivate:     os.Getenv("RMM_SMTP_ALERTS_ALLOW_PRIVATE") == "true",
+		AlertsSMTPHost:             strings.TrimSpace(os.Getenv("RMM_ALERTS_SMTP_HOST")),
+		AlertsSMTPPort:             envInt("RMM_ALERTS_SMTP_PORT", 587),
+		AlertsSMTPUsername:         os.Getenv("RMM_ALERTS_SMTP_USERNAME"),
+		AlertsSMTPPassword:         alertsSMTPPassword,
+		AlertsSMTPFrom:             strings.TrimSpace(os.Getenv("RMM_ALERTS_SMTP_FROM")),
+		AlertsSMTPFromName:         env("RMM_ALERTS_SMTP_FROM_NAME", "OpenRMM Alerts"),
+		AlertsSMTPTLSMode:          env("RMM_ALERTS_SMTP_TLS_MODE", "starttls"),
+		AlertsHourlyLimit:          envInt("RMM_ALERTS_HOURLY_LIMIT", 120),
 		MCPAllowedIPs:              splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:        os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
 		TrustProxyHeaders:          os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",

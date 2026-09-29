@@ -130,6 +130,7 @@ func (s *Server) Router() http.Handler {
 	// an enumeration target and a way to use the instance as a mail relay.
 	r.With(authLimiter, maxBody).Post("/api/auth/password-reset", s.requestPasswordReset)
 	r.With(authLimiter, maxBody).Post("/api/auth/password-reset/confirm", s.confirmPasswordReset)
+	r.With(authLimiter, maxBody).Post("/api/auth/verify-email", s.confirmEmailVerification)
 	// Single sign-on. Unauthenticated by definition — nobody has a session yet.
 	// The status endpoint is what the login screen reads to decide whether to
 	// draw the button at all.
@@ -205,6 +206,7 @@ func (s *Server) Router() http.Handler {
 		// caller's own alerts go, and it grants no visibility their scope lacks.
 		r.Get("/me/notifications", s.getMyNotifications)
 		r.Put("/me/notifications", s.updateMyNotifications)
+		r.Post("/me/email/verify", s.requestMyEmailVerification)
 		r.Get("/config", s.getConfig)
 
 		r.With(s.requirePermission(models.PermClientsView)).Get("/clients", s.listClients)
@@ -363,6 +365,7 @@ func (s *Server) Router() http.Handler {
 		// reset resolves an account through it, so it is an authentication factor
 		// rather than a contact detail.
 		r.With(s.requirePermission(models.PermUsersManage), s.requirePermission(models.PermUsersEmailManage)).Put("/users/{id}/email", s.setUserEmail)
+		r.With(s.requirePermission(models.PermUsersManage), s.requirePermission(models.PermUsersEmailManage)).Post("/users/{id}/email/verify", s.requestUserEmailVerification)
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users/{id}/scopes", s.getUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)

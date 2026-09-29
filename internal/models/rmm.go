@@ -103,6 +103,10 @@ type User struct {
 	// did stays on the record. Nil means active; the timestamp answers "when was
 	// this revoked", which is the question an incident review asks.
 	DisabledAt *time.Time `json:"disabled_at,omitempty"`
+	// EmailVerifiedAt is when the owner confirmed the current address. Alert
+	// mail through the operator's shared service goes only to confirmed
+	// addresses; changing the address clears it.
+	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
 }
 
 // Disabled reports whether this account may still authenticate.

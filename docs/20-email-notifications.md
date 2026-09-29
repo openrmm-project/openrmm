@@ -168,6 +168,54 @@ with a sender of their own choosing, any tenant administrator could set
 If the alerts relay fails, alerts retry on it and are **never rerouted** through
 the account transport.
 
+### The operator's shared alert service
+
+A hosted operator can deliver alerts for instances whose administrators set no
+relay of their own, through one service of the operator's, set in the
+environment like the account transport:
+
+```
+RMM_ALERTS_SMTP_HOST=smtp.resend.com
+RMM_ALERTS_SMTP_PORT=2587            # Civo blocks 25/465/587
+RMM_ALERTS_SMTP_USERNAME=resend
+RMM_ALERTS_SMTP_PASSWORD=…           # or RMM_ALERTS_SMTP_PASSWORD_FILE
+RMM_ALERTS_SMTP_FROM=alerts@notify.example.com
+RMM_ALERTS_SMTP_FROM_NAME=OpenRMM Alerts · acme
+RMM_ALERTS_SMTP_TLS_MODE=starttls
+RMM_ALERTS_HOURLY_LIMIT=120          # per instance
+```
+
+Alert mail then goes, in order, through the tenant's own relay (Settings >
+Email), else this service, else nowhere. **Never the account transport.**
+
+The alert text is the tenant's — hostnames, check names — while the sender
+domain is the operator's, so the service holds itself to rules a tenant's own
+relay does not need:
+
+- **Fixed sender.** `RMM_ALERTS_SMTP_FROM` and its display name; nothing in the
+  console changes them. Put the instance's name in the display name.
+- **Confirmed recipients only.** A tenant administrator types the addresses in;
+  without a check they could point mail signed with the operator's domain at
+  anyone. So an address receives nothing through the service until its owner
+  clicks a confirmation link, mailed through the service when the address is
+  set (and again on request from the user's notification settings, or by an
+  administrator). The link is single use, expires in 48 hours, and confirms
+  only the address it was sent to; changing an address clears its
+  confirmation. Unconfirmed recipients are left out when alerts are queued and
+  checked again at delivery. Confirmations are throttled per address (one per
+  five minutes, five a day, whichever account asks) and per instance (100 a
+  day).
+- **Hourly budget.** At most `RMM_ALERTS_HOURLY_LIMIT` alerts an hour leave an
+  instance; the rest waits in the outbox for the next hour, and the transition
+  is logged once each way.
+- **A footer** under each alert names the instance it came from and says the
+  content is that instance's.
+- The alerts **test button** sends only to the caller's own confirmed address.
+
+Use a sending domain of its own for this service (for example
+`notify.example.com`), separate from the account transport's, so complaints
+about alert volume never touch the reputation password resets depend on.
+
 **The alerts relay must be a public address.** It is typed in by a settings
 administrator, and the server dialling wherever they point it — with the answer
 shown back by the test button — is a way to probe the network the server sits

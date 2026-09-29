@@ -47,6 +47,8 @@ func DefaultSubscribed(eventType string) bool { return defaultSubscribed[eventTy
 type NotificationRecipient struct {
 	UserID string
 	Email  string
+	// Verified: the owner confirmed this address (users.email_verified_at).
+	Verified bool
 }
 
 // RecipientsForAgentEvent returns the users who may be told about agentID.
@@ -66,7 +68,7 @@ type NotificationRecipient struct {
 // from models.DefaultRolePermissions.
 func (s *Store) RecipientsForAgentEvent(ctx context.Context, agentID, eventType string, defaultEnabled bool) ([]NotificationRecipient, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, u.email
+		SELECT u.id, u.email, u.email_verified_at IS NOT NULL
 		FROM users u
 		LEFT JOIN notification_subscriptions ns
 		       ON ns.user_id = u.id AND ns.event_type = $2
@@ -97,7 +99,7 @@ func (s *Store) RecipientsForAgentEvent(ctx context.Context, agentID, eventType 
 	var out []NotificationRecipient
 	for rows.Next() {
 		var r NotificationRecipient
-		if err := rows.Scan(&r.UserID, &r.Email); err != nil {
+		if err := rows.Scan(&r.UserID, &r.Email, &r.Verified); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -111,7 +113,7 @@ func (s *Store) RecipientsForAgentEvent(ctx context.Context, agentID, eventType 
 // make delivery impossible after the live device row was deleted.
 func (s *Store) RecipientsForAlertEvent(ctx context.Context, alertID, eventType string, defaultEnabled bool) ([]NotificationRecipient, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, u.email
+		SELECT u.id, u.email, u.email_verified_at IS NOT NULL
 		FROM alerts al
 		JOIN users u ON true
 		LEFT JOIN notification_subscriptions ns

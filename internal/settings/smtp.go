@@ -113,15 +113,48 @@ func AlertSMTPConfig(ctx context.Context, st *store.Store, cfg *config.Config) (
 	return alertDelivery(cfg, smtpProfile(cfg, rows, ProfileAlerts)), nil
 }
 
-// alertDelivery is AlertTransport plus the dial policy: the alerts relay was
-// typed into the console, so it may only be a public address unless the
-// operator allowed private ones (RMM_SMTP_ALERTS_ALLOW_PRIVATE).
+// alertDelivery chooses the transport for alert mail, in order:
+//
+//  1. the tenant's own relay, set in the console — public addresses only
+//     unless the operator allowed private ones (RMM_SMTP_ALERTS_ALLOW_PRIVATE);
+//  2. the operator's shared alert service (RMM_ALERTS_SMTP_*), with its fixed
+//     sender and its limits (see OperatorAlertSMTPConfig);
+//  3. nothing: alert mail is off.
+//
+// Never the account transport: password-reset mail and alert mail do not mix.
 func alertDelivery(cfg *config.Config, alerts notify.Config) notify.Config {
 	out := AlertTransport(alerts)
 	if out.Host != "" {
 		out.PublicOnly = cfg == nil || !cfg.SMTPAlertsAllowPrivate
+		return out
 	}
-	return out
+	return OperatorAlertSMTPConfig(cfg)
+}
+
+// OperatorAlertSMTPConfig is the operator's shared alert service, or no
+// transport when RMM_ALERTS_SMTP_HOST is unset. Its sender is the operator's
+// and nothing in the console can change it.
+func OperatorAlertSMTPConfig(cfg *config.Config) notify.Config {
+	if cfg == nil || cfg.AlertsSMTPHost == "" {
+		return notify.Config{}
+	}
+	port := cfg.AlertsSMTPPort
+	if port <= 0 {
+		port = 587
+	}
+	tlsMode := cfg.AlertsSMTPTLSMode
+	if tlsMode == "" {
+		tlsMode = "starttls"
+	}
+	limit := cfg.AlertsHourlyLimit
+	if limit <= 0 {
+		limit = 120
+	}
+	return notify.Config{
+		Host: cfg.AlertsSMTPHost, Port: port, Username: cfg.AlertsSMTPUsername, Password: cfg.AlertsSMTPPassword,
+		From: cfg.AlertsSMTPFrom, FromName: cfg.AlertsSMTPFromName, TLSMode: tlsMode,
+		Timeout: 20 * time.Second, Operator: true, HourlyLimit: limit,
+	}
 }
 
 // ErrAlertsHostNotPublic rejects an alerts relay that resolves to a private,

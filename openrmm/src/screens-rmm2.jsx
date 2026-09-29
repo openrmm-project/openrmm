@@ -1389,6 +1389,15 @@ function NotificationsCard() {
   const [busy, setBusy] = useState(false);
   const data = prefsQ.data;
   const email = data?.email || '';
+  const [sending, setSending] = useState(false);
+  // Through the shared alert service, an unconfirmed address receives nothing.
+  const needsConfirm = !!(data?.verification_required && email && !data?.email_verified);
+  const sendConfirmation = async () => {
+    setSending(true);
+    try { await api.requestMyEmailVerification(); toast.success(t('notify.confirmSent'), t('notify.confirmSentTo', { email })); }
+    catch (e) { toast.error(t('notify.confirmFailed'), e.message); }
+    finally { setSending(false); }
+  };
 
   useEffect(() => {
     if (!data) return;
@@ -1422,6 +1431,14 @@ function NotificationsCard() {
         <div className="mb-3 flex items-start gap-2 rounded-lg border border-warn/25 bg-warnsoft px-3 py-2">
           <Icon name="info" size={14} className="text-warn mt-0.5 shrink-0" />
           <div className="text-[11.5px] text-muted">{t('notify.noMailServer')}</div>
+        </div>
+      )}
+
+      {needsConfirm && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-warn/25 bg-warnsoft px-3 py-2">
+          <Icon name="alert" size={14} className="text-warn mt-0.5 shrink-0" />
+          <div className="text-[11.5px] text-muted flex-1">{t('notify.unconfirmed')}</div>
+          <Button size="sm" variant="secondary" icon="send" loading={sending} onClick={sendConfirmation}>{t('notify.sendConfirmation')}</Button>
         </div>
       )}
 
@@ -1498,6 +1515,11 @@ function UsersPanel({ canAdmin }) {
   const [confirmScopeSave, setConfirmScopeSave] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [editEmail, setEditEmail] = useState(null); // { user, value } while editing an address
+  // Through the shared alert service, alerts reach only confirmed addresses.
+  const resendConfirmation = async (u) => {
+    try { await api.requestUserEmailVerification(u.id); toast.success(t('users.confirmationSent'), u.email); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
   const [emailBusy, setEmailBusy] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(null);
   const users = usersQ.data?.users || [];
@@ -1597,6 +1619,9 @@ function UsersPanel({ canAdmin }) {
               </div></td>
               <td className="px-3 py-3 text-[12px] mono">
                 {u.email ? <span className="text-muted">{u.email}</span> : <span className="text-faint">{t('users.noAlerts')}</span>}
+                {u.email && (u.email_verified_at
+                  ? <span className="ml-1.5 font-sans text-[10.5px] px-1.5 py-0.5 rounded bg-oksoft text-ok" title={t('users.confirmedAt', { when: fmtTime(u.email_verified_at) })}>{t('users.confirmed')}</span>
+                  : <span className="ml-1.5 font-sans text-[10.5px] px-1.5 py-0.5 rounded bg-warnsoft text-warn" title={t('users.unconfirmedHint')}>{t('users.unconfirmed')}</span>)}
               </td>
               <td className="px-3 py-3">
                 {canAdmin && u.username !== 'admin'
@@ -1617,6 +1642,7 @@ function UsersPanel({ canAdmin }) {
                         <Icon name="dots" size={16} fill />
                       </button>}>
                       {canEmail && <MenuItem icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} hint={u.email ? undefined : t('users.unset')}>{t('users.emailAddress')}</MenuItem>}
+                      {canEmail && u.email && !u.email_verified_at && <MenuItem icon="send" onClick={() => resendConfirmation(u)}>{t('users.resendConfirmation')}</MenuItem>}
                       {u.role !== 'admin' && <MenuItem icon="shield" onClick={() => openEdit(u)}>{t('users.accessScope')}</MenuItem>}
                       {u.totp_enabled && <MenuItem icon="key" onClick={() => setConfirmReset(u)}>{t('users.reset2fa')}</MenuItem>}
                       {/* Withdrawing and deleting access are separated from the
@@ -2133,6 +2159,11 @@ function SMTPProfilePanel() {
     finally { setTesting(false); }
   };
 
+  // Without a relay of its own, the instance's alerts go through the operator's
+  // shared service when there is one: its sender is fixed, and recipients must
+  // confirm their address first.
+  const service = (c && c.service) || {};
+  const viaService = !!(c && !c.enabled && service.enabled);
   if (!c || !form) return <div className="grid md:grid-cols-2 gap-4">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-72 w-full rounded-2xl" />)}</div>;
   const dirty = form.host !== (c.host || '') || form.from !== (c.from || '') || form.tls_mode !== (c.tls_mode || 'starttls')
     || Number(form.port) !== c.port || form.username !== (c.username || '') || form.password !== ''
@@ -2145,7 +2176,9 @@ function SMTPProfilePanel() {
           <Icon name="info" size={14} className="text-muted mt-0.5 shrink-0" />
           <div className="text-[11.5px] text-muted">
             {t('mail.ownInfo')}
-            {c.enabled ? <> {t('mail.sendingAs', { from: c.from })}</> : <> {t('mail.alertsOff')}</>}
+            {c.enabled ? <> {t('mail.sendingAs', { from: c.from })}</>
+              : viaService ? <> {t('mail.serviceInfo', { from: `${service.from_name} <${service.from}>` })}</>
+              : <> {t('mail.alertsOff')}</>}
           </div>
         </div>
       }
@@ -2153,7 +2186,7 @@ function SMTPProfilePanel() {
         <div className="flex items-center gap-2 mb-3">
           <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="send" size={15} /></div>
           <div className="text-[13px] font-semibold text-ink">{t('mail.server')}</div>
-          <span className="ml-auto"><StatusPill status={c.enabled ? 'online' : 'warning'} label={c.enabled ? t('cfg.configured') : t('mail.notConfigured')} size="sm" /></span>
+          <span className="ml-auto"><StatusPill status={c.enabled || viaService ? 'online' : 'warning'} label={c.enabled ? t('cfg.configured') : viaService ? t('mail.serviceActive') : t('mail.notConfigured')} size="sm" /></span>
         </div>
         <div className="space-y-3">
           <Field label={t('mail.host')} hint={t('mail.hostHint')}>
@@ -2202,7 +2235,7 @@ function SMTPProfilePanel() {
           <Field label={t('mail.testTo')} className="flex-1 min-w-[240px]" hint={t('mail.testToHint')}>
             <Input type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" />
           </Field>
-          <Button variant="secondary" icon="send" loading={testing} disabled={!c.enabled || dirty} onClick={test}
+          <Button variant="secondary" icon="send" loading={testing} disabled={!(c.enabled || viaService) || dirty} onClick={test}
             title={dirty ? t('mail.saveFirst') : undefined}>{t('mail.sendTest')}</Button>
         </div>
         <div className="flex items-center justify-between gap-3 mt-4">

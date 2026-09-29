@@ -33,6 +33,12 @@ type Config struct {
 	// relays a console user typed in; enforced on the address actually dialled,
 	// so a name that resolves somewhere else later (DNS rebinding) is caught too.
 	PublicOnly bool
+	// Operator marks the operator's shared alert service (RMM_ALERTS_SMTP_*):
+	// its sender is the operator's, so it delivers only to confirmed
+	// addresses, at most HourlyLimit messages an hour, with a footer naming
+	// the instance the alert came from.
+	Operator    bool
+	HourlyLimit int
 }
 
 // ErrNotPublic is returned when PublicOnly refuses an address.

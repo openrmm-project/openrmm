@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type Service struct {
 	// when the situation changes and then stay quiet.
 	mu        sync.Mutex
 	quiet     bool // last drain found no usable transport
+	throttled bool // last drain found the shared service's hourly budget spent
 	lastError string
 }
 
@@ -65,10 +67,13 @@ func (s *Service) Queue(ctx context.Context, ev Event) error {
 	// to a retention period of stale alerts and send them all the moment a
 	// relay appears. The alert itself is still in the console. A settings read
 	// error is not "off": queue, and let the worker retry.
+	operator := false
 	if s.config != nil {
-		if cfg, _, err := s.config(ctx); err == nil && !cfg.Enabled() {
+		cfg, _, err := s.config(ctx)
+		if err == nil && !cfg.Enabled() {
 			return nil
 		}
+		operator = err == nil && cfg.Operator
 	}
 	var recipients []store.NotificationRecipient
 	var err error
@@ -87,6 +92,12 @@ func (s *Service) Queue(ctx context.Context, ev Event) error {
 	}
 	var queueErr error
 	for _, r := range recipients {
+		// Through the operator's shared service, only confirmed addresses:
+		// otherwise a tenant administrator could point alerts, signed with
+		// the operator's domain, at anyone.
+		if operator && !r.Verified {
+			continue
+		}
 		userID, alertID := r.UserID, ev.AlertID
 		n := &models.Notification{
 			EventType: ev.Type,
@@ -123,7 +134,7 @@ func (s *Service) RunWorker(ctx context.Context) {
 }
 
 func (s *Service) drain(ctx context.Context) {
-	cfg, _, err := s.config(ctx)
+	cfg, publicURL, err := s.config(ctx)
 	if err != nil || !cfg.Enabled() {
 		// Rows are left pending — they go out once SMTP is configured — but this
 		// used to be entirely silent, which meant a half-configured alerts
@@ -133,7 +144,25 @@ func (s *Service) drain(ctx context.Context) {
 		return
 	}
 	s.setQuiet(false, "")
-	pending, err := s.store.ClaimPendingNotificationsLeased(ctx, claimBatch, 5*time.Minute)
+	batch := claimBatch
+	if cfg.Operator {
+		// The shared service's hourly budget for this instance. What is over
+		// it waits in the outbox for the next hour rather than being dropped.
+		sent, err := s.store.NotificationsSentSince(ctx, time.Now().Add(-time.Hour))
+		if err != nil {
+			log.Printf("notify: hourly budget: %v", err)
+			return
+		}
+		if sent >= cfg.HourlyLimit {
+			s.setThrottled(true, cfg.HourlyLimit)
+			return
+		}
+		s.setThrottled(false, cfg.HourlyLimit)
+		if left := cfg.HourlyLimit - sent; left < batch {
+			batch = left
+		}
+	}
+	pending, err := s.store.ClaimPendingNotificationsLeased(ctx, batch, 5*time.Minute)
 	if err != nil {
 		log.Printf("notify: claim: %v", err)
 		return
@@ -143,7 +172,28 @@ func (s *Service) drain(ctx context.Context) {
 			log.Printf("notify: claimed message %s without a lease token", n.ID)
 			continue
 		}
-		sendErr := Send(cfg, Message{To: n.Recipient, Subject: n.Subject, Body: n.Body})
+		body := n.Body
+		if cfg.Operator {
+			// Checked again at delivery: the address may have changed, or
+			// lost its confirmation, since the message was queued.
+			ok, err := false, error(nil)
+			if n.UserID != nil {
+				ok, err = s.recipientConfirmed(ctx, *n.UserID, n.Recipient)
+			}
+			if err != nil {
+				log.Printf("notify: recipient check for %s: %v", n.ID, err)
+				continue
+			}
+			if !ok {
+				if err := s.store.MarkNotificationFailedLeased(ctx, n.ID, *n.LeaseToken, maxAttempts, maxAttempts,
+					"recipient has not confirmed this address", 0); err != nil {
+					log.Printf("notify: mark failed %s: %v", n.ID, err)
+				}
+				continue
+			}
+			body += operatorFooter(publicURL)
+		}
+		sendErr := Send(cfg, Message{To: n.Recipient, Subject: n.Subject, Body: body})
 		if sendErr == nil {
 			if err := s.store.MarkNotificationSentLeased(ctx, n.ID, *n.LeaseToken); err != nil {
 				log.Printf("notify: mark sent %s: %v", n.ID, err)
@@ -369,4 +419,39 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// recipientConfirmed wraps the store check so a nil store (unit tests of the
+// rest of drain) reads as "not confirmed" rather than a panic.
+func (s *Service) recipientConfirmed(ctx context.Context, userID, email string) (bool, error) {
+	if s.store == nil {
+		return false, nil
+	}
+	return s.store.RecipientConfirmed(ctx, userID, email)
+}
+
+// operatorFooter says, under an alert sent through the operator's shared
+// service, which instance it came from and that its text is that instance's:
+// the sender domain is the operator's, the words are not.
+func operatorFooter(publicURL string) string {
+	host := publicURL
+	if u, err := url.Parse(publicURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	return "\n\n--\nSent by OpenRMM's alert service for the instance " + host +
+		". The content above comes from that instance and its devices.\n"
+}
+
+// setThrottled logs the transition into and out of the hourly budget.
+func (s *Service) setThrottled(throttled bool, limit int) {
+	s.mu.Lock()
+	was := s.throttled
+	s.throttled = throttled
+	s.mu.Unlock()
+	switch {
+	case throttled && !was:
+		log.Printf("notify: hourly alert budget of the shared service reached (%d); the rest waits for the next hour", limit)
+	case !throttled && was:
+		log.Print("notify: hourly alert budget available again; draining the outbox")
+	}
 }

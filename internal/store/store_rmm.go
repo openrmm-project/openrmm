@@ -225,8 +225,8 @@ func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
 func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var u models.User
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at FROM users WHERE id=$1`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -239,7 +239,7 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error
 // ListUsers returns all users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at FROM users ORDER BY username`)
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -260,8 +260,8 @@ func (s *Store) UpdateUserRole(ctx context.Context, id, role string) (*models.Us
 	var u models.User
 	err := s.pool.QueryRow(ctx,
 		`UPDATE users SET role=$2 WHERE id=$1
-		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at`,
-		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at`,
+		id, role).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -282,9 +282,12 @@ func (s *Store) UpdateUserEmail(ctx context.Context, id, email string) (*models.
 	}
 	var u models.User
 	err := s.pool.QueryRow(ctx,
-		`UPDATE users SET email=$2 WHERE id=$1
-		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at`,
-		id, arg).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
+		// email_verified_at survives only a change of case: a new address
+		// has not been confirmed by anyone. SET sees the row as it was.
+		`UPDATE users SET email_verified_at = CASE WHEN lower(COALESCE(email,'')) = lower(COALESCE($2,'')) THEN email_verified_at ELSE NULL END,
+		                  email=$2 WHERE id=$1
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at`,
+		id, arg).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -315,8 +318,8 @@ func (s *Store) SetUserDisabled(ctx context.Context, id string, disabled bool) (
 	err := s.pool.QueryRow(ctx,
 		`UPDATE users SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) ELSE NULL END
 		 WHERE id=$1
-		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at`,
-		id, disabled).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt)
+		 RETURNING id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at`,
+		id, disabled).Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

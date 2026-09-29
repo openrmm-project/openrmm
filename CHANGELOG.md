@@ -186,6 +186,19 @@ tag.
 
 ### Added
 
+- **Alerts through the operator's shared service, to confirmed addresses
+  only.** A hosted operator can deliver alert mail for instances that set no
+  relay of their own (`RMM_ALERTS_SMTP_*`), with a fixed sender the console
+  cannot change. Because a tenant administrator types the recipients in, an
+  address receives nothing through the service until its owner confirms it by
+  a single-use link (48 h; a changed address needs a new confirmation;
+  throttled per address and per instance). Each instance also has an hourly
+  budget (`RMM_ALERTS_HOURLY_LIMIT`), and every alert carries a footer naming
+  the instance it came from. The console shows confirmation status on the
+  users screen and in each user's notification settings, with a way to send
+  the link again, and the email screen shows the shared service when the
+  instance has no relay of its own. Migration `017_email_verification`.
+
 - **MCP applications screen.** Settings ▸ API tokens lists every registered
   MCP application (hosts it returns to, status, active tokens, last use) with
   Approve and Revoke, and sets the policy: any application, or only those on

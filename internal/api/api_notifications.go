@@ -58,6 +58,12 @@ func (s *Server) smtpConfigFor(r *http.Request, profile string) (view map[string
 		}
 		out := smtpView(stored)
 		out["enabled"] = settings.AlertTransport(stored).Enabled()
+		// The operator's shared alert service, which carries alert mail when
+		// the tenant sets no relay of its own. Its sender is not editable.
+		op := settings.OperatorAlertSMTPConfig(s.cfg)
+		out["service"] = map[string]any{
+			"enabled": op.Enabled(), "from": op.From, "from_name": op.FromName, "hourly_limit": op.HourlyLimit,
+		}
 		return out, nil
 	}
 	// The account profile is env-backed and read-only, so there is no stored
@@ -188,6 +194,15 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 			writeErr(w, http.StatusBadRequest, "configure an SMTP host and sender address first")
 			return
 		}
+		// The shared alert service tests like it delivers: only to the
+		// caller's own confirmed address.
+		if cfg.Operator {
+			u, err := s.store.GetUserByID(r.Context(), actorOf(r))
+			if err != nil || !strings.EqualFold(to, u.Email) || u.EmailVerifiedAt == nil {
+				writeErr(w, http.StatusForbidden, "the shared alert service sends test mail only to your own confirmed address")
+				return
+			}
+		}
 		// The account relay is the operator's, signing for the operator's
 		// domain. A tenant administrator may check that it works, but only by
 		// mailing themselves: an open "to" makes it a way to send the
@@ -270,6 +285,10 @@ func (s *Server) getMyNotifications(w http.ResponseWriter, r *http.Request) {
 		// Without a transport nothing is delivered whatever the preferences say,
 		// so the screen can tell the user that instead of leaving them waiting.
 		"delivery_configured": cfg.Enabled(),
+		// Through the shared service, only a confirmed address receives mail;
+		// the screen offers to send the confirmation again.
+		"verification_required": cfg.Operator,
+		"email_verified":        u.EmailVerifiedAt != nil,
 	})
 }
 
@@ -355,6 +374,7 @@ func (s *Server) setEmail(r *http.Request, userID, email string) (*models.User, 
 	}
 	detail, _ := json.Marshal(map[string]string{"user": u.Username, "email": u.Email})
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.email.update", userID, detail)
+	s.verifyAfterEmailChange(u, actorOf(r))
 	return u, nil
 }
 

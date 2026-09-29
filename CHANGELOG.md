@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
 ### Security
 
 - **Revoking an MCP application now kills its tokens at once.** OAuth tokens

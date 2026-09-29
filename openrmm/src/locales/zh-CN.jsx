@@ -481,6 +481,7 @@
   'dash.totalDevices': '设备总数',
   'dash.offlineCount': '{n} 离线',
   'dash.recentFailures': '最近失败',
+  'dash.lastHours': '最近 {n} 小时',
   'dash.allHidden': '所有面板均已隐藏',
   'dash.allHiddenMsg': '使用右上角的“自定义”恢复仪表盘面板。',
   'dash.viewAll': '查看全部',

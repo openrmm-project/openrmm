@@ -481,6 +481,7 @@
   'dash.totalDevices': 'デバイス総数',
   'dash.offlineCount': '{n} オフライン',
   'dash.recentFailures': '最近の失敗',
+  'dash.lastHours': '過去 {n} 時間',
   'dash.allHidden': 'すべてのパネルが非表示です',
   'dash.allHiddenMsg': '右上の「カスタマイズ」からパネルを再表示できます。',
   'dash.viewAll': 'すべて表示',

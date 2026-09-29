@@ -69,6 +69,17 @@ tag.
 
 ### Fixed
 
+- **The dashboard counted only what it had downloaded.** "Awaiting approval"
+  and "Recent failures" were counted over the latest 100 jobs, so a job
+  waiting longer than that dropped out of the count, and "recent" had no
+  window. The console also downloaded every device and those jobs, with
+  their scripts and output, every few seconds just to count them. A new
+  `GET /api/dashboard` counts in the database over what the caller may see
+  — every waiting job, failures in the last 24 hours — and lists the newest
+  waiting jobs without their content.
+- **The dashboard's recent activity listed 200 entries.** It asked for 8 in a
+  way the API client ignored; it now shows the latest 8, and the client
+  refuses a malformed filter instead of dropping it.
 - **Ten audit actions showed as raw identifiers in the console** (two-factor
   changes, reboot requests, remote sessions moved between tabs, MCP
   application approvals and revocations). They now read in every language,

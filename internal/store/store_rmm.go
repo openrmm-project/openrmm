@@ -568,16 +568,8 @@ func (s *Store) ScopeIntersectsUser(ctx context.Context, userID, scopeType, scop
 
 // ListAgentsForUser lists the agents a user may see (all when unscoped).
 func (s *Store) ListAgentsForUser(ctx context.Context, userID string) ([]models.Agent, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents a WHERE
-		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
-		OR EXISTS (
-		  SELECT 1 FROM user_scopes us WHERE us.user_id=$1 AND (
-		    (us.scope_type='agent'  AND us.scope_id=a.id) OR
-		    (us.scope_type='group'  AND us.scope_id=a.group_id) OR
-		    (us.scope_type='site'   AND us.scope_id=a.site_id) OR
-		    (us.scope_type='client' AND us.scope_id=(SELECT s.client_id FROM sites s WHERE s.id=a.site_id))
-		  ))
-		ORDER BY a.created_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT `+agentCols+` FROM agents a WHERE `+agentVisible+`
+		ORDER BY a.created_at DESC`, scopeArg(userID))
 	if err != nil {
 		return nil, err
 	}

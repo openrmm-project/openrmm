@@ -127,11 +127,16 @@ function loadDashHidden() {
   try { return JSON.parse(localStorage.getItem(DASH_HIDDEN_KEY)) || []; } catch { return []; }
 }
 
+// The dashboard shows the latest few entries; the audit log has the rest.
+const DASH_ACTIVITY_LIMIT = 8;
+
 function DashboardScreen({ navigate }) {
   const { can, role } = useAuth();
-  const devicesQ = useQuery(['dash-dev', role], () => can('devices.view') ? api.listDevices() : Promise.resolve({ devices: [] }), { invalidateOn: ['devices'], poll: can('devices.view') ? 10000 : 0 });
-  const jobsQ = useQuery(['dash-jobs', role], () => can('jobs.view') ? api.listJobs() : Promise.resolve({ jobs: [] }), { invalidateOn: ['jobs'], poll: can('jobs.view') ? 4000 : 0 });
-  const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit(8) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
+  // Counts come from the server, over everything the caller may see: counting
+  // here meant downloading the fleet and the latest jobs with their output,
+  // and missed a job waiting for approval older than that page.
+  const dashQ = useQuery(['dash-summary', role], () => (can('devices.view') || can('jobs.view')) ? api.getDashboard() : Promise.resolve({}), { invalidateOn: ['devices', 'jobs'], poll: (can('devices.view') || can('jobs.view')) ? 5000 : 0 });
+  const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit({ limit: DASH_ACTIVITY_LIMIT }) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
   const alertsQ = useQuery(['dash-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
   // Moves and deletions the AI or an MCP client proposed wait for a person just
   // like jobs do, so they count here too. A failure shows nothing rather than
@@ -147,15 +152,13 @@ function DashboardScreen({ navigate }) {
   });
   const customizable = DASH_WIDGETS.filter((w) => !w.perm || can(w.perm));
 
-  const devices = devicesQ.data?.devices || [];
-  const jobs = jobsQ.data?.jobs || [];
+  const deviceCounts = dashQ.data?.devices || { total: 0, online: 0 };
+  const jobCounts = dashQ.data?.jobs || { awaiting: 0, failed: 0, failed_window: 24, awaiting_items: [] };
   const alerts = alertsQ.data?.alerts || [];
-  const online = devices.filter((d) => d.status === 'online').length;
-  const awaiting = jobs.filter((j) => j.status === 'awaiting_approval');
+  const awaiting = jobCounts.awaiting_items || [];
   const pendingOps = window.DeviceBulk.awaiting(opsQ.data?.operations);
-  const awaitingTotal = awaiting.length + pendingOps.length;
+  const awaitingTotal = jobCounts.awaiting + pendingOps.length;
   const canSeeApprovals = can('jobs.view') || can('devices.view');
-  const failures = jobs.filter((j) => j.status === 'failed');
   const openAlerts = alerts.filter((a) => a.status === 'new' || a.status === 'acked');
   const openAlertCount = alertsQ.data?.counts?.open ?? openAlerts.length;
 
@@ -192,11 +195,11 @@ function DashboardScreen({ navigate }) {
 
       {show('stats') && (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-        {can('devices.view') && <StatTile label={t('dash.totalDevices')} value={devices.length} icon="devices" onClick={() => navigate('devices')} />}
-        {can('devices.view') && <StatTile label={t('status.online')} value={online} icon="dot" tone="ok" sub={t('dash.offlineCount', { n: devices.length - online })} onClick={() => navigate('devices')} />}
-        {canSeeApprovals && <StatTile label={t('dash.widget.awaiting')} value={awaitingTotal} icon="flash" tone="warn" highlight={awaitingTotal > 0} onClick={() => navigate(awaiting.length === 0 && pendingOps.length > 0 ? 'devices' : 'jobs')} sub={window.DeviceBulk.approvalSummary(awaiting.length, pendingOps.length)} />}
+        {can('devices.view') && <StatTile label={t('dash.totalDevices')} value={deviceCounts.total} icon="devices" onClick={() => navigate('devices')} />}
+        {can('devices.view') && <StatTile label={t('status.online')} value={deviceCounts.online} icon="dot" tone="ok" sub={t('dash.offlineCount', { n: deviceCounts.total - deviceCounts.online })} onClick={() => navigate('devices')} />}
+        {canSeeApprovals && <StatTile label={t('dash.widget.awaiting')} value={awaitingTotal} icon="flash" tone="warn" highlight={awaitingTotal > 0} onClick={() => navigate(jobCounts.awaiting === 0 && pendingOps.length > 0 ? 'devices' : 'jobs')} sub={window.DeviceBulk.approvalSummary(jobCounts.awaiting, pendingOps.length)} />}
         {can('alerts.view') && <StatTile label={t('dash.widget.alerts')} value={openAlertCount} icon="alert" tone={openAlerts.some((a) => a.severity === 'error') ? 'bad' : 'warn'} onClick={() => navigate('alerts')} />}
-        {can('jobs.view') && <StatTile label={t('dash.recentFailures')} value={failures.length} icon="reject" tone="bad" onClick={() => navigate('jobs')} />}
+        {can('jobs.view') && <StatTile label={t('dash.recentFailures')} value={jobCounts.failed} icon="reject" tone="bad" sub={t('dash.lastHours', { n: jobCounts.failed_window })} onClick={() => navigate('jobs')} />}
       </div>
       )}
 
@@ -237,7 +240,6 @@ function DashboardScreen({ navigate }) {
                 </button>
               ))}
               {awaiting.slice(0, Math.max(0, 4 - pendingOps.length)).map((j) => {
-                const dev = devices.find((d) => d.id === j.agent_id);
                 const ai = j.created_by.startsWith('ai:');
                 return (
                   <button key={j.id} onClick={() => navigate('jobs', { focus: j.id })} className="w-full text-left px-4 py-3 hover:bg-elevated/50 transition flex items-center gap-3">
@@ -246,7 +248,7 @@ function DashboardScreen({ navigate }) {
                         <span className="text-[13px] text-ink font-medium truncate">{j.description}</span>
                         {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{t('dash.aiBadge')}</span>}
                       </div>
-                      <div className="text-[11.5px] text-faint mt-0.5 flex items-center gap-1.5"><OsIcon os={dev?.os} size={12} />{dev?.hostname || j.agent_id} · {timeAgo(j.created_at)}</div>
+                      <div className="text-[11.5px] text-faint mt-0.5 flex items-center gap-1.5"><OsIcon os={j.os} size={12} />{j.hostname || j.agent_id} · {timeAgo(j.created_at)}</div>
                     </div>
                     <StatusPill status="awaiting_approval" size="sm" />
                   </button>
@@ -262,7 +264,7 @@ function DashboardScreen({ navigate }) {
                 <button onClick={() => navigate('audit')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">{t('dash.auditLog')} <Icon name="chevright" size={13} /></button>
               </div>
               <div className="p-2">
-                {(auditQ.data?.entries || []).map((e) => <ActivityRow key={e.id} entry={e} />)}
+                {(auditQ.data?.entries || []).slice(0, DASH_ACTIVITY_LIMIT).map((e) => <ActivityRow key={e.id} entry={e} />)}
               </div>
             </Card>
           )}
@@ -277,13 +279,12 @@ function DashboardScreen({ navigate }) {
             <div className="divide-y divide-line">
               {openAlerts.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-faint">{t('dash.noAlerts')}</div>}
               {openAlerts.slice(0, 5).map((a) => {
-                const dev = devices.find((d) => d.id === a.agent_id);
                 return (
                   <button key={a.id} onClick={() => navigate('alerts')} className="w-full text-left px-4 py-2.5 hover:bg-elevated/50 transition flex items-start gap-2.5">
                     <span className={cx('mt-1 h-1.5 w-1.5 rounded-full shrink-0', a.severity === 'error' ? 'bg-bad' : a.severity === 'warning' ? 'bg-warn' : 'bg-run')} />
                     <div className="min-w-0 flex-1">
                       <div className="text-[12.5px] text-ink leading-snug">{a.message}</div>
-                      <div className="text-[11px] text-faint mt-0.5">{dev?.hostname || t('dash.fleet')} · {timeAgo(a.created_at)}</div>
+                      <div className="text-[11px] text-faint mt-0.5">{a.agent_hostname || t('dash.fleet')} · {timeAgo(a.created_at)}</div>
                     </div>
                   </button>
                 );

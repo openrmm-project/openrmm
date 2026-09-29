@@ -108,6 +108,9 @@ const websocketURL = (path) => {
   return url.toString();
 };
 const qs = (o) => {
+  // A bare value would be dropped without a word — listAudit(8) once asked for
+  // the whole default page instead of eight entries — so it is refused.
+  if (o != null && typeof o !== 'object') throw new TypeError('query parameters must be an object');
   const u = new URLSearchParams();
   Object.entries(o || {}).forEach(([k, v]) => { if (v != null && v !== '') u.set(k, String(v)); });
   const s = u.toString(); return s ? '?' + s : '';
@@ -253,6 +256,8 @@ const api = {
 
   /* ---- jobs ---- */
   listJobs(params) { return GET('/api/jobs' + qs(params)); },
+  // The dashboard's counts and the newest jobs waiting for approval.
+  getDashboard() { return GET('/api/dashboard'); },
   getJob(id) { return GET('/api/jobs/' + id); },
   createJob(body) { return POST('/api/jobs', body); },
   createBulkJob(body) { return POST('/api/jobs/bulk', body); },

@@ -494,6 +494,7 @@
   'dash.totalDevices': 'Total devices',
   'dash.offlineCount': '{n} offline',
   'dash.recentFailures': 'Recent failures',
+  'dash.lastHours': 'Last {n} h',
   'dash.allHidden': 'All panels hidden',
   'dash.allHiddenMsg': 'Use Customize (top-right) to bring dashboard panels back.',
   'dash.viewAll': 'View all',

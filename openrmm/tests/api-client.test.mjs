@@ -471,3 +471,22 @@ test('address confirmation is wired from the link to the screens', async () => {
   assert.match(screens, /api\.requestMyEmailVerification\(\)/);
   assert.match(screens, /canEmail && u\.email && !u\.email_verified_at && <MenuItem/);
 });
+
+// The dashboard once called listAudit(8): the bare number was dropped, the
+// server answered with its default page of 200, and all of it was drawn.
+test('list filters must be objects, and the dashboard asks for a few entries', async () => {
+  const { api, last } = await loadApi();
+
+  await api.listAudit({ limit: 8 });
+  assert.equal(last().url, 'https://console.test/api/audit?limit=8');
+  assert.throws(() => api.listAudit(8), /must be an object/);
+  assert.throws(() => api.listJobs('failed'), /must be an object/);
+  await api.listJobs();
+  assert.equal(last().url, 'https://console.test/api/jobs');
+  await api.listAlerts('open');
+  assert.equal(last().url, 'https://console.test/api/alerts?status=open');
+
+  const dashboard = await readFile(path.join(root, 'src', 'screens-core.jsx'), 'utf8');
+  assert.match(dashboard, /api\.listAudit\(\{ limit: DASH_ACTIVITY_LIMIT \}\)/);
+  assert.match(dashboard, /entries \|\| \[\]\)\.slice\(0, DASH_ACTIVITY_LIMIT\)/);
+});

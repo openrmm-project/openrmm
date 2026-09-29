@@ -127,11 +127,14 @@ function loadDashHidden() {
   try { return JSON.parse(localStorage.getItem(DASH_HIDDEN_KEY)) || []; } catch { return []; }
 }
 
+// The dashboard shows the latest few entries; the audit log has the rest.
+const DASH_ACTIVITY_LIMIT = 8;
+
 function DashboardScreen({ navigate }) {
   const { can, role } = useAuth();
   const devicesQ = useQuery(['dash-dev', role], () => can('devices.view') ? api.listDevices() : Promise.resolve({ devices: [] }), { invalidateOn: ['devices'], poll: can('devices.view') ? 10000 : 0 });
   const jobsQ = useQuery(['dash-jobs', role], () => can('jobs.view') ? api.listJobs() : Promise.resolve({ jobs: [] }), { invalidateOn: ['jobs'], poll: can('jobs.view') ? 4000 : 0 });
-  const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit(8) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
+  const auditQ = useQuery(['dash-audit', role], () => can('audit.view') ? api.listAudit({ limit: DASH_ACTIVITY_LIMIT }) : Promise.resolve({ entries: [] }), { invalidateOn: ['audit'], poll: can('audit.view') ? 8000 : 0 });
   const alertsQ = useQuery(['dash-alerts', role], () => can('alerts.view') ? api.listAlerts() : Promise.resolve({ alerts: [] }), { invalidateOn: ['alerts'], poll: can('alerts.view') ? 8000 : 0 });
   // Moves and deletions the AI or an MCP client proposed wait for a person just
   // like jobs do, so they count here too. A failure shows nothing rather than
@@ -262,7 +265,7 @@ function DashboardScreen({ navigate }) {
                 <button onClick={() => navigate('audit')} className="text-[12px] text-muted hover:text-ink flex items-center gap-1">{t('dash.auditLog')} <Icon name="chevright" size={13} /></button>
               </div>
               <div className="p-2">
-                {(auditQ.data?.entries || []).map((e) => <ActivityRow key={e.id} entry={e} />)}
+                {(auditQ.data?.entries || []).slice(0, DASH_ACTIVITY_LIMIT).map((e) => <ActivityRow key={e.id} entry={e} />)}
               </div>
             </Card>
           )}

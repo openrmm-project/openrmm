@@ -481,6 +481,7 @@
   'dash.totalDevices': 'Geräte gesamt',
   'dash.offlineCount': '{n} offline',
   'dash.recentFailures': 'Letzte Fehler',
+  'dash.lastHours': 'Letzte {n} Std.',
   'dash.allHidden': 'Alle Bereiche ausgeblendet',
   'dash.allHiddenMsg': 'Über „Anpassen“ (oben rechts) holst du die Bereiche zurück.',
   'dash.viewAll': 'Alle anzeigen',

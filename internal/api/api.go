@@ -208,6 +208,9 @@ func (s *Server) Router() http.Handler {
 		r.Put("/me/notifications", s.updateMyNotifications)
 		r.Post("/me/email/verify", s.requestMyEmailVerification)
 		r.Get("/config", s.getConfig)
+		// The dashboard's counts. Open to every principal; each part is
+		// filled only with the permission that guards its full list.
+		r.Get("/dashboard", s.getDashboard)
 
 		r.With(s.requirePermission(models.PermClientsView)).Get("/clients", s.listClients)
 		r.With(s.requirePermission(models.PermClientsView)).Get("/sites", s.listSites)

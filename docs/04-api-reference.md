@@ -166,6 +166,12 @@ Review/approve a batch as one unit via `/api/jobs/batch/{batch_id}` (jobs share 
 `batch_id`). Same engine backs the AI `propose_bulk_deploy` tool — see
 [06-ai-chat](06-ai-chat.md).
 
+## Dashboard
+
+| Method | Path | Permission | Description |
+|--------|------|------------|-------------|
+| GET | `/api/dashboard` | any signed-in principal | Counts over what the caller may see: `devices` `{total, online}` (with `devices.view`) and `jobs` `{awaiting, failed, failed_window, awaiting_items}` (with `jobs.view`). `failed` covers the last `failed_window` hours; `awaiting_items` are the 5 newest jobs waiting for approval, without script or output |
+
 ## Audit
 
 | Method | Path | Permission | Description |

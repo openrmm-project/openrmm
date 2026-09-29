@@ -490,3 +490,18 @@ test('list filters must be objects, and the dashboard asks for a few entries', a
   assert.match(dashboard, /api\.listAudit\(\{ limit: DASH_ACTIVITY_LIMIT \}\)/);
   assert.match(dashboard, /entries \|\| \[\]\)\.slice\(0, DASH_ACTIVITY_LIMIT\)/);
 });
+
+// The dashboard's counts come from the server; downloading the fleet and the
+// latest jobs to count them in the browser also missed older waiting jobs.
+test('the dashboard counts on the server instead of downloading lists', async () => {
+  const { api, last } = await loadApi();
+  await api.getDashboard();
+  assert.equal(last().url, 'https://console.test/api/dashboard');
+  assert.equal(last().method, 'GET');
+
+  const source = await readFile(path.join(root, 'src', 'screens-core.jsx'), 'utf8');
+  const dashboard = source.slice(source.indexOf('function DashboardScreen'));
+  const body = dashboard.slice(0, dashboard.indexOf('\n}\n'));
+  assert.match(body, /api\.getDashboard\(\)/);
+  assert.doesNotMatch(body, /api\.listDevices\(|api\.listJobs\(/);
+});

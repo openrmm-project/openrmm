@@ -481,6 +481,7 @@
   'dash.totalDevices': 'Total de dispositivos',
   'dash.offlineCount': '{n} desconectados',
   'dash.recentFailures': 'Fallos recientes',
+  'dash.lastHours': 'Últimas {n} h',
   'dash.allHidden': 'Todos los paneles ocultos',
   'dash.allHiddenMsg': 'Usa Personalizar (arriba a la derecha) para recuperar los paneles.',
   'dash.viewAll': 'Ver todo',

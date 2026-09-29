@@ -256,6 +256,8 @@ const api = {
 
   /* ---- jobs ---- */
   listJobs(params) { return GET('/api/jobs' + qs(params)); },
+  // The dashboard's counts and the newest jobs waiting for approval.
+  getDashboard() { return GET('/api/dashboard'); },
   getJob(id) { return GET('/api/jobs/' + id); },
   createJob(body) { return POST('/api/jobs', body); },
   createBulkJob(body) { return POST('/api/jobs/bulk', body); },

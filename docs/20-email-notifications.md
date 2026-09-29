@@ -175,9 +175,9 @@ relay of their own, through one service of the operator's, set in the
 environment like the account transport:
 
 ```
-RMM_ALERTS_SMTP_HOST=smtp.resend.com
-RMM_ALERTS_SMTP_PORT=2587            # Civo blocks 25/465/587
-RMM_ALERTS_SMTP_USERNAME=resend
+RMM_ALERTS_SMTP_HOST=smtp.mail.example.com
+RMM_ALERTS_SMTP_PORT=587
+RMM_ALERTS_SMTP_USERNAME=alerts
 RMM_ALERTS_SMTP_PASSWORD=…           # or RMM_ALERTS_SMTP_PASSWORD_FILE
 RMM_ALERTS_SMTP_FROM=alerts@notify.example.com
 RMM_ALERTS_SMTP_FROM_NAME=OpenRMM Alerts · acme
@@ -227,9 +227,10 @@ self-hosted instance with an internal relay sets
 `RMM_SMTP_ALERTS_ALLOW_PRIVATE=true`. The account transport, set by the operator
 in the environment, is not restricted.
 
-**Hosted on Civo:** outbound 25, 465 and 587 are blocked there, so a tenant's
-relay has to accept another port (Resend, SendGrid and Mailgun offer 2525/2587;
-Microsoft 365 and Gmail do not).
+**Blocked mail ports:** some cloud providers block outbound 25, 465 and 587.
+On those, every relay — the account transport, the shared service and a
+tenant's own — has to accept another port (many transactional mail services
+offer 2525 or 2587; Microsoft 365 and Gmail do not).
 
 Settings are under **Users & Settings → Email** (`settings.manage`), one tab per
 profile:

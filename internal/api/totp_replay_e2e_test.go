@@ -78,3 +78,28 @@ func TestTOTPCodeSignsInOnlyOnceIntegration(t *testing.T) {
 		}
 	}
 }
+
+// A secret the server cannot decrypt (the settings key was rotated) must be a
+// refusal, not an empty 200 that the console reads as success.
+func TestTOTPUndecryptableSecretIsRefusedIntegration(t *testing.T) {
+	e := newSMTPE2E(t)
+	id, _, session := e.resetUser("totp-undecryptable@example.test")
+	otherKey := &config.Config{SettingsEncryptionKey: "fedcba9876543210fedcba9876543210"}
+	enc, err := settings.Encrypt(otherKey, auth.GenerateTOTPSecret())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.SetPendingUserTOTP(e.ctx, id, enc); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.EnablePendingUserTOTP(e.ctx, id, enc, nil); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := e.do(http.MethodPost, "/api/me/2fa/recovery-codes", `{"code":"123456"}`, session); status != http.StatusBadRequest {
+		t.Errorf("new recovery codes with an undecryptable secret: HTTP %d, want 400", status)
+	}
+	body := fmt.Sprintf(`{"current_password":%q,"code":"123456"}`, resetTestPassword)
+	if status, _ := e.do(http.MethodPost, "/api/me/2fa/setup", body, session); status != http.StatusUnauthorized {
+		t.Errorf("2FA setup with an undecryptable secret: HTTP %d, want 401", status)
+	}
+}

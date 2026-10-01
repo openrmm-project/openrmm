@@ -600,7 +600,11 @@ func (s *Server) setup2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	if enabled {
 		secret, derr := settings.Decrypt(s.cfg, currentSecret)
-		if derr != nil || !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusUnauthorized,
+		if derr != nil {
+			writeErr(w, http.StatusUnauthorized, "current password and two-factor code are required")
+			return
+		}
+		if !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusUnauthorized,
 			"current password and two-factor code are required") {
 			return
 		}
@@ -690,7 +694,11 @@ func (s *Server) regenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := settings.Decrypt(s.cfg, enc)
-	if err != nil || !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusBadRequest, "invalid code") {
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid code")
+		return
+	}
+	if !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusBadRequest, "invalid code") {
 		return
 	}
 	codes, err := s.issueRecoveryCodes(r, uid)

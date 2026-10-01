@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/p1ngu/rmm/internal/config"
+	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/oidc"
 	"github.com/p1ngu/rmm/internal/store"
 )
@@ -147,6 +148,17 @@ func TestOIDCFirstLinkRequiresVerifiedEmail(t *testing.T) {
 	}
 }
 
+// A username that only came from a fallback claim (the configured one was
+// absent) must not adopt a pre-existing local account.
+func TestOIDCAdoptAllowed(t *testing.T) {
+	if oidcAdoptAllowed(&oidc.Identity{Username: "admin", UsernameFallback: true}) == nil {
+		t.Fatal("a fallback username was allowed to claim a local account")
+	}
+	if err := oidcAdoptAllowed(&oidc.Identity{Username: "admin"}); err != nil {
+		t.Fatalf("the configured claim was refused: %v", err)
+	}
+}
+
 func TestResolveOIDCUserIntegration(t *testing.T) {
 	databaseURL := os.Getenv("RMM_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -202,5 +214,27 @@ func TestResolveOIDCUserIntegration(t *testing.T) {
 	})
 	if err != nil || provisioned.Username != "directory-user" {
 		t.Fatalf("directory username was not provisioned: %#v, %v", provisioned, err)
+	}
+
+	// A token without the configured claim falls back to preferred_username,
+	// which the user may have chosen at the provider. Matching a local admin
+	// by that name must be refused, and must not leave a link behind.
+	helpdesk, err := st.CreateUser(ctx, "helpdesk", "unused-hash", models.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := &oidc.Identity{Issuer: "https://issuer.example", Subject: "chosen-name-sub",
+		Username: "helpdesk", UsernameFallback: true}
+	if got, err := s.resolveOIDCUser(ctx, fallback); err == nil {
+		t.Fatalf("a fallback username claimed local admin %q", got.Username)
+	}
+	if _, err := st.GetUserByOIDC(ctx, fallback.Issuer, fallback.Subject); err != store.ErrNotFound {
+		t.Fatalf("refused fallback identity lookup = %v, want not found", err)
+	}
+	// Control: the configured claim carrying the same name still links.
+	configured := *fallback
+	configured.UsernameFallback = false
+	if got, err := s.resolveOIDCUser(ctx, &configured); err != nil || got.ID != helpdesk.ID {
+		t.Fatalf("configured claim did not link the local account: %#v, %v", got, err)
 	}
 }

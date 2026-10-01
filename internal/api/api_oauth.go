@@ -362,7 +362,12 @@ func (s *Server) verifyUserCredentials(ctx context.Context, username, password, 
 	}
 	if enabled {
 		secret, derr := settings.Decrypt(s.cfg, encSecret)
-		ok := derr == nil && auth.ValidateTOTP(secret, code)
+		ok := false
+		if derr == nil {
+			if ok, e = s.spendTOTP(ctx, id, secret, code); e != nil {
+				return "", "", errAuthStore
+			}
+		}
 		if !ok {
 			used, uerr := s.store.UseRecoveryCode(ctx, id, auth.Hash(auth.NormalizeRecoveryCode(code)))
 			if uerr != nil {

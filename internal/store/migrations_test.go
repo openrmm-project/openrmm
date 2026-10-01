@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,6 +36,29 @@ func TestMigrationFilesAreSeparatedFromSnapshot(t *testing.T) {
 	}
 	if snapshot == migrationV1SQL {
 		t.Fatal("canonical snapshot must not double as immutable v1")
+	}
+}
+
+// Each migration is embedded and listed by hand. A file added to migrations/
+// and left out of the list compiles, passes every test that needs no database,
+// and is simply never applied — its columns missing at runtime.
+func TestEveryMigrationFileIsRegistered(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate migrations test")
+	}
+	entries, err := os.ReadDir(filepath.Join(filepath.Dir(file), "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := map[string]bool{}
+	for _, m := range migrations {
+		registered[fmt.Sprintf("%03d_%s.sql", m.version, m.name)] = true
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".sql") && !registered[entry.Name()] {
+			t.Errorf("%s is not in the migrations list, so it would never run", entry.Name())
+		}
 	}
 }
 

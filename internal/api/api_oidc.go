@@ -252,6 +252,9 @@ func (s *Server) resolveOIDCUser(ctx context.Context, id *oidc.Identity) (*model
 	// A local account with this username: adopt it rather than creating a
 	// duplicate. It keeps the role and scope an operator already set.
 	if existingID, role, _, lerr := s.store.GetUserAuth(ctx, id.Username); lerr == nil {
+		if err := oidcAdoptAllowed(id); err != nil {
+			return nil, err
+		}
 		if err := s.store.LinkOIDCIdentity(ctx, existingID, id.Issuer, id.Subject); err != nil {
 			// Already linked to a different identity. Refusing is the point: this
 			// is someone arriving with a matching username at a provider,
@@ -278,6 +281,18 @@ func (s *Server) resolveOIDCUser(ctx context.Context, id *oidc.Identity) (*model
 func oidcFirstLinkAllowed(id *oidc.Identity) error {
 	if strings.Contains(id.Username, "@") && (!id.EmailVerified || !strings.EqualFold(id.Username, id.Email)) {
 		return errors.New("an email username must be a verified email claim")
+	}
+	return nil
+}
+
+// oidcAdoptAllowed decides whether an identity may take over a pre-existing
+// local account. Only a username from the claim the operator configured may:
+// when that claim is missing, the fallback (preferred_username, sub) is often
+// chosen by the user at the provider, and matching it against local usernames
+// hands "admin" at the provider the local admin account.
+func oidcAdoptAllowed(id *oidc.Identity) error {
+	if id.UsernameFallback {
+		return errors.New("the provider did not send the configured username claim, so the sign-in cannot claim an existing account")
 	}
 	return nil
 }

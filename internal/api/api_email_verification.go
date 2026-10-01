@@ -147,9 +147,10 @@ func (s *Server) requestMyEmailVerification(w http.ResponseWriter, r *http.Reque
 
 // requestUserEmailVerification lets an administrator send a user a new link.
 func (s *Server) requestUserEmailVerification(w http.ResponseWriter, r *http.Request) {
-	u, err := s.store.GetUserByID(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, httpStatusFor(err), err.Error())
+	// The same gate as every other action on another user: without it a scoped
+	// manager could mail any account and learn whether its address is confirmed.
+	u, ok := s.requireUserManage(w, r, chi.URLParam(r, "id"))
+	if !ok {
 		return
 	}
 	if u.EmailVerifiedAt != nil {

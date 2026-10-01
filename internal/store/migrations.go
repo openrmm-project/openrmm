@@ -81,6 +81,9 @@ var migrationV16SQL string
 //go:embed migrations/017_email_verification.sql
 var migrationV17SQL string
 
+//go:embed migrations/018_totp_replay.sql
+var migrationV18SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -99,6 +102,7 @@ var migrations = []migration{
 	{version: 15, name: "oauth_sso", sql: migrationV15SQL},
 	{version: 16, name: "oauth_app_controls", sql: migrationV16SQL},
 	{version: 17, name: "email_verification", sql: migrationV17SQL},
+	{version: 18, name: "totp_replay", sql: migrationV18SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

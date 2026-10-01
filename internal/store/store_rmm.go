@@ -179,7 +179,7 @@ func (s *Store) EnablePendingUserTOTP(ctx context.Context, id, secret string, re
 	}
 	defer tx.Rollback(ctx)
 	ct, err := tx.Exec(ctx, `UPDATE users SET totp_secret=totp_pending_secret,
-		totp_pending_secret=NULL, totp_enabled=TRUE
+		totp_pending_secret=NULL, totp_enabled=TRUE, totp_last_step=NULL
 		WHERE id=$1 AND totp_pending_secret=$2`, id, secret)
 	if err != nil {
 		return err
@@ -200,6 +200,19 @@ func (s *Store) EnablePendingUserTOTP(ctx context.Context, id, secret string, re
 	return tx.Commit(ctx)
 }
 
+// ConsumeTOTPStep spends a two-factor time step for the user, reporting false
+// when that step (or a later one) was already accepted. The comparison and the
+// write are one statement, so two sign-ins racing with the same code cannot
+// both pass.
+func (s *Store) ConsumeTOTPStep(ctx context.Context, id string, step int64) (bool, error) {
+	ct, err := s.pool.Exec(ctx, `UPDATE users SET totp_last_step=$2
+		WHERE id=$1 AND (totp_last_step IS NULL OR totp_last_step < $2)`, id, step)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
+}
+
 // DisableUserTOTP atomically clears the secret and all recovery codes.
 func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
@@ -208,7 +221,7 @@ func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback(ctx)
 	ct, err := tx.Exec(ctx, `UPDATE users SET totp_secret=NULL, totp_pending_secret=NULL,
-		totp_enabled=FALSE WHERE id=$1`, id)
+		totp_enabled=FALSE, totp_last_step=NULL WHERE id=$1`, id)
 	if err != nil {
 		return err
 	}

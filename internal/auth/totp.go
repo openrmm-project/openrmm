@@ -52,17 +52,25 @@ func hotp(secret string, counter uint64) (string, bool) {
 // ValidateTOTP checks a 6-digit code against the secret (RFC 6238, 30s step),
 // allowing ±1 step of clock skew. Constant-time compare.
 func ValidateTOTP(secret, code string) bool {
+	_, ok := MatchTOTP(secret, code)
+	return ok
+}
+
+// MatchTOTP is ValidateTOTP that also says which time step the code belongs
+// to, so the caller can spend it: a code is otherwise valid for its whole
+// window, and anyone who sees it can use it again inside that window.
+func MatchTOTP(secret, code string) (step int64, ok bool) {
 	code = strings.TrimSpace(code)
 	if len(code) != 6 {
-		return false
+		return 0, false
 	}
-	step := uint64(time.Now().Unix() / 30)
-	for _, c := range []uint64{step - 1, step, step + 1} {
-		if want, ok := hotp(secret, c); ok && subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
-			return true
+	now := time.Now().Unix() / 30
+	for _, c := range []int64{now - 1, now, now + 1} {
+		if want, ok := hotp(secret, uint64(c)); ok && subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return c, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 // recoveryAlphabet excludes ambiguous characters (0/O, 1/I/L) so codes are

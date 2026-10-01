@@ -1,0 +1,11 @@
+-- One use per two-factor code.
+--
+-- A TOTP code stays valid for about ninety seconds (the current step and one
+-- either side, for clock drift). Without a record of what was used, a code
+-- seen once — over a shoulder, or relayed by a phishing page — signs in again
+-- within that window. The highest time step accepted for each user is kept,
+-- and a code is only accepted for a later step.
+--
+--   users.totp_last_step   the last accepted step (unix time / 30); NULL when
+--                          no code has been accepted for the current secret.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT;

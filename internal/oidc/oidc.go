@@ -41,8 +41,13 @@ type Identity struct {
 	// Username is the claim chosen by RMM_OIDC_USERNAME_CLAIM, used when an
 	// account is created and to link an existing local user on first sign-in.
 	Username string
-	Email    string
-	Name     string
+	// UsernameFallback is set when the configured claim was absent and Username
+	// came from another one. A fallback may name a new account, never claim an
+	// existing one: preferred_username in particular is often whatever the user
+	// typed at the provider, and "admin" there must not become the local admin.
+	UsernameFallback bool
+	Email            string
+	Name             string
 	// EmailVerified is reported, not enforced, because providers disagree about
 	// it: some omit it entirely for a directory where every address is by
 	// definition verified. The caller decides.
@@ -219,11 +224,13 @@ func (p *Provider) identityFrom(issuer, subject string, claims map[string]any) (
 	// Falling back is better than failing: some providers omit `email` for
 	// service directories but always send `preferred_username`, and vice versa.
 	// Refusing the sign-in over a missing optional claim would be a support
-	// ticket for something this can resolve.
+	// ticket for something this can resolve. It is marked, though, because a
+	// fallback is not the identifier the operator chose to trust for linking.
 	if id.Username == "" {
 		for _, fallback := range []string{"email", "preferred_username", "sub"} {
 			if v := strings.TrimSpace(stringClaim(claims, fallback)); v != "" {
 				id.Username = v
+				id.UsernameFallback = true
 				break
 			}
 		}

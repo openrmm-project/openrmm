@@ -476,6 +476,9 @@ func (s *Store) ListJobs(ctx context.Context, agentID string, limit int) ([]mode
 }
 
 // ListDispatchableJobs returns approved-but-not-finished jobs for an agent.
+// "sent" is included on purpose: a frame lost with the connection would
+// otherwise strand the job. Delivery is therefore at-least-once, and the agent
+// is what keeps execution at-most-once (cmd/agent beginJob).
 func (s *Store) ListDispatchableJobs(ctx context.Context, agentID string) ([]models.Job, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+jobCols+` FROM jobs WHERE agent_id=$1 AND status IN ('pending','sent')
@@ -502,6 +505,22 @@ func (s *Store) SetJobStatus(ctx context.Context, id, status string, approvedBy 
 		`UPDATE jobs SET status=$2, approved_by=COALESCE($3, approved_by), updated_at=now() WHERE id=$1`,
 		id, status, approvedBy)
 	return err
+}
+
+// TransitionJobStatus moves a job from one status to another only if it is
+// still in the first, reporting whether it did. A decision on a job — approve,
+// reject — is a check followed by a write, and two operators acting at once
+// would otherwise both pass the check: the job is rejected on record and runs
+// anyway.
+func (s *Store) TransitionJobStatus(ctx context.Context, id, from, to string, actor *string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE jobs SET status=$3, approved_by=COALESCE($4, approved_by), updated_at=now()
+		 WHERE id=$1 AND status=$2`,
+		id, from, to, actor)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // SetJobResult records the outcome of a finished job.

@@ -164,7 +164,10 @@ services:
         condition: service_healthy
     environment:
       OPENRMM_BASE_PATH: ${OPENRMM_BASE_PATH:-/}
-      NGINX_ENVSUBST_FILTER: ^OPENRMM_BASE_PATH$
+      # Peers allowed to say who the client is (nginx.prod.conf, real_ip).
+      EDGE_SUBNET: ${EDGE_SUBNET:-172.30.240.0/24}
+      OPENRMM_TRUSTED_PROXY: ${OPENRMM_TRUSTED_PROXY:-127.0.0.1}
+      NGINX_ENVSUBST_FILTER: ^(OPENRMM_BASE_PATH|EDGE_SUBNET|OPENRMM_TRUSTED_PROXY)$
     volumes:
       - ./nginx.prod.conf:/etc/nginx/templates/default.conf.template:ro
       - ./public:/usr/share/nginx/dl:ro
@@ -204,6 +207,12 @@ networks:
   db:
     internal: true
   edge:
+    # Pinned so nginx can trust exactly this range for X-Forwarded-For: the
+    # published ports reach the frontend from this network's gateway. Change it
+    # with EDGE_SUBNET if it collides with a route on the host (a VPN, say).
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.30.240.0/24}
   egress:
 
 secrets:

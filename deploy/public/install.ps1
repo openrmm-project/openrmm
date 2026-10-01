@@ -220,21 +220,26 @@ $UninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OpenR
 # uninstall.ps1 out of. Inheritance is broken and the ACL written explicitly,
 # which also strips whatever a squatter granted itself. Well-known SIDs, not
 # names: "Administrators" is localised.
+#
+# Standard users get nothing. state.json holds the agent's bearer token and the
+# outboxes hold undelivered job output; read access to them is enough to
+# impersonate this device to the server. Nothing that runs as a user needs the
+# directory: the agent, its jobs and the remote-desktop sidecar all run as
+# SYSTEM. The agent re-applies the same ACL on every start (statedir_windows.go),
+# because self-updates never run this script again.
 function Set-AgentDirectoryAcl {
     param([string]$Path)
     $system = New-Object Security.Principal.SecurityIdentifier(
         [Security.Principal.WellKnownSidType]::LocalSystemSid, $null)
     $admins = New-Object Security.Principal.SecurityIdentifier(
         [Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null)
-    $users = New-Object Security.Principal.SecurityIdentifier(
-        [Security.Principal.WellKnownSidType]::BuiltinUsersSid, $null)
 
     $acl = Get-Acl -Path $Path
     $acl.SetAccessRuleProtection($true, $false)   # break inheritance, keep nothing
     foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
     $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
     $none = [Security.AccessControl.PropagationFlags]::None
-    foreach ($grant in @(@($system, 'FullControl'), @($admins, 'FullControl'), @($users, 'ReadAndExecute'))) {
+    foreach ($grant in @(@($system, 'FullControl'), @($admins, 'FullControl'))) {
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
             $grant[0], $grant[1], $inherit, $none, [Security.AccessControl.AccessControlType]::Allow)))
     }

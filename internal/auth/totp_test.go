@@ -64,3 +64,26 @@ func TestNormalizeRecoveryCode(t *testing.T) {
 		t.Errorf("NormalizeRecoveryCode = %q", got)
 	}
 }
+
+// MatchTOTP names the step a code belongs to, so the caller can spend it once.
+func TestMatchTOTPReportsTheStep(t *testing.T) {
+	s := GenerateTOTPSecret()
+	now := time.Now().Unix() / 30
+	codes := map[int64]string{}
+	for _, step := range []int64{now - 1, now, now + 1} {
+		codes[step], _ = hotp(s, uint64(step))
+	}
+	for step, code := range codes {
+		got, ok := MatchTOTP(s, code)
+		if !ok {
+			t.Fatalf("code for step %d did not match", step)
+		}
+		// Two steps can share a 6-digit code by chance; then the earliest wins.
+		if got != step && codes[got] != code {
+			t.Fatalf("code for step %d matched step %d", step, got)
+		}
+	}
+	if _, ok := MatchTOTP(s, "12345"); ok {
+		t.Fatal("malformed code matched")
+	}
+}

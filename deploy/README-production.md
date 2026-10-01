@@ -140,16 +140,24 @@ listener. Apply source ACLs there:
   egress and normally require public reachability plus OAuth, least privilege,
   rate limiting, and the approval guardrail.
 
-The edge must preserve WebSocket upgrades. It must replace, not append an
-untrusted client-supplied `X-Forwarded-For`, and forward the original host and
-HTTPS scheme. The bundled nginx then replaces `X-Forwarded-For` with the peer it
-accepted. Configure `real_ip_header`/trusted proxy ranges in bundled nginx first
-if another proxy address, rather than the real client, would otherwise be seen.
-Enable `RMM_TRUST_PROXY_HEADERS` only for this trusted chain.
+The edge must preserve WebSocket upgrades, set `X-Forwarded-For` to the client
+it accepted (replacing or appending to an untrusted client-supplied value), and
+forward the original host and HTTPS scheme. The bundled nginx takes the client
+address from `X-Forwarded-For` only when the connection comes from the edge
+network (`EDGE_SUBNET`, which the published ports arrive from) or from
+`OPENRMM_TRUSTED_PROXY`, and forwards that single address to the server.
+Without this every client would share the edge's address, and the per-address
+login limit would lock everyone out at once. Enable `RMM_TRUST_PROXY_HEADERS`
+only for this trusted chain.
+
+`EDGE_SUBNET` pins the Docker network's range; change it if it collides with a
+route on the host. Changing it, or upgrading from a release that did not pin
+it, recreates that network: run `docker compose ... down` before `up -d`.
 
 If the TLS edge runs on another machine, changing a bind address from loopback is
 an explicit topology change. Bind only to the private interface used by that
-edge, enforce source/network ACLs there, and prevent direct public access. Never
+edge, set `OPENRMM_TRUSTED_PROXY` to that edge's address, enforce source/network
+ACLs there, and prevent direct public access. Never
 publish the app `8080` or PostgreSQL `5432`.
 
 The nginx security policy is enforcing, not report-only. The console CSP permits

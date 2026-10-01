@@ -95,6 +95,21 @@ func (f *fakeStore) SetJobStatus(_ context.Context, id, status string, approvedB
 	return nil
 }
 
+func (f *fakeStore) TransitionJobStatus(_ context.Context, id, from, to string, actor *string) (bool, error) {
+	j, ok := f.jobs[id]
+	if !ok {
+		return false, errors.New("job not found")
+	}
+	if j.Status != from {
+		return false, nil
+	}
+	j.Status = to
+	if actor != nil {
+		j.ApprovedBy = actor
+	}
+	return true, nil
+}
+
 func (f *fakeStore) SetJobResult(_ context.Context, id, status string, exitCode int, stdout, stderr string) error {
 	j, ok := f.jobs[id]
 	if !ok {

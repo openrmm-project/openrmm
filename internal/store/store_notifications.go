@@ -144,7 +144,7 @@ func (s *Store) RecipientsForAlertEvent(ctx context.Context, alertID, eventType 
 	var out []NotificationRecipient
 	for rows.Next() {
 		var recipient NotificationRecipient
-		if err := rows.Scan(&recipient.UserID, &recipient.Email); err != nil {
+		if err := rows.Scan(&recipient.UserID, &recipient.Email, &recipient.Verified); err != nil {
 			return nil, err
 		}
 		out = append(out, recipient)

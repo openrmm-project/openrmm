@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -166,7 +167,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		secret, derr := settings.Decrypt(s.cfg, encSecret)
-		ok := derr == nil && auth.ValidateTOTP(secret, in.Code)
+		ok := false
+		if derr == nil {
+			if ok, err = s.spendTOTP(r.Context(), id, secret, in.Code); err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 		if !ok {
 			// Fall back to a recovery code (consumed on use).
 			used, uerr := s.store.UseRecoveryCode(r.Context(), id, auth.Hash(auth.NormalizeRecoveryCode(in.Code)))
@@ -294,14 +301,43 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"users": users})
 }
 
-func (s *Server) userManageAllowed(r *http.Request, user *models.User) (bool, error) {
-	uid := s.scopeUserID(r)
-	if uid == "" {
-		return true, nil
+// spendTOTP checks a two-factor code and spends its time step. A code stays
+// valid for about ninety seconds; spending it means one seen over a shoulder,
+// or relayed by a phishing page, does not work a second time in that window.
+func (s *Server) spendTOTP(ctx context.Context, userID, secret, code string) (bool, error) {
+	step, ok := auth.MatchTOTP(secret, code)
+	if !ok {
+		return false, nil
 	}
+	return s.store.ConsumeTOTPStep(ctx, userID, step)
+}
+
+// spendTOTPOrFail is spendTOTP for handlers: it writes the refusal itself.
+func (s *Server) spendTOTPOrFail(w http.ResponseWriter, r *http.Request, userID, secret, code string, status int, msg string) bool {
+	ok, err := s.spendTOTP(r.Context(), userID, secret, code)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !ok {
+		writeErr(w, status, msg)
+		return false
+	}
+	return true
+}
+
+// userManageAllowed reports whether the caller may act on user. Nobody manages
+// an account that holds a permission they lack — scoped or not. Without that,
+// an unscoped custom role with users.manage could change an administrator's
+// email, reset their second factor and take the account over.
+func (s *Server) userManageAllowed(r *http.Request, user *models.User) (bool, error) {
 	perms, err := s.permissionsForRole(r.Context(), user.Role)
 	if err != nil || !permissionsSubset(perms, permissionsOf(r)) {
 		return false, err
+	}
+	uid := s.scopeUserID(r)
+	if uid == "" {
+		return true, nil
 	}
 	scopes, err := s.store.ListUserScopes(r.Context(), user.ID)
 	if err != nil || len(scopes) == 0 {
@@ -564,8 +600,8 @@ func (s *Server) setup2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	if enabled {
 		secret, derr := settings.Decrypt(s.cfg, currentSecret)
-		if derr != nil || !auth.ValidateTOTP(secret, in.Code) {
-			writeErr(w, http.StatusUnauthorized, "current password and two-factor code are required")
+		if derr != nil || !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusUnauthorized,
+			"current password and two-factor code are required") {
 			return
 		}
 	}
@@ -602,7 +638,8 @@ func (s *Server) enable2FA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := settings.Decrypt(s.cfg, enc)
-	if err != nil || !auth.ValidateTOTP(secret, in.Code) {
+	step, valid := auth.MatchTOTP(secret, in.Code)
+	if err != nil || !valid {
 		writeErr(w, http.StatusBadRequest, "invalid code")
 		return
 	}
@@ -615,6 +652,8 @@ func (s *Server) enable2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// The confirming code is spent too, so it cannot complete a sign-in.
+	_, _ = s.store.ConsumeTOTPStep(r.Context(), uid, step)
 	_ = s.store.AddAudit(r.Context(), uid, "user.2fa.enable", uid, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": true, "recovery_codes": codes})
 }
@@ -651,8 +690,7 @@ func (s *Server) regenRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, err := settings.Decrypt(s.cfg, enc)
-	if err != nil || !auth.ValidateTOTP(secret, in.Code) {
-		writeErr(w, http.StatusBadRequest, "invalid code")
+	if err != nil || !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusBadRequest, "invalid code") {
 		return
 	}
 	codes, err := s.issueRecoveryCodes(r, uid)
@@ -702,8 +740,12 @@ func (s *Server) disable2FA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, hashErr.Error())
 		return
 	}
-	if err != nil || !auth.CheckPassword(hash, in.CurrentPassword) || !auth.ValidateTOTP(secret, in.Code) {
+	if err != nil || !auth.CheckPassword(hash, in.CurrentPassword) {
 		writeErr(w, http.StatusUnauthorized, "current password and two-factor code are required")
+		return
+	}
+	if !s.spendTOTPOrFail(w, r, uid, secret, in.Code, http.StatusUnauthorized,
+		"current password and two-factor code are required") {
 		return
 	}
 	if err := s.store.DisableUserTOTP(r.Context(), uid); err != nil {

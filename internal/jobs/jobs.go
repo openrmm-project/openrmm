@@ -23,6 +23,7 @@ type Store interface {
 	CreateJob(ctx context.Context, j *models.Job) (*models.Job, error)
 	GetJob(ctx context.Context, id string) (*models.Job, error)
 	SetJobStatus(ctx context.Context, id, status string, approvedBy *string) error
+	TransitionJobStatus(ctx context.Context, id, from, to string, actor *string) (bool, error)
 	SetJobResult(ctx context.Context, id, status string, exitCode int, stdout, stderr string) error
 	ListDispatchableJobs(ctx context.Context, agentID string) ([]models.Job, error)
 	ListJobsByBatch(ctx context.Context, batchID string) ([]models.Job, error)
@@ -170,7 +171,9 @@ func (s *Service) Approve(ctx context.Context, jobID, approver string) (*models.
 	if j.Status != models.JobAwaitingApproval {
 		return nil, fmt.Errorf("job is %s, cannot approve", j.Status)
 	}
-	if err := s.store.SetJobStatus(ctx, jobID, models.JobPending, &approver); err != nil {
+	// The check above is for the message; this conditional write is the guard.
+	// A reject landing between the two must win, not be overwritten.
+	if err := s.decide(ctx, jobID, models.JobPending, approver, "approve"); err != nil {
 		return nil, err
 	}
 	s.audit(ctx, approver, "job.approve", jobID, map[string]any{"agent": j.AgentID, "host": s.hostname(ctx, j.AgentID)})
@@ -188,11 +191,27 @@ func (s *Service) Reject(ctx context.Context, jobID, actor string) (*models.Job,
 	if j.Status != models.JobAwaitingApproval {
 		return nil, fmt.Errorf("job is %s, cannot reject", j.Status)
 	}
-	if err := s.store.SetJobStatus(ctx, jobID, models.JobRejected, &actor); err != nil {
+	if err := s.decide(ctx, jobID, models.JobRejected, actor, "reject"); err != nil {
 		return nil, err
 	}
 	s.audit(ctx, actor, "job.reject", jobID, map[string]any{"agent": j.AgentID, "host": s.hostname(ctx, j.AgentID)})
 	return s.store.GetJob(ctx, jobID)
+}
+
+// decide records an approval decision only while the job still awaits one.
+func (s *Service) decide(ctx context.Context, jobID, to, actor, verb string) error {
+	ok, err := s.store.TransitionJobStatus(ctx, jobID, models.JobAwaitingApproval, to, &actor)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		status := "no longer awaiting approval"
+		if j, err := s.store.GetJob(ctx, jobID); err == nil {
+			status = j.Status
+		}
+		return fmt.Errorf("job is %s, cannot %s", status, verb)
+	}
+	return nil
 }
 
 // checkFleetCanRunShell refuses the deployment if any target is too old for the

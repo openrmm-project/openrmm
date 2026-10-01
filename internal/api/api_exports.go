@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/p1ngu/rmm/internal/exports"
@@ -62,13 +63,36 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 // csvStream wraps the response as a CSV download and hands back a writer.
-func csvStream(w http.ResponseWriter, filename string) *csv.Writer {
+func csvStream(w http.ResponseWriter, filename string) *spreadsheetSafeCSV {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	// Nothing here should be cached: the URL expires, and a cached copy would
 	// outlive it in a proxy.
 	w.Header().Set("Cache-Control", "no-store")
-	return csv.NewWriter(w)
+	return &spreadsheetSafeCSV{csv.NewWriter(w)}
+}
+
+// spreadsheetSafeCSV neutralises cells a spreadsheet would run as a formula.
+// Most of what these exports carry is reported by the devices themselves —
+// hostnames, software names, manufacturers — so anyone in control of one
+// endpoint chooses text that a technician later opens in Excel. A leading
+// apostrophe makes the cell literal text there and is plainly visible
+// everywhere else.
+type spreadsheetSafeCSV struct{ *csv.Writer }
+
+func (c *spreadsheetSafeCSV) Write(record []string) error {
+	safe := make([]string, len(record))
+	for i, cell := range record {
+		safe[i] = spreadsheetSafeCell(cell)
+	}
+	return c.Writer.Write(safe)
+}
+
+func spreadsheetSafeCell(cell string) string {
+	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+		return "'" + cell
+	}
+	return cell
 }
 
 func (s *Server) streamAuditCSV(w http.ResponseWriter, r *http.Request, claims *exports.Claims) {

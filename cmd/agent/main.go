@@ -76,6 +76,15 @@ type agent struct {
 	outboxPath      string
 	checkOutbox     map[string]protocol.CheckResultMsg
 	checkOutboxPath string
+
+	// started records, durably and before anything runs, every job this agent
+	// has begun and not yet had its result acked (guarded by obmu). The server
+	// re-sends a job still in "sent" on every reconnect — delivery is
+	// at-least-once — so without this a job that was running, or whose result
+	// was still on its way, would run a second time: one more install, reboot
+	// or account change than the operator asked for.
+	started     map[string]time.Time
+	startedPath string
 }
 
 // program adapts the agent to the service interface.
@@ -140,10 +149,13 @@ func main() {
 		running: map[string]context.CancelFunc{}, runningChecks: map[string]struct{}{},
 		outbox: map[string]protocol.JobResultMsg{}, outboxPath: *statePath + ".outbox",
 		checkOutbox: map[string]protocol.CheckResultMsg{}, checkOutboxPath: *statePath + ".check-outbox",
+		started: map[string]time.Time{}, startedPath: *statePath + ".started",
 	}
+	hardenStateDir(*statePath)
 	a.loadState()
 	a.loadOutbox()
 	a.loadCheckOutbox()
+	a.loadStarted()
 	if a.st.AgentID != "" && a.st.AgentToken != "" {
 		// A legacy service may still pass -enroll-token, but an enrolled agent must
 		// never retain or reuse that bootstrap capability at runtime.
@@ -462,10 +474,20 @@ func (a *agent) handleFrame(raw []byte) {
 
 // runJob executes a script and reports the result. The job is registered so a
 // job_cancel from the server can kill the still-running process.
+// runJobScript is the script runner, replaceable in tests.
+var runJobScript = runScriptCtx
+
 func (a *agent) runJob(job protocol.JobMsg) {
-	log.Printf("running job %s (%s)", job.JobID, job.Shell)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Claiming the id in running and checking it happen under one lock, so two
+	// copies of the same job arriving together cannot both start.
 	a.mu.Lock()
+	if _, busy := a.running[job.JobID]; busy {
+		a.mu.Unlock()
+		cancel()
+		log.Printf("job %s is already running; ignoring the repeated dispatch", job.JobID)
+		return
+	}
 	a.running[job.JobID] = cancel
 	a.mu.Unlock()
 	defer func() {
@@ -474,8 +496,12 @@ func (a *agent) runJob(job protocol.JobMsg) {
 		delete(a.running, job.JobID)
 		a.mu.Unlock()
 	}()
+	if !a.beginJob(job.JobID) {
+		return
+	}
 
-	exitCode, stdout, stderr := runScriptCtx(ctx, job.Shell, job.Script)
+	log.Printf("running job %s (%s)", job.JobID, job.Shell)
+	exitCode, stdout, stderr := runJobScript(ctx, job.Shell, job.Script)
 	if ctx.Err() == context.Canceled {
 		stderr = strings.TrimSpace(stderr + "\n[canceled by operator]")
 		if exitCode == 0 {
@@ -501,14 +527,88 @@ func (a *agent) reportResult(res protocol.JobResultMsg) {
 	a.queue(protocol.MsgJobResult, res)
 }
 
+// beginJob decides whether a dispatched job may run, and records that it
+// started before it does. A job seen before is never run again:
+//   - its result is still in the outbox: flushOutbox delivers it, nothing to do;
+//   - it started under a previous process and never finished (the agent
+//     stopped mid-run): what it did is unknown, so it is reported as failed
+//     and left to the operator, instead of being repeated blindly.
+func (a *agent) beginJob(jobID string) bool {
+	a.obmu.Lock()
+	defer a.obmu.Unlock()
+	if _, pending := a.outbox[jobID]; pending {
+		log.Printf("job %s already finished; its result is waiting in the outbox", jobID)
+		return false
+	}
+	if a.started == nil {
+		a.started = map[string]time.Time{}
+	}
+	if since, seen := a.started[jobID]; seen {
+		log.Printf("job %s started at %s and was interrupted; not running it again", jobID, since.Format(time.RFC3339))
+		res := protocol.JobResultMsg{JobID: jobID, ExitCode: -1,
+			Stderr: "[the agent stopped while this job was running; it was not run again, to avoid running it twice]"}
+		if a.outbox == nil {
+			a.outbox = map[string]protocol.JobResultMsg{}
+		}
+		a.outbox[jobID] = res
+		a.saveOutbox()
+		a.queue(protocol.MsgJobResult, res)
+		return false
+	}
+	a.started[jobID] = time.Now().UTC()
+	a.saveStarted()
+	return true
+}
+
 // ackResult drops an acked result from the outbox so it stops being re-sent.
+// The server has recorded the job as finished, so it will not dispatch it
+// again and its start record can go too.
 func (a *agent) ackResult(jobID string) {
 	a.obmu.Lock()
 	if _, ok := a.outbox[jobID]; ok {
 		delete(a.outbox, jobID)
 		a.saveOutbox()
 	}
+	if _, ok := a.started[jobID]; ok {
+		delete(a.started, jobID)
+		a.saveStarted()
+	}
 	a.obmu.Unlock()
+}
+
+// startedRetention bounds the start records: a job deleted server-side is never
+// acked, and its record would otherwise stay forever. A week is far past any
+// job's ten-minute limit and any realistic offline spell before a reconnect.
+const startedRetention = 7 * 24 * time.Hour
+
+func (a *agent) loadStarted() {
+	b, err := os.ReadFile(a.startedPath)
+	if err != nil {
+		return
+	}
+	loaded := map[string]time.Time{}
+	if err := json.Unmarshal(b, &loaded); err != nil || loaded == nil {
+		log.Printf("warning: could not load job start records: %v", err)
+		return
+	}
+	cutoff := time.Now().Add(-startedRetention)
+	for id, at := range loaded {
+		if id == "" || at.Before(cutoff) {
+			delete(loaded, id)
+		}
+	}
+	a.started = loaded
+}
+
+// saveStarted persists the start records; callers hold a.obmu.
+func (a *agent) saveStarted() {
+	b, err := json.Marshal(a.started)
+	if err == nil {
+		err = writeDurableFile(a.startedPath, b)
+	}
+	if err != nil {
+		log.Printf("warning: could not persist job start records: %v", err)
+	}
 }
 
 // flushOutbox re-sends every unacked result. Called on each (re)connect and on

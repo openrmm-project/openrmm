@@ -6,6 +6,49 @@ tag.
 
 ## [Unreleased]
 
+### Security
+
+- **Standard users on a Windows endpoint can no longer read the agent's
+  token.** The installer gave `BUILTIN\Users` read access to
+  `C:\ProgramData\rmm-agent`, and `state.json` — the agent's bearer token — and
+  the result outboxes inherited it, so any local user could impersonate the
+  device to the server. The directory now grants SYSTEM and Administrators
+  only. The agent re-applies that ACL on every start, so endpoints that update
+  themselves are repaired without running the installer again.
+- **A custom role with `users.manage` can no longer act on stronger accounts.**
+  An unscoped caller skipped the permission comparison entirely and could change
+  an administrator's email, reset their second factor and take the account
+  over. Nobody manages an account that holds a permission they lack. Requesting
+  another user's email confirmation now goes through the same check.
+- **Single sign-on no longer claims a local account through a fallback claim.**
+  When the configured username claim was missing, the username came from
+  `preferred_username` or `sub`, which a user may choose at the provider, and a
+  match adopted the local account of that name — `admin` included. A fallback
+  username can still name a new account, never an existing one.
+- **A two-factor code works once.** A code was valid for its whole ~90-second
+  window, so one seen over a shoulder or relayed by a phishing page signed in
+  again. The last accepted time step is stored per user (migration 018).
+- **Approve and reject racing on one job have a single winner.** Both used to
+  succeed, leaving the job recorded as rejected and sent to the device anyway.
+- **CSV exports neutralise spreadsheet formulas** in cells that endpoints
+  report (hostnames, software names), which otherwise ran when a technician
+  opened the export in Excel.
+- **The production compose takes the client address from the edge only.**
+  nginx recorded the edge's address for every client, so a few failed sign-ins
+  anywhere locked everyone out and `RMM_MCP_ALLOWED_IPS` saw only the edge. It
+  now trusts `X-Forwarded-For` from the pinned edge network (`EDGE_SUBNET`) or
+  `OPENRMM_TRUSTED_PROXY`. Pinning the network recreates it: run
+  `docker compose down` before `up -d` when upgrading.
+
+### Fixed
+
+- **Alert mail is delivered again.** Monitoring alerts queued no mail since
+  0.6.0: the recipient query returned three columns and read two.
+- **A job runs at most once on the device.** The server re-sends a job still
+  marked sent on every reconnect; the agent now recognises one it already ran
+  or is running, and a job interrupted by an agent restart is reported as
+  failed instead of being repeated.
+
 ## [0.6.0] - 2026-09-29
 
 ### Security

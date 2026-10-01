@@ -131,6 +131,9 @@ func TestUsernameClaimIsHonoured(t *testing.T) {
 	if id.Username != "alice" {
 		t.Errorf("username = %q, want the configured claim", id.Username)
 	}
+	if id.UsernameFallback {
+		t.Error("the configured claim was present, yet the username is marked as a fallback")
+	}
 }
 
 // A provider that omits the configured claim should not break the sign-in when
@@ -145,6 +148,10 @@ func TestUsernameFallsBackWhenClaimIsAbsent(t *testing.T) {
 	}
 	if id.Username != "alice@example.com" {
 		t.Errorf("username = %q, want the email fallback", id.Username)
+	}
+	// A fallback may name a new account but must not claim an existing one.
+	if !id.UsernameFallback {
+		t.Error("username came from a fallback claim but is not marked as one")
 	}
 }
 

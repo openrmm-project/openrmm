@@ -54,7 +54,7 @@ const sourceBlocks = await Promise.all(sources.map(async (name) => {
 const entry = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import QRCode from 'qrcodejs';
+import { QRCode } from './src/qr-adapter.js';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@fontsource-variable/inter';

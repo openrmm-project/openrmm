@@ -1353,7 +1353,7 @@ function TwoFactorCard() {
             <div className="rounded-xl border border-line bg-white p-2 shrink-0" ref={qrRef} />
             <div className="min-w-0 flex-1">
               <div className="text-[12px] text-muted mb-1">{t('tfa.step1')}</div>
-              <div className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5"><span className="text-[12.5px] mono text-ink break-all flex-1">{setup.secret}</span><CopyButton value={setup.secret} size="sm" variant="ghost" /></div>
+              <div className="flex items-center gap-2 rounded-lg border border-line bg-elevated px-2.5 py-1.5"><span className="text-[12.5px] mono text-ink break-all flex-1">{String(setup.secret || '').replace(/(.{4})(?=.)/g, '$1 ')}</span><CopyButton value={setup.secret} size="sm" variant="ghost" /></div>
               <div className="text-[11px] text-faint mt-1.5">{t('tfa.issuer')}</div>
             </div>
           </div>

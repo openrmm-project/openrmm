@@ -138,6 +138,7 @@ func (s *Server) oidcStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not start sign-in")
 		return
 	}
+	s.setOIDCBrowser(w, r, state, int(oidcLoginTTL.Seconds()))
 	http.Redirect(w, r, provider.AuthCodeURL(state, nonce, verifier), http.StatusFound)
 }
 
@@ -154,6 +155,11 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	// Check the initiating browser before consuming state or exchanging a code.
+	if state := q.Get("state"); state != "" && !s.oidcBrowserMatches(r, state) {
+		s.oidcFail(w, r, "", "sso_failed")
+		return
+	}
 	// A provider that refuses says so here. Its text is not echoed back to the
 	// browser; it goes to the log where an operator can read it.
 	if e := q.Get("error"); e != "" {
@@ -183,6 +189,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	// Started from the MCP consent form: finish that authorization instead of
 	// opening a console session. See api_oauth_sso.go.
 	if login.OAuthRequest != nil {
+		s.setOIDCBrowser(w, r, "", -1)
 		s.finishOAuthSSO(w, r, provider, login, code)
 		return
 	}
@@ -204,19 +211,92 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := auth.NewToken()
-	if err := s.store.CreateSession(r.Context(), user.ID, auth.Hash(token), time.Now().Add(sessionTTL)); err != nil {
+	ticket := auth.NewToken()
+	if err := s.store.CreateOIDCHandoff(r.Context(), auth.Hash(ticket), user.ID, auth.Hash(state), time.Now().Add(oidcHandoffTTL)); err != nil {
 		s.oidcFail(w, r, login.RedirectTo, "sso_failed")
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), user.Username, "user.sso.login", user.ID,
 		auditDetail(map[string]string{"issuer": identity.Issuer}))
 
-	// The token goes back in the fragment: fragments are never sent to a server,
-	// so it stays out of proxy logs, access logs and Referer headers on the way
-	// to the console.
+	// Only a browser-bound, single-use code travels through the URL.
 	target := s.consoleURL(login.RedirectTo)
-	http.Redirect(w, r, target+"#sso_token="+url.QueryEscape(token), http.StatusFound)
+	http.Redirect(w, r, target+"#sso_code="+url.QueryEscape(ticket), http.StatusFound)
+}
+
+func (s *Server) oidcBrowserCookieName(r *http.Request) string {
+	base, _ := url.Parse(s.consoleURL(""))
+	if (base != nil && base.Scheme == "https") || r.TLS != nil {
+		return "__Host-rmm_oidc_login"
+	}
+	return "rmm_dev_oidc_login"
+}
+
+func (s *Server) setOIDCBrowser(w http.ResponseWriter, r *http.Request, state string, maxAge int) {
+	name := s.oidcBrowserCookieName(r)
+	http.SetCookie(w, &http.Cookie{Name: name, Value: state, Path: "/", HttpOnly: true,
+		Secure: strings.HasPrefix(name, "__Host-"), SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
+func (s *Server) oidcBrowserMatches(r *http.Request, state string) bool {
+	cookie, err := r.Cookie(s.oidcBrowserCookieName(r))
+	return err == nil && state != "" && auth.ConstantTimeEqual(cookie.Value, state)
+}
+
+// MCP starts on a separate origin. Set the host-only cookie on the console
+// origin before redirecting to the provider; never broaden its Domain.
+func (s *Server) oidcBegin(w http.ResponseWriter, r *http.Request) {
+	p := s.oidcProvider()
+	if p == nil {
+		writeErr(w, http.StatusNotFound, "single sign-on is not enabled")
+		return
+	}
+	state := r.URL.Query().Get("state")
+	login, err := s.store.OIDCStateForBegin(r.Context(), auth.Hash(state))
+	if err != nil || login.OAuthRequest == nil {
+		s.oidcFail(w, r, "", "sso_expired")
+		return
+	}
+	s.setOIDCBrowser(w, r, state, int(oidcLoginTTL.Seconds()))
+	http.Redirect(w, r, p.AuthCodeURL(state, login.Nonce, login.CodeVerifier), http.StatusFound)
+}
+
+func (s *Server) oidcExchange(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	base, err := url.Parse(s.consoleURL(""))
+	if err != nil || base.Host == "" || r.Header.Get("Origin") != base.Scheme+"://"+base.Host {
+		writeErr(w, http.StatusForbidden, "invalid origin")
+		return
+	}
+	var in struct {
+		Code string `json:"code"`
+	}
+	cookie, err := r.Cookie(s.oidcBrowserCookieName(r))
+	if err != nil || cookie.Value == "" || decode(r, &in) != nil || in.Code == "" {
+		writeErr(w, http.StatusUnauthorized, "invalid sign-in code")
+		return
+	}
+	token := auth.NewToken()
+	userID, err := s.store.ExchangeOIDCHandoff(r.Context(), auth.Hash(in.Code), auth.Hash(cookie.Value), auth.Hash(token), time.Now().Add(sessionTTL))
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "invalid sign-in code")
+		return
+	}
+	s.setOIDCBrowser(w, r, "", -1)
+	user, err := s.store.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "invalid sign-in code")
+		return
+	}
+	perms, err := s.permissionsForRole(r.Context(), user.Role)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not sign in")
+		return
+	}
+	user.Permissions = perms
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": user, "role": user.Role, "permissions": perms})
 }
 
 // resolveOIDCUser turns a verified identity into a console account.
@@ -307,6 +387,12 @@ func (s *Server) oidcFail(w http.ResponseWriter, r *http.Request, redirectTo, re
 // original request is honoured, so this can never point off-site.
 func (s *Server) consoleURL(path string) string {
 	base := strings.TrimRight(s.cfg.PublicURL, "/")
+	// PUBLIC_URL can identify the agents ingress. The configured callback
+	// identifies the console origin. redirect_to already contains the full
+	// frontend pathname, including any reverse-proxy base path.
+	if callback, err := url.Parse(s.cfg.OIDCRedirectURL); err == nil && callback.Host != "" && (callback.Scheme == "https" || callback.Scheme == "http") {
+		base = callback.Scheme + "://" + callback.Host
+	}
 	if base == "" {
 		base = "/"
 	}

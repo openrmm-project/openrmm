@@ -81,11 +81,44 @@ func (s *Store) ConsumeOIDCState(ctx context.Context, stateHash string) (*OIDCLo
 // page and walks away leaves a row behind; without this they accumulate
 // forever.
 func (s *Store) PurgeExpiredOIDCStates(ctx context.Context) (int64, error) {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM oidc_console_handoffs WHERE expires_at <= now()`); err != nil {
+		return 0, err
+	}
 	ct, err := s.pool.Exec(ctx, `DELETE FROM oidc_login_states WHERE expires_at <= now()`)
 	if err != nil {
 		return 0, err
 	}
 	return ct.RowsAffected(), nil
+}
+
+func (s *Store) OIDCStateForBegin(ctx context.Context, stateHash string) (*OIDCLogin, error) {
+	var out OIDCLogin
+	err := s.pool.QueryRow(ctx, `SELECT nonce, code_verifier, oauth_request FROM oidc_login_states
+		WHERE state_hash=$1 AND expires_at > now() AND oauth_request IS NOT NULL`, stateHash).
+		Scan(&out.Nonce, &out.CodeVerifier, &out.OAuthRequest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &out, err
+}
+
+func (s *Store) CreateOIDCHandoff(ctx context.Context, ticketHash, userID, browserHash string, expires time.Time) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO oidc_console_handoffs (ticket_hash,user_id,browser_hash,expires_at) VALUES ($1,$2,$3,$4)`, ticketHash, userID, browserHash, expires)
+	return err
+}
+
+// Consumption and session creation are atomic, including expiry, browser and
+// disabled-account checks. A code cannot create two sessions concurrently.
+func (s *Store) ExchangeOIDCHandoff(ctx context.Context, ticketHash, browserHash, tokenHash string, expires time.Time) (string, error) {
+	var userID string
+	err := s.pool.QueryRow(ctx, `WITH handoff AS (
+		DELETE FROM oidc_console_handoffs WHERE ticket_hash=$1 AND browser_hash=$2 AND expires_at > now() RETURNING user_id
+	) INSERT INTO sessions (id,user_id,token_hash,expires_at)
+		SELECT $3, g.user_id, $4, $5 FROM handoff g JOIN users u ON u.id=g.user_id WHERE u.disabled_at IS NULL RETURNING user_id`, ticketHash, browserHash, newID(), tokenHash, expires).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return userID, err
 }
 
 // GetUserByOIDC finds the console account linked to a provider identity.

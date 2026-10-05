@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"strings"
@@ -52,9 +53,10 @@ func newSSOFlow(t *testing.T, opts ...func(*config.Config)) *ssoFlow {
 		t.Fatal("the fake provider was not discovered")
 	}
 
+	jar, _ := cookiejar.New(nil)
 	f := &ssoFlow{
 		smtpE2E: e, idp: idp, clientID: uuid.NewString(), redirectURI: "https://client.example.test/cb",
-		browser: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		browser: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 	if err := e.store.CreateOAuthClient(e.ctx, f.clientID, "Test client", []string{f.redirectURI}); err != nil {
 		t.Fatal(err)
@@ -110,6 +112,10 @@ func (f *ssoFlow) toProvider() *url.URL {
 		f.t.Fatalf("SSO start: status %d (%s)", res.StatusCode, body)
 	}
 	loc, _ := url.Parse(res.Header.Get("Location"))
+	if loc.Path == "/api/auth/oidc/begin" {
+		res, _ = f.get(loc.String())
+		loc, _ = url.Parse(res.Header.Get("Location"))
+	}
 	if !strings.HasPrefix(loc.String(), f.idp.Issuer+"/authorize") {
 		f.t.Fatalf("SSO start went to %s, not the provider", loc)
 	}
@@ -240,7 +246,7 @@ func TestSSOCallbackFailuresLandWhereTheyStartedIntegration(t *testing.T) {
 	t.Run("forged state", func(t *testing.T) {
 		f := newSSOFlow(t)
 		res, _ := f.get(f.url + "/api/auth/oidc/callback?code=x&state=forged")
-		if res.StatusCode != http.StatusFound || !strings.HasSuffix(res.Header.Get("Location"), "#sso_error=sso_expired") {
+		if res.StatusCode != http.StatusFound || !strings.HasSuffix(res.Header.Get("Location"), "#sso_error=sso_failed") {
 			t.Fatalf("status %d Location %q, want sso_expired", res.StatusCode, res.Header.Get("Location"))
 		}
 	})
@@ -314,10 +320,31 @@ func TestConsoleSignInThroughSSOEndToEndIntegration(t *testing.T) {
 	}
 	res, _ = f.throughProvider(mustURL(t, res.Header.Get("Location")))
 	loc := res.Header.Get("Location")
-	if res.StatusCode != http.StatusFound || !strings.HasPrefix(loc, f.url+"/devices#sso_token=") {
+	if res.StatusCode != http.StatusFound || !strings.HasPrefix(loc, f.url+"/devices#sso_code=") {
 		t.Fatalf("callback: status %d Location %q", res.StatusCode, loc)
 	}
-	token, _ := url.QueryUnescape(strings.TrimPrefix(loc, f.url+"/devices#sso_token="))
+	handoff, _ := url.QueryUnescape(strings.TrimPrefix(loc, f.url+"/devices#sso_code="))
+	exchange := func() (int, map[string]any) {
+		req, _ := http.NewRequest(http.MethodPost, f.url+"/api/auth/oidc/exchange", strings.NewReader(`{"code":"`+handoff+`"}`))
+		req.Header.Set("Origin", f.url)
+		req.Header.Set("Content-Type", "application/json")
+		response, err := f.browser.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&out)
+		return response.StatusCode, out
+	}
+	status, out := exchange()
+	if status != http.StatusOK {
+		t.Fatalf("handoff exchange: %d %v", status, out)
+	}
+	if status, _ := exchange(); status != http.StatusUnauthorized {
+		t.Fatal("handoff replay succeeded")
+	}
+	token, _ := out["token"].(string)
 	code, me := f.do(http.MethodGet, "/api/me", "", token)
 	if code != http.StatusOK || me["username"] != ssoUsername {
 		t.Fatalf("/api/me with the SSO session: %d %v", code, me)

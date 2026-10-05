@@ -136,7 +136,9 @@ func (s *Server) Router() http.Handler {
 	// draw the button at all.
 	r.With(authLimiter).Get("/api/auth/oidc", s.oidcStatus)
 	r.With(authLimiter).Get("/api/auth/oidc/start", s.oidcStart)
+	r.With(authLimiter).Get("/api/auth/oidc/begin", s.oidcBegin)
 	r.With(authLimiter).Get("/api/auth/oidc/callback", s.oidcCallback)
+	r.With(authLimiter, maxBody).Post("/api/auth/oidc/exchange", s.oidcExchange)
 
 	// MCP OAuth 2.1 flow (register / authorize+consent / token). Public clients +
 	// PKCE; the authorize POST verifies user credentials, so it's rate-limited like

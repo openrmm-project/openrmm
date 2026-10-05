@@ -447,6 +447,28 @@ function Shell() {
 }
 
 /* --------------------------------- Root ----------------------------------- */
+// Restore a tab's own session, or redeem a handoff bound by the server to
+// this browser. A token received from a URL is never a login credential.
+async function restoreConsoleAuth(transport, browser, authKey) {
+  const { location, history, sessionStorage } = browser;
+  const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  const code = hash.get('sso_code');
+  if (hash.has('sso_code') || hash.has('sso_token')) {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  if (code) {
+    try {
+      const res = await transport.exchangeSSO(code);
+      sessionStorage.setItem(authKey, JSON.stringify(res));
+      return res;
+    } catch (e) { /* Preserve this tab's session after an unsolicited handoff. */ }
+  }
+  try {
+    const a = JSON.parse(sessionStorage.getItem(authKey) || 'null');
+    return a?.token ? await transport.loginWithToken(a.token) : null;
+  } catch (e) { return null; }
+}
+
 function App() {
   // Subscribing here re-renders the whole tree when the language changes.
   // Without it the picker would only take effect on reload, which reads as a
@@ -490,29 +512,7 @@ function App() {
   }, []);
 
   uE(() => {
-    // A single sign-on that just landed wins over whatever this tab had: the
-    // person deliberately signed in again, possibly as someone else. Read it
-    // before the stored session, and strip it from the address bar so a
-    // refresh or a shared link cannot replay it.
-    const hash = new URLSearchParams((location.hash || '').replace(/^#/, ''));
-    const ssoToken = hash.get('sso_token');
-    if (ssoToken) {
-      history.replaceState(null, '', location.pathname + location.search);
-      api.loginWithToken(ssoToken)
-        .then((res) => {
-          sessionStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] }));
-          setAuth(res);
-        })
-        .catch(() => setAuth(null));
-      return;
-    }
-
-    const raw = sessionStorage.getItem(AUTH_KEY);
-    if (!raw) { setAuth(null); return; }
-    try {
-      const a = JSON.parse(raw);
-      api.loginWithToken(a.token).then((res) => setAuth({ token: res.token, user: res.user, role: res.role, permissions: res.permissions || res.user?.permissions || [] })).catch(() => setAuth(null));
-    } catch (e) { setAuth(null); }
+    restoreConsoleAuth(api, window, AUTH_KEY).then(setAuth);
   }, []);
 
   const logout = async () => { setAuth(undefined); await api.logout(); setAuth(null); };

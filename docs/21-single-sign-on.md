@@ -155,14 +155,21 @@ table must not hand anyone a usable in-flight login.
 
 ## Getting the session back to the console
 
-The console is a single-page app that authenticates with a bearer token, not a
-cookie, so the callback cannot simply set a session and redirect. It sends the
-browser back with a token in the URL **fragment**.
+The callback sends a **single-use code** in the URL fragment (`sso_code`),
+valid for 60 seconds. The page strips the fragment and posts the code to
+`/api/auth/oidc/exchange`; only this response returns the normal bearer session.
+Legacy `sso_token` fragments are ignored and cannot replace a tab's session.
 
-Fragments are never sent to a server. The token therefore stays out of proxy
-logs, access logs and `Referer` headers on its way to the page, which a query
-string would not. The page reads it, exchanges it for a session and strips it
-from the address bar so a refresh or a shared link cannot replay it.
+The login starts by setting a host-only, HttpOnly, SameSite=Lax cookie (Secure
+on HTTPS). Both the provider callback and the code exchange require this browser
+binding. The exchange also checks the console Origin and consumes the code
+atomically with session creation. A copied callback or fragment cannot sign a
+different browser in; an invalid code preserves an existing tab session.
+
+MCP sign-in first visits the console origin to set the same browser binding.
+Deploy the API and console together; migration 19 creates the handoff table.
+The console origin comes from `RMM_OIDC_REDIRECT_URL` when agent and console
+origins differ. The destination pathname already includes any frontend base path.
 
 The `redirect_to` parameter accepts a path and nothing else. Anything absolute
 or protocol-relative is discarded rather than repaired: an open redirect on a

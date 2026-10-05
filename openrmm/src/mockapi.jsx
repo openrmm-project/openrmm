@@ -221,6 +221,19 @@ const api = {
       throw e;
     }
   },
+  async exchangeSSO(code) {
+    // This is an unauthenticated exchange. A rejected handoff must not clear
+    // an existing session through the normal authenticated-request 401 handler.
+    const response = await fetch(API_BASE + '/api/auth/oidc/exchange', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+    });
+    const res = await response.json();
+    if (!response.ok) throw apiError(response.status, res.error || t('api.unauthorized'));
+    const next = normalizeSession(res.token, res);
+    setSession(next);
+    return next;
+  },
   async me() { return GET('/api/me'); },
   async logout() { try { await POST('/api/auth/logout'); } catch (e) {} finally { setSession(null); } },
   currentRole() { return session ? session.role : null; },

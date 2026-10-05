@@ -81,7 +81,7 @@ func (s *Server) oauthAuthorizeSSO(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not start sign-in", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, provider.AuthCodeURL(state, nonce, verifier), http.StatusFound)
+	http.Redirect(w, r, s.consoleURL("/api/auth/oidc/begin")+"?state="+state, http.StatusFound)
 }
 
 // finishOAuthSSO completes a provider sign-in that was started from the consent

@@ -374,7 +374,7 @@ jobs:
           test -n "$RMM_UPDATE_PUBLIC_KEY"
           cp deploy/public/install.sh deploy/public/install.ps1 deploy/public/uninstall.sh release/
           go build -buildvcs=false -o rmm-sign ./cmd/rmm-sign
-      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
       - name: Generate SBOM and checksums
         run: |
           syft dir:release -o spdx-json=release/SBOM.spdx.json

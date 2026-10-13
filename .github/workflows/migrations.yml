@@ -1,7 +1,7 @@
 name: Database migrations
 
 env:
-  GO_VERSION: '1.26.6'
+  GO_VERSION: '1.26.9'
 
 # Same reasoning as ci.yml: a superseded pull-request run is wasted budget, a
 # run on main is the one that says whether main is good.

@@ -2,7 +2,7 @@ module github.com/p1ngu/rmm
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.26.9
 
 require (
 	github.com/UserExistsError/conpty v0.1.4

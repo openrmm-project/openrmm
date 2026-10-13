@@ -6,8 +6,21 @@ tag.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-13
+
 ### Security
 
+- **Built with Go 1.26.9.** Server, agents, the remote sidecar on Linux and
+  Windows, and the images move from Go 1.26.6, clearing eleven
+  standard-library advisories reported by govulncheck (net/http, net/textproto,
+  crypto/tls, html/template). None was found reachable from outside — the
+  server speaks plain HTTP/1.1 behind its proxy — but every binary carried them.
+- **A single sign-on link only signs in the browser that started it.** The
+  provider callback used to hand the console a bearer token in the address
+  fragment, so a copied or phished callback link signed in whoever opened it.
+  It now carries a single-use code, valid 60 seconds, that is exchanged only by
+  the browser holding the HttpOnly binding cookie set when sign-in started
+  (migration 019). Deploy the API and the console together.
 - **Standard users on a Windows endpoint can no longer read the agent's
   token.** The installer gave `BUILTIN\Users` read access to
   `C:\ProgramData\rmm-agent`, and `state.json` — the agent's bearer token — and
@@ -48,6 +61,9 @@ tag.
   marked sent on every reconnect; the agent now recognises one it already ran
   or is running, and a job interrupted by an agent restart is reported as
   failed instead of being repeated.
+- **Two-factor QR codes scan in every authenticator.** The console drew them
+  without a quiet zone, and some apps (Aegis among them) could not read them;
+  the QR library was replaced as well.
 
 ## [0.6.0] - 2026-09-29
 

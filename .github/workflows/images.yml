@@ -136,15 +136,21 @@ jobs:
       # Runs the trivy image directly rather than the action, matching how
       # ci.yml already does it — same pinning policy, and Dependabot's docker
       # ecosystem tracks the tag.
+      # The name as it was pushed: registry paths are lower case (the owner is
+      # P1N-GU), and a release tag v1.2.3 is published as 1.2.3 (the semver
+      # pattern above). Either mismatch made trivy refuse the reference before
+      # scanning anything, so this gate never ran.
       - name: Trivy (blocks on fixable HIGH/CRITICAL)
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ matrix.image }}
           REF: ${{ github.ref_name }}
         run: |
+          image="ghcr.io/${OWNER,,}/$NAME:${REF#v}"
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker run --rm \
             -v "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
             -v "$HOME/.cache/trivy:/root/.cache/trivy" \
             aquasec/trivy:0.58.1 image \
               --exit-code 1 --severity CRITICAL,HIGH --ignore-unfixed --no-progress \
-              "$IMAGE:$REF"
+              "$image"

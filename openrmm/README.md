@@ -122,9 +122,6 @@ outro arquivo chega por `window` (por exemplo `window.checkType` e
   no inventário (só no check `cpuload`), e o agente envia no máximo 600 itens de
   software por máquina.
 - Jobs ad hoc continuam approval-gated pelo backend, independentemente da UI.
-- O painel de políticas atribui a clientes, sites e dispositivos. A API também
-  aceita departamento (`scope_type: group`); uma atribuição assim aparece no
-  painel pelo id do departamento.
 
 Veja [`RUNNING.md`](RUNNING.md) para execução e
 [`handoff/INTEGRATION.md`](handoff/INTEGRATION.md) para o contrato da camada de

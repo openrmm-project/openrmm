@@ -147,10 +147,10 @@ via `AgentIDsForPolicy` and are narrowed to the caller's access scope.
 A **policy** bundles checks and tasks and is **assigned to a scope**: a client, a
 site, a department, or a specific agent (`policy_assignments`). An agent
 inherits every policy whose scope covers it (its own id, its department, its
-site, or its client). The console's policy drawer assigns to clients, sites and
-devices; a department assignment is made through the API
-(`POST /api/policies/{id}/assignments` with `scope_type: group`); the drawer lists
-it by the department's id rather than its name. Resolution happens
+site, or its client). The console's policy drawer assigns to any of the four
+(`POST /api/policies/{id}/assignments`, where a department is `scope_type:
+group`) and shows a department with its site, since two sites may each have one
+of the same name. Resolution happens
 in the store (`ChecksForAgent` / `TasksForAgent`), so one policy can push a
 baseline of checks/tasks to a whole client at once.
 

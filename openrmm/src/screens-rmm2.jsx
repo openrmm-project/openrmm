@@ -300,6 +300,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
   const asgQ = useQuery([policy.id, 'pad'], () => api.listAssignments(policy.id), { invalidateOn: ['policies'] });
   const clientsQ = useQuery(['cl-pol'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
   const sitesQ = useQuery(['st-pol'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
+  const groupsQ = useQuery(['gr-pol'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
   const devMap = useDeviceMap();
   const [addScope, setAddScope] = useState('');
   // Editing a policy's checks and tasks in place. The editors come from
@@ -324,8 +325,16 @@ function PolicyDetail({ policy, onClose, onSaved }) {
   };
 
   const checks = checksQ.data?.checks || [], tasks = tasksQ.data?.tasks || [], asg = asgQ.data?.assignments || [];
-  const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
-  const scopeName = (a) => a.scope_type === 'agent' ? devMap[a.scope_id]?.hostname : a.scope_type === 'site' ? sites.find((s) => s.id === a.scope_id)?.name : clients.find((c) => c.id === a.scope_id)?.name;
+  const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [], groups = groupsQ.data?.groups || [];
+  // Two sites may each have a department of the same name, so a department is
+  // shown with its site.
+  const groupLabel = (g) => { const site = sites.find((s) => s.id === g.site_id); return site ? t('pol.groupInSite', { name: g.name, site: site.name }) : g.name; };
+  const scopeName = (a) => {
+    if (a.scope_type === 'agent') return devMap[a.scope_id]?.hostname;
+    if (a.scope_type === 'group') { const g = groups.find((x) => x.id === a.scope_id); return g && groupLabel(g); }
+    if (a.scope_type === 'site') return sites.find((s) => s.id === a.scope_id)?.name;
+    return clients.find((c) => c.id === a.scope_id)?.name;
+  };
 
   const addAssignment = async () => { if (!addScope) return; const [type, id] = addScope.split(':'); await api.createAssignment(policy.id, { scope_type: type, scope_id: id }); setAddScope(''); toast.success(t('pol.assignedToast'), t('pol.assignedToastMsg')); };
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info(t('pol.assignmentRemoved')); };
@@ -388,6 +397,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
                   options={[
                     ...clients.map((c) => ({ value: 'client:' + c.id, label: t('pol.clientAllSites', { name: c.name }), group: t('pol.group.clients') })),
                     ...sites.map((s) => ({ value: 'site:' + s.id, label: s.name, group: t('pol.group.sites') })),
+                    ...groups.map((g) => ({ value: 'group:' + g.id, label: groupLabel(g), group: t('pol.group.groups') })),
                     ...Object.values(devMap).map((d) => ({ value: 'agent:' + d.id, label: d.hostname, group: t('pol.group.agents') })),
                   ]} />
                 <Button variant="primary" icon="plus" onClick={addAssignment} disabled={!addScope}>{t('pol.assign')}</Button>
@@ -396,7 +406,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
             <div className="space-y-2">
               {asg.map((a) => (
                 <div key={a.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-2.5">
-                  <span className={cx('inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase', a.scope_type === 'agent' ? 'text-run bg-runsoft border-run/25' : a.scope_type === 'site' ? 'text-warn bg-warnsoft border-warn/25' : 'text-brandhi bg-brandsoft border-brand/25')}>{tEnum('pol.scope', a.scope_type)}</span>
+                  <span className={cx('inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase', a.scope_type === 'agent' ? 'text-run bg-runsoft border-run/25' : a.scope_type === 'group' ? 'text-ok bg-oksoft border-ok/25' : a.scope_type === 'site' ? 'text-warn bg-warnsoft border-warn/25' : 'text-brandhi bg-brandsoft border-brand/25')}>{tEnum('pol.scope', a.scope_type)}</span>
                   <span className="flex-1 text-[13px] text-ink">{scopeName(a) || a.scope_id}</span>
                   {can('policies.manage') && <button onClick={() => removeAssignment(a.id)} className="text-faint hover:text-bad p-1"><Icon name="trash" size={15} /></button>}
                 </div>

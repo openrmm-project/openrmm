@@ -71,3 +71,32 @@ test('the new-policy form sends a description', async () => {
     'create must send the description the API accepts');
   assert.match(screen, /<Field label=\{t\('common\.description'\)\}/, 'the form needs a description field');
 });
+
+// The API and the scheduler took a department (scope_type "group") from the
+// start, but the drawer offered clients, sites and devices only, and showed a
+// department assignment made through the API by its bare id.
+test('a policy can be assigned to a department from the drawer', async () => {
+  const source = await readFile(path.join(root, 'src/screens-rmm2.jsx'), 'utf8');
+  const detail = source.slice(source.indexOf('function PolicyDetail('), source.indexOf('/* ============================ CLIENTS & SITES'));
+  // Listing departments reads the org tree, which viewers without clients.view
+  // may not see.
+  assert.match(detail, /can\('clients\.view'\) \? api\.listGroups\(\) : Promise\.resolve\(\{ groups: \[\] \}\)/);
+  assert.match(detail, /\.\.\.groups\.map\(\(g\) => \(\{ value: 'group:' \+ g\.id, label: groupLabel\(g\), group: t\('pol\.group\.groups'\) \}\)\)/,
+    'the picker must offer departments under their own heading');
+  // The picker's value is split on ':' into the body the API validates.
+  assert.match(detail, /const \[type, id\] = addScope\.split\(':'\); await api\.createAssignment\(policy\.id, \{ scope_type: type, scope_id: id \}\)/);
+  assert.match(detail, /if \(a\.scope_type === 'group'\) \{ const g = groups\.find\(\(x\) => x\.id === a\.scope_id\); return g && groupLabel\(g\); \}/,
+    'a department assignment must read by name, not id');
+  assert.match(detail, /t\('pol\.groupInSite', \{ name: g\.name, site: site\.name \}\)/,
+    'departments of the same name on two sites must be told apart');
+
+  // tEnum('pol.scope', a.scope_type) builds the key at run time, so the static
+  // i18n scan cannot see it.
+  for (const lang of ['en', 'pt-BR', 'es', 'de', 'ja', 'zh-CN']) {
+    const table = await readFile(path.join(root, `src/locales/${lang}.jsx`), 'utf8');
+    for (const key of ['pol.scope.group', 'pol.group.groups', 'pol.groupInSite']) {
+      assert.match(table, new RegExp(`'${key.replaceAll('.', '\\.')}': '[^']+'`), `${lang} lacks ${key}`);
+    }
+    assert.match(table, /'pol\.groupInSite': '[^']*\{name\}[^']*\{site\}[^']*'/, `${lang} pol.groupInSite needs {name} and {site}`);
+  }
+});

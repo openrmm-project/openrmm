@@ -1,7 +1,7 @@
 # 10 — Org, RBAC, Monitoring, Tasks, Policies & Alerts
 
-This document covers the "classic RMM" subsystems added on top of the MVP,
-inspired by Tactical RMM. All verified end-to-end against PostgreSQL.
+This document covers the "classic RMM" subsystems added on top of the MVP. All
+verified end-to-end against PostgreSQL.
 
 ## Org hierarchy: Client → Site → Agent
 

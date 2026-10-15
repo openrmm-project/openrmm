@@ -80,15 +80,24 @@ the caller has `reports.view`:
 
 ```
 inventory_report(report_type: "software"|"hardware"|"machines",
+                 mode?: "summary"|"rows", group_by?, match?,
                  scope_type?: "client"|"site"|"group", scope_id?: <uuid>)
+export_inventory(report_type, scope_type?, scope_id?)
 ```
 
-It calls the identical store functions with the caller's scope, so the chat can
-answer "give me the software inventory of client X as CSV" and render a table the
-UI exports. MCP and AI Chat do not advertise or execute this tool without
-`reports.view`. The result is **capped at 1000 rows** for the model (with a
-`truncated` flag) so a large fleet can't overflow the context window — the full
-data is always available via the Reports tab / REST export. Read-only: it never
+It calls the identical store functions with the caller's scope. By default
+(`mode: summary`) it **counts in the database**, grouped by `group_by` (software:
+name, version, manufacturer or client; hardware: os, manufacturer, model, platform
+or client; machines: os, status, client, site, department or version) and
+narrowed by `match` — the right answer to "how many machines have X". `mode: rows`
+returns individual records, **capped at 1000** with a `truncated` flag, so a large
+fleet cannot overflow the context window.
+
+For the complete data the model calls `export_inventory`, which returns a signed
+link to `GET /api/exports/csv`: the CSV streams from the database to the
+operator's browser without passing through the model, and the link works only for
+the account that asked, re-checked against its current scope. MCP and AI Chat do
+not advertise or execute either tool without `reports.view`. Read-only: neither
 creates a job.
 
 ## Frontend

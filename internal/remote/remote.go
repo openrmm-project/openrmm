@@ -263,7 +263,7 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 
 // StartSession builds a connect URL into MeshCentral for the agent's node. When
 // a login token key is configured it mints a login token so the session embeds
-// without a second login (like Tactical RMM); otherwise it returns a deep link
+// without a second login; otherwise it returns a deep link
 // that works once the technician is logged into MeshCentral.
 func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
 	p.m.mu.RLock()

@@ -6,12 +6,14 @@ of the **current** schema for review/manual use; it is not replayed as the
 migration mechanism.
 
 `schema_migrations` records a contiguous version/name/SHA-256 checksum history.
-Current versions are v1 `baseline` and v2 `pending_totp_secret`. Startup accepts
+Current versions run from 1 `baseline` to 19 `oidc_browser_handoff`. Startup accepts
 only an exact prefix of the binary's history and rejects gaps, unknown versions,
 renames, or changed SQL. The migration transaction uses a PostgreSQL advisory
 lock. Migrations are forward-only: once a newer version is applied, an older
 binary can reject it, so rollback requires restoring the pre-upgrade database as
-well as the application.
+well as the application. `rmm-server -migrate-only` applies them with the
+owner's credentials and exits, so the serving role need not own the schema (see
+[01-architecture](01-architecture.md#startup-and-migrations)).
 
 ## Tables
 
@@ -69,6 +71,13 @@ session lookup, API tokens bound to that user, alert delivery, and the
 password-reset lookup — that last one otherwise being a way straight back in.
 A timestamp rather than a boolean because "when was access withdrawn" is what an
 incident review asks, and re-disabling keeps the original value.
+
+`email_verified_at` (nullable) records when the owner confirmed the address; the
+operator's shared alert service delivers only to confirmed addresses, and a
+changed address needs a new confirmation. `totp_last_step` is the last accepted
+TOTP time step (unix time / 30), so a code is accepted once. `oidc_issuer` and
+`oidc_subject` link the account to a single sign-on identity (empty when not
+linked); while SSO is on, a linked account has no password path.
 
 ### `roles` / `role_permissions`
 Role definitions and their permission keys. `roles.role_key` is the stable key
@@ -150,9 +159,26 @@ single-use timestamps; raw tickets are returned only at session creation and are
 never persisted.
 
 ### `audit_log`
-Immutable record of sensitive actions (actor, action, target, detail jsonb,
-created_at). Actions include `job.propose`, `job.approve`, `job.reject`,
-`job.result`, `remote.start`.
+Record of sensitive actions (actor, action, target, detail jsonb, created_at).
+Actions include `job.propose`, `job.approve`, `job.reject`, `job.result`,
+`remote.start`; every action the server records has a console label.
+
+Append-only in three layers (migration `012_audit_append_only`):
+
+1. **Triggers** refuse `UPDATE` and `DELETE`, except retention's removal of the
+   machine-written entries (`job.automated`, `job.result`).
+2. **Privileges**: run the server as a role that does not own the table
+   (`openrmm_app`, with migrations applied separately by the owner) and a
+   compromised server cannot disable the triggers or erase the trail. The server
+   says at every start which of these is in force.
+3. **Hash chain**: each human entry stores `prev_hash` and `entry_hash`, so a
+   rewrite by someone with full database access is detectable
+   (`SELECT * FROM verify_audit_chain()` reports the first break).
+   Machine-written entries are not chained, because retention deletes them.
+
+The API pages it by an opaque cursor (`/api/audit`, `next_cursor`) because an
+offset drifts while entries arrive at the top. See
+[07-guardrails-security](07-guardrails-security.md) for setting up the restricted role.
 
 ### `chat_sessions` / `chat_messages`
 Conversations with the AI. `chat_sessions.created_by` owns the session (private
@@ -335,10 +361,50 @@ server-local maintenance windows and reboot behavior;
 
 ### OAuth tables
 
-`oauth_clients` stores Dynamic Client Registration metadata. `oauth_codes` stores
+`oauth_clients` stores Dynamic Client Registration metadata, plus `status`
+(approved or pending, per the registration policy), `approved_by`/`approved_at`
+and `last_used_at`. `oauth_codes` stores
 single-use, expiring, PKCE-bound code hashes. `oauth_tokens` stores access and
 refresh hashes, user/client/scope binding, and independent access/refresh expiry;
 plaintext OAuth credentials are returned only when issued.
+
+### Account mail
+
+`password_resets` holds single-use reset links (`token_hash` unique, `expires_at`,
+`used_at`). `email_verifications` holds address confirmation links
+(`token_hash` PK, the `email` they confirm, `expires_at`, `used_at`); a link for
+an address the user no longer has confirms nothing.
+
+### `notifications` / `notification_subscriptions`
+
+`notifications` is the durable alert-mail outbox: one row per message
+(`event_type`, `recipient`, `subject`, `body`, optional `alert_id`/`agent_id`/
+`user_id`), `status` `pending` → `processing` → `sent` or `failed`, with
+`attempts`, `last_error`, `next_attempt_at`, a `dedupe_key`, and a delivery lease
+(`lease_token`, `lease_until`) so a worker that dies mid-send does not lose the
+message. `notification_subscriptions` is each user's opt-in per event type
+(`check_failed`, `check_recovered`, `agent_offline`, `job_failed`). See
+[20-email-notifications](20-email-notifications.md).
+
+### `device_operations`
+
+Moves and deletions of devices **proposed** by the AI or an MCP client. `kind`
+`move` (with destination `site_id`, optional `group_id`) or `delete`; `agent_ids`
+(1–500); `status` `awaiting_approval` → `approved` → `completed`/`failed`, or
+`rejected`; `proposed_by` and, once decided, `decided_by` (enforced by a check);
+`result` jsonb with per-device outcomes. Deleting the destination site or
+department deletes a pending move to it.
+
+### Single sign-on tables
+
+`oidc_login_states` holds a sign-in in progress (`state_hash`, `nonce`, PKCE
+`code_verifier`, `redirect_to`, and `oauth_request` when it started from the MCP
+consent page), expiring after a few minutes. `oidc_console_handoffs` holds the
+single-use code the callback hands the console (`ticket_hash`, `user_id`, and
+`browser_hash` — the browser that started the sign-in, the only one that can
+exchange it). `oauth_sso_grants` holds the five-minute, single-use grant an SSO
+sign-in gives the MCP consent page, bound to `client_id`, `redirect_uri` and the
+PKCE `code_challenge`.
 
 ### `schema_migrations`
 

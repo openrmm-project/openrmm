@@ -5,9 +5,13 @@
 | Component | Where | Role |
 |-----------|-------|------|
 | **Control plane** | `cmd/server` | HTTP/REST API, agent WebSocket, remote relay, AI engine, MCP server, check/task scheduler |
-| **Agent** | `cmd/agent` | Runs on each endpoint: enroll, heartbeat, inventory, run jobs |
+| **Agent** | `cmd/agent` | Runs on each endpoint: enroll, heartbeat, inventory, run jobs, self-update |
+| **Remote sidecar** | `cmd/rmm-remote` | Spawned by the agent for a native session: screen capture, input, file transfer, chat (CGO-free on Windows/Linux; CGO on macOS) |
+| **Signing tool** | `cmd/rmm-sign` | Generates the Ed25519 update key and the detached signatures of artifacts published under `/dl` |
 | **PostgreSQL** | external | Durable state: agents, jobs, inventory, audit, chat, sessions, migration history |
 | **AI provider** | external | Any OpenAI-compatible `/chat/completions` endpoint |
+| **Identity provider** | external, optional | OpenID Connect provider for single sign-on (console and MCP consent) |
+| **SMTP relay** | external, optional | Password resets and confirmations (account transport); alert mail (alerts transport) |
 | **Remote client** | technician side | MeshCentral web/native, or the native browser viewer |
 | **Console** | `openrmm` | npm-built React bundle, served by nginx with runtime `config.js` |
 
@@ -15,8 +19,10 @@
 
 ```
 cmd/
-  server/        # control-plane entrypoint (wiring + graceful shutdown)
+  server/        # control-plane entrypoint (wiring + graceful shutdown; -migrate-only)
   agent/         # endpoint agent entrypoint
+  rmm-remote/    # native remote media sidecar (capture, input, file transfer, chat)
+  rmm-sign/      # Ed25519 key generation and artifact signing for /dl
 internal/
   config/        # env-based configuration
   settings/      # merges env config with editable DB-backed runtime settings (secrets encrypted)
@@ -24,6 +30,8 @@ internal/
   protocol/      # agent <-> server WebSocket message types
   store/         # PostgreSQL persistence (pgx) + immutable embedded migrations
   auth/          # token generation, hashing, constant-time compare, TOTP 2FA
+  oidc/          # single sign-on: who the person is (roles and scope stay in the RMM)
+  exports/       # signed, expiring tokens behind CSV download links (REST and AI tools)
   hub/           # registry of live agent connections (push channel per agent)
   jobs/          # job lifecycle: propose/approve/reject/dispatch/result + audit
   patches/       # approved patch scan/install/reboot dispatch and result handling
@@ -31,7 +39,8 @@ internal/
   notify/        # durable email outbox: leases a queued message, sends it, retries with backoff
   ai/            # OpenAI-compatible client, permission-filtered tool catalog, tool loop
   mcpserver/     # exposes the same permission/scope-filtered tools over Streamable HTTP
-  remote/        # RemoteProvider abstraction (native + terminal + meshcentral) + session relay
+  remote/        # RemoteProvider abstraction (native, files, terminal, meshcentral, rustdesk) + session relay + presence
+  sasbridge/     # Windows only: brokers Ctrl+Alt+Del (secure attention) through the installed service
   api/           # chi router, auth middleware, REST handlers, WebSocket handlers
 ```
 
@@ -114,7 +123,14 @@ bus; migration safety must not be mistaken for HA support.
 ## Startup and migrations
 
 Before opening the HTTP listener, the server applies embedded forward migrations
-in one transaction under an advisory lock. Current history is v1 `baseline` then
-v2 `pending_totp_secret`; names and SHA-256 checksums are immutable and the
-database history must be a contiguous prefix. See
+in one transaction under an advisory lock. History runs from `001_baseline` to
+`019_oidc_browser_handoff` today; names and SHA-256 checksums are immutable and
+the database history must be a contiguous prefix. See
 [03-database-schema](03-database-schema.md) and the production rollback runbook.
+
+`rmm-server -migrate-only` applies them and exits without reading settings or
+opening a listener. It lets the schema owner's credential live only in that
+one-shot step, so the serving role can be one that cannot change the schema — and
+therefore cannot delete from the append-only audit table. A serving role that
+lacks the rights stops with the command to run instead of a bare permission
+error.

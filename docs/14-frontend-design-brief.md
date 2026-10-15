@@ -13,7 +13,7 @@ interface is an **AI chat**. An IT admin manages fleets of computers in natural
 language — *"install 7-zip on the finance group"*, *"set up printer X at IP Y on
 host Z"*, *"give me a report of offline devices"*. The AI inspects the fleet and
 **proposes** scripts/actions; a human **approves** before anything runs. Think
-"modern Tactical RMM, AI-native, privacy-first."
+"a modern RMM: AI-native, privacy-first."
 
 ## 2. Audience & tone
 
@@ -151,7 +151,7 @@ That covers the core loop. The full backend (below) is broader.
 
 # Part 2 — Full RMM UI (backend is implemented & verified)
 
-The backend now includes the "classic RMM" feature set inspired by Tactical RMM.
+The backend now includes the "classic RMM" feature set.
 Design these additional areas. Background and semantics:
 `docs/10-monitoring-policies.md`.
 

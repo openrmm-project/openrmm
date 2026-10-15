@@ -9,8 +9,8 @@ designed defense-first. This summarizes the posture; details live in
 
 - **AI proposes, humans dispose.** The AI and the MCP surface create
   approval-gated job proposals (`propose_script`, bulk deploy, or high-level
-  proposal tools). They have **no** execute-a-script tool and **no** delete tool.
-  Nothing reaches a machine from an AI proposal without a human approval.
+  proposal tools). They have **no** tool that runs a script or deletes anything
+  itself. Nothing reaches a machine from an AI proposal without a human approval.
 - **Configuration is proposed too.** `propose_task`, `propose_check` and
   `propose_policy` write the row **disabled** and stamped `proposed_by`; the
   scheduler only ever selects `WHERE enabled`, and a database CHECK constraint
@@ -25,8 +25,11 @@ designed defense-first. This summarizes the posture; details live in
   that bound circular.
 - Scheduled tasks and patch policies remain separate, explicitly preconfigured
   automation paths.
-- **Destructive actions are permission-gated**, deliberate, and audited
-  (device/group deletion never via AI/MCP).
+- **Destructive actions are permission-gated**, deliberate, and audited. The
+  AI/MCP can only **propose** moving or deleting devices; a person approves it
+  under Devices ▸ Pending operations, with their own permissions and scope checked
+  again at that moment, and must type the device count to approve a deletion.
+  Groups, sites and companies are never deleted through the AI/MCP.
 - **Approval is mandatory by default** for every ad-hoc/AI script run (bypass
   only via the explicit `RMM_ALLOW_UNAPPROVED_JOBS=true`).
 - **RBAC**: built-in and custom roles with granular permissions, enforced per
@@ -36,8 +39,15 @@ designed defense-first. This summarizes the posture; details live in
   users can't see or touch out-of-scope devices.
 - **Two-factor (TOTP)**: optional per-user 2FA (RFC 6238). Setup/rotation stores a
   pending encrypted candidate and does not replace an active factor until the new
-  code is confirmed; rotation requires the password and current TOTP. Recovery
-  codes are one-time and hashed.
+  code is confirmed; rotation requires the password and current TOTP. A code is
+  accepted once (the last accepted time step is stored). Recovery codes are
+  one-time and hashed.
+- **Single sign-on (OIDC)**, optional: the provider says who the person is; roles
+  and scope stay in OpenRMM. `RMM_OIDC_ACR_VALUES` / `RMM_OIDC_REQUIRED_AMR` require
+  MFA from the provider's signed claims. The callback hands the console a
+  single-use, 60-second code that only the browser that started the sign-in can
+  exchange. While SSO is on, a linked account has no password path (sign-in,
+  reset). The console never accepts a pasted token.
 - **Secrets**: agent/session/API/OAuth tokens are random and stored hashed
   (SHA-256); enrollment tokens are limited-use bootstrap capabilities stored
   until consumed/expired; passwords use bcrypt. Runtime configuration secrets in
@@ -54,8 +64,13 @@ designed defense-first. This summarizes the posture; details live in
 - **Signed agent/sidecar updates** are supported for `/dl` artifacts with
   Ed25519 detached signatures. Roll out in `warn`, then enforce with
   `RMM_UPDATE_VERIFY=strict`.
-- **Application-immutable audit log** of sensitive actions. A PostgreSQL
-  administrator can still alter it, so export logs off-box for tamper evidence.
+- **Append-only audit log** of sensitive actions, in three layers: triggers refuse
+  updates and deletes (only aged machine entries are purged); run the server as a
+  role that does not own the table and a compromised server cannot erase the
+  trail; and a hash chain over the human record makes a rewrite by a database
+  administrator detectable. The server logs at every start which layers are in
+  force. Export logs off-box as well: the chain detects a rewrite, it does not
+  prevent one.
 
 ## Deploying securely
 
@@ -84,13 +99,13 @@ designed defense-first. This summarizes the posture; details live in
 - Native remote media is trusted at the relay and is not end-to-end encrypted.
 - The supported control plane is a single server replica. Hub/relay/scheduler
   state is process-local; there is no HA or distributed agent hub.
-- `/healthz` is liveness only. There is no readiness/dependency probe, metrics
-  endpoint, tracing, built-in log shipping, or platform alert delivery.
-- Release Ed25519 signatures are not Windows Authenticode or Apple
-  code-signing/notarization. Platform trust prompts and TCC requirements remain.
-- The current console's 2FA card has not yet been updated to send the password
-  and current-code fields required by the hardened setup/disable API. Use the API
-  directly for those operations until the UI is aligned.
+- `/readyz` checks the database only, and the token-gated `/metrics` is a small
+  snapshot. There is no tracing, built-in log shipping, or alerting on the
+  platform's own health.
+- Release Ed25519 signatures are not Windows Authenticode or Apple Developer ID
+  signing/notarization (the macOS bundle is ad-hoc signed, or with a persistent
+  self-signed identity when the build has one). Platform trust prompts, Defender
+  exclusions and TCC requirements remain.
 
 ## Reporting a vulnerability
 

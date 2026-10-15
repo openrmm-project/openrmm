@@ -196,6 +196,6 @@ console TOTP for these accounts.
 - The approval guardrail is unchanged: an OAuth-authenticated client still only
   **proposes** jobs — a human approves. It inherits the bound user's scope, so a
   scoped user's connector sees only that user's fleet.
-- `/healthz` is liveness only and does not validate OAuth database operations or
-  a real connector. Monitor token/authorize failures in application/edge logs and
+- `/healthz` (liveness) and `/readyz` (database ping) do not validate OAuth
+  database operations or a real connector. Monitor token/authorize failures in application/edge logs and
   periodically exercise discovery plus a controlled connector flow.

@@ -1,6 +1,7 @@
 # 09 — Roadmap
 
-Phased plan from the current MVP to a complete RMM. Phases 0–1 are **done**.
+Phased plan toward a complete RMM, and where it stands at v0.6.1. Phases 0–4 are
+**done**; what remains is listed under each phase and at the end.
 
 ## ✅ Phase 0 — Skeleton (done)
 Agent enrollment, persistent WebSocket, heartbeat, job queue in Postgres,
@@ -25,9 +26,14 @@ guardrails (approval, audit). The product's differentiator.
 - **Rich inventory** via gopsutil (CPU, memory, disks, platform, uptime).
 - **Agent as a system service** (install/uninstall via kardianos/service).
 
+- **Departments** (device groups under a site), enrolment straight into one,
+  and bulk move/delete of devices in the console.
+- **High-level AI actions** (`install_software`, `uninstall_software`,
+  `restart_service`, `install_printer`, `flush_dns`, `reboot_device`) — each
+  generates an OS-specific, approval-gated job.
+
 Remaining Phase 2 nice-to-haves:
-- osquery-grade software inventory; device groups/tags filtering in the UI.
-- High-level AI action tools (`install_software`, `install_printer(model, ip)`).
+- osquery-grade software inventory; tags for filtering devices in the UI.
 
 ## ✅ Phase 3 — Remote access (done; codecs maturing)
 - MeshCentral token-login embed (turnkey in-browser sessions).
@@ -48,9 +54,17 @@ Remaining Phase 2 nice-to-haves:
 - **Elevated remote Terminal** (`terminal` provider, `devices.terminal`): a real
   PTY (Unix) / ConPTY (Windows) shell running as the agent's service account
   (root/SYSTEM), bridged to an xterm.js viewer.
+- **macOS (experimental)**: a CGO sidecar in a signed `.app` bundle run as the
+  console user through a LaunchAgent; capture, input, file transfer, chat and
+  display selection, with Screen Recording and Accessibility requested one at a
+  time.
+- **Session conveniences**: the clipboard in both directions, display selection,
+  a Ctrl+Alt+Delete button on Windows, one desktop session per operator per
+  device ("Continue here" moves it), and a notice of who else is connected.
 - **Remaining:** hardware-accelerated codecs (VP8/9/AV1) + media E2E (homegrown,
-  no fork); macOS capture; an optional Wayland backend (XDG portal + PipeWire,
-  needs CGO + a consent prompt, and still can't capture the login screen).
+  no fork); the macOS login window; an optional Wayland backend (XDG portal +
+  PipeWire, needs CGO + a consent prompt, and still can't capture the login
+  screen).
   (XDamage-based change detection was tried and reverted — it doesn't fire under a
   compositor like GNOME/mutter; MIT-SHM is the compositor-safe capture speedup.)
 
@@ -78,11 +92,52 @@ all behind the existing approval/scope/audit guardrails, with a Patches tab, a
 device-drawer Patches view and a read-only `list_patches` AI tool. Requires agent
 ≥ 0.4.2. Design + per-OS notes in [16-patch-management](16-patch-management.md).
 
+## ✅ Identity and access (done)
+- **Single sign-on** through any OpenID Connect provider, with MFA requirements
+  checked on the provider's signed claims and a break-glass switch — see
+  [21-single-sign-on](21-single-sign-on.md).
+- Password reset by email, address confirmation, disabling a user without
+  deleting them; a TOTP code is accepted once.
+- **MCP OAuth 2.1** so cloud connectors (Claude, ChatGPT) sign in natively, with
+  SSO on the consent page and an applications screen to approve and revoke — see
+  [17-mcp-oauth](17-mcp-oauth.md).
+
+## ✅ Alerting and audit (done)
+- **Alert email**: per-user subscriptions, transition-only sending, a durable
+  outbox with retries, the instance's own SMTP relay or an operator's shared
+  service (confirmed addresses only) — see
+  [20-email-notifications](20-email-notifications.md).
+- **Append-only audit trail**: triggers, a non-owner database role, a hash chain;
+  server-side filters and cursor paging, CSV export links, and `query_audit` /
+  `export_audit` for the assistant.
+
+## ✅ AI proposals beyond scripts (done)
+The assistant and MCP clients propose **configuration** (tasks, checks,
+policies — created disabled) and **moves or deletions of devices**; a person
+approves each one. Fleet and audit tools count in the database and hand back
+download links instead of reading rows into the model.
+
+## ✅ Console in six languages (done)
+English, Portuguese (Brazil) and Spanish are reviewed; German, Japanese and
+Simplified Chinese are complete and await a native speaker's review.
+
+## ✅ Release and distribution (done)
+Signed agent and sidecar artifacts (Ed25519, staged key rotation without
+reinstalling), SBOM and build provenance; server, console and `/dl` artifacts
+published as container images; installers and uninstallers for Windows, Linux
+and macOS. See [18-update-signing-runbook](18-update-signing-runbook.md).
+
 ## Cross-cutting hardening
-TLS everywhere, rate limiting, script output caps, agent revocation, signed
-script library, off-box audit shipping. See
-[07-guardrails-security](07-guardrails-security.md).
+Done: TLS at the edge, per-IP rate limiting, request and agent output caps,
+agent credential revocation and rotation, append-only audit. Remaining: a
+server-side output cap for non-reference agents, a signed script library,
+off-box audit shipping, script/terminal sandboxing, OS code signing
+(Authenticode, Apple Developer ID). See
+[07-guardrails-security](07-guardrails-security.md) and
+[19-production-readiness-plan](19-production-readiness-plan.md).
 
 ## Suggested next step
-Phase 2 inventory (osquery) + device groups — they give the AI far richer
-context to reason about, which compounds the value of the chat already built.
+osquery-grade inventory and device tags — they give the AI far richer context to
+reason about, which compounds the value of the chat already built. After that:
+an HA decision for the control plane, and the remote engine's remaining
+platforms (Wayland, the macOS login window).

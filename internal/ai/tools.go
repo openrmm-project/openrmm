@@ -102,6 +102,19 @@ func Tools() []Tool {
 				"scope_id":{"type":"string","description":"id of the client/site/group; required when scope_type is set"}
 			},"required":["report_type"],"additionalProperties":false}`),
 		}},
+		// inventory_report and its row cap point here for the complete data, and
+		// Execute has always handled it; without this entry it was the one tool
+		// the model was told to call and could not, because neither the chat nor
+		// an MCP client can call a function the catalog does not declare.
+		{Type: "function", Function: FunctionDef{
+			Name:        "export_inventory",
+			Description: "Produce the complete fleet inventory report as a CSV and return a download link for the operator. Use this whenever they want the DATA rather than an answer about it — the rows stream from the database straight to their disk, so nothing is truncated, nothing enters this conversation, and the file holds what the database holds. Same report_type and optional scope as inventory_report. The link expires and works only for the account that asked. Read-only.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"report_type":{"type":"string","enum":["software","hardware","machines"],"description":"which report to export"},
+				"scope_type":{"type":"string","enum":["client","site","group"],"description":"optional: narrow to one client, site or department (group)"},
+				"scope_id":{"type":"string","description":"id of the client/site/group; required when scope_type is set"}
+			},"required":["report_type"],"additionalProperties":false}`),
+		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "cancel_job",
 			Description: "Cancel a job: rejects it if still awaiting approval, or kills the running process on the device if it is in progress (e.g. a stuck script/download). This stops execution; it never runs anything.",

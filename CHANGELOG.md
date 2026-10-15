@@ -6,7 +6,32 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Checks and Tasks tabs on a device.** The device drawer had no way to see
+  what monitors or runs on the machine: the Checks and Scheduled tasks screens
+  list definitions, and a policy check shows its policy rather than the devices
+  it reaches. Two tabs next to Jobs now list the enabled checks and tasks that
+  apply to the device — assigned to it or inherited from a policy on its
+  department, site or client, the set the scheduler runs — with each check's
+  state on this machine and each task's last run here. Backed by
+  `GET /api/devices/{id}/checks` and `/tasks` (`checks.view` / `tasks.view`,
+  scoped like every device route).
+
+### Changed
+
+- **The Email settings tab says it is for alerts.** It configures only the
+  alert-mail relay — password resets are the operator's — but its headings
+  ("Email", "Mail server", "Sender & credentials") read like the instance's
+  mail settings. It is now *Alert email*, with *Alert mail server*, *Alert
+  sender and SMTP login* and *Test an alert*, in all six languages.
+
 ### Fixed
+
+- **One screen failing no longer blanks the console.** A screen that threw
+  while rendering unmounted the whole application, leaving a white page and no
+  navigation. Each screen, and each Settings tab, now fails on its own with a
+  message and a Retry, and the rest of the console keeps working.
 
 - **The assistant can hand over the complete inventory.** `inventory_report`
   told the model to call `export_inventory` for the full data, and the server

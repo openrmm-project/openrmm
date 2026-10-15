@@ -108,6 +108,8 @@ the caller's authority.
 | GET | `/api/devices/{id}` | `devices.view` | One agent |
 | GET | `/api/devices/{id}/inventory` | `devices.view` | Latest inventory snapshot |
 | GET | `/api/devices/{id}/remote-capabilities` | `devices.view` | On-demand conservative native-desktop capability preflight |
+| GET | `/api/devices/{id}/checks` | `checks.view` | The enabled checks that run on this device — assigned to it or inherited from a policy on its department, site or client (what the scheduler runs) — each with `policy_name` and this device's `status`, `value`, `output`, `last_result_at`. Direct ones first |
+| GET | `/api/devices/{id}/tasks` | `tasks.view` | The enabled scheduled tasks that run on this device, direct or inherited, each with `policy_name` and `last_run_at` here |
 | POST | `/api/devices/{id}/remote` | `devices.remote` / `devices.files` / `devices.terminal` | Start a remote session |
 | PATCH | `/api/devices/{id}` | `devices.manage` | Set `{description, note}` (identification fields, scope-checked) |
 | PATCH | `/api/devices/{id}/remote-ids` | `devices.manage` | Set external provider identifiers such as `mesh_id` |

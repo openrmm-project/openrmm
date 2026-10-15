@@ -335,6 +335,25 @@ function Kbd({ children }) { return <kbd className="inline-flex items-center h-5
 
 function Skeleton({ className = '' }) { return <div className={cx('relative overflow-hidden rounded-md bg-elevated', className)}><div className="absolute inset-0 -translate-x-full animate-[shimmer_1.4s_infinite] bg-gradient-to-r from-transparent via-white/[0.04] to-transparent" /></div>; }
 
+// One screen that threw while rendering used to take the whole console with it:
+// React unmounts the tree, and the operator was left with a white page and no
+// navigation — Settings ▸ Configuration did exactly that on a /api/config reply
+// without an `ai` block. This keeps a failure to the screen (or settings tab)
+// that had it, says so, and leaves the sidebar working. Navigating away mounts a
+// fresh one (the key changes); Retry renders this one again.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error('openrmm: a screen failed to render', error, info && info.componentStack); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <EmptyState icon="alert" title={t('app.screenFailed')} msg={t('app.screenFailedMsg')}
+        action={<Button variant="secondary" icon="refresh" onClick={() => this.setState({ error: null })}>{t('action.retry')}</Button>} />
+    );
+  }
+}
+
 function EmptyState({ icon = 'info', title, msg, action }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-16 px-6">
@@ -591,6 +610,6 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t
 Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, useQuery, useMutation, useToast, ToastProvider,
   Button, Spinner, StatusPill, STATUS_META, statusLabel, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
-  Avatar, RoleBadge, Kbd, Skeleton, EmptyState, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
+  Avatar, RoleBadge, Kbd, Skeleton, EmptyState, ErrorBoundary, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
   csvEscape, toCSV, downloadText,
 });

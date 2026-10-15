@@ -439,7 +439,7 @@ function Shell() {
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar route={route} navigate={navigate} theme={theme} onOpenNav={() => setMobileNavOpen(true)} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
         <main className={cx('flex-1 min-h-0', fullBleed ? 'overflow-hidden' : 'overflow-y-auto scroll-area')}>
-          <Screen route={route} navigate={navigate} key={route.name} />
+          <ErrorBoundary key={route.name}><Screen route={route} navigate={navigate} /></ErrorBoundary>
         </main>
       </div>
     </div>

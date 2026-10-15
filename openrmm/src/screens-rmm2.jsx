@@ -1183,12 +1183,14 @@ function SettingsScreen() {
     <Page>
       <PageHeader title={t('title.settings')} subtitle={t('settings.subtitle')} />
       <Tabs className="mb-5" value={tab} onChange={setTab} tabs={tabs} />
+      <ErrorBoundary key={tab}>
       {tab === 'users' && <><LanguagePicker /><ChangePasswordCard /><TwoFactorCard /><NotificationsCard />{can('users.manage') && <UsersPanel canAdmin />}</>}
       {tab === 'roles' && can('roles.manage') && <RolesPanel />}
       {tab === 'tokens' && can('api_tokens.manage') && <><APITokensPanel /><OAuthAppsPanel /></>}
       {tab === 'config' && can('settings.manage') && <ConfigPanel />}
       {tab === 'email' && can('settings.manage') && <SMTPPanel />}
       {tab === 'enroll' && can('enrollment.manage') && <EnrollPanel canAdmin={can('enrollment.manage')} />}
+      </ErrorBoundary>
     </Page>
   );
 }

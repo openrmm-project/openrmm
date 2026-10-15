@@ -417,6 +417,10 @@ const api = {
   deleteCheck(id) { return DELETE('/api/checks/' + id); },
   getCheckResults(id, agent_id) { return GET('/api/checks/' + id + '/results' + qs({ agent_id })); },
   getCheckInstances(id) { return GET('/api/checks/' + id + '/instances'); },
+  // What runs on one device: assigned to it or inherited from a policy, with
+  // this device's state (checks) and last run (tasks).
+  listDeviceChecks(id) { return GET('/api/devices/' + id + '/checks'); },
+  listDeviceTasks(id) { return GET('/api/devices/' + id + '/tasks'); },
 
   /* ---- tasks ---- */
   listTasks(params) { return GET('/api/tasks' + qs(params)); },

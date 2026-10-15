@@ -449,11 +449,13 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : [])]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('checks.view') ? [{ value: 'checks', label: t('device.tab.checks') }] : []), ...(can('tasks.view') ? [{ value: 'tasks', label: t('device.tab.tasks') }] : []), ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : [])]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
             {tab === 'jobs' && can('jobs.view') && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
+            {tab === 'checks' && can('checks.view') && <DeviceChecks id={id} navigate={navigate} onClose={onClose} />}
+            {tab === 'tasks' && can('tasks.view') && <DeviceTasks id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'patches' && can('patches.view') && <DevicePatches id={id} hostname={d.hostname} />}
             {tab === 'run' && can('jobs.create') && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
             {tab === 'notes' && can('devices.manage') && <DeviceNotes device={d} />}
@@ -1400,6 +1402,91 @@ function DeviceJobs({ id, navigate, onClose }) {
           <StatusPill status={j.status} size="sm" pulse />
         </button>
       ))}
+    </div>
+  );
+}
+
+// Where a check or task on this device comes from: assigned to the device, or
+// a policy on its department, site or client.
+function MonitoringSource({ row }) {
+  if (!row.policy_id) return <span>{t('dmon.direct')}</span>;
+  return <span className="inline-flex items-center gap-1 text-brandhi"><Icon name="policy" size={12} />{row.policy_name || t('dmon.policy')}</span>;
+}
+
+// The link to the screen where these are created and changed: the drawer only
+// shows what applies here.
+function MonitoringFooter({ hint, screen, label, navigate, onClose }) {
+  return (
+    <div className="flex items-center justify-between gap-3 pt-1">
+      <p className="text-[11.5px] text-faint">{hint}</p>
+      {navigate && <Button size="sm" variant="ghost" icon="arrowright" onClick={() => { onClose(); navigate(screen); }}>{label}</Button>}
+    </div>
+  );
+}
+
+/* device checks tab: the enabled checks the scheduler runs on this device, with
+   this device's latest state */
+function DeviceChecks({ id, navigate, onClose }) {
+  const checksQ = useQuery([id, 'device-checks'], () => api.listDeviceChecks(id), { invalidateOn: ['checks', 'policies'], poll: 10000 });
+  const checks = checksQ.data?.checks || [];
+  if (checksQ.loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}</div>;
+  if (checksQ.error) return <EmptyState icon="alert" title={t('dmon.loadFailed')} msg={checksQ.error.message} />;
+  const footer = <MonitoringFooter hint={t('dchecks.hint')} screen="checks" label={t('dchecks.manage')} navigate={navigate} onClose={onClose} />;
+  if (!checks.length) return <div className="space-y-3"><EmptyState icon="check" title={t('dchecks.empty')} msg={t('dchecks.emptyMsg')} />{footer}</div>;
+  return (
+    <div className="space-y-2">
+      {checks.map((c) => {
+        const ct = window.checkType(c.type);
+        // The value is shown only when there is no output: a check's output
+        // usually states it already ("92% used").
+        const value = c.value != null && !c.output ? Math.round(c.value * 10) / 10 + (ct.unit || '') : null;
+        return (
+          <div key={c.id} className="rounded-xl border border-line bg-card p-3.5 flex items-start gap-3">
+            <Icon name={ct.icon} size={15} className="text-muted mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] text-ink font-medium truncate">{c.name}</div>
+              <div className="text-[11.5px] text-faint mt-0.5 flex flex-wrap items-center gap-x-1.5">
+                <span>{ct.label}</span><span>·</span><span>{fmtInterval(c.interval_sec)}</span><span>·</span><MonitoringSource row={c} />
+              </div>
+              {c.output && <div className="text-[11.5px] text-muted mono mt-1 truncate" title={c.output}>{c.output}</div>}
+              <div className="text-[11px] text-faint mt-0.5">
+                {c.last_result_at ? t('dchecks.lastResult', { when: timeAgo(c.last_result_at) }) : t('dchecks.noResult')}
+                {value != null && <span className="mono"> · {value}</span>}
+              </div>
+            </div>
+            <StatusPill status={c.status} size="sm" />
+          </div>
+        );
+      })}
+      {footer}
+    </div>
+  );
+}
+
+/* device tasks tab: the enabled tasks the scheduler runs on this device, with
+   their last run here */
+function DeviceTasks({ id, navigate, onClose }) {
+  const tasksQ = useQuery([id, 'device-tasks'], () => api.listDeviceTasks(id), { invalidateOn: ['tasks', 'policies', 'jobs'], poll: 15000 });
+  const tasks = tasksQ.data?.tasks || [];
+  if (tasksQ.loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}</div>;
+  if (tasksQ.error) return <EmptyState icon="alert" title={t('dmon.loadFailed')} msg={tasksQ.error.message} />;
+  const footer = <MonitoringFooter hint={t('dtasks.hint')} screen="tasks" label={t('dtasks.manage')} navigate={navigate} onClose={onClose} />;
+  if (!tasks.length) return <div className="space-y-3"><EmptyState icon="tasks" title={t('dtasks.empty')} msg={t('dtasks.emptyMsg')} />{footer}</div>;
+  return (
+    <div className="space-y-2">
+      {tasks.map((task) => (
+        <div key={task.id} className="rounded-xl border border-line bg-card p-3.5 flex items-start gap-3">
+          <Icon name="tasks" size={15} className="text-muted mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] text-ink font-medium truncate">{task.name}</div>
+            <div className="text-[11.5px] text-faint mt-0.5 flex flex-wrap items-center gap-x-1.5">
+              <span className="inline-flex items-center gap-1"><Icon name="clock" size={12} />{window.taskSchedule(task)}</span><span>·</span><MonitoringSource row={task} />
+            </div>
+            <div className="text-[11px] text-faint mt-0.5">{task.last_run_at ? t('dtasks.lastRun', { when: timeAgo(task.last_run_at) }) : t('dtasks.neverRun')}</div>
+          </div>
+        </div>
+      ))}
+      {footer}
     </div>
   );
 }

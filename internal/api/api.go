@@ -231,6 +231,9 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/remote-capabilities", s.getRemoteCapabilities)
+		// What runs on this device: direct and policy-inherited (api_device_monitoring.go).
+		r.With(s.requirePermission(models.PermChecksView)).Get("/devices/{id}/checks", s.listDeviceChecks)
+		r.With(s.requirePermission(models.PermTasksView)).Get("/devices/{id}/tasks", s.listDeviceTasks)
 		// Who is attached right now. Readable by anyone who can see devices:
 		// knowing that a colleague is already on a machine is what stops two
 		// people from working on it blind, and it reveals nothing about the

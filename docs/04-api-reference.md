@@ -304,7 +304,7 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
 
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
-| GET | `/api/config` | any | Effective non-secret config for UI display |
+| GET | `/api/config` | any | Effective non-secret config for UI display; `server.version` is the release the binary was built from (`dev` when unstamped) |
 | PUT | `/api/config` | `settings.manage` | Update editable runtime settings |
 
 `PUT /api/config` body:

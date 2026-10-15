@@ -134,6 +134,11 @@ type Config struct {
 	// the endpoint is disabled; when set, scrapers must send it as a bearer token.
 	MetricsToken string
 
+	// Version is the release the server binary was built from (main.version,
+	// stamped at build time). Not read from the environment: it describes the
+	// binary, and an operator setting it would only make it wrong.
+	Version string
+
 	// Monitoring history retention. Only resolved/terminal rows are purged;
 	// active alerts, pending executions and queued mail are never age-deleted.
 	AlertRetentionDays        int

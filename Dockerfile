@@ -9,7 +9,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/rmm-server ./cmd/server
+# The release this image is, shown in Settings ▸ Configuration and printed by
+# `rmm-server -version`. The image workflow passes the tag's version; a local
+# build without it says "dev". Declared after the module download so changing
+# it does not refetch dependencies.
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/rmm-server ./cmd/server
 
 # Build the production console into openrmm/dist without carrying node_modules
 # or source files into the web image.

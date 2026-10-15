@@ -142,6 +142,17 @@ func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 	return proposalResult("task", out.ID, out.Name, ownerLabel(agentID, policyID))
 }
 
+// legacyCheckTypes are the names propose_check advertised until it was found
+// that the server never accepted them: "disk_space" and "cpu_load" against the
+// models' diskspace and cpuload, so every disk or CPU check the assistant
+// proposed was refused as an unsupported type. The schema now offers the real
+// names; these keep a client that cached the old schema (an MCP connector does)
+// working.
+var legacyCheckTypes = map[string]string{
+	"disk_space": models.CheckDiskSpace,
+	"cpu_load":   models.CheckCPULoad,
+}
+
 func proposeCheck(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
 	var in struct {
 		AgentID       string          `json:"agent_id"`
@@ -159,6 +170,9 @@ func proposeCheck(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 	agentID, policyID, err := tc.targetOwner(ctx, in.AgentID, in.PolicyID)
 	if err != nil {
 		return nil, err
+	}
+	if canonical, ok := legacyCheckTypes[in.Type]; ok {
+		in.Type = canonical
 	}
 	c := &models.Check{
 		AgentID: agentID, PolicyID: policyID,

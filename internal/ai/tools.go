@@ -150,11 +150,11 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "propose_check",
-			Description: "Propose a monitoring check for one device or for a policy. Created DISABLED: it monitors nothing until a person reviews and enables it in the console. Types: disk_space/memory need warn_threshold above err_threshold (percent free); cpu_load needs err_threshold above warn_threshold; ping needs config {\"host\":\"...\"}; winservice needs config {\"service\":\"...\"}; script needs config {\"shell\":\"...\",\"script\":\"...\"}.",
+			Description: "Propose a monitoring check for one device or for a policy. Created DISABLED: it monitors nothing until a person reviews and enables it in the console. Types: diskspace/memory need warn_threshold above err_threshold (percent free); cpuload needs err_threshold above warn_threshold; ping needs config {\"host\":\"...\"}; winservice needs config {\"service\":\"...\"}; script needs config {\"shell\":\"...\",\"script\":\"...\"}.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"agent_id":{"type":"string","description":"target device id; give this OR policy_id, never both"},
 				"policy_id":{"type":"string","description":"target policy id"},
-				"type":{"type":"string","enum":["disk_space","memory","cpu_load","ping","winservice","script"],"description":"what to monitor"},
+				"type":{"type":"string","enum":["diskspace","memory","cpuload","ping","winservice","script"],"description":"what to monitor"},
 				"name":{"type":"string","description":"short name for the check"},
 				"config":{"type":"object","description":"type-specific settings"},
 				"warn_threshold":{"type":"number","description":"percent threshold for the warning level"},

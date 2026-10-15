@@ -28,6 +28,11 @@ tag.
 
 ### Fixed
 
+- **The assistant can propose disk and CPU checks.** `propose_check` offered the
+  types `disk_space` and `cpu_load`, but the server accepts only `diskspace` and
+  `cpuload`, so every disk or CPU check the AI or an MCP client proposed was
+  refused as an unsupported type. The tool now offers the server's names, still
+  accepts the old ones, and a test fails if it offers a type the server refuses.
 - **Settings ▸ Configuration shows the real server version.** It read "0.2.1"
   on every release since that number was typed into the handler. The version is
   now stamped into the binary at build time (`-X main.version`): the image

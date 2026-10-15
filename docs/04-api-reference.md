@@ -407,7 +407,7 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | PUT | `/api/policies/{id}` | `policies.manage` | Rename a policy / rewrite its description (`{name,description}`). Relabels only — checks, tasks and assignments are untouched. Audited as `policy.update` |
 | DELETE | `/api/policies/{id}` | `policies.manage` | Delete |
 | GET | `/api/policies/{id}/assignments` | `policies.view` | List assignments |
-| POST | `/api/policies/{id}/assignments` | `policies.manage` | `{scope_type: client\|site\|agent, scope_id}` |
+| POST | `/api/policies/{id}/assignments` | `policies.manage` | `{scope_type: client\|site\|group\|agent, scope_id}` (`group` = department) |
 | DELETE | `/api/policies/assignments/{aid}` | `policies.manage` | Remove assignment |
 
 ## Alerts

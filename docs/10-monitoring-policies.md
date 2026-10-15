@@ -70,6 +70,13 @@ A **check** is owned by an agent (direct) **or** a policy (inherited). Types:
 | `winservice` | Windows service running (`config.service`) | fail when not running |
 | `script` | exit code (`config.shell`, `config.script`) | 0=passing, 1=warning, else failing |
 
+What applies to one device — its own checks and tasks plus those its policies
+bring — is listed in the device drawer's **Checks** and **Tasks** tabs, with each
+check's state on that machine and each task's last run there
+(`GET /api/devices/{id}/checks` and `/tasks`). Those tabs show only enabled rows,
+the set the scheduler runs; disabled ones and unreviewed AI proposals are on the
+Checks and Scheduled tasks screens.
+
 The **server** owns scheduling and threshold evaluation: the scheduler sends a
 `run_check` to the online agent when a check is due (per `interval_sec`); the
 agent returns a raw value/output; the server computes `passing`/`warning`/
@@ -138,8 +145,12 @@ via `AgentIDsForPolicy` and are narrowed to the caller's access scope.
 ## Policies (inheritance)
 
 A **policy** bundles checks and tasks and is **assigned to a scope**: a client, a
-site, or a specific agent (`policy_assignments`). An agent inherits every policy
-whose scope covers it (its own id, its site, or its client). Resolution happens
+site, a department, or a specific agent (`policy_assignments`). An agent
+inherits every policy whose scope covers it (its own id, its department, its
+site, or its client). The console's policy drawer assigns to clients, sites and
+devices; a department assignment is made through the API
+(`POST /api/policies/{id}/assignments` with `scope_type: group`); the drawer lists
+it by the department's id rather than its name. Resolution happens
 in the store (`ChecksForAgent` / `TasksForAgent`), so one policy can push a
 baseline of checks/tasks to a whole client at once.
 

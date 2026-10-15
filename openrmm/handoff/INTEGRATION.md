@@ -14,7 +14,10 @@ participa do build e não é garantido que acompanhe todos os métodos atuais.
   `sessionStorage["rmm-ai-auth"]`.
 - Toda chamada usa `Authorization: Bearer`; `401` encerra a sessão e `429` recebe
   retries limitados com backoff.
-- A autenticação suporta usuário/senha/TOTP ou recovery code e bearer API token.
+- O console entra por usuário/senha (com TOTP ou recovery code, quando o 2FA está
+  ativo) ou por SSO (`/api/auth/oidc/start`, depois `POST /api/auth/oidc/exchange`
+  com o código de uso único). Não aceita colar um token: tokens de API e o
+  `RMM_ADMIN_TOKEN` servem à API e à automação, não ao login do console.
 - Permission keys retornadas pelo backend controlam navegação e ações. O backend
   é autoritativo; não use gating visual como autorização.
 
@@ -78,17 +81,19 @@ POST /api/me/2fa/recovery-codes
   { code }
 ```
 
-Limitação atual: `TwoFactorCard` e os wrappers `setup2FA`/`disable2FA` ainda não
-coletam/enviam `current_password`; portanto setup/rotação/disable falham na UI até
-essa integração ser ajustada. Não documente essas ações como funcionais no
-frontend.
+No console, `TwoFactorCard` pede a senha atual para iniciar o setup e senha mais
+código para desativar, e regenera os recovery codes com o código atual. Ele não
+oferece a rotação direta (`setup` com `code` enquanto o 2FA está ativo): pela UI,
+troca-se de autenticador desativando e ativando de novo. Um código TOTP vale uma
+vez só; o backend guarda o último passo aceito por usuário.
 
 ## Polling e WebSocket
 
 A UI faz polling para listas/status; não existe WebSocket geral de jobs/alerts.
-O WebSocket implementado no browser é o relay de remote. Checks ainda fazem N
-requisições extras para buscar o último resultado. Considere essas características
-ao dimensionar o rate limit.
+O WebSocket implementado no browser é o relay de remote. `GET /api/checks` já
+traz o estado de cada check por dispositivo (`instances` e `summary`), então a
+tela de Checks faz uma requisição só; o histórico de resultados é buscado ao abrir
+um check. Considere o polling ao dimensionar o rate limit.
 
 ## Checklist
 

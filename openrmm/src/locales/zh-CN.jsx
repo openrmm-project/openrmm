@@ -480,6 +480,8 @@
   'app.lightMode': '浅色模式',
   'app.darkMode': '深色模式',
   'app.denied': '拒绝访问',
+  'app.screenFailed': "无法显示此页面",
+  'app.screenFailedMsg': "页面中的某些内容加载失败。控制台的其他部分仍可正常使用：请重试，或打开其他页面。",
   'app.deniedMsg': '你的角色无权打开此页面。',
   'app.soon': '即将推出',
   'app.soonMsg': '此页面属于当前构建。',

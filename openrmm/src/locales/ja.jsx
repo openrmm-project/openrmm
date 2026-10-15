@@ -480,6 +480,8 @@
   'app.lightMode': 'ライトモード',
   'app.darkMode': 'ダークモード',
   'app.denied': 'アクセスが拒否されました',
+  'app.screenFailed': "この画面を表示できませんでした",
+  'app.screenFailedMsg': "画面内の一部を読み込めませんでした。コンソールのほかの部分は引き続き使えます。再試行するか、別の画面を開いてください。",
   'app.deniedMsg': 'あなたのロールにはこの画面を開く権限がありません。',
   'app.soon': '近日公開',
   'app.soonMsg': 'この画面はビルドに含まれています。',

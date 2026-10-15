@@ -486,6 +486,8 @@
   'app.lightMode': 'Modo claro',
   'app.darkMode': 'Modo escuro',
   'app.denied': 'Acesso negado',
+  'app.screenFailed': "Não foi possível mostrar esta tela",
+  'app.screenFailedMsg': "Algo nela falhou ao carregar. O resto do console continua funcionando: tente de novo ou abra outra tela.",
   'app.deniedMsg': 'Seu papel não tem permissão para abrir esta tela.',
   'app.soon': 'Em breve',
   'app.soonMsg': 'Esta tela faz parte do build.',

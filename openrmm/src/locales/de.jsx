@@ -480,6 +480,8 @@
   'app.lightMode': 'Heller Modus',
   'app.darkMode': 'Dunkler Modus',
   'app.denied': 'Zugriff verweigert',
+  'app.screenFailed': "Diese Ansicht konnte nicht angezeigt werden",
+  'app.screenFailedMsg': "Etwas darin konnte nicht geladen werden. Der Rest der Konsole funktioniert weiter: erneut versuchen oder eine andere Ansicht öffnen.",
   'app.deniedMsg': 'Deine Rolle darf diesen Bildschirm nicht öffnen.',
   'app.soon': 'Demnächst',
   'app.soonMsg': 'Dieser Bildschirm ist Teil des Builds.',

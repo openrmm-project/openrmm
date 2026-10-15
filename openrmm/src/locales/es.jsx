@@ -480,6 +480,8 @@
   'app.lightMode': 'Modo claro',
   'app.darkMode': 'Modo oscuro',
   'app.denied': 'Acceso denegado',
+  'app.screenFailed': "No se pudo mostrar esta pantalla",
+  'app.screenFailedMsg': "Algo en ella no se pudo cargar. El resto de la consola sigue funcionando: reinténtalo o abre otra pantalla.",
   'app.deniedMsg': 'Tu rol no tiene permiso para abrir esta pantalla.',
   'app.soon': 'Próximamente',
   'app.soonMsg': 'Esta pantalla forma parte de la compilación.',

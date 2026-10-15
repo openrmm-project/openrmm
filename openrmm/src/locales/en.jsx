@@ -493,6 +493,8 @@
   'app.lightMode': 'Light mode',
   'app.darkMode': 'Dark mode',
   'app.denied': 'Access denied',
+  'app.screenFailed': "This screen could not be shown",
+  'app.screenFailedMsg': "Something on it failed to load. The rest of the console still works: retry, or open another screen.",
   'app.deniedMsg': 'Your role does not have permission to open this screen.',
   'app.soon': 'Coming soon',
   'app.soonMsg': 'This screen is part of the build.',

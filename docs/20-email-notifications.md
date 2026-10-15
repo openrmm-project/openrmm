@@ -112,7 +112,7 @@ point.
 | Profile | Configured in | Carries |
 |---|---|---|
 | Account | `RMM_SMTP_*` env, **no console form** | password resets, and nothing else |
-| Alerts | `smtp.alerts.*` in the database, editable in Settings > Email | notifications — only through a server set there |
+| Alerts | `smtp.alerts.*` in the database, editable in Settings ▸ Alert email | notifications — only through a server set there |
 
 ### Why account mail is env-only
 

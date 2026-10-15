@@ -24,8 +24,10 @@ curl -X POST http://localhost:3005/api/auth/bootstrap \
   -d '{"username":"admin","password":"<a-strong-password>"}'
 ```
 
-Open `http://localhost:3005`. This Compose proxy serves the built console and
-API from the same origin.
+Open `http://localhost:3005` and sign in with that user. The console takes a
+username and password (plus the second factor once you enable one, in Settings ▸
+Users) or single sign-on; it does not accept the admin token. This Compose proxy
+serves the built console and API from the same origin.
 
 ## Local build
 
@@ -85,9 +87,8 @@ through the actual edge as separate checks.
 - The session bearer is in `sessionStorage`, while non-secret preferences use
   `localStorage`.
 - The built-in `readonly` role includes remote desktop permission.
-- Check status causes one latest-result request per check.
-- The 2FA backend safely stages a pending secret and now requires current
-  password (plus current TOTP when rotating/disabling). The current frontend card
-  does not collect/send those reauthentication fields, so those UI actions are
-  not functional yet. Use the REST API with the documented bodies.
-- Live CPU load and osquery-grade inventory are not implemented.
+- Live CPU load in the inventory (only the `cpuload` check measures it) and
+  osquery-grade inventory are not implemented; the agent reports at most 600
+  software entries per machine.
+- The policy drawer assigns to clients, sites and devices; a department
+  assignment is made through the API.

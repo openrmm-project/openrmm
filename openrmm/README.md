@@ -2,9 +2,16 @@
 
 Frontend React conectado ao backend Go. `src/mockapi.jsx` manteve o nome
 histórico, mas é o cliente `fetch` real (`window.api`); não contém dados mockados.
-As telas cobrem login, dashboard, devices, jobs/aprovações, AI Chat, auditoria,
-alertas, checks, tasks, policies, scripts, clientes/sites/departamentos, patches,
-relatórios, usuários, papéis e configurações.
+As telas cobrem login (senha com segundo fator, ou SSO), dashboard, devices (com
+as abas Inventory, Jobs, Checks, Tasks, Patches, Run script e Notes no detalhe),
+jobs/aprovações, operações propostas pela IA, AI Chat, auditoria, alertas,
+checks, tasks, policies, scripts, clientes/sites/departamentos, patches,
+relatórios, usuários, papéis, tokens de API e aplicações MCP, configuração e
+e-mail de alertas.
+
+O console está traduzido em seis idiomas (`src/locales/`): inglês, português
+(Brasil), espanhol, alemão, japonês e chinês simplificado; `tests/i18n*.test.mjs`
+exige o conjunto completo de chaves em todos.
 
 ## Build atual
 
@@ -57,6 +64,10 @@ O backend e o build devem concordar sobre o base path. O proxy continua expondo
 
 ## Segurança no navegador
 
+- O login é por usuário e senha (mais o segundo fator, quando ativo) ou por SSO;
+  o console não aceita colar um token. No SSO, o callback devolve um código de uso
+  único, válido por 60 segundos, que só o navegador que iniciou o login troca por
+  uma sessão (`POST /api/auth/oidc/exchange`, com o cookie de vínculo).
 - A sessão `{token,user,role,permissions}` fica em
   `sessionStorage["rmm-ai-auth"]`, não em `localStorage`. Ela sobrevive ao reload
   da aba, não a uma nova sessão do navegador. Preferências não secretas, como
@@ -80,29 +91,40 @@ O backend e o build devem concordar sobre o base path. O proxy continua expondo
 ```text
 index.html                 shell e CSP
 config.js                  configuração runtime da origem da API
-scripts/build.mjs          bundle e base path
+scripts/build.mjs          bundle e base path (lista a ordem dos fontes)
 scripts/smoke.mjs          smoke headless
+src/i18n.jsx               t(), idiomas oferecidos e detecção do idioma
+src/locales/*.jsx          uma tabela de textos por idioma
 src/mockapi.jsx            cliente fetch real e adaptadores
-src/ui.jsx                 primitivos e hooks de query/mutation
+src/ui.jsx                 primitivos, hooks de query/mutation e ErrorBoundary
+src/labels.jsx             rótulos e formatação compartilhados
+src/icons.jsx              ícones SVG
 src/app.jsx                auth, navegação, permission gating e router
 src/screens-*.jsx          telas
-tests/build.test.mjs       invariantes do artefato de produção
+src/device-bulk.jsx        seleção e ações em lote de dispositivos
+src/remote-input.jsx       teclado, atalhos e área de transferência do remoto
+src/qr-adapter.js          QR do 2FA (qrcode-generator)
+tests/*.test.mjs           invariantes do build, das telas, do cliente e do i18n
 handoff/apiClient.ts       referência TS histórica; fora do build e pode defasar
 dist/                      saída gerada
 ```
 
+Cada arquivo de `src/` vira um bloco próprio no bundle: o que uma tela usa de
+outro arquivo chega por `window` (por exemplo `window.checkType` e
+`window.taskSchedule`, de `screens-rmm.jsx`, usados no detalhe do dispositivo).
+
 ## Estado conhecido
 
-- Checks buscam o último resultado individualmente, causando uma requisição
-  adicional por check.
-- O inventário adapta o payload plano do agente; live CPU load não é coletado e
-  software é limitado no agente.
+- Uma tela (ou aba de Configurações) que falha ao renderizar mostra um aviso com
+  "Tentar de novo" no lugar dela; o resto do console continua funcionando. O erro
+  vai para o console do navegador.
+- O inventário adapta o payload plano do agente. A carga de CPU ao vivo não entra
+  no inventário (só no check `cpuload`), e o agente envia no máximo 600 itens de
+  software por máquina.
 - Jobs ad hoc continuam approval-gated pelo backend, independentemente da UI.
-- O backend agora exige senha atual em setup/disable de 2FA e, durante rotação,
-  também o TOTP ativo. O `TwoFactorCard`/cliente atual ainda não envia esses
-  campos; setup, rotação e disable pela UI falham até essa integração ser
-  atualizada. `enable` do segredo pendente e regeneração de recovery codes já
-  usam o código esperado.
+- O painel de políticas atribui a clientes, sites e dispositivos. A API também
+  aceita departamento (`scope_type: group`); uma atribuição assim aparece no
+  painel pelo id do departamento.
 
 Veja [`RUNNING.md`](RUNNING.md) para execução e
 [`handoff/INTEGRATION.md`](handoff/INTEGRATION.md) para o contrato da camada de

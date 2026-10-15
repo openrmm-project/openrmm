@@ -52,7 +52,10 @@ runs code on real machines, so destructive/AI actions must feel deliberate.
     `connect_url` (`terminal` is an elevated shell requiring `devices.terminal` — see
     [`08-remote-access.md`](08-remote-access.md)).
   - Tabs: **Inventory** (pretty-print the JSON), **Jobs** (this device's history),
-    **Run script** (manual: shell selector + editor → creates an approval-gated job).
+    **Checks** and **Tasks** (what monitors and runs on this machine — its own and
+    those its policies bring — with state and last run; `GET /api/devices/{id}/checks`
+    and `/tasks`), **Patches**, **Run script** (manual: shell selector + editor →
+    creates an approval-gated job), **Notes**.
 
 ### 4.3 Jobs & Approval queue  ⭐ (the safety-critical screen)
 - Two views: **Awaiting approval** (default, prominent) and **All jobs**.

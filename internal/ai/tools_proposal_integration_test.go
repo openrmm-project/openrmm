@@ -251,6 +251,38 @@ func TestProposedCheckIsInertAndScopedIntegration(t *testing.T) {
 	}
 }
 
+// Disk and CPU checks can be proposed: under the names the schema offers, and
+// under the names it used to offer (disk_space, cpu_load), which the server
+// never accepted until they were mapped.
+func TestProposedDiskAndCPUChecksAreAcceptedIntegration(t *testing.T) {
+	f := newProposalFixture(t)
+	for _, tc := range []struct {
+		typ, want  string
+		warn, fail float64
+	}{
+		{"diskspace", models.CheckDiskSpace, 20, 10},
+		{"disk_space", models.CheckDiskSpace, 15, 5},
+		{"cpuload", models.CheckCPULoad, 85, 95},
+		{"cpu_load", models.CheckCPULoad, 80, 90},
+	} {
+		b, _ := json.Marshal(map[string]any{
+			"agent_id": f.mineAgent, "type": tc.typ, "name": "check " + tc.typ,
+			"warn_threshold": tc.warn, "err_threshold": tc.fail,
+		})
+		if res := Execute(f.ctx, f.tc(), "propose_check", b); strings.Contains(res.Output, `"error"`) {
+			t.Fatalf("propose_check %s refused: %s", tc.typ, res.Output)
+		}
+	}
+	checks, _ := f.st.ListChecks(f.ctx, f.mineAgent, "")
+	got := map[string]int{}
+	for _, c := range checks {
+		got[c.Type]++
+	}
+	if got[models.CheckDiskSpace] != 2 || got[models.CheckCPULoad] != 2 || len(checks) != 4 {
+		t.Fatalf("stored types = %v, want two diskspace and two cpuload", got)
+	}
+}
+
 // A policy definition is global, so a restricted principal has no business
 // creating one — the same rule the REST handler enforces.
 func TestProposePolicyRefusesScopedPrincipalsIntegration(t *testing.T) {

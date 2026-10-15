@@ -154,8 +154,8 @@ and the reconnect lease, not routing).
 - **Script/terminal sandboxing** — they run as root/SYSTEM; at minimum reinforce
   approval/audit. code ⬜
 - **End-to-end encryption** of native media (relay/edge are trusted today). code ⬜
-- **Console 2FA card** — send the hardened password/current-code fields the API
-  already implements. code ⬜
+- ~~**Console 2FA card**~~ — **DONE**: the card sends the password to start setup
+  and the password plus a current code to disable. code ✅
 - **Key-rotation governance** — scheduled rotation (now possible without reinstall,
   see 18) + runbooks. ops ⬜
 

@@ -28,7 +28,11 @@ These controls are built in.
 - **Deleting a device or group** requires `devices.delete` or `clients.manage`
   respectively (`DELETE /api/devices/{id}`, `DELETE /api/groups/{id}`) — a
   deliberate human action in the tool, audited (`device.delete` / `group.delete`).
-  The AI/MCP surface has **no** delete tool, so external AI can never delete anything.
+  The AI/MCP surface can only **propose** moving or deleting devices
+  (`propose_move_devices`, `propose_delete_devices`); nothing changes until a
+  person approves the proposal with their own permissions and scope, and a
+  deletion needs the device count typed. It has no tool for groups, sites or
+  companies. See [06-ai-chat](06-ai-chat.md#moving-and-deleting-devices).
 - **Scheduled tasks** are the one pre-approved path: the scheduler dispatches a
   due task through `jobs.RunAutomated`, which creates the job already approved.
   They require `tasks.manage`, are authorized at creation and fully audited;
@@ -298,8 +302,9 @@ silently omitted:
 7. **Output size limits** — the reference agent caps stdout and stderr at 1 MiB
    each. A server-side cap remains desirable for non-reference agent clients.
 8. **Single replica / observability** — hub, relay and scheduler are process-local;
-   there is no supported HA mode. `/healthz` is liveness only and there is no
-   metrics/tracing/readiness endpoint or built-in log/backup alerting.
+   there is no supported HA mode. `/healthz` is liveness only; `/readyz` adds a
+   database ping and the token-gated `/metrics` a small snapshot. There is no
+   tracing or built-in log/backup alerting.
 
 ## Safe-script guidance for the AI
 

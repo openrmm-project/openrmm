@@ -54,13 +54,19 @@ artifact signature before installation. Runtime self-update verifies detached
 artifact signatures.
 
 Local `make dist-signed` produces binaries, checksums and Ed25519 signatures; it
-does not generate the CI SBOM or GitHub provenance. The workflow does not publish
-a server/container image.
+does not generate the CI SBOM or GitHub provenance. The release workflow also
+publishes the signed `/dl` set as the `openrmm-artifacts` image; the server and
+console images come from `images.yml` (see
+[`deploy/README-production.md`](../deploy/README-production.md)).
 
 ### Platform signing limitations
 
-The release does **not** Authenticode-sign Windows executables. It also does not
-Apple code-sign, notarize or staple macOS artifacts. OpenRMM Ed25519 signatures
+The release does **not** Authenticode-sign Windows executables. The macOS
+remote-desktop bundle is code-signed with a persistent identity when the
+repository holds one (`APPLE_SIGNING_P12`), and ad-hoc otherwise; the persistent
+identity is what lets a sidecar update keep its Screen Recording and
+Accessibility grants. It is not a Developer ID: nothing is notarized or stapled.
+OpenRMM Ed25519 signatures
 protect the installer/self-update trust path but are not recognized as OS vendor
 trust. SmartScreen, Gatekeeper, enterprise application control and macOS TCC can
 still require operator policy/approval.
@@ -185,8 +191,6 @@ does not make a bearer safe if same-origin script execution is compromised.
 - scripts and remote terminal run as root/SYSTEM without sandboxing;
 - native media is not end-to-end encrypted; relay and TLS edge are trusted;
 - one server replica is supported; hub, relay and scheduler are not distributed;
-- `/healthz` is liveness only; no readiness, metrics, tracing or built-in backup
-  alerting exists;
-- container vulnerability scanning is not a blocking release step;
-- the current console 2FA card does not yet send hardened password/current-code
-  fields for setup/rotation/disable, although the API implements them.
+- `/readyz` checks only the database and `/metrics` (token-gated) is a small
+  snapshot; there is no tracing or built-in backup alerting;
+- container vulnerability scanning is not a blocking release step.

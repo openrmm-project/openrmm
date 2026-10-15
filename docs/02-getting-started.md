@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- Go 1.25+ (to build) or Docker (to run via compose).
+- Go 1.26 (to build; `go.mod` pins the toolchain, currently go1.26.9) or Docker
+  (to run via compose).
 - PostgreSQL 14+.
 - Node/npm only when building the console outside Docker.
 
@@ -30,12 +31,43 @@ make build
 ./bin/rmm-server
 ```
 
-Immutable migrations are embedded and applied automatically before the listener
-starts. Current versions are v1 `baseline` and v2 `pending_totp_secret`; recorded
-names/checksums are validated on every startup. `db/schema.sql` is a current
-snapshot, not the migration runner.
+Immutable migrations (`internal/store/migrations`, `001_baseline` through
+`019_oidc_browser_handoff` today) are embedded and applied before the listener
+starts; recorded names and checksums are validated on every start.
+`db/schema.sql` is a current snapshot, not the migration runner.
+
+In production the serving role should not own the schema — the audit trail's
+append-only guarantee depends on it being unable to delete from its own table.
+Run the migrations first with the owner's credentials, then start the server
+with the restricted ones:
+
+```bash
+RMM_DATABASE_URL=<owner dsn> ./bin/rmm-server -migrate-only
+```
+
+A server whose role cannot change the schema stops with that instruction instead
+of a bare permission error. With Compose, `make migrate` runs the same thing in a
+one-shot `server` container, using the owner DSN in `RMM_MIGRATE_DATABASE_URL`
+(see `.env.example`).
 The remaining direct-server examples use port `8080`; replace it with `3005` when
 using the bundled Docker Compose frontend/proxy.
+
+## Create the first console user
+
+The console signs in with a username and password (plus a second factor once you
+enable one) or single sign-on — never with `RMM_ADMIN_TOKEN`. Create the first
+administrator with that token; the call works only while no user exists:
+
+```bash
+curl -s -X POST localhost:8080/api/auth/bootstrap \
+  -H "Authorization: Bearer $RMM_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<at least 12 characters>"}' | jq '{role, user: .user.username}'
+```
+
+Then open the console (`http://localhost:3005` with Compose), sign in, and turn on
+two-factor authentication in Settings ▸ Users. Further users are created there,
+or through `POST /api/users`. The admin token stays valid for the API and
+automation, as in the examples below; keep it out of day-to-day use.
 
 ## Enroll an agent
 
@@ -166,7 +198,7 @@ The `artifacts` build target packages a published `deploy/public` into an image
 that copies itself into a volume:
 
 ```bash
-docker build --target artifacts -t openrmm-artifacts:v0.5.10 .
+docker build --target artifacts -t openrmm-artifacts:v0.6.1 .
 ```
 
 Run it as an initContainer writing to a volume the web container mounts at
@@ -249,8 +281,11 @@ export RMM_TEST_DATABASE_URL='postgres://rmm:rmm@localhost:5432/rmm_test?sslmode
 make test
 ```
 
-CI sets no `RMM_TEST_DATABASE_URL`, so the integration tests skip there. Run them
-locally before trusting a change to anything security-relevant.
+In CI, the *Database migrations* workflow runs them against PostgreSQL 16 for the
+packages that have DB-backed tests (store, settings, api, notify, ai, mcpserver,
+patches, scheduler), on pull requests and pushes that touch those paths. The
+main CI job runs without a database, so they skip there. Run them locally before
+trusting a change to anything security-relevant.
 
 Each DB-backed test gets a **schema of its own** (`storetest.NewSchema`), created
 and dropped around the test, so packages running in parallel cannot see each

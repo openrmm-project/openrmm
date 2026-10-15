@@ -62,7 +62,10 @@ server (`11-mcp`).
 | `get_inventory` | `devices.view` | read | Latest inventory for a device |
 | `get_job_status` | `jobs.view` | read | Status + result of a job |
 | `fleet_summary` | `devices.view` (+ `jobs.view` for recent jobs) | read | Aggregate counts + recent jobs when allowed |
-| `inventory_report` | `reports.view` | read | Fleet inventory (software/hardware/machines) by client/site/department, scope-filtered, capped at 1000 rows — see [15-reports](15-reports.md) |
+| `inventory_report` | `reports.view` | read | Fleet inventory (software/hardware/machines) by client/site/department, scope-filtered. Defaults to `mode: summary` — counts grouped in the database (`group_by`, `match`); `mode: rows` reads records, capped at 1000 — see [15-reports](15-reports.md) |
+| `export_inventory` | `reports.view` | read | The complete inventory report as a CSV **download link** for the operator; same `report_type` and scope as `inventory_report`. The rows never pass through the model |
+| `query_audit` | `audit.view` | read | Search the audit trail. Defaults to `mode: summary` (totals by actor and action family, last 7 days unless `since`/`until` are given); `mode: entries` reads records. Filters: `actor`, `action` (or family prefix), `target`. A scoped account is refused |
+| `export_audit` | `audit.view` | read | The matching audit entries as a CSV download link, same filters as `query_audit` |
 | `list_patches` | `patches.view` | read | Missing OS patches on a device (KB/advisory, classification, status) — see [16-patch-management](16-patch-management.md) |
 | `list_tasks` / `list_checks` / `list_policies` | `tasks.view` / `checks.view` / `policies.view` | read | Existing monitoring configuration, including which rows are unreviewed AI proposals |
 | `install_patches` | `patches.manage` | **write** | Install patches **a person already approved**. `ClaimApprovedPatches` filters to approved identifiers, so an unapproved one installs nothing. There is deliberately no tool to approve a patch |
@@ -191,6 +194,15 @@ Reports are the model summarizing data fetched via permitted read tools:
 principal has `reports.view`. Ask for a report in chat and the model assembles it
 from tool output.
 
+The fleet and audit tools **count in the database by default** (`mode: summary`)
+and read individual rows only when asked to, capped. When the operator wants the
+data itself, the model calls `export_inventory` or `export_audit`, which return a
+signed link to `GET /api/exports/csv`: the rows stream from the database to the
+operator's browser and never enter the conversation, so nothing is truncated or
+retyped. The link expires, works only for the account that asked, and is
+re-checked against that account's current access when it is opened (see
+[04-api-reference](04-api-reference.md#audit)).
+
 **Reports are read-only and stay in the chat.** A system-prompt rule forbids the
 model from proposing a script that writes a report file on the endpoint: to
 "report / list / show" data it must use the read tools and answer in chat. If a
@@ -209,8 +221,9 @@ The chat UI (`openrmm/src/screens-chat.jsx`) parses the assistant message:
   downloads it **client-side via a `Blob`** — nothing is written on the server or
   the endpoint, and no file artifact is persisted.
 
-This is the recommended way to get a report "as a file": the data is fetched with
-read tools, shown in chat, and exported by the browser on demand. To pull an
+This suits a small table the model has already shown. For anything larger, or
+whenever the exact contents matter, prefer the export links above: the browser
+CSV contains what the model wrote, and the link contains what the database holds. To pull an
 *existing* file off an endpoint instead, use the remote-access file manager
 (`08-remote-access`).
 

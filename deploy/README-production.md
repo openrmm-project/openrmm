@@ -235,16 +235,38 @@ make VERSION=v0.4.5 dist-signed
 release steps. The current workflow also does **not** Authenticode-sign Windows
 executables and does **not** Apple code-sign/notarize/staple macOS artifacts.
 Ed25519 update signatures protect OpenRMM's download path, but do not remove
-SmartScreen, Gatekeeper, TCC, or enterprise application-control warnings. No
-server/container image is published by this portable-binary release workflow.
+SmartScreen, Gatekeeper, TCC, or enterprise application-control warnings.
+
+Container images are published to GHCR by separate workflows:
+`openrmm-server` and `openrmm-frontend` (`images.yml`: the version from the tag,
+the minor line, `latest` for releases, `main` for every push to main) and
+`openrmm-artifacts` (`release.yml`: the signed `/dl` set, for Kubernetes; see
+[`docs/02-getting-started.md`](../docs/02-getting-started.md#serving-dl-on-kubernetes)).
+This compose file builds the server and frontend from source instead.
 
 ## 6. Database migrations
 
 Server startup applies immutable, embedded, forward-only migrations in one
-transaction under a PostgreSQL advisory lock:
+transaction under a PostgreSQL advisory lock — `internal/store/migrations`,
+from `001_baseline` to `019_oidc_browser_handoff` today.
 
-- v1 `baseline`
-- v2 `pending_totp_secret`
+`rmm-server -migrate-only` applies them and exits. Use it to keep the schema
+owner's credential out of the serving process. This compose file's database URL
+is the owner (`POSTGRES_USER`, password from the `postgres_password` secret), so
+a one-shot run applies them:
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml run --rm --no-deps \
+  server -migrate-only
+```
+
+The server can then serve as the `openrmm_app` role that migration 012 creates,
+which cannot update or delete the audit trail: give that role a login and point
+the `server` service's `RMM_DATABASE_URL` and password secret at it, keeping the
+owner for the one-shot run. This compose file serves as the owner by default; the server says so
+at every start. See
+[`docs/07-guardrails-security.md`](../docs/07-guardrails-security.md) for setting
+up the restricted role.
 
 `schema_migrations` records the contiguous version, immutable name, and SHA-256
 checksum. A database history must be an exact prefix of the migrations embedded
@@ -405,8 +427,9 @@ Do not manually delete `schema_migrations` rows or change their checksums.
 
 ## 10. Health and observability
 
-Compose healthchecks cover PostgreSQL `pg_isready`, server `/healthz`, and the
-frontend's built `index.html` plus `assets/app.js`. Useful checks include:
+Compose healthchecks cover PostgreSQL `pg_isready`, the server's `/readyz`
+(which pings the database), and the frontend's built `index.html` plus
+`assets/app.js`. Useful checks include:
 
 ```bash
 docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml ps
@@ -419,10 +442,28 @@ The agents door must return `404` for `/api/*`; the MCP door must return `404`
 for console routes; OAuth discovery exists only when enabled. Test the console
 from both an allowed and a denied source at the TLS edge.
 
-`/healthz` is only process liveness and does not query PostgreSQL, the scheduler,
-agents, remote relay, AI provider, backup freshness, or offsite replication.
-There is no `/readyz`, Prometheus endpoint, distributed tracing, built-in alert
-delivery, or HA failover. Production operators must collect stdout/container and
+`/healthz` is only process liveness; `/readyz` adds a database ping and nothing
+else. Neither checks the scheduler, agents, remote relay, AI provider, backup
+freshness, or offsite replication.
+
+`/metrics` serves a small Prometheus text snapshot (online agents, database pool,
+monitoring errors, audit write failures, the alert-mail outbox) and stays **404**
+until `RMM_METRICS_TOKEN` is set; a scraper then sends it as a bearer token. This
+compose file does not pass that variable and the bundled nginx does not route
+`/metrics` through any door: add `RMM_METRICS_TOKEN` to the `server`
+environment and scrape `server:8080/metrics` from the internal network rather
+than publishing it. The series are listed in
+[`docs/04-api-reference.md`](../docs/04-api-reference.md#health) and what to alert
+on in [`docs/20-email-notifications.md`](../docs/20-email-notifications.md).
+
+There is no distributed tracing or HA failover. Alert mail is built in (Settings ▸
+Email; see `docs/20-email-notifications.md`), but it reports fleet events, not the
+platform's own health. Production operators must collect stdout/container and
 edge logs, monitor PostgreSQL/storage/resources/certificate expiry, alert on
 Compose health and backup verification, and use application alerts/audit as
 domain signals rather than full platform observability.
+
+Single sign-on (`RMM_OIDC_*`, see [`docs/21-single-sign-on.md`](../docs/21-single-sign-on.md))
+is likewise not passed by this compose file; add the variables you use to the
+`server` environment, with the client secret as a file secret
+(`RMM_OIDC_CLIENT_SECRET_FILE`).

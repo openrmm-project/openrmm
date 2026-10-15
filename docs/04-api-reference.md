@@ -13,8 +13,11 @@ All `/api/*` routes require a bearer token:
 Authorization: Bearer <token>
 ```
 
-Valid tokens: a **session token** from `POST /api/auth/login`, an **API token**
-(`api_tokens`), or the bootstrap `RMM_ADMIN_TOKEN`. Each carries a role key
+Valid tokens: a **session token** from `POST /api/auth/login` (or from
+`POST /api/auth/oidc/exchange` after single sign-on), an **API token**
+(`api_tokens`), or the bootstrap `RMM_ADMIN_TOKEN`. The console itself signs in
+only with a password (plus second factor) or SSO; it does not accept a pasted
+token. Each carries a role key
 (`admin`/`tech`/`readonly` or custom), which resolves to granular permissions —
 see the Permission column below and [10-monitoring-policies](10-monitoring-policies.md).
 WebSocket endpoints authenticate via their own handshake/token and do not use this
@@ -60,9 +63,20 @@ tokens store that stable identifier.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/healthz` | none | Liveness probe → `ok` |
+| GET | `/readyz` | none | Readiness probe: pings the database (2 s timeout) → `ready`, or **503** while it is unreachable |
+| GET | `/metrics` | `Authorization: Bearer $RMM_METRICS_TOKEN` | Prometheus text format. **404** unless `RMM_METRICS_TOKEN` is set |
 
-`/healthz` checks only that the HTTP process can answer. It does not test the
-database, scheduler, agent hub, AI provider, relay, backup, or edge.
+`/healthz` checks only that the HTTP process can answer; `/readyz` adds the
+database and nothing else. Neither tests the scheduler, agent hub, AI provider,
+relay, backup, or edge.
+
+`/metrics` exposes online agents, goroutines, database pool connections,
+monitoring errors (`rmm_alert_processing_errors_total`,
+`rmm_check_dispatch_failures_total`, `rmm_check_timeouts_total`),
+`rmm_audit_write_failures_total` (any value above zero means the audit trail has
+gaps) and the alert outbox (`rmm_notifications_pending`, `_processing`,
+`_failed`, `_oldest_pending_seconds`). See
+[20-email-notifications](20-email-notifications.md) for what to alert on.
 
 ## Enrollment
 
@@ -97,6 +111,7 @@ the caller's authority.
 | POST | `/api/devices/{id}/remote` | `devices.remote` / `devices.files` / `devices.terminal` | Start a remote session |
 | PATCH | `/api/devices/{id}` | `devices.manage` | Set `{description, note}` (identification fields, scope-checked) |
 | PATCH | `/api/devices/{id}/remote-ids` | `devices.manage` | Set external provider identifiers such as `mesh_id` |
+| GET | `/api/remote/presence?agent_id=` | `devices.view` | Live remote attachments (who is connected to which device, with `user_name`), for the fleet or one device; scope-filtered. Informational: sessions are never refused because someone else is connected |
 | POST | `/api/devices/{id}/revoke` | `devices.delete` | Revoke device identity, close live control/relay connections, and require fresh enrollment |
 | POST | `/api/devices/{id}/rotate-credential` | `devices.delete` | Rotate an online trusted device's credential over its authenticated control channel |
 | POST | `/api/devices/{id}/cancel-credential-rotation` | `devices.delete` | Request cancellation of a staged replacement; completes only after the live agent confirms restoration |
@@ -176,7 +191,22 @@ Review/approve a batch as one unit via `/api/jobs/batch/{batch_id}` (jobs share 
 
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
-| GET | `/api/audit?limit=` | `audit.view` | Recent audit entries (newest first) |
+| GET | `/api/audit` | `audit.view`, unscoped | Audit entries, newest first → `{entries, total, limit, offset, next_cursor?}` |
+| GET | `/api/audit/facets` | `audit.view`, unscoped | Distinct actors and action families present, for building filters → `{actors, actions}` |
+| GET | `/api/exports/csv?token=` | the account the link was minted for | Stream a CSV export (audit or inventory) described by a signed, expiring token |
+
+`/api/audit` filters: `actor`, `action`, `target`, `since` and `until` (RFC 3339;
+a malformed time is **400**, never silently ignored), `limit`, and either
+`offset` or the opaque `cursor` from the previous page's `next_cursor`. Prefer the
+cursor: the trail is append-only and newest-first, so an offset drifts while
+others work. `next_cursor` is present only when there is more to read. A caller
+with a restricted access scope gets **403** — the trail is global.
+
+Export links are minted by the console and by the AI's report tools. Nothing is
+stored: fetching the link re-runs its query against the caller's **current**
+access, so a link fails with **403** for another account or after the caller's
+scope changed. Cells that start like a spreadsheet formula are prefixed with an
+apostrophe.
 
 ## Chat (AI)
 
@@ -205,10 +235,14 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | POST | `/api/auth/bootstrap` | admin token | Create the first admin only when no users exist; `Authorization: Bearer $RMM_ADMIN_TOKEN` is required so an empty instance cannot be claimed by whoever reaches it first; password must meet the current 12-character policy |
 | POST | `/api/auth/login` | none | `{username,password,code?}` → seven-day session `{token, role, permissions, user}`. `code` is a TOTP **or** a one-time recovery code. If 2FA is on and `code` is missing/invalid → `401 {totp_required:true}` |
 | POST | `/api/auth/logout` | any | Revoke the session token |
+| POST | `/api/auth/password-reset` | none, rate limited | `{email}` → always **202**, answered before any lookup so neither the reply nor its timing says whether the account exists; mails a single-use link to a matching account. Throttled per account (one per five minutes, five a day). No mail for an SSO-linked account while SSO is on. See [20-email-notifications](20-email-notifications.md) |
+| POST | `/api/auth/password-reset/confirm` | none, rate limited | `{token, password}`; the password is checked against the policy **before** the link is spent |
+| POST | `/api/auth/verify-email` | none, rate limited | `{token}` — confirm an address from its link. Unknown, used, expired and outdated links get one answer |
 | GET | `/api/me` | any | Current user/principal with `role` and `permissions` |
 | GET | `/api/users` | `users.manage` | List users |
 | POST | `/api/users` | `users.manage` | `{username,password,role,scopes?}` (`scopes`: array of `{scope_type,scope_id}`; `scope_type` = `client`/`site`/`group`/`agent`). An optional `email` additionally requires `users.email.manage` |
 | PUT | `/api/users/{id}/email` | `users.manage` + `users.email.manage` | `{email}` — where their alerts go, and where a password reset link is sent (unique; blank clears) |
+| POST | `/api/users/{id}/email/verify` | `users.manage` + `users.email.manage` | Send that user a new confirmation link → **202** `{status:"sent"}`, or `{status:"already_confirmed"}` |
 | PATCH | `/api/users/{id}` | `users.manage` | `{role}` update a user's role |
 | POST | `/api/users/{id}/disable` | `users.manage` | Withdraw access without deleting: sessions end immediately, bound API tokens stop, alert mail stops, no password reset is issued. Cannot target yourself or the built-in admin |
 | POST | `/api/users/{id}/enable` | `users.manage` | Restore access |
@@ -221,6 +255,9 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | POST | `/api/me/password` | any | `{current_password, new_password}` — change your own password (verifies current; min 12 chars and rejects a small common-password set; revokes your other sessions; audited `user.password.change`) |
+| GET | `/api/me/notifications` | a user session | Your alert subscriptions, your address (read-only here), whether alert delivery is configured, and whether your address must be / is confirmed |
+| PUT | `/api/me/notifications` | a user session | `{subscriptions: {event: bool}}`. Changing the address here is refused (**403**): that needs `users.email.manage` |
+| POST | `/api/me/email/verify` | a user session | Send yourself a new confirmation link |
 
 ### Two-factor (TOTP)
 
@@ -242,10 +279,24 @@ recovery code is accepted in the same `code` field as the TOTP code and is
 consumed on use. A user manager can reset a locked-out user's 2FA; per-user 2FA
 recovery does not require user management permission if the user kept their codes.
 
-The current console's 2FA card has not yet been updated to collect the password
-and current TOTP required by hardened setup/rotation/disable. These API flows are
-implemented, but those UI actions currently fail until the frontend wrapper is
-aligned.
+The console's two-factor card (Settings ▸ Users) asks for the current password
+to start setup and for the password and a current code to disable.
+
+A code is accepted once: the last accepted time step is stored per user, so a
+code seen over a shoulder cannot sign in again within its window.
+
+### Single sign-on (OIDC)
+
+Present only when SSO is configured (`RMM_OIDC_*`); see
+[21-single-sign-on](21-single-sign-on.md).
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/auth/oidc` | none | `{enabled, label}` — whether the login screen offers the button |
+| GET | `/api/auth/oidc/start?redirect_to=` | none | Start a sign-in: sets a host-only binding cookie and redirects to the provider. `redirect_to` accepts a path only |
+| GET | `/api/auth/oidc/callback` | none (provider redirect) | Finish it. Every failure lands on the console with a generic message; the reason is logged and audited |
+| POST | `/api/auth/oidc/exchange` | the binding cookie + console `Origin` | `{code}` — trade the single-use, 60-second code from the callback for a session `{token, user, role, permissions}` |
+| GET | `/api/auth/oidc/begin?state=` | none | Used by the MCP consent page, which runs on another origin: sets the binding cookie on the console origin, then redirects to the provider |
 
 ## Runtime configuration
 
@@ -279,6 +330,18 @@ Secret fields (`ai.api_key`, `remote.meshcentral_token_key`) are write-only:
 omit them or send `""` to keep the existing value. They are encrypted in
 `app_settings` and never returned by the API; `GET /api/config` only returns
 boolean `*_set` flags.
+
+### Email transports
+
+Two profiles; details in [20-email-notifications](20-email-notifications.md).
+
+| Method | Path | Permission | Description |
+|--------|------|------------|-------------|
+| GET | `/api/config/smtp` | `settings.manage` | The account transport (password resets, confirmations). Read-only: it comes from the environment |
+| POST | `/api/config/smtp/test` | `settings.manage` | Test it — mails the caller's own address only |
+| GET | `/api/config/smtp/alerts` | `settings.manage` | The alerts transport; `enabled` says whether alert mail will leave |
+| PUT | `/api/config/smtp/alerts` | `settings.manage` | Set it. A blank host turns alert mail off; a sender or login without a host is **400** (`alerts_need_own_server`); a private relay address is refused unless `RMM_SMTP_ALERTS_ALLOW_PRIVATE=true` |
+| POST | `/api/config/smtp/alerts/test` | `settings.manage` | Test the alerts transport |
 
 ## Org hierarchy
 
@@ -398,6 +461,10 @@ is no streaming progress/cancel endpoint. See [16-patch-management](16-patch-man
 | GET | `/api/api-tokens` | `api_tokens.manage` | List tokens (no secrets) |
 | POST | `/api/api-tokens` | `api_tokens.manage` | `{name, role, user_id?, expires_in_days?}` → token (shown once); binding inherits user scope, `0`/omitted expiry means no expiry |
 | DELETE | `/api/api-tokens/{id}` | `api_tokens.manage` | Revoke a token |
+| GET | `/api/oauth-apps` | `api_tokens.manage` | Registered MCP OAuth applications (hosts, status, active tokens, last use) and the registration policy |
+| POST | `/api/oauth-apps/{id}/approve` | `api_tokens.manage`, unscoped | Approve a pending application |
+| DELETE | `/api/oauth-apps/{id}` | `api_tokens.manage`, unscoped | Revoke an application: its tokens, codes and SSO grants go in one transaction |
+| PUT | `/api/config/mcp-oauth` | `api_tokens.manage`, unscoped | Registration policy: any application or only allowed hosts, and whether new ones need approval |
 
 ## Delegation rules
 
@@ -453,6 +520,7 @@ HTTPS `RMM_MCP_PUBLIC_URL`:
 | GET | `/.well-known/oauth-protected-resource` | none | MCP protected-resource metadata |
 | POST | `/oauth/register` | none | Dynamic Client Registration |
 | GET/POST | `/oauth/authorize` | user credentials + consent | PKCE authorization code |
+| GET | `/oauth/authorize/sso` | none (starts a provider sign-in) | Single sign-on for the consent form; returns with a five-minute, single-use grant bound to the client, redirect URI and PKCE challenge |
 | POST | `/oauth/token` | code verifier or refresh token | Issue/rotate opaque OAuth tokens |
 
 OAuth access tokens authenticate `/mcp` only and are rejected on the REST API.

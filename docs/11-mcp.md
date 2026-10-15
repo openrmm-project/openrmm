@@ -100,9 +100,12 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
 4. **Approval guardrail.** External AI proposes; a human releases. Jobs are
    created `awaiting_approval`; tasks, checks and policies are created **disabled**
    and stamped `proposed_by`, and the database refuses to enable one nobody has
-   reviewed. It has no execute-a-script and no delete tools. The one tool that
-   acts is `install_patches`, and it can only install what a person had already
-   approved — there is no tool to approve a patch. See
+   reviewed. Moving or deleting devices is a proposal too, carried out only when
+   a person approves it under Devices ▸ Pending operations. No tool runs a script
+   or deletes anything itself. The tools that act without a further approval are
+   `install_patches`, which can only install what a person had already approved
+   (there is no tool to approve a patch), and `cancel_job`, which stops a job and
+   never starts one. See
    [07-guardrails-security](07-guardrails-security.md).
 5. **Least privilege.** The `/mcp` group requires `mcp.use`, not broad admin
    access.
@@ -133,10 +136,13 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
 |------------|----------|
 | List devices, read inventory, fleet summary, job status | ✅ only with matching permissions |
 | List tasks, checks and policies | ✅ with `tasks.view` / `checks.view` / `policies.view` |
+| Fleet inventory and audit search, counted in the database | ✅ with `reports.view` / `audit.view` (audit: unscoped accounts only) |
+| Hand the operator a CSV of the inventory or audit trail | ✅ same permissions; a download link that works only for the account that asked |
 | Propose scripts/bulk/high-level actions | ✅ only with `jobs.create`; awaits human approval |
 | Propose a task, check or policy | ✅ with `tasks.manage` / `checks.manage` / `policies.manage` — created **disabled**; it never runs until a person enables it |
 | Install patches | ✅ with `patches.manage`, but **only ones a person already approved**; unapproved identifiers install nothing |
 | Approve a patch | ❌ no such tool — approval is always a human decision |
 | Enable a task, check or policy it proposed | ❌ the database refuses an unreviewed proposal |
 | Execute a script directly | ❌ |
-| Delete a device or group | ❌ (permission-gated human action in the tool) |
+| Move or delete devices | ⚠️ propose only, with `clients.manage` / `devices.delete`; a person approves it, and a deletion needs the device count typed |
+| Delete a group, site or company | ❌ |

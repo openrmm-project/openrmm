@@ -1,9 +1,9 @@
 # OpenRMM
 
 An **open-source, self-hosted RMM** (Remote Monitoring & Management) with a
-**native AI assistant**. Inspired by Tactical RMM and MeshCentral, but with a
-modern interface, a chat that connects to any AI model via API (BYO-model,
-including local/private models), and pluggable remote access.
+**native AI assistant**: a modern console, a chat that connects to any AI model
+via API (BYO-model, including local/private models), its own cross-platform
+agent, and pluggable remote access.
 
 Ask the assistant in plain language — *"install 7-zip on the finance group"*,
 *"configure printer model X at IP Y on host Z"*, *"generate a report of offline
@@ -24,19 +24,22 @@ this project fills.
   versioned release artifacts are required for production).
 - **AI chat with tool-calling** — the model reads fleet state and proposes actions.
 - **Guardrails by design** — AI never executes directly; every action is a job that
-  a human approves, with dry-run preview and an immutable audit log.
-- **Pluggable remote access** — `native` (built-in relay + CGO-free media sidecar,
-  tile-delta codec; Windows and Linux/Xorg incl. the login screen, with
-  cross-platform file transfer), `terminal` (an **elevated** PTY/ConPTY shell in
-  the browser, gated by `devices.terminal`), and `meshcentral` — all behind one
-  interface. Swap freely.
+  a human approves, with dry-run preview and an append-only audit log.
+- **Pluggable remote access** — `native` (built-in relay + media sidecar,
+  tile-delta codec; Windows and Linux/Xorg incl. the login screen, macOS
+  experimental; file transfer, chat with the user, clipboard both ways, display
+  selection, Ctrl+Alt+Del on Windows, and a notice of who else is connected),
+  `terminal` (an **elevated** PTY/ConPTY shell in the browser, gated by
+  `devices.terminal`), and `meshcentral` — all behind one interface. Swap freely.
 - **BYO AI model** — any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, …).
 - **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
   monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
   installs as a system service and reports rich inventory.
 - **Access control** — built-in `admin`/`tech`/`readonly` roles plus custom roles,
-  optional **TOTP 2FA**, and **per-user access scope** (Company/Site/Department/
-  device) enforced on read, write, remote access, and the AI/MCP surface. AI/MCP
+  optional **TOTP 2FA**, **single sign-on** through any OpenID Connect provider
+  (with MFA requirements checked on the provider's signed claims), and
+  **per-user access scope** (Company/Site/Department/device) enforced on read,
+  write, remote access, and the AI/MCP surface. AI/MCP
   tools are filtered by the caller's permissions and scope. AI reports stay in chat
   with a client-side **CSV download** —
   never written to an endpoint.
@@ -45,8 +48,17 @@ this project fills.
   custom role without `devices.remote` when screen access is not acceptable.
 - **MCP server** — connect external AI (Claude, ChatGPT, …) to manage the fleet,
   reusing the same permission-filtered tools and the same human-approval guardrail.
-  Secured with scoped revocable tokens + `mcp.use` + an IP allowlist; deploy
-  privately (Tailscale) or behind TLS.
+  Secured with scoped revocable tokens + `mcp.use` + an IP allowlist, or with the
+  built-in **OAuth 2.1** server so cloud connectors sign in natively (with an
+  applications screen to approve and revoke them); deploy privately (Tailscale)
+  or behind TLS.
+- **Alert email** — per-user subscriptions, a durable outbox with retries, and
+  your own SMTP relay (or an operator's shared service, to confirmed addresses only).
+- **Append-only audit trail** — triggers, a non-owner database role and a hash
+  chain; searchable, exportable as CSV, and queryable by the assistant.
+- **Six languages** — the console is fully translated into English, Portuguese
+  (Brazil), Spanish, German, Japanese and Simplified Chinese; the last three still
+  await review by a native speaker.
 
 ## Architecture at a glance
 
@@ -73,6 +85,15 @@ docker compose up -d          # postgres + server
 # or run locally:
 export RMM_ADMIN_TOKEN="$(openssl rand -hex 32)"
 make build && ./bin/rmm-server
+```
+
+Create the first console user (the console signs in with a password or SSO, not
+with the admin token):
+
+```bash
+curl -X POST localhost:3005/api/auth/bootstrap \
+  -H "Authorization: Bearer $RMM_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<12+ characters>"}'
 ```
 
 Then enroll an agent:
@@ -124,6 +145,7 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 | [18-update-signing-runbook](docs/18-update-signing-runbook.md) | Operator playbook for signed auto-update: key custody, cutting a signed release, publishing to `/dl/`, and staged key rotation via the trusted key set (no reinstall) |
 | [19-production-readiness-plan](docs/19-production-readiness-plan.md) | Prioritized remediation plan to reach production: go-live blockers, observability, HA, container scanning, defense-in-depth |
 | [20-email-notifications](docs/20-email-notifications.md) | Alert email: scope-enforced recipients, transition-only sending, the durable outbox and retry policy, SMTP setup |
+| [21-single-sign-on](docs/21-single-sign-on.md) | Single sign-on with an OpenID Connect provider: setup, MFA requirements, account linking, break-glass |
 
 For production deployment, see [`deploy/README-production.md`](deploy/README-production.md):
 a **split-ingress topology** with loopback backend binds and source ACLs at the
@@ -138,6 +160,14 @@ The native remote engine is a homegrown implementation (CGO-free on Windows and
 Linux; macOS capture uses CGO) rather than a third-party fork. See
 [`docs/08-remote-access.md`](docs/08-remote-access.md) for platform and maturity
 limitations.
+
+## Community
+
+- Discord: <https://discord.gg/VN2jYWuA8X>
+- X: [@openrmm](https://x.com/openrmm)
+
+Report security issues privately, as described in [SECURITY.md](SECURITY.md),
+not in public channels.
 
 ## License
 

@@ -56,7 +56,7 @@ choose a configured fallback provider.
 
 ### `meshcentral`
 - Builds a connect URL into a configured MeshCentral server for the agent's node.
-- **Seamless login-token embed** (like Tactical RMM): when a token key is
+- **Seamless login-token embed**: when a token key is
   configured, the server mints a MeshCentral login token (AES-256-GCM,
   `internal/remote/meshtoken.go`) so the iframe opens without a second login.
   Without the key it falls back to a deep link that works once you're logged into
@@ -602,13 +602,20 @@ the AppKit thread before ⌘V is serialized with the remaining input events.
 Text only, capped at 256 KB: the message shares the session's socket with the
 video stream.
 
-**One direction only.** The endpoint's clipboard is never read back. Collecting
-what somebody copied on their own machine, silently, is surveillance rather than
-support; a technician who needs content from the endpoint can use file transfer,
-which the user can see.
+**The other direction (sidecar 0.16.0+).** While a session is open the sidecar
+reads the endpoint's clipboard every 700 ms and sends each new text value to the
+viewer, which writes it to the technician's clipboard, so Ctrl+C on the remote
+screen gives them something to paste at home. Same limits: text only, 256 KB. A
+mirror remembers what has already crossed in either direction, so a paste is not
+read straight back and sent over as if the user had copied it. The browser writes
+it only in a secure context (HTTPS) and while the viewer tab has focus.
 
-On Linux the text is handed to `wl-copy`, `xclip` or `xsel`, whichever is
-installed — Wayland first, since the X11 tools reach Xwayland's clipboard rather
+Be plain about what this is: while a session is open, what the endpoint's user
+copies reaches the technician, the same way their screen already does. Nothing is
+watched outside a session; the watch stops with it.
+
+On Linux the text is handed to (and read back from) `wl-copy`/`wl-paste`,
+`xclip` or `xsel`, whichever is installed — Wayland first, since the X11 tools reach Xwayland's clipboard rather
 than the one the compositor's applications read. Owning the X11 CLIPBOARD
 selection directly would mean answering selection requests for as long as the
 content should live, and the capture loop owns that connection. If none of the
@@ -719,6 +726,8 @@ If the native tool underperforms, remove the provider — MeshCentral remains.
 
 ## Choosing a default
 
-`RMM_REMOTE_PROVIDER` sets the default (`native` or `meshcentral`). Reasonable
-path: ship with `meshcentral` (fast, Apache, in-browser) and graduate to
-`native` as its media engine matures.
+`RMM_REMOTE_PROVIDER` sets the default (`native` or `meshcentral`). The
+production compose file defaults to `native`, which needs nothing outside
+OpenRMM; the development compose file defaults to `meshcentral`. MeshCentral
+remains the choice where you already run it, or for what the native engine does
+not cover yet (Wayland sessions, the macOS login window).

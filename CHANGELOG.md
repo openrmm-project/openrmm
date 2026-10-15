@@ -17,6 +17,12 @@ tag.
   state on this machine and each task's last run here. Backed by
   `GET /api/devices/{id}/checks` and `/tasks` (`checks.view` / `tasks.view`,
   scoped like every device route).
+- **Assign a policy to a department from the console.** The API and the
+  scheduler always accepted a department (`scope_type: group`), but the policy
+  drawer offered clients, sites and devices only, and listed a department
+  assignment made through the API by its bare id. The picker now has a
+  Departments group, and a department reads as its name with its site — two
+  sites may each have a "Finance".
 
 ### Changed
 

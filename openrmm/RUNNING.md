@@ -90,5 +90,3 @@ through the actual edge as separate checks.
 - Live CPU load in the inventory (only the `cpuload` check measures it) and
   osquery-grade inventory are not implemented; the agent reports at most 600
   software entries per machine.
-- The policy drawer assigns to clients, sites and devices; a department
-  assignment is made through the API.

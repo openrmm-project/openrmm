@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-15
+
 ### Added
 
 - **Checks and Tasks tabs on a device.** The device drawer had no way to see
@@ -49,13 +51,20 @@ tag.
   while rendering unmounted the whole application, leaving a white page and no
   navigation. Each screen, and each Settings tab, now fails on its own with a
   message and a Retry, and the rest of the console keeps working.
-
 - **The assistant can hand over the complete inventory.** `inventory_report`
   told the model to call `export_inventory` for the full data, and the server
   could run it, but the tool was never declared in the catalog — so neither the
   chat nor an MCP client could call it, and a large report ended in a tool the
   model did not have. It is now offered to every caller with `reports.view`, and a
   test fails if `Execute` handles a tool the catalog does not declare.
+
+### Dependencies
+
+- `golang.org/x/crypto` 0.58.0, `golang.org/x/sys` 0.49.0, `golang.org/x/text`
+  0.43.0 and `github.com/go-chi/httprate` 0.16.1.
+- The macOS remote module is the 0.6.1 build, unchanged (sidecar 0.17.1): its
+  source did not change, and keeping the same signed bundle keeps the Screen
+  Recording and Accessibility grants on every Mac.
 
 ## [0.6.1] - 2026-10-13
 

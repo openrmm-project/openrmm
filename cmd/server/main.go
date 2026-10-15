@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -43,13 +44,29 @@ import (
 var migrateOnly = flag.Bool("migrate-only", false,
 	"apply pending database migrations and exit, without starting the server")
 
+// version is the release this binary was built from, stamped at build time:
+//
+//	go build -ldflags "-X main.version=0.6.2" ./cmd/server
+//
+// The Dockerfile (build arg VERSION, set by the image workflow from the tag)
+// and `make server` stamp it. An unstamped build says "dev" rather than a
+// number that looks real: the console showed a hardcoded "0.2.1" for months.
+var version = "dev"
+
+var showVersion = flag.Bool("version", false, "print the version this binary was built from and exit")
+
 func main() {
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	cfg.Version = version
 
 	ctx := context.Background()
 	st, err := store.New(ctx, cfg.DatabaseURL)

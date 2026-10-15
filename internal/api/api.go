@@ -636,7 +636,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"rustdesk_enabled":      eff.RustDeskEnabled,
 		},
 		"server": map[string]any{
-			"version":               "0.2.1",
+			"version":               serverVersion(s.cfg),
 			"base_url":              s.cfg.PublicURL,
 			"allow_unapproved_jobs": s.cfg.AllowUnapprovedJobs,
 			// Public keys, not secrets: every installer that pins them was
@@ -644,6 +644,15 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"update_public_keys": updatePublicKeys(s.cfg),
 		},
 	})
+}
+
+// serverVersion is the release the running binary was built from, as stamped
+// at build time; "dev" for a build that was not stamped.
+func serverVersion(cfg *config.Config) string {
+	if cfg == nil || cfg.Version == "" {
+		return "dev"
+	}
+	return cfg.Version
 }
 
 // updatePublicKeys is never null in JSON, so the console can tell "none

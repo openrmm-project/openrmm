@@ -28,6 +28,12 @@ tag.
 
 ### Fixed
 
+- **Settings ▸ Configuration shows the real server version.** It read "0.2.1"
+  on every release since that number was typed into the handler. The version is
+  now stamped into the binary at build time (`-X main.version`): the image
+  workflow passes the tag's version as the Dockerfile's `VERSION` build arg,
+  `make server` uses `VERSION`, and an unstamped build says `dev`.
+  `rmm-server -version` prints it.
 - **One screen failing no longer blanks the console.** A screen that threw
   while rendering unmounted the whole application, leaving a white page and no
   navigation. Each screen, and each Settings tab, now fails on its own with a

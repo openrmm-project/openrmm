@@ -242,7 +242,12 @@ Container images are published to GHCR by separate workflows:
 the minor line, `latest` for releases, `main` for every push to main) and
 `openrmm-artifacts` (`release.yml`: the signed `/dl` set, for Kubernetes; see
 [`docs/02-getting-started.md`](../docs/02-getting-started.md#serving-dl-on-kubernetes)).
-This compose file builds the server and frontend from source instead.
+This compose file builds the server and frontend from source instead. The
+server image carries its version, shown in Settings ▸ Configuration and printed
+by `rmm-server -version`: the workflow passes the tag's version as the
+Dockerfile's `VERSION` build arg, and a build without it reports `dev` — pass
+`--build-arg VERSION=0.6.2` (or set it under `build.args` in the compose file)
+when building one yourself.
 
 ## 6. Database migrations
 

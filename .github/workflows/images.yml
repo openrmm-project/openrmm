@@ -90,6 +90,11 @@ jobs:
           # then set platforms back to linux/amd64,linux/arm64.
           platforms: linux/amd64
           push: true
+          # The server's own version (Settings ▸ Configuration, rmm-server
+          # -version): the tag's semver on a release, the branch name otherwise.
+          # Unused by the frontend target.
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Layer cache in the registry: without it every run recompiles the Go

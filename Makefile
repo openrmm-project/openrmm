@@ -13,7 +13,7 @@ AGENT_BUILD_FLAGS := -buildvcs=false -ldflags '$(AGENT_LDFLAGS)'
 build: server agent
 
 server:
-	$(GO) build -buildvcs=false -o bin/rmm-server ./cmd/server
+	$(GO) build -buildvcs=false -ldflags '-X main.version=$(patsubst v%,%,$(VERSION))' -o bin/rmm-server ./cmd/server
 
 agent:
 	$(GO) build $(AGENT_BUILD_FLAGS) -o bin/rmm-agent ./cmd/agent

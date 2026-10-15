@@ -1,6 +1,6 @@
 # 09 — Roadmap
 
-Phased plan toward a complete RMM, and where it stands at v0.6.1. Phases 0–4 are
+Phased plan toward a complete RMM, and where it stands at v0.6.2. Phases 0–4 are
 **done**; what remains is listed under each phase and at the end.
 
 ## ✅ Phase 0 — Skeleton (done)

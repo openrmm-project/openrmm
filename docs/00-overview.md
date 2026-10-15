@@ -24,7 +24,7 @@ project targets exactly that niche: *a modern RMM, AI-native and privacy-first*.
 
 ## What is built (this repo)
 
-As of v0.6.1, verified end-to-end against PostgreSQL:
+As of v0.6.2, verified end-to-end against PostgreSQL:
 
 - Agent enrollment + persistent WebSocket + heartbeat + inventory.
 - Job lifecycle: propose → **human approval** → dispatch → result, fully audited.

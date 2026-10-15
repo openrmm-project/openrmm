@@ -6,6 +6,15 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The assistant can hand over the complete inventory.** `inventory_report`
+  told the model to call `export_inventory` for the full data, and the server
+  could run it, but the tool was never declared in the catalog — so neither the
+  chat nor an MCP client could call it, and a large report ended in a tool the
+  model did not have. It is now offered to every caller with `reports.view`, and a
+  test fails if `Execute` handles a tool the catalog does not declare.
+
 ## [0.6.1] - 2026-10-13
 
 ### Security

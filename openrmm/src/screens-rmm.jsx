@@ -43,6 +43,17 @@ function checkType(type) {
   return { ...known, label: t('check.type.' + type), cfgLabel: known.cfg ? t('check.cfg.' + type) : undefined };
 }
 
+// A task's schedule in words: "Every 1 h", "Daily at 03:00", "Mon Wed at 08:00".
+function taskSchedule(task) {
+  if (task.schedule_kind === 'daily') return t('tasks.dailyAt', { time: minuteToHHMM(task.run_at_minute) });
+  if (task.schedule_kind === 'weekly') {
+    const days = WEEKDAY_BITS.filter((i) => (task.days_of_week & (1 << i)) !== 0).map(weekdayShort).join(' ');
+    const at = (task.run_at_minutes || []).map(minuteToHHMM).join(', ');
+    return t('tasks.weeklyAt', { days: days || '—', times: at || '—' });
+  }
+  return t('tasks.every', { interval: fmtInterval(task.interval_sec) });
+}
+
 function checkAggregateStatus(c) {
   if (!c.enabled) return 'disabled';
   const x = c.summary || {};
@@ -503,15 +514,6 @@ function TasksScreen() {
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
   const scriptMap = {}; (scriptsQ.data?.scripts || []).forEach((s) => scriptMap[s.id] = s);
 
-  const schedule = (task) => {
-    if (task.schedule_kind === 'daily') return t('tasks.dailyAt', { time: minuteToHHMM(task.run_at_minute) });
-    if (task.schedule_kind === 'weekly') {
-      const days = WEEKDAY_BITS.filter((i) => (task.days_of_week & (1 << i)) !== 0).map(weekdayShort).join(' ');
-      const at = (task.run_at_minutes || []).map(minuteToHHMM).join(', ');
-      return t('tasks.weeklyAt', { days: days || '—', times: at || '—' });
-    }
-    return t('tasks.every', { interval: fmtInterval(task.interval_sec) });
-  };
   const toggle = async (task) => {
     // Task updates use PUT, so the server validates the entire schedule. Keep
     // the current task fields when changing just the enabled state.
@@ -550,7 +552,7 @@ function TasksScreen() {
                 <tr key={task.id} className="hover:bg-elevated/40 transition">
                   <td className="px-4 py-3"><div className="flex items-center gap-2"><Icon name="tasks" size={15} className="text-muted" /><span className="text-[13px] text-ink font-medium">{task.name}</span>{awaitingReview(task) && <ProposalBadge />}</div></td>
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
-                  <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{schedule(task)}</td>
+                  <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{taskSchedule(task)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[12px] text-faint">{sc?.name || t('tasks.inline')}</td>
                   <td className="px-3 py-3"><Toggle checked={task.enabled} onChange={() => setConfirmToggleTask(task)} disabled={!can('tasks.manage')} /></td>
                   <td className="px-4 py-3 text-right">{can('tasks.manage') && <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" icon="play" onClick={() => askRun(task)}>{t('action.runNow')}</Button><Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(task)}>{t('action.edit')}</Button></div>}</td>
@@ -673,4 +675,7 @@ window.SEV = SEV;
 // checks and tasks a policy owns with the same editors this screen uses, rather
 // than a second, drifting copy of the same forms.
 window.CheckEditor = CheckEditor;
+// The device drawer (screens-devices.jsx) describes checks and tasks the same way.
+window.checkType = checkType;
+window.taskSchedule = taskSchedule;
 window.TaskEditor = TaskEditor;

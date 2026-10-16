@@ -85,6 +85,24 @@ Full detail: [`docs/01-architecture.md`](docs/01-architecture.md).
 
 ## Quick start
 
+**Self-host with the published images.** Use one Linux server, three DNS names and
+Docker Compose. Caddy obtains the certificates, and the release images come
+from `ghcr.io/openrmm-project`:
+
+```bash
+git clone https://github.com/openrmm-project/openrmm.git && cd openrmm/deploy
+cp .env.example .env            # set the hostnames and the release key
+ops/provision-secrets.sh
+docker compose up -d
+```
+
+[deploy/QUICKSTART.md](deploy/QUICKSTART.md) covers what to put in `.env`, the
+first administrator, adding devices and upgrades. The full runbook (backups,
+point-in-time recovery, standby) is
+[deploy/README-production.md](deploy/README-production.md).
+
+**Run from source (development):**
+
 ```bash
 cp .env.example .env          # replace RMM_ADMIN_TOKEN with a generated value
 docker compose up -d          # postgres + server

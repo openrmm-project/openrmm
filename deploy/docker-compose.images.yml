@@ -1,0 +1,57 @@
+# Runs the published release images instead of building them from source.
+# Layer it on top of the production file:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.images.yml up -d
+#
+# or list the files in COMPOSE_FILE in deploy/.env (deploy/QUICKSTART.md).
+#
+# - The images are the release's, from ghcr.io/openrmm-project, pinned to a
+#   version and its digest. The release PR moves the three pins together;
+#   override them with OPENRMM_*_IMAGE to run another release, and keep this
+#   checkout's deploy/ files at the same release.
+# - They are built for x86-64 (linux/amd64).
+# - The agent binaries come from the openrmm-artifacts image, signed with the
+#   project's release key, so RMM_UPDATE_PUBLIC_KEY in deploy/.env must be that
+#   key (deploy/QUICKSTART.md).
+# - The console is built for OPENRMM_BASE_PATH=/; serving it under a sub-path
+#   needs a build from source.
+# - `build: !reset` needs Docker Compose 2.24 or later.
+
+services:
+  server:
+    image: ${OPENRMM_SERVER_IMAGE:-ghcr.io/openrmm-project/openrmm-server:0.6.2@sha256:f0feb170e6cf07c2788476328b21ac84dafb2d6ad28e39a4215e62c0fafe12c3}
+    build: !reset null
+
+  frontend:
+    image: ${OPENRMM_FRONTEND_IMAGE:-ghcr.io/openrmm-project/openrmm-frontend:0.6.2@sha256:611bed5ceb4e4a91ec929d2ef34521574efa4d794663c258a4c86390ced8b5ce}
+    build: !reset null
+    depends_on:
+      artifacts:
+        condition: service_completed_successfully
+    volumes:
+      # Replaces the ./public bind mount (same path), filled from the release.
+      - rmm_dl:/usr/share/nginx/dl:ro
+
+  # Copies the signed release (agents, remote sidecars, installers, SHA256SUMS
+  # and its signature) into the volume the agents door serves as /dl, then
+  # exits. Every installer and agent verifies these files against the release
+  # key, so this service is a transport, not a trust boundary.
+  artifacts:
+    image: ${OPENRMM_ARTIFACTS_IMAGE:-ghcr.io/openrmm-project/openrmm-artifacts:0.6.2@sha256:cfcfdd9d856b60e9298ddb758d428ec43e146f9154ac630cbb95e44357947345}
+    # The image runs as nginx's uid, but a new named volume belongs to root:
+    # the copy runs as root, with no capabilities and no network, and leaves
+    # world-readable files that nginx serves.
+    user: "0:0"
+    command: ["sh", "-c", "rm -rf /dl/* && cp -R /artifacts/. /dl/"]
+    volumes:
+      - rmm_dl:/dl
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+volumes:
+  rmm_dl:

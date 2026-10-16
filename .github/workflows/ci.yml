@@ -442,6 +442,54 @@ jobs:
           image='nginx:1.27.5-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10'
           docker run --rm --add-host server:127.0.0.1 -v "$PWD/deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro" "$image" nginx -t
           docker run --rm --add-host server:127.0.0.1 -e OPENRMM_BASE_PATH=/ -e EDGE_SUBNET=172.30.240.0/24 -e OPENRMM_TRUSTED_PROXY=127.0.0.1 -e NGINX_ENVSUBST_FILTER='^(OPENRMM_BASE_PATH|EDGE_SUBNET|OPENRMM_TRUSTED_PROXY)$' -v "$PWD/deploy/nginx.prod.conf:/etc/nginx/templates/default.conf.template:ro" "$image" nginx -t
+      # The published images, run the way deploy/QUICKSTART.md runs them: the
+      # layered Compose files parse, the Caddyfile is valid, and the stack comes
+      # up from ghcr.io and answers on all three doors, down to a first-admin
+      # bootstrap that crosses nginx, the server and PostgreSQL.
+      - name: Published images (deploy/QUICKSTART.md)
+        working-directory: deploy
+        run: |
+          set -euo pipefail
+          # The release key, as QUICKSTART.md tells people to set it: one source,
+          # and a key the guide gets wrong fails here.
+          RELEASE_KEY=$(sed -n 's/^RMM_UPDATE_PUBLIC_KEY=\([A-Za-z0-9+/=]\{44\}\)$/\1/p' QUICKSTART.md)
+          test -n "$RELEASE_KEY"
+          cp .env.example .env
+          sed -i "s|^RMM_UPDATE_PUBLIC_KEY=.*|RMM_UPDATE_PUBLIC_KEY=$RELEASE_KEY|" .env
+          printf '%s\n' AGENTS_HOST=agents.example.test CONSOLE_HOST=console.example.test \
+            MCP_HOST=mcp.example.test ACME_EMAIL=ops@example.test >> .env
+          files=(-f docker-compose.prod.yml -f docker-compose.images.yml)
+          docker compose "${files[@]}" -f docker-compose.caddy.yml config --quiet
+          caddy=$(docker compose "${files[@]}" -f docker-compose.caddy.yml config --format json | jq -r .services.caddy.image)
+          docker run --rm -e AGENTS_HOST=agents.example.test -e CONSOLE_HOST=console.example.test \
+            -e MCP_HOST=mcp.example.test -e ACME_EMAIL=ops@example.test \
+            -e 'CONSOLE_ALLOWED_RANGES=0.0.0.0/0 ::/0' -e 'MCP_ALLOWED_RANGES=0.0.0.0/0 ::/0' \
+            -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy" \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          ops/provision-secrets.sh >/dev/null
+          docker compose "${files[@]}" up -d
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:8443/healthz >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:9443/frontend-healthz >/dev/null 2>&1 && break
+            sleep 5
+          done
+          curl -fsS http://127.0.0.1:8443/healthz >/dev/null
+          curl -fsS http://127.0.0.1:8443/dl/SHA256SUMS | grep -q rmm-agent-linux-amd64
+          curl -fsS http://127.0.0.1:8443/install.sh | head -1 | grep -q '^#!'
+          curl -fsS http://127.0.0.1:9443/index.html | grep -qi '<html'
+          curl -fsS http://127.0.0.1:7443/healthz >/dev/null
+          # A password the server's rules accept: 12+ characters, an uppercase
+          # letter and a symbol.
+          code=$(curl -sS -o bootstrap.json -w '%{http_code}' -X POST http://127.0.0.1:9443/api/auth/bootstrap \
+            -H "Authorization: Bearer $(cat secrets/admin_token)" -H 'Content-Type: application/json' \
+            -d '{"username":"ci-admin","password":"Ci-Only-Password-1234!"}')
+          test "$code" = 201 || { echo "bootstrap answered $code: $(jq -r .error bootstrap.json 2>/dev/null)"; exit 1; }
+      - name: Published images, state on failure
+        if: failure()
+        working-directory: deploy
+        run: |
+          docker compose -f docker-compose.prod.yml -f docker-compose.images.yml ps -a
+          docker compose -f docker-compose.prod.yml -f docker-compose.images.yml logs --no-color --tail 80
 
   container-scan:
     name: Container image vulnerability scan

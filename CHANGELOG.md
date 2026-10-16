@@ -6,6 +6,18 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Self-hosting from the published images.** `deploy/docker-compose.images.yml`
+  runs the release images from `ghcr.io/openrmm-project`, pinned by version and
+  digest, on top of the production Compose file. It fills the agents door's
+  `/dl` from the `openrmm-artifacts` image, whose agents are signed with the
+  release key. `deploy/docker-compose.caddy.yml` and `deploy/Caddyfile` add
+  Caddy as an optional TLS edge with Let's Encrypt certificates, with
+  source-range limits for the console and MCP. `deploy/QUICKSTART.md` walks
+  through it. CI brings the stack up from the published images on every
+  deployment change and checks all three doors, down to a first-admin bootstrap.
+
 ## [0.6.2] - 2026-10-15
 
 ### Added

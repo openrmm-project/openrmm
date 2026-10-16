@@ -1,0 +1,25 @@
+# The TLS edge for docker-compose.caddy.yml. Each hostname goes to its nginx
+# door; the values come from deploy/.env through the Compose file.
+
+{
+	email {$ACME_EMAIL}
+}
+
+# Agents, installers and /dl: reached by every managed endpoint.
+{$AGENTS_HOST} {
+	reverse_proxy frontend:8080
+}
+
+# The console and its API.
+{$CONSOLE_HOST} {
+	@outside not remote_ip {$CONSOLE_ALLOWED_RANGES}
+	respond @outside 403
+	reverse_proxy frontend:8081
+}
+
+# MCP and its OAuth endpoints.
+{$MCP_HOST} {
+	@outside not remote_ip {$MCP_ALLOWED_RANGES}
+	respond @outside 403
+	reverse_proxy frontend:8082
+}

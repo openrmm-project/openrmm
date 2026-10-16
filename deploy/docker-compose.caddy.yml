@@ -1,0 +1,55 @@
+# Optional: Caddy as the trusted TLS edge, with certificates from Let's Encrypt.
+# Layer it after the other files:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.images.yml \
+#     -f docker-compose.caddy.yml up -d
+#
+# It needs the three hostnames in DNS pointing at this host, and ports 80 and
+# 443 reachable from the internet for the ACME challenges. Caddy proxies to the
+# nginx doors over the edge network, which nginx already trusts for
+# X-Forwarded-For (EDGE_SUBNET), and replaces any X-Forwarded-For a client
+# sends. Using another edge instead: deploy/README-production.md, section 3.
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f}
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      AGENTS_HOST: ${AGENTS_HOST:?set AGENTS_HOST, the agents hostname}
+      CONSOLE_HOST: ${CONSOLE_HOST:?set CONSOLE_HOST, the console hostname}
+      MCP_HOST: ${MCP_HOST:?set MCP_HOST, the MCP hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL, where Let's Encrypt sends certificate notices}
+      # Source ranges allowed on the console and MCP doors (space-separated
+      # CIDRs). Narrow the console to your office or VPN when you can.
+      CONSOLE_ALLOWED_RANGES: ${CONSOLE_ALLOWED_RANGES:-0.0.0.0/0 ::/0}
+      MCP_ALLOWED_RANGES: ${MCP_ALLOWED_RANGES:-0.0.0.0/0 ::/0}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,mode=1777
+    networks:
+      - edge
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  caddy_data:
+  caddy_config:

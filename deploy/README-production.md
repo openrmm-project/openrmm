@@ -5,6 +5,10 @@ three path-restricted nginx listeners, PostgreSQL on an internal network,
 file-backed secrets, a prebuilt frontend bundle, and an external trusted TLS
 edge.
 
+To run the published release images instead of building them, with Caddy as an
+optional TLS edge, see [QUICKSTART.md](QUICKSTART.md). That setup is the same
+deployment: everything below still applies.
+
 ## Supported topology
 
 ```text

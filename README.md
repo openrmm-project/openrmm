@@ -64,8 +64,7 @@ OpenRMM is an open-source, self-hosted RMM built around three choices:
 - **Append-only audit trail** — triggers, a non-owner database role and a hash
   chain; searchable, exportable as CSV, and queryable by the assistant.
 - **Six languages** — the console is fully translated into English, Portuguese
-  (Brazil), Spanish, German, Japanese and Simplified Chinese; the last three still
-  await review by a native speaker.
+  (Brazil), Spanish, German, Japanese and Simplified Chinese.
 
 ## Architecture at a glance
 

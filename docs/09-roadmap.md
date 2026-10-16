@@ -54,7 +54,7 @@ Remaining Phase 2 nice-to-haves:
 - **Elevated remote Terminal** (`terminal` provider, `devices.terminal`): a real
   PTY (Unix) / ConPTY (Windows) shell running as the agent's service account
   (root/SYSTEM), bridged to an xterm.js viewer.
-- **macOS (experimental)**: a CGO sidecar in a signed `.app` bundle run as the
+- **macOS**: a CGO sidecar in a signed `.app` bundle run as the
   console user through a LaunchAgent; capture, input, file transfer, chat and
   display selection, with Screen Recording and Accessibility requested one at a
   time.
@@ -118,8 +118,8 @@ approves each one. Fleet and audit tools count in the database and hand back
 download links instead of reading rows into the model.
 
 ## ✅ Console in six languages (done)
-English, Portuguese (Brazil) and Spanish are reviewed; German, Japanese and
-Simplified Chinese are complete and await a native speaker's review.
+English, Portuguese (Brazil), Spanish, German, Japanese and Simplified Chinese,
+each with the full key set.
 
 ## ✅ Release and distribution (done)
 Signed agent and sidecar artifacts (Ed25519, staged key rotation without

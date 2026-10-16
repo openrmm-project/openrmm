@@ -86,11 +86,11 @@ func TestXauthParsing(t *testing.T) {
 		b = append(b, l[:]...)
 		b = append(b, s...)
 	}
-	b = append(b, 0x01, 0x00)          // family
-	put([]byte("host"))                // address
-	put([]byte("0"))                   // display number
-	put([]byte("MIT-MAGIC-COOKIE-1"))  // name
-	put(cookie)                        // data
+	b = append(b, 0x01, 0x00)         // family
+	put([]byte("host"))               // address
+	put([]byte("0"))                  // display number
+	put([]byte("MIT-MAGIC-COOKIE-1")) // name
+	put(cookie)                       // data
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatal(err)
 	}

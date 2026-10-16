@@ -395,6 +395,23 @@ jobs:
       - name: Installer migration and uninstall
         run: sudo bash scripts/test-install-migration.sh
 
+  # THIRD_PARTY_NOTICES reproduces the licence of every module and npm package
+  # OpenRMM ships, and has to change when they do.
+  notices:
+    name: Third-party notices
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: npm ci
+        working-directory: openrmm
+      - run: go mod download
+      - run: go run ./cmd/notices -check
+
   frontend:
     name: Frontend npm validation
     needs: changes

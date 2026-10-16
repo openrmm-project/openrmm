@@ -1,14 +1,7 @@
 # OpenRMM Contributor License Agreement
 
-> **DRAFT — not yet reviewed by a lawyer.** This document is modelled on the
-> Apache Individual Contributor License Agreement and the Harmony agreements,
-> adapted for a project that is offered both under the AGPL-3.0 and under
-> separate commercial terms. Have counsel review it before you ask anyone to
-> sign it. One thing in particular still needs a decision that only you can
-> make: who the **Project Owner** is (you personally, or a company you own).
-
-**Project:** OpenRMM
-**Project Owner:** `<LEGAL NAME OF THE COPYRIGHT HOLDER>` ("the Owner")
+**Project:** OpenRMM (openrmm.org)
+**Project Owner:** Miquéias Gonçalves ("the Owner")
 
 ## Why this exists
 

@@ -12,10 +12,15 @@ human approves before anything runs on an endpoint.
 
 ## Why this exists
 
-The AI-copilot RMMs that exist today (Atera, SuperOps, Acronis, Neo Agent) are
-all **closed SaaS**. There is no open-source, self-hosted RMM with native AI and
-a pluggable model. That gap — self-hosted + AI-native + privacy-first — is what
-this project fills.
+Most AI-copilot RMMs (Atera, SuperOps, Acronis, Neo Agent) are **closed SaaS**:
+the fleet's data goes to the vendor's cloud and to the model the vendor picked.
+OpenRMM is an open-source, self-hosted RMM built around three choices:
+
+- **Any model** — any OpenAI-compatible endpoint, including a local one, so
+  command data can stay on your own infrastructure.
+- **A human approves every action** — the AI reads and proposes; nothing runs on
+  an endpoint until someone approves the job.
+- **Privacy first** — your server, your database, your audit trail.
 
 ## Highlights
 
@@ -26,11 +31,13 @@ this project fills.
 - **Guardrails by design** — AI never executes directly; every action is a job that
   a human approves, with dry-run preview and an append-only audit log.
 - **Pluggable remote access** — `native` (built-in relay + media sidecar,
-  tile-delta codec; Windows and Linux/Xorg incl. the login screen, macOS
-  experimental; file transfer, chat with the user, clipboard both ways, display
+  tile-delta codec; Windows and Linux/Xorg including the login screen, and
+  macOS; file transfer, chat with the user, clipboard both ways, display
   selection, Ctrl+Alt+Del on Windows, and a notice of who else is connected),
   `terminal` (an **elevated** PTY/ConPTY shell in the browser, gated by
-  `devices.terminal`), and `meshcentral` — all behind one interface. Swap freely.
+  `devices.terminal`), `meshcentral`, and `rustdesk` (opens your own RustDesk
+  client on the device's id, read on demand; off by default) — all behind one
+  interface. Swap freely.
 - **BYO AI model** — any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, …).
 - **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
   monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
@@ -57,8 +64,7 @@ this project fills.
 - **Append-only audit trail** — triggers, a non-owner database role and a hash
   chain; searchable, exportable as CSV, and queryable by the assistant.
 - **Six languages** — the console is fully translated into English, Portuguese
-  (Brazil), Spanish, German, Japanese and Simplified Chinese; the last three still
-  await review by a native speaker.
+  (Brazil), Spanish, German, Japanese and Simplified Chinese.
 
 ## Architecture at a glance
 
@@ -176,8 +182,9 @@ OpenRMM is licensed under the **GNU Affero General Public License v3.0**
 means anyone who runs a modified version as a network service must offer that
 version's source to its users.
 
-Copyright (C) 2026 Miqueias Gonçalves. Contributors retain copyright in their own
-contributions and license them under the [CLA](CLA.md).
+Copyright (C) 2026 Miquéias Gonçalves. Contributors retain copyright in their own
+contributions and license them under the [CLA](CLA.md). Third-party components
+and their licences are listed in [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
 
 ### Commercial licensing
 
@@ -188,9 +195,15 @@ product on top of it.
 
 If you need to embed OpenRMM in something you do not want to publish, a separate
 commercial licence is available — the same code, without the AGPL's source
-obligations. Ask via the address on the GitHub profile.
+obligations. Write to contact@openrmm.io.
 
 Contributing is unaffected by that: you keep the copyright in your work. The
 [CLA](CLA.md) grants a licence broad enough to cover both distributions, because
 the alternative is a project that can never change its own terms. See
 [CONTRIBUTING](CONTRIBUTING.md).
+
+### Trademark
+
+"OpenRMM" and its logo are trademarks of Miquéias Gonçalves. The AGPL licenses
+the code, not the name: a fork is welcome under a name of its own. See
+[TRADEMARKS](TRADEMARKS.md).

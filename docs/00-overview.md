@@ -18,9 +18,11 @@ What it stands on:
 
 ## Positioning
 
-The AI-copilot RMMs on the market (Atera, SuperOps, Acronis RMM, Neo Agent) are
-**closed SaaS**. None are open-source + self-hosted + bring-your-own-model. This
-project targets exactly that niche: *a modern RMM, AI-native and privacy-first*.
+Most AI-copilot RMMs on the market (Atera, SuperOps, Acronis RMM, Neo Agent)
+are **closed SaaS**, and open-source, self-hosted ones with built-in AI are still
+few. This project's take is *a modern RMM, AI-native and privacy-first*: any
+OpenAI-compatible model, including a local one, and a human approval in front of
+every action the AI proposes.
 
 ## What is built (this repo)
 
@@ -36,7 +38,7 @@ As of v0.6.2, verified end-to-end against PostgreSQL:
   The native sidecar does screen capture + input over a tile-delta codec on
   **Windows** (GDI; chat, multi-monitor, UAC, logoff survival, a Ctrl+Alt+Delete
   button), **Linux/Xorg** (X11 capture via MIT-SHM + uinput input, with
-  seat-following for the login screen) and, experimentally, **macOS** (CGO
+  seat-following for the login screen) and **macOS** (CGO
   capture and input in a signed `.app` bundle; asks for Screen Recording and
   Accessibility one at a time). **File transfer**, in-session **chat** and the
   **clipboard in both directions** work on all three, and the operator can pick
@@ -88,8 +90,8 @@ As of v0.6.2, verified end-to-end against PostgreSQL:
 
 - **Hardware-accelerated codecs / E2E-encrypted media** — the native engine uses a
   tile-delta JPEG codec today (homegrown, **no third-party fork**); hardware
-  codecs (VP8/9/AV1) and media end-to-end encryption are future work. **macOS**
-  support is experimental and does not reach the login window, and **Linux
+  codecs (VP8/9/AV1) and media end-to-end encryption are future work. The
+  **macOS** engine does not reach the login window, and **Linux
   requires an Xorg session** (Wayland blocks screen capture — see
   [08-remote-access](08-remote-access.md)).
 - **Rich osquery inventory, script sandboxing/signing** — see

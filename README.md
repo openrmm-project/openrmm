@@ -182,8 +182,9 @@ OpenRMM is licensed under the **GNU Affero General Public License v3.0**
 means anyone who runs a modified version as a network service must offer that
 version's source to its users.
 
-Copyright (C) 2026 Miqueias Gonçalves. Contributors retain copyright in their own
-contributions and license them under the [CLA](CLA.md).
+Copyright (C) 2026 Miquéias Gonçalves. Contributors retain copyright in their own
+contributions and license them under the [CLA](CLA.md). Third-party components
+and their licences are listed in [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
 
 ### Commercial licensing
 
@@ -194,9 +195,15 @@ product on top of it.
 
 If you need to embed OpenRMM in something you do not want to publish, a separate
 commercial licence is available — the same code, without the AGPL's source
-obligations. Ask via the address on the GitHub profile.
+obligations. Write to contact@openrmm.io.
 
 Contributing is unaffected by that: you keep the copyright in your work. The
 [CLA](CLA.md) grants a licence broad enough to cover both distributions, because
 the alternative is a project that can never change its own terms. See
 [CONTRIBUTING](CONTRIBUTING.md).
+
+### Trademark
+
+"OpenRMM" and its logo are trademarks of Miquéias Gonçalves. The AGPL licenses
+the code, not the name: a fork is welcome under a name of its own. See
+[TRADEMARKS](TRADEMARKS.md).

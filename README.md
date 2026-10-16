@@ -117,7 +117,7 @@ with the admin token):
 ```bash
 curl -X POST localhost:3005/api/auth/bootstrap \
   -H "Authorization: Bearer $RMM_ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"<12+ characters>"}'
+  -d '{"username":"admin","password":"<12+ characters, an uppercase letter and a symbol>"}'
 ```
 
 Then enroll an agent:

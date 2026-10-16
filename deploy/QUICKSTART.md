@@ -71,7 +71,7 @@ server creates the database.
 The admin token works for this exactly once, while the console has no users.
 
 ```bash
-read -rsp 'Admin password (12+ characters, no double quotes): ' PW; echo
+read -rsp 'Admin password (12+ characters, an uppercase letter and a symbol; no double quotes): ' PW; echo
 curl -fsS -X POST https://console.rmm.example.com/api/auth/bootstrap \
   -H "Authorization: Bearer $(cat secrets/admin_token)" \
   -H 'Content-Type: application/json' \
@@ -129,3 +129,7 @@ to forward.
   console stores encrypted (SMTP and AI keys) cannot be read.
 - The admin token is for the first bootstrap and for emergencies. Day-to-day
   work uses console accounts.
+- The server connects to PostgreSQL as the database owner, and says so in its
+  log at every start. For an audit trail the server itself cannot erase, run it
+  as the restricted `openrmm_app` role
+  ([README-production.md](README-production.md), section 6).

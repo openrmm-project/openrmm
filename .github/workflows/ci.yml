@@ -478,10 +478,12 @@ jobs:
           curl -fsS http://127.0.0.1:8443/install.sh | head -1 | grep -q '^#!'
           curl -fsS http://127.0.0.1:9443/index.html | grep -qi '<html'
           curl -fsS http://127.0.0.1:7443/healthz >/dev/null
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:9443/api/auth/bootstrap \
+          # A password the server's rules accept: 12+ characters, an uppercase
+          # letter and a symbol.
+          code=$(curl -sS -o bootstrap.json -w '%{http_code}' -X POST http://127.0.0.1:9443/api/auth/bootstrap \
             -H "Authorization: Bearer $(cat secrets/admin_token)" -H 'Content-Type: application/json' \
-            -d '{"username":"ci-admin","password":"ci-only-password-1234"}')
-          test "$code" = 201
+            -d '{"username":"ci-admin","password":"Ci-Only-Password-1234!"}')
+          test "$code" = 201 || { echo "bootstrap answered $code: $(jq -r .error bootstrap.json 2>/dev/null)"; exit 1; }
       - name: Published images, state on failure
         if: failure()
         working-directory: deploy

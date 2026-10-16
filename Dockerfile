@@ -38,6 +38,7 @@ RUN apk upgrade --no-cache \
     && addgroup -S -g 10001 rmm \
     && adduser -S -D -H -u 10001 -G rmm rmm
 COPY --from=server-build --chown=10001:10001 /out/rmm-server /usr/local/bin/rmm-server
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/doc/openrmm/
 USER 10001:10001
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
@@ -57,6 +58,7 @@ ENTRYPOINT ["/usr/local/bin/rmm-server"]
 FROM ${ALPINE_IMAGE} AS artifacts
 RUN apk upgrade --no-cache
 COPY deploy/public/ /artifacts/
+COPY LICENSE THIRD_PARTY_NOTICES /artifacts/
 # Ownership matches the nginx user in the frontend image, so the copy lands
 # readable without the initContainer having to chown anything.
 RUN chown -R 101:101 /artifacts && chmod -R a-w /artifacts
@@ -69,6 +71,8 @@ FROM ${NGINX_IMAGE} AS frontend
 # CVEs that fail the Trivy gate.
 RUN apk upgrade --no-cache
 COPY --from=frontend-build --chown=101:101 /src/openrmm/dist/ /usr/share/nginx/html/
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/doc/openrmm/
+COPY --chown=101:101 THIRD_PARTY_NOTICES /usr/share/nginx/html/third-party-notices.txt
 ENV OPENRMM_BASE_PATH=/ \
     NGINX_ENVSUBST_FILTER=^OPENRMM_BASE_PATH$
 USER 101:101

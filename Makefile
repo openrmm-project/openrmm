@@ -1,4 +1,4 @@
-.PHONY: build server agent signer icons run vet tidy test security-check clean dist-clean checksums require-release-config agent-all remote-all remote-all-darwin remote-dist remote-dist-darwin agent-dist sign-dist agent-dist-signed remote-dist-signed dist-signed
+.PHONY: build server agent signer icons run vet tidy test security-check clean dist-clean checksums require-release-config agent-all remote-all remote-all-darwin remote-dist remote-dist-darwin agent-dist sign-dist agent-dist-signed remote-dist-signed dist-signed notices
 
 # Go toolchain. Override if `go` isn't on PATH, e.g.:
 #   make remote-dist GO=$(ls -d $HOME/go/pkg/mod/golang.org/toolchain@*/bin/go | head -1)
@@ -137,6 +137,10 @@ WINRES := github.com/tc-hib/go-winres@v0.3.3
 icons:
 	for d in agent rmm-remote; do (cd cmd/$$d && $(GO) run $(WINRES) simply --arch amd64,arm64 --manifest none --out rsrc --icon ../../$(LOGO)) || exit 1; done
 	python3 -c "from PIL import Image; im=Image.open('$(LOGO)').convert('RGBA'); l,t,r,b=im.getbbox(); h=max(r-l,b-t)*27//50; cx,cy=(l+r)//2,(t+b)//2; sq=im.crop((cx-h,cy-h,cx+h,cy+h)); [sq.resize((s,s),Image.LANCZOS).save('cmd/rmm-remote/icon/openrmm-%d.png'%s,optimize=True) for s in (16,32,48)]"
+
+# THIRD_PARTY_NOTICES, after a dependency change (needs `npm ci` in openrmm/).
+notices:
+	go run ./cmd/notices
 
 run: server
 	./bin/rmm-server

@@ -141,8 +141,8 @@ jobs:
       # Runs the trivy image directly rather than the action, matching how
       # ci.yml already does it — same pinning policy, and Dependabot's docker
       # ecosystem tracks the tag.
-      # The name as it was pushed: registry paths are lower case (the owner is
-      # P1N-GU), and a release tag v1.2.3 is published as 1.2.3 (the semver
+      # The name as it was pushed: registry paths are lower case, whatever the
+      # owner's spelling, and a release tag v1.2.3 is published as 1.2.3 (the semver
       # pattern above). Either mismatch made trivy refuse the reference before
       # scanning anything, so this gate never ran.
       - name: Trivy (blocks on fixable HIGH/CRITICAL)

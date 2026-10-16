@@ -139,8 +139,8 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   available — plus **uinput/XTEST** input injection (`media_linux.go` /
   `x11_linux.go`) — the same native technique, no fork. (Unlike XDamage, MIT-SHM
   works under a compositor such as GNOME/mutter, since it shares GetImage's
-  server-side read path.) macOS uses an experimental CoreGraphics engine that
-  requires CGO (see *macOS engine* below). The viewer is
+  server-side read path.) macOS uses a CoreGraphics engine that requires CGO
+  (see *macOS engine* below). The viewer is
   a plain browser client (`openrmm/src/screens-devices.jsx`, also openable in a new
   tab). A **multiplexed protocol** rides one WebSocket: binary `0x01`=video frame,
   `0x02`=file chunk; JSON text for input, chat, file ops, `{t:"kf"}` (the
@@ -328,7 +328,7 @@ display.
 The darwin engine is CGO and compiles only on a Mac; the macOS CI job is where
 it is built.
 
-### macOS engine (experimental, CGO)
+### macOS engine (CGO)
 
 Unlike Windows (GDI) and Linux (X11), macOS has **no CGO-free capture path** —
 screen capture (`CGDisplayCreateImage`) and input (`CGEvent`) only exist in

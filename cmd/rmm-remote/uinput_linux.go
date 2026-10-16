@@ -80,8 +80,8 @@ func newUinput() (*uinputDevice, error) {
 	le.PutUint16(dev[82:], 0x1234)
 	le.PutUint16(dev[84:], 0x5678)
 	le.PutUint16(dev[86:], 1)
-	le.PutUint32(dev[92:], absRange)  // absmax[ABS_X]
-	le.PutUint32(dev[96:], absRange)  // absmax[ABS_Y]
+	le.PutUint32(dev[92:], absRange) // absmax[ABS_X]
+	le.PutUint32(dev[96:], absRange) // absmax[ABS_Y]
 	if _, err := unix.Write(fd, dev); err != nil {
 		return bail(err)
 	}

@@ -54,7 +54,7 @@ Remaining Phase 2 nice-to-haves:
 - **Elevated remote Terminal** (`terminal` provider, `devices.terminal`): a real
   PTY (Unix) / ConPTY (Windows) shell running as the agent's service account
   (root/SYSTEM), bridged to an xterm.js viewer.
-- **macOS (experimental)**: a CGO sidecar in a signed `.app` bundle run as the
+- **macOS**: a CGO sidecar in a signed `.app` bundle run as the
   console user through a LaunchAgent; capture, input, file transfer, chat and
   display selection, with Screen Recording and Accessibility requested one at a
   time.

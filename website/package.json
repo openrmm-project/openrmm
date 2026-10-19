@@ -1,0 +1,24 @@
+{
+  "name": "openrmm-docs",
+  "private": true,
+  "type": "module",
+  "description": "The OpenRMM documentation site (docs.openrmm.io), built from the repository's guides.",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "sync": "node scripts/sync-docs.mjs",
+    "build": "node scripts/sync-docs.mjs && astro build",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.6",
+    "astro": "7.3.8",
+    "starlight-links-validator": "0.27.0"
+  },
+  "overrides": {
+    "postcss-nested": "8.0.1",
+    "postcss-selector-parser": "7.1.6"
+  },
+  "engines": {
+    "node": ">=22.22.0"
+  }
+}

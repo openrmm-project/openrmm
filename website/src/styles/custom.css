@@ -9,3 +9,9 @@
   --sl-color-accent: #4f46e5;
   --sl-color-accent-high: #312e81;
 }
+
+/* The home page hero has no image beside it: its text is centred rather than
+   leaving the right-hand column empty. */
+.hero { grid-template-columns: 100%; }
+.hero .copy { align-items: center; text-align: center; }
+.hero .actions { justify-content: center; }

@@ -48,5 +48,7 @@ openrmm/dist
 openrmm/tests
 openrmm/uploads
 openrmm/.thumbnail
+# The docs site (docs.openrmm.io) is built and published on its own.
+website
 **/*.log
 **/.DS_Store

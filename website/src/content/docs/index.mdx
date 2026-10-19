@@ -1,0 +1,54 @@
+---
+title: OpenRMM documentation
+description: Install, run and extend OpenRMM, the open-source RMM whose AI assistant proposes and a human approves.
+template: splash
+hero:
+  tagline: An open-source, self-hosted RMM. The AI assistant reads your fleet and proposes; nothing runs on a machine until a person approves it.
+  image:
+    file: ../../assets/logo.png
+  actions:
+    - text: Self-host in minutes
+      link: /quickstart/
+      icon: right-arrow
+    - text: OpenRMM Cloud
+      link: https://openrmm.io/#planos
+      icon: external
+      variant: minimal
+    - text: View on GitHub
+      link: https://github.com/openrmm-project/openrmm
+      icon: github
+      variant: minimal
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+These guides live with the code in the [OpenRMM repository](https://github.com/openrmm-project/openrmm): this site is rebuilt from it on every change, and every page has a link to edit its source.
+
+## Get started
+
+<CardGrid>
+  <LinkCard title="Self-hosting quick start" href="/quickstart/" description="Docker Compose, the published images and automatic HTTPS on your own server." />
+  <LinkCard title="Overview" href="/overview/" description="What OpenRMM is, what is built and what is intentionally left out." />
+  <LinkCard title="Production deployment" href="/production/" description="TLS, secrets, agent installers, backups, upgrades and rollback." />
+  <LinkCard title="Run from source" href="/run-from-source/" description="Build and run the server, console and agent for development." />
+</CardGrid>
+
+## Using OpenRMM
+
+<CardGrid>
+  <LinkCard title="AI assistant" href="/ai-chat/" description="How the chat reads your fleet, proposes jobs, and why it can only propose." />
+  <LinkCard title="Remote access" href="/remote-access/" description="Remote desktop, file transfer and terminal, plus MeshCentral and RustDesk." />
+  <LinkCard title="Monitoring, policies and alerts" href="/monitoring-policies/" description="Companies, sites, roles, checks, tasks, policies and alerts." />
+  <LinkCard title="Update management" href="/patch-management/" description="Scan, approve and install OS updates in maintenance windows." />
+  <LinkCard title="MCP server" href="/mcp/" description="Connect Claude, ChatGPT or another assistant with the same permissions and approvals." />
+  <LinkCard title="Single sign-on" href="/single-sign-on/" description="Sign in through any OpenID Connect provider." />
+</CardGrid>
+
+## Security and development
+
+<CardGrid>
+  <LinkCard title="Security overview" href="/security/" description="The guarantees enforced in code, roles, two-factor sign-in and the audit trail." />
+  <LinkCard title="Architecture" href="/architecture/" description="The components and how a proposal, an agent and a remote session flow through them." />
+  <LinkCard title="API reference" href="/api-reference/" description="Authentication, roles and the REST endpoints behind the console." />
+  <LinkCard title="Contributing" href="/contributing/" description="Sign-off, the contributor agreement, the tests and what gets a pull request merged." />
+</CardGrid>

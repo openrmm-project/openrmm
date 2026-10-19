@@ -146,6 +146,9 @@ See [`docs/02-getting-started.md`](docs/02-getting-started.md) for the full walk
 
 ## Documentation
 
+Read it at **[docs.openrmm.io](https://docs.openrmm.io)**, with search and a sidebar by
+topic. The site is built from the files below on every change to them.
+
 | Doc | Contents |
 |-----|----------|
 | [00-overview](docs/00-overview.md) | Vision, scope, what's built vs planned |

@@ -17,6 +17,13 @@ tag.
   source-range limits for the console and MCP. `deploy/QUICKSTART.md` walks
   through it. CI brings the stack up from the published images on every
   deployment change and checks all three doors, down to a first-admin bootstrap.
+- **docs.openrmm.io.** The guides in `docs/`, the self-hosting and production
+  guides, `SECURITY.md`, `CONTRIBUTING.md` and this changelog are published as
+  a documentation site with search, a sidebar by topic, and an edit link to
+  each page's source file. The files stay the source. `website/` holds only
+  the site's configuration and the script that copies the files in. A merge
+  to `main` that touches a guide republishes the site. A pull request builds it
+  and fails on a broken link.
 
 ## [0.6.2] - 2026-10-15
 

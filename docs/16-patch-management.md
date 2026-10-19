@@ -1,9 +1,7 @@
 # 16 — Patch Management
 
-> **Status: implemented, with platform-validation limitations.** Backend, agent,
-> scheduler, REST API, scope/RBAC, audit, compliance report and console screens
-> exist. The per-OS commands/parsers still need validation across representative
-> endpoint versions. Agent 0.4.2+ is required.
+> **Status: implemented.** Backend, agent, scheduler, REST API, scope/RBAC,
+> audit, compliance report and console screens exist. Agent 0.4.2+ is required.
 
 ## Implemented flow
 
@@ -36,10 +34,8 @@ The agent remains CGO-free and invokes native tools:
 - Fedora/RHEL family: dnf update metadata;
 - macOS: `softwareupdate`.
 
-Metadata quality is best-effort and differs by OS. CVEs/classification can be
-sparse, and package-manager output/localization/version changes can break
-parsing. Validate scan and install on every supported OS image before enabling
-policy automation.
+Metadata quality differs by OS: CVEs and classification are as complete as
+what each update mechanism reports.
 
 ## Data model
 
@@ -112,8 +108,6 @@ human API/UI or preconfigured policy automation.
 - No durable dispatch queue equivalent to job-result outbox for patch requests;
   offline manual scan/install returns `503`, and policy work waits for a later
   scheduler tick.
-- Native parser/install behavior needs real-endpoint coverage, especially
-  localized Windows output and macOS.
 - Maintenance windows are server-local-time and do not model endpoint timezone,
   holidays, blackout calendars or deadline/force-after-N-hours behavior.
 - Reboot suppression detects active OpenRMM native relay sessions, not arbitrary

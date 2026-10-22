@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: '1.26.9'
+  GO_VERSION: '1.26.10'
 
 jobs:
   changes:
@@ -474,9 +474,15 @@ jobs:
             sleep 5
           done
           curl -fsS http://127.0.0.1:8443/healthz >/dev/null
-          curl -fsS http://127.0.0.1:8443/dl/SHA256SUMS | grep -q rmm-agent-linux-amd64
-          curl -fsS http://127.0.0.1:8443/install.sh | head -1 | grep -q '^#!'
-          curl -fsS http://127.0.0.1:9443/index.html | grep -qi '<html'
+          # Each body is read whole before it is checked: piped into a reader that
+          # stops early (head, grep -q), curl was left writing into a closed pipe
+          # and pipefail failed the step with curl's exit 23.
+          sums=$(curl -fsS http://127.0.0.1:8443/dl/SHA256SUMS)
+          grep -q rmm-agent-linux-amd64 <<<"$sums"
+          script=$(curl -fsS http://127.0.0.1:8443/install.sh)
+          [[ $script == '#!'* ]]
+          page=$(curl -fsS http://127.0.0.1:9443/index.html)
+          grep -qi '<html' <<<"$page"
           curl -fsS http://127.0.0.1:7443/healthz >/dev/null
           # A password the server's rules accept: 12+ characters, an uppercase
           # letter and a symbol.

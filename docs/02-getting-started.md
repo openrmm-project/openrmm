@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.26 (to build; `go.mod` pins the toolchain, currently go1.26.9) or Docker
+- Go 1.26 (to build; `go.mod` pins the toolchain, currently go1.26.10) or Docker
   (to run via compose).
 - PostgreSQL 14+.
 - Node/npm only when building the console outside Docker.

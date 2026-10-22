@@ -6,6 +6,16 @@ tag.
 
 ## [Unreleased]
 
+### Security
+
+- **Built with Go 1.26.10.** Server, agents, the remote sidecar on Linux and
+  Windows, and the images move from Go 1.26.9. It distrusts compromised
+  intermediate certificates in `crypto/x509` (GO-2026-6809), which govulncheck
+  traced to the alert-mail client's TLS connection to its SMTP relay.
+- **`github.com/go-jose/go-jose/v4` 4.1.6** (GHSA-mgcc-cww5-fp2q). The single
+  sign-on verifier reads the provider's signing keys through it, and it now
+  refuses RSA keys larger than 4096 bits.
+
 ### Added
 
 - **Self-hosting from the published images.** `deploy/docker-compose.images.yml`
@@ -24,6 +34,10 @@ tag.
   the site's configuration and the script that copies the files in. A merge
   to `main` that touches a guide republishes the site. A pull request builds it
   and fails on a broken link.
+
+### Dependencies
+
+- `github.com/go-chi/chi/v5` 5.5.0.
 
 ## [0.6.2] - 2026-10-15
 

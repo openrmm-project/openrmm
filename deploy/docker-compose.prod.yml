@@ -17,9 +17,42 @@ x-security: &security
       max-file: "5"
 
 services:
+  # Hands the WAL archive volume to postgres's uid, then exits. A new named
+  # volume belongs to root, and postgres runs as 70, so archive_command could
+  # not write a single segment: nothing was archived and pg_wal grew without
+  # bound. Runs as root with only CHOWN and no network, touches only the
+  # volume's own directory (never what postgres wrote inside it), and leaves it
+  # alone once postgres owns it.
+  postgres-wal-init:
+    image: &postgres-image ${POSTGRES_IMAGE:-postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297}
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -eu
+        dir=/var/lib/postgresql/wal-archive
+        [ "$$(stat -c %u:%g "$$dir")" = 70:70 ] && exit 0
+        chmod 0700 "$$dir"
+        chown 70:70 "$$dir"
+    volumes:
+      - rmm_pgwal:/var/lib/postgresql/wal-archive
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297}
+    image: *postgres-image
     user: "70:70"
+    depends_on:
+      postgres-wal-init:
+        condition: service_completed_successfully
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rmm}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password

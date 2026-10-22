@@ -16,6 +16,29 @@ tag.
   sign-on verifier reads the provider's signing keys through it, and it now
   refuses RSA keys larger than 4096 bits.
 
+### Fixed
+
+- **WAL archiving works under `deploy/docker-compose.prod.yml`.** The
+  `rmm_pgwal` volume was created by Docker as root, and postgres runs as uid
+  70, so `archive_command` failed on every segment with `Permission denied`.
+  Nothing was archived, so point-in-time recovery had nothing to replay, and
+  PostgreSQL kept every unarchived segment in `pg_wal`, which grew until the
+  disk filled. A one-shot `postgres-wal-init` service now hands the volume to
+  postgres before it starts. It runs as root with only `CHOWN`, no network and
+  a read-only filesystem. On an existing install, the next `up -d` fixes the
+  volume, and postgres then archives the backlog from `pg_wal` and frees it.
+  Each segment is copied to the archive before a checkpoint frees it in
+  `pg_wal`, so on a nearly full disk make room first. `ship-wal.sh` prunes
+  the archive as before. CI now checks that segments
+  reach the archive and none fails. Self-hosted Compose installs only;
+  OpenRMM Cloud does not use this file.
+- **The restore helpers run the stack's pinned postgres.** `restore-pitr.sh`,
+  `standby-bootstrap.sh` and `drill-restore.sh` looked up the postgres image
+  with a pattern that never matched `docker compose config`, or did not look
+  it up at all, so they pulled an unpinned `postgres:16-alpine`. They now take
+  the image Compose resolves, digest included, and stop if it cannot be
+  resolved.
+
 ### Added
 
 - **Self-hosting from the published images.** `deploy/docker-compose.images.yml`

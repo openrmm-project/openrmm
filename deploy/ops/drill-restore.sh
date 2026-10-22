@@ -30,7 +30,7 @@ if [[ -z "$archive" ]]; then
 fi
 [[ -f "$archive" ]] || die "backup not found: $archive"
 
-image=${POSTGRES_IMAGE:-postgres:16-alpine}
+image=$(postgres_image)
 container="rmm-drill-$$"
 plain=$(mktemp "${TMPDIR:-/tmp}/rmm-drill.XXXXXX")
 cleanup() {

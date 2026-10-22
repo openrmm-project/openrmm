@@ -65,8 +65,7 @@ docker volume create "$data_volume" >/dev/null
 
 # Unpack and arm recovery inside a throwaway container that shares both volumes,
 # so file ownership matches the postgres image's uid without assuming host uids.
-image=$(compose config --format json | sed -n 's/.*"postgres":{"image":"\([^"]*\)".*/\1/p' | head -n1)
-[[ -n "$image" ]] || image=${POSTGRES_IMAGE:-postgres:16-alpine}
+image=$(postgres_image)
 
 recovery_conf="restore_command = 'cp ${WAL_ARCHIVE_DIR}/%f %p'\nrecovery_target_action = 'promote'\n"
 if [[ -n "${PITR_TARGET_TIME:-}" ]]; then

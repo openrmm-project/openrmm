@@ -87,6 +87,9 @@ var migrationV18SQL string
 //go:embed migrations/019_oidc_browser_handoff.sql
 var migrationV19SQL string
 
+//go:embed migrations/020_remote_shares.sql
+var migrationV20SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -107,6 +110,7 @@ var migrations = []migration{
 	{version: 17, name: "email_verification", sql: migrationV17SQL},
 	{version: 18, name: "totp_replay", sql: migrationV18SQL},
 	{version: 19, name: "oidc_browser_handoff", sql: migrationV19SQL},
+	{version: 20, name: "remote_shares", sql: migrationV20SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

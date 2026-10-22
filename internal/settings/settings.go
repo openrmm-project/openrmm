@@ -30,6 +30,9 @@ const (
 	KeyMeshCentralTokenKey   = "remote.meshcentral_token_key"
 	KeyMeshCentralEnabled    = "remote.meshcentral_enabled"
 	KeyRustDeskEnabled       = "remote.rustdesk_enabled"
+	// KeyRemoteGuestAccess allows technicians holding devices.remote.share to
+	// invite guests without an account. Off unless an administrator turns it on.
+	KeyRemoteGuestAccess = "remote.guest_access"
 )
 
 var publicKeys = map[string]bool{
@@ -41,6 +44,7 @@ var publicKeys = map[string]bool{
 	KeyMeshCentralUser:       true,
 	KeyMeshCentralEnabled:    true,
 	KeyRustDeskEnabled:       true,
+	KeyRemoteGuestAccess:     true,
 }
 
 // Editable is the effective runtime subset that can be edited from the UI.
@@ -55,6 +59,7 @@ type Editable struct {
 	MeshCentralTokenKey   string
 	MeshCentralEnabled    bool
 	RustDeskEnabled       bool
+	RemoteGuestAccess     bool
 }
 
 // FromConfig builds the env-only baseline.
@@ -113,7 +118,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -142,6 +147,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.MeshCentralEnabled = v == "true"
 		case KeyRustDeskEnabled:
 			out.RustDeskEnabled = v == "true"
+		case KeyRemoteGuestAccess:
+			out.RemoteGuestAccess = v == "true"
 		}
 	}
 	return out, nil
@@ -162,6 +169,7 @@ type SaveRequest struct {
 		MeshTokenKey       string `json:"meshcentral_token_key"`
 		MeshCentralEnabled *bool  `json:"meshcentral_enabled"` // nil = preserve current
 		RustDeskEnabled    *bool  `json:"rustdesk_enabled"`    // nil = preserve current
+		GuestAccess        *bool  `json:"guest_access"`        // nil = preserve current
 	} `json:"remote"`
 }
 
@@ -212,6 +220,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	if in.Remote.MeshCentralEnabled != nil {
 		meshEnabled = *in.Remote.MeshCentralEnabled
 	}
+	guestAccess := current.RemoteGuestAccess
+	if in.Remote.GuestAccess != nil {
+		guestAccess = *in.Remote.GuestAccess
+	}
 	for _, op := range []struct{ key, value string }{
 		{KeyAIProvider, in.AI.Provider},
 		{KeyAIBaseURL, in.AI.BaseURL},
@@ -221,6 +233,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyMeshCentralUser, in.Remote.MeshCentralUser},
 		{KeyMeshCentralEnabled, strconv.FormatBool(meshEnabled)},
 		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
+		{KeyRemoteGuestAccess, strconv.FormatBool(guestAccess)},
 	} {
 		if err := writePublic(op.key, op.value); err != nil {
 			return current, err

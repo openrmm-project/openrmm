@@ -71,9 +71,12 @@ type Server struct {
 	// presence is who is attached to which endpoint right now, so a second
 	// technician is told rather than surprised. See internal/remote/presence.go.
 	presence *remote.Presence
-	chat     *ai.Engine
-	sched    *scheduler.Scheduler
-	patches  *patches.Service
+	// guests are the live sessions of guests a technician let in, so they can
+	// be ended the moment their invitation or their sponsor goes away.
+	guests  *guestSessions
+	chat    *ai.Engine
+	sched   *scheduler.Scheduler
+	patches *patches.Service
 
 	// oidc is the discovered identity provider, or nil when single sign-on is
 	// off or discovery failed. Guarded because InitOIDC runs after New and a
@@ -89,7 +92,7 @@ type Server struct {
 
 // New builds the API server.
 func New(cfg *config.Config, s *store.Store, h *hub.Hub, j *jobs.Service, rm *remote.Manager, relay *remote.Relay, chat *ai.Engine, sched *scheduler.Scheduler, patchSvc *patches.Service) *Server {
-	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, presence: remote.NewPresence(), chat: chat, sched: sched, patches: patchSvc}
+	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, presence: remote.NewPresence(), guests: newGuestSessions(), chat: chat, sched: sched, patches: patchSvc}
 }
 
 func (s *Server) lockAgentLifecycle(agentID string) func() {
@@ -139,6 +142,15 @@ func (s *Server) Router() http.Handler {
 	r.With(authLimiter).Get("/api/auth/oidc/begin", s.oidcBegin)
 	r.With(authLimiter).Get("/api/auth/oidc/callback", s.oidcCallback)
 	r.With(authLimiter, maxBody).Post("/api/auth/oidc/exchange", s.oidcExchange)
+
+	// Guests: someone a technician invited to a device's screen, with no
+	// account (api_remote_shares.go). The link and the code are checked under
+	// the login limiter; the page's polling and reconnects have their own.
+	guestLimiter := s.rateLimit(guestPollRateLimit)
+	r.With(authLimiter, maxBody).Post("/api/guest/lookup", s.guestLookup)
+	r.With(authLimiter, maxBody).Post("/api/guest/join", s.guestJoin)
+	r.With(guestLimiter).Get("/api/guest/request", s.guestRequest)
+	r.With(guestLimiter, maxBody).Post("/api/guest/session", s.guestSession)
 
 	// MCP OAuth 2.1 flow (register / authorize+consent / token). Public clients +
 	// PKCE; the authorize POST verifies user credentials, so it's rate-limited like
@@ -240,6 +252,15 @@ func (s *Server) Router() http.Handler {
 		// session's contents.
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/remote/presence", s.listRemotePresence)
 		r.With(s.requirePermissionAny(models.PermDevicesRemote, models.PermDevicesFiles, models.PermDevicesTerminal)).Post("/devices/{id}/remote", s.startRemote)
+		// Guest invitations (api_remote_shares.go). Sharing takes remote access
+		// and its own permission; the technician's session decides who gets in.
+		shareRemote := []func(http.Handler) http.Handler{s.requirePermission(models.PermDevicesRemote), s.requirePermission(models.PermDevicesRemoteShare)}
+		r.With(shareRemote...).Post("/devices/{id}/remote-shares", s.createRemoteShare)
+		r.With(shareRemote...).Get("/devices/{id}/remote-shares", s.listRemoteShares)
+		r.With(shareRemote...).Get("/remote-shares/pending", s.pendingRemoteShares)
+		r.With(shareRemote...).Post("/remote-shares/{id}/accept", s.decideRemoteShare(true))
+		r.With(shareRemote...).Post("/remote-shares/{id}/reject", s.decideRemoteShare(false))
+		r.With(s.requirePermissionAny(models.PermDevicesRemoteShare, models.PermUsersManage)).Delete("/remote-shares/{id}", s.closeRemoteShare)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}", s.updateDeviceMeta)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)
 		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/revoke", s.revokeDevice)
@@ -634,6 +655,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"meshcentral_token_set": eff.MeshCentralTokenKey != "",
 			"meshcentral_enabled":   eff.MeshCentralEnabled,
 			"rustdesk_enabled":      eff.RustDeskEnabled,
+			"guest_access":          eff.RemoteGuestAccess,
 		},
 		"server": map[string]any{
 			"version":               serverVersion(s.cfg),
@@ -692,6 +714,11 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	s.chat.UpdateProvider(eff.AIBaseURL, eff.AIAPIKey, eff.AIModel)
 	s.remote.UpdateMeshConfig(eff.MeshCentralURL, eff.MeshCentralTokenKey, eff.MeshCentralUser, eff.MeshCentralEnabled)
 	s.remote.SetRustDeskEnabled(eff.RustDeskEnabled)
+	if before.RemoteGuestAccess && !eff.RemoteGuestAccess {
+		// Turning it off withdraws every invitation and ends every guest's
+		// session now, not at their expiry.
+		s.closeAllGuestShares(r.Context(), actorOf(r))
+	}
 
 	changed := changedSettings(before, eff, in)
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.update", "app_settings", settings.AuditDetail(changed))
@@ -724,6 +751,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.meshcentral_token_key", strings.TrimSpace(in.Remote.MeshTokenKey) != "")
 	add("remote.meshcentral_enabled", before.MeshCentralEnabled != after.MeshCentralEnabled)
 	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
+	add("remote.guest_access", before.RemoteGuestAccess != after.RemoteGuestAccess)
 	return out
 }
 

@@ -285,6 +285,102 @@ captures the screen twice.
 - Terminal and file-transfer sessions are not limited: several shells on one
   machine are ordinary.
 
+### Guest access (one-time link and code)
+
+A technician can let someone without an account see a device's screen, or
+control it, for a limited time: a vendor's support engineer, the customer's own
+IT person. The guest is always supervised: they get in only when the
+technician who invited them accepts them from that technician's own open
+session, and they leave when that session ends.
+
+**Turning it on.** Settings ▸ Remote access ▸ **Guest access** (off by
+default, needs `settings.manage`). A technician then needs `devices.remote`
+and **`devices.remote.share`**, which only the built-in administrator role has
+by default; custom roles opt in. Turning the setting off revokes every open
+invitation and ends every guest session at once.
+
+**Inviting.** Device ▸ Remote ▸ **Share access…**:
+
+- choose **View only** or **View and control**, and a validity of 15 minutes,
+  1, 4, 8 or 24 hours;
+- the dialog shows, once, a link `https://<console>/join#<token>` (a 256-bit
+  token in the URL fragment, so it never reaches access logs or a `Referer`)
+  and a six-digit code. Send the code through another channel than the link.
+  Only hashes of the token and the code are stored;
+- the same dialog lists your open invitations on the device, with **Revoke**
+  (or **Remove** for a guest who is in).
+
+**The guest.** The link opens a page with no sign-in. It names the technician
+and nothing about the device. The guest types their name and the code:
+
+- the first correct code burns the link, whatever the technician decides next;
+  a second visitor with the same link and code gets nothing;
+- five wrong codes revoke the link. The link and code endpoints share the login
+  rate limiter;
+- the guest then waits. The page holds only a credential bound to this one
+  request, in that browser tab.
+
+**Accepting.** While a guest waits, the technician's **own desktop session on
+that device** shows a banner at the top: name, IP address and mode, with
+**Accept** and **Reject**. Only the technician who sent the invitation sees it
+and decides, and accepting needs that session open at that moment. Once in,
+the guest appears as a chip with **Remove**, and in the device's presence as
+"Guest <name> (via <technician>)".
+
+**What a guest can do.** The guest gets a session of their own (their own relay
+pair and sidecar, never the technician's stream), and the relay filters every
+frame of it in both directions (`internal/remote/guest.go`):
+
+- to the device: keyframe requests and the monitor choice; in *view and
+  control* mode, also mouse and keyboard. Everything else is dropped: file
+  transfer, clipboard, chat, Ctrl+Alt+Delete, UAC, the input lock;
+- to the guest: the screen, and the `hello`, `monitors` and `notice` messages
+  that describe it. The endpoint's clipboard, chat and files never reach them.
+
+The filter is the guarantee, so it holds whatever version the endpoint's
+sidecar runs.
+
+**When it ends.** The guest's socket is closed with a code their page explains:
+
+| Code | Why |
+|---|---|
+| 4411 | removed by the technician, invitation revoked, or guest access turned off |
+| 4412 | the technician's own session on the device ended; the guest's page waits, and reconnects when the technician is back, until the invitation expires |
+| 4413 | the invitation expired |
+
+The technician's permissions and device scope are rechecked when the guest is
+accepted and every time the guest connects, so a change made after the
+invitation was sent is not outlived by it.
+
+**API.**
+
+| Route | Who | Purpose |
+|---|---|---|
+| `POST /api/devices/{id}/remote-shares` | `devices.remote` + `devices.remote.share`, in scope | Create: `{mode, minutes}` → the share, `token` and `code` (once) |
+| `GET /api/devices/{id}/remote-shares` | same | The caller's live invitations on the device |
+| `GET /api/remote-shares/pending?agent_id=` | same | What the open session polls: guests waiting, and guests in |
+| `POST /api/remote-shares/{id}/accept` · `/reject` | the creator; accept needs their live desktop session | Decide |
+| `DELETE /api/remote-shares/{id}` | the creator, or `users.manage` | Revoke, or remove a guest who is in |
+| `POST /api/guest/lookup` | public, login rate limit | `{token}` → the technician's name |
+| `POST /api/guest/join` | public, login rate limit | `{token, code, name}` → `{request_id, guest_credential}` |
+| `GET /api/guest/request` | `Authorization: Guest <credential>` | The decision, and whether the technician is present |
+| `POST /api/guest/session` | guest credential | Brokers the guest's session; the viewer then presents `rmm-guest.<credential>` with its ticket on `/ws/remote` |
+
+Every step is in the audit log: `remote.share.create`, `.code_failed`,
+`.redeem`, `.accept`, `.reject`, `.revoke`, `.remove`, `.guest_start`,
+`.guest_end`, with the guest's name, IP and user agent where known.
+
+**Deployment.** The guest reaches `/join`, `/api/guest/*` and `/ws/remote` on
+the **console** origin. A console behind an IP allowlist (for example
+`CONSOLE_ALLOWED_RANGES` in the Caddy setup) or an access proxy has to admit
+those paths for guests to get in. OpenRMM Cloud consoles are public and need
+nothing.
+
+Not yet: a notice to the device's local user that a guest is watching (needs a
+sidecar release), sending the invitation by email from OpenRMM, and an
+administrator-wide list of open invitations. Terminal and file transfer for
+guests are not planned: both amount to running code on the device.
+
 ### Multiple monitors
 
 Windows and Linux stream **every monitor at once**, as one image. Windows

@@ -348,7 +348,19 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	viewerSubject := ""
-	if role == "viewer" {
+	// guestShare is set when the viewer is a guest a technician let in: it
+	// authenticates with its guest credential instead of an operator token,
+	// and every frame of its session is filtered (remote.GuestPolicy).
+	var guestShare *models.RemoteShare
+	if role == "viewer" && guestRelayCredential(r) != "" {
+		share, guestErr := s.guestRelayShare(r.Context(), sessionID, guestRelayCredential(r))
+		if guestErr != nil {
+			http.Error(w, guestErr.Error(), http.StatusForbidden)
+			return
+		}
+		guestShare = share
+		viewerSubject = models.GuestPrincipal(share.ID)
+	} else if role == "viewer" {
 		identity, identityErr := s.relayViewerIdentity(r)
 		if identityErr != nil || identity.relayPrincipal == "" {
 			http.Error(w, "viewer authentication required", http.StatusUnauthorized)
@@ -411,6 +423,12 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 			Since:     time.Now().UTC(),
 		}
 		leave := func() {}
+		if guestShare != nil && !s.guests.owns(guestShare.ID, sess.ID) {
+			// Removed between brokering and connecting: never admit it.
+			remote.CloseViewer(conn, remote.CloseGuestEnded, "guest_removed")
+			_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
+			return
+		}
 		if sess.Provider == "native" {
 			// One desktop session per operator per endpoint. The start handler
 			// already asked; this is the check two tabs cannot both pass.
@@ -426,6 +444,27 @@ func (s *Server) handleRelayWS(w http.ResponseWriter, r *http.Request) {
 			leave = s.presence.Join(viewer)
 		}
 		defer leave()
+		if guestShare != nil {
+			policy := remote.GuestPolicy{Control: guestShare.Mode == models.RemoteShareControl}
+			if err := s.relay.JoinGuest(sess.ID, sess.AgentID, conn, policy); err != nil {
+				log.Printf("remote relay session=%s guest=%s rejected: %v", sess.ID, guestShare.ID, err)
+			}
+			s.guests.finish(guestShare.ID, sess.ID)
+			_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
+			s.auditShare(context.Background(), "guest", "remote.share.guest_end", guestShare, map[string]string{"session": sess.ID})
+			return
+		}
+		if err := s.relay.Join(sess.ID, sess.AgentID, role, conn); err != nil {
+			log.Printf("remote relay session=%s role=%s rejected: %v", sess.ID, role, err)
+		}
+		_ = s.store.SetRemoteSessionStatus(context.Background(), sess.ID, "ended")
+		if sess.Provider == "native" {
+			// The technician's desktop session ended: once they have none left
+			// on this device, the guests they let in leave with them.
+			leave()
+			s.sponsorLeft(sess.AgentID, viewerSubject)
+		}
+		return
 	}
 	if err := s.relay.Join(sess.ID, sess.AgentID, role, conn); err != nil {
 		log.Printf("remote relay session=%s role=%s rejected: %v", sess.ID, role, err)

@@ -37,6 +37,11 @@ const (
 	PermDevicesRemote   = "devices.remote"
 	PermDevicesFiles    = "devices.files"
 	PermDevicesTerminal = "devices.terminal"
+	// PermDevicesRemoteShare lets a technician invite someone without an account
+	// to view, or control, a device's screen for a limited time. It also needs
+	// devices.remote: the invitation is accepted from the technician's own
+	// session, which supervises the guest for as long as it lasts.
+	PermDevicesRemoteShare = "devices.remote.share"
 
 	PermClientsView   = "clients.view"
 	PermClientsManage = "clients.manage"
@@ -100,6 +105,7 @@ func PermissionCatalog() []Permission {
 		{PermDevicesRemote, "Remote access", "Start remote desktop sessions.", "Devices"},
 		{PermDevicesFiles, "File transfer", "Open device file transfer sessions.", "Devices"},
 		{PermDevicesTerminal, "Terminal", "Open elevated terminal sessions.", "Devices"},
+		{PermDevicesRemoteShare, "Share remote access", "Invite a guest without an account to a device's screen, from your own remote session.", "Devices"},
 		{PermClientsView, "View clients & sites", "List clients, sites, and departments.", "Clients & Sites"},
 		{PermClientsManage, "Manage clients & sites", "Create, rename, delete, and assign clients, sites, and departments.", "Clients & Sites"},
 		{PermReportsView, "View reports", "Open inventory and compliance reports.", "Reports"},
@@ -155,7 +161,7 @@ func DefaultRolePermissions(role string) []string {
 			PermPoliciesView, PermPoliciesManage,
 			PermScriptsView, PermScriptsManage,
 			PermPatchesView, PermPatchesManage, PermPatchPoliciesManage,
-			PermDevicesView, PermDevicesManage, PermDevicesDelete, PermDevicesRemote, PermDevicesFiles, PermDevicesTerminal,
+			PermDevicesView, PermDevicesManage, PermDevicesDelete, PermDevicesRemote, PermDevicesFiles, PermDevicesTerminal, PermDevicesRemoteShare,
 			PermClientsView, PermClientsManage,
 			PermReportsView,
 			PermAuditView,

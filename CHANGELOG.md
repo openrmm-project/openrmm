@@ -41,6 +41,19 @@ tag.
 
 ### Added
 
+- **Guest access to a remote session.** A technician can invite someone without
+  an account to see a device's screen, or control it, for 15 minutes to 24
+  hours (Device ▸ Remote ▸ Share access…). The invitation is a link and a
+  six-digit code sent separately; the first correct code burns the link, and
+  five wrong ones revoke it. The guest then waits until the technician who
+  invited them accepts them from the top of their own open session on the
+  device, and leaves when that session ends. The guest gets a session of their
+  own, and the relay filters every frame of it: screen and monitor choice, plus
+  mouse and keyboard in control mode, and never files, clipboard, chat or the
+  shortcuts. Off by default (Settings ▸ Remote access ▸ Guest access); the new
+  `devices.remote.share` permission is held only by the administrator role
+  until a custom role opts in. Migration 020 adds `remote_shares`. See
+  docs/08-remote-access.md.
 - **Self-hosting from the published images.** `deploy/docker-compose.images.yml`
   runs the release images from `ghcr.io/openrmm-project`, pinned by version and
   digest, on top of the production Compose file. It fills the agents door's

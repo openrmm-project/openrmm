@@ -2068,6 +2068,7 @@ function ConfigPanel() {
       meshcentral_token_key: '',
       meshcentral_enabled: c.remote.meshcentral_enabled !== false,
       rustdesk_enabled: !!c.remote.rustdesk_enabled,
+      guest_access: !!c.remote.guest_access,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -2076,7 +2077,7 @@ function ConfigPanel() {
     try {
       await api.updateConfig({
         ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key },
-        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled },
+        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled, guest_access: form.guest_access },
       });
       set('ai_api_key', ''); set('meshcentral_token_key', '');
       toast.success(t('cfg.saved'), t('cfg.savedMsg'));
@@ -2105,6 +2106,7 @@ function ConfigPanel() {
           <Field label={t('cfg.meshUser')}><Input value={form.meshcentral_user} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>{/* i18n-ignore: an account name */}
           <Field label={t('cfg.meshToken')} hint={c.remote.meshcentral_token_set ? t('cfg.meshTokenSet') : t('cfg.meshTokenHint')}><Input type="password" value={form.meshcentral_token_key} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>{/* i18n-ignore: MeshCentral's own field name */}
           <Field label="RustDesk" hint={t('cfg.rustdeskHint')}><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
+          <Field label={t('cfg.guestAccess')} hint={t('cfg.guestAccessHint')}><Select value={form.guest_access ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('guest_access', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
         </div>
       </Card>
       <Card className="p-4 md:col-span-2">

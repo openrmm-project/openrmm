@@ -12,7 +12,10 @@ function useRemotePresence() {
   // the banner depend on permission to list users, which most technicians do
   // not have — and the banner then read as a raw user id.
   (q.data?.viewers || []).forEach((v) => {
-    (byAgent[v.agent_id] = byAgent[v.agent_id] || []).push({ ...v, name: v.user_name || v.user || t('presence.someone') });
+    // A guest is named as one, with the technician supervising them: an
+    // outsider on the screen must not read as a colleague.
+    const name = v.guest ? t('presence.guest', { name: v.user_name, sponsor: v.sponsor_name || t('presence.someone') }) : (v.user_name || v.user || t('presence.someone'));
+    (byAgent[v.agent_id] = byAgent[v.agent_id] || []).push({ ...v, name });
   });
   return byAgent;
 }
@@ -335,6 +338,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const d = devQ.data;
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
   const rustdeskEnabled = !!cfgQ.data?.remote?.rustdesk_enabled;
+  const guestAccess = !!cfgQ.data?.remote?.guest_access;
   const meshEnabled = cfgQ.data?.remote?.meshcentral_enabled !== false;
   const capsQ = useQuery([id, 'remote-capabilities'], () => id ? api.getRemoteCapabilities(id) : Promise.resolve(null), { invalidateOn: ['devices'] });
   const nativeCaps = capsQ.data;
@@ -350,6 +354,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const [term, setTerm] = useState(null);     // { deviceId, hostname } for the terminal viewer
   const [orgOpen, setOrgOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const startRemote = async (provider) => {
     // Announced, never blocked: joining a colleague is sometimes the point.
     if (attached.length) toast.info(t('remote.alreadyConnected'), t('remote.alreadyConnectedTo', { who: presenceSummary(attached), host: d.hostname }));
@@ -437,6 +442,10 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 {can('devices.files') && <MenuItem icon="folder" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>{t('device.fileTransfer')}</MenuItem>}
                 {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : t('device.noNodeId')}>MeshCentral</MenuItem>}
                 {can('devices.remote') && rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
+                {can('devices.remote') && can('devices.remote.share') && guestAccess && <>
+                  <div className="my-1 border-t border-line" />
+                  <MenuItem icon="users" onClick={() => setShareOpen(true)} hint={t('share.menuHint')}>{t('share.menu')}</MenuItem>
+                </>}
                 {can('devices.manage') && meshEnabled && <>
                   <div className="my-1 border-t border-line" />
                   <MenuItem icon="external" onClick={() => linkRemote('mesh_id', t('remote.meshNodeId'))}>{t('device.linkMesh')}</MenuItem>
@@ -465,6 +474,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       {!d && <div className="flex-1 flex items-center justify-center"><Spinner size={22} /></div>}
       {remote && <RemoteViewer deviceId={remote.deviceId} hostname={remote.hostname} os={remote.os} filesOnly={remote.filesOnly} onClose={() => setRemote(null)} />}
       {term && <TerminalViewer deviceId={term.deviceId} hostname={term.hostname} onClose={() => setTerm(null)} />}
+      {d && <ShareAccessModal open={shareOpen} onClose={() => setShareOpen(false)} device={d} />}
       {d && <DeviceOrgModal open={orgOpen} onClose={() => setOrgOpen(false)} device={d} clients={clients} sites={sites} groups={groups} onSave={saveOrg} />}
       {d && <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={deleteDevice} danger title={t('device.delete.title')} body={t('device.delete.body', { host: d.hostname })} confirmLabel={t('device.delete.confirm')} />}
     </Drawer>
@@ -570,15 +580,239 @@ function relayProtocols(ticket) {
   } catch (e) {}
   return ['rmm-v1', 'rmm-ticket.' + ticket];
 }
-function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
+
+// Why a guest's session closed, by relay close code (internal/remote/guest.go).
+const GUEST_CLOSE_REASONS = { 4410: 'replaced', 4411: 'removed', 4412: 'sponsor_left', 4413: 'expired' };
+const SHARE_LIFETIMES = [15, 60, 240, 480, 1440];
+
+// GuestRequests sits at the top of a technician's own session: guests waiting
+// for this technician's decision on this device, and those already in. Only
+// the technician who sent an invitation sees its guest here, and accepting
+// needs this session open — which is why it lives in the viewer.
+function GuestRequests({ deviceId }) {
+  const toast = useToast();
+  const q = useQuery(['remote-shares-pending', deviceId], () => api.pendingRemoteShares(deviceId), { poll: 3000 });
+  const pending = q.data?.pending || [];
+  const guests = q.data?.guests || [];
+  const act = async (fn) => {
+    try { await fn(); q.refetch(); }
+    catch (e) { toast.error(t('guest.actionFailed'), e.message); }
+  };
+  if (!pending.length && !guests.length) return null;
+  return (<>
+    {pending.map((g) => (
+      <div key={g.id} className="pointer-events-auto w-full rounded-lg border border-brandhi/50 bg-panel/95 backdrop-blur px-3.5 py-2.5 shadow-lg flex flex-wrap items-center gap-2.5 text-[12.5px] text-ink">
+        <Icon name="bell" size={15} className="text-brandhi shrink-0" />
+        <span className="flex-1 min-w-[180px]">{t('guest.wantsToJoin', { name: g.guest_name, ip: g.guest_ip, mode: tEnum('guest.mode', g.mode) })}</span>
+        <Button size="sm" variant="primary" icon="approve" onClick={() => act(() => api.acceptRemoteShare(g.id))}>{t('guest.accept')}</Button>
+        <Button size="sm" variant="ghost" icon="reject" onClick={() => act(() => api.rejectRemoteShare(g.id))}>{t('guest.reject')}</Button>
+      </div>
+    ))}
+    {guests.map((g) => (
+      <div key={g.id} className="pointer-events-auto rounded-full border border-line bg-panel/95 backdrop-blur px-3 py-1 shadow flex items-center gap-2 text-[11.5px] text-ink">
+        <span className={cx('h-2 w-2 rounded-full', g.connected ? 'bg-ok' : 'bg-faint')} />
+        <span>{t(g.connected ? 'guest.chipConnected' : 'guest.chipWaiting', { name: g.guest_name, mode: tEnum('guest.mode', g.mode) })}</span>
+        <button onClick={() => act(() => api.closeRemoteShare(g.id))} className="text-bad hover:underline">{t('guest.remove')}</button>
+      </div>
+    ))}
+  </>);
+}
+
+// ShareAccessModal issues an invitation for a device and lists the caller's
+// open ones. The link and the code are shown once: only their hashes are kept.
+function ShareAccessModal({ open, onClose, device }) {
+  const toast = useToast();
+  const [mode, setMode] = useState('view');
+  const [minutes, setMinutes] = useState('60');
+  const [busy, setBusy] = useState(false);
+  const [issued, setIssued] = useState(null); // { link, code, expires_at, mode }
+  const listQ = useQuery(['remote-shares', device.id, open], () => open ? api.listRemoteShares(device.id) : Promise.resolve({ shares: [] }), { poll: open ? 5000 : 0 });
+  useEffect(() => { if (open) { setIssued(null); setMode('view'); setMinutes('60'); } }, [open, device.id]);
+  const create = async () => {
+    setBusy(true);
+    try {
+      const r = await api.createRemoteShare(device.id, { mode, minutes: Number(minutes) });
+      const link = new URL((window.__BASE_PATH__ || '/') + 'join', location.origin).toString() + '#' + r.token;
+      setIssued({ link, code: r.code, expires_at: r.share.expires_at, mode: r.share.mode });
+      listQ.refetch();
+      toast.success(t('share.created'));
+    } catch (e) {
+      toast.error(t('share.failed'), e.code === 'guest_access_disabled' ? t('share.disabled') : e.message);
+    } finally { setBusy(false); }
+  };
+  const close = async (id) => {
+    try { await api.closeRemoteShare(id); listQ.refetch(); }
+    catch (e) { toast.error(t('guest.actionFailed'), e.message); }
+  };
+  const shares = listQ.data?.shares || [];
+  return (
+    <Modal open={open} onClose={onClose} width="max-w-xl">
+      <div className="p-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="users" size={18} /></div>
+          <div><div className="text-[15px] font-semibold text-ink">{t('share.title')}</div><div className="text-[12.5px] text-muted">{t('share.subtitle', { host: device.hostname })}</div></div>
+        </div>
+        {issued ? (
+          <div className="space-y-3 rounded-xl border border-brand/30 bg-brandsoft/40 p-4">
+            <Field label={t('share.link')}>
+              <div className="flex gap-1.5"><Input readOnly value={issued.link} className="mono text-[11.5px]" onFocus={(e) => e.target.select()} /><CopyButton value={issued.link} /></div>
+            </Field>
+            <Field label={t('share.code')}>
+              <div className="flex items-center gap-2"><span className="mono text-[22px] tracking-[0.3em] text-ink">{issued.code}</span><CopyButton value={issued.code} /></div>
+            </Field>
+            <div className="text-[12px] text-muted">{tEnum('guest.mode', issued.mode)} · {t('share.expires', { when: fmtTime(issued.expires_at) })}</div>
+            <div className="flex items-start gap-2 text-[12px] text-warn"><Icon name="info" size={14} className="shrink-0 mt-0.5" /><span>{t('share.onceWarning')}</span></div>
+            <div className="text-[12px] text-muted">{t('share.acceptHint')}</div>
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t('share.mode')}>
+              <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="view">{tEnum('guest.mode', 'view')}</option>
+                <option value="control">{tEnum('guest.mode', 'control')}</option>
+              </Select>
+            </Field>
+            <Field label={t('share.validFor')}>
+              <Select value={minutes} onChange={(e) => setMinutes(e.target.value)}>
+                {SHARE_LIFETIMES.map((m) => <option key={m} value={String(m)}>{tEnum('share.minutes', m)}</option>)}
+              </Select>
+            </Field>
+          </div>
+        )}
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-faint font-semibold mb-1.5">{t('share.open')}</div>
+          {shares.length === 0 && <div className="text-[12px] text-faint">{t('share.none')}</div>}
+          {shares.map((s) => (
+            <div key={s.id} className="flex items-center gap-2 border-b border-line/50 py-1.5 text-[12px]">
+              <span className="text-ink">{s.guest_name || tEnum('guest.mode', s.mode)}</span>
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-elevated text-muted">{tEnum('share.status', s.status)}</span>
+              <span className="text-faint">{t('share.expires', { when: fmtTime(s.expires_at) })}</span>
+              <button onClick={() => close(s.id)} className="ml-auto text-bad hover:underline">{s.status === 'accepted' ? t('guest.remove') : t('share.revoke')}</button>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>{t('action.close')}</Button>
+          {!issued && <Button variant="primary" icon="link" loading={busy} onClick={create}>{t('share.create')}</Button>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// GuestJoinScreen is the page an invitation link opens (/join#<token>), for
+// someone with no account: name and code, then a wait for the technician, then
+// the reduced viewer. The token leaves the address bar at once; after the code
+// is accepted the page holds only the guest's own credential, for this tab.
+const GUEST_STORE = 'rmm-guest';
+function GuestJoinScreen() {
+  const [token] = useState(() => (location.hash || '').replace(/^#/, ''));
+  const [saved, setSaved] = useState(() => { try { return JSON.parse(sessionStorage.getItem(GUEST_STORE) || 'null'); } catch (e) { return null; } });
+  const [phase, setPhase] = useState(saved ? 'waiting' : (token ? 'loading' : 'invalid'));
+  const [technician, setTechnician] = useState(saved?.technician || '');
+  const [mode, setMode] = useState(saved?.mode || 'view');
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [ended, setEnded] = useState('');
+  useEffect(() => { if (location.hash) history.replaceState(null, '', location.pathname + location.search); }, []);
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    api.guest.lookup(token).then((r) => { setTechnician(r.technician); setMode(r.mode); setPhase('form'); }).catch(() => setPhase('invalid'));
+  }, [phase]);
+  const remember = (s) => { setSaved(s); try { s ? sessionStorage.setItem(GUEST_STORE, JSON.stringify(s)) : sessionStorage.removeItem(GUEST_STORE); } catch (e) {} };
+  const finish = (reason) => { remember(null); setEnded(reason); setPhase('ended'); };
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setError('');
+    try {
+      const r = await api.guest.join(token, code.trim(), name.trim());
+      remember({ credential: r.guest_credential, technician: r.technician, mode: r.mode });
+      setTechnician(r.technician); setMode(r.mode); setPhase('waiting');
+    } catch (err) {
+      if (err.code === 'link_invalid') setPhase('invalid');
+      else setError(err.code === 'wrong_code' ? t('guest.wrongCode') : err.code === 'name_required' ? t('guest.nameRequired') : err.message);
+    } finally { setBusy(false); }
+  };
+  // While waiting, and while the technician is away, ask for the decision.
+  useEffect(() => {
+    if (!saved || (phase !== 'waiting' && phase !== 'paused')) return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const st = await api.guest.status(saved.credential);
+        if (stopped) return;
+        if (st.status === 'accepted') setPhase(st.sponsor_present ? 'viewer' : 'paused');
+        else if (st.status !== 'pending') finish(st.status);
+      } catch (err) { if (!stopped && err.status === 401) finish('ended'); }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => { stopped = true; clearInterval(id); };
+  }, [phase, saved && saved.credential]);
+  const onEnd = (reason) => {
+    // The technician stepped away, or the device dropped offline: wait for
+    // either to come back while the invitation lasts.
+    if (reason === 'sponsor_left' || reason === 'sponsor_absent' || reason === 'device_unavailable') setPhase('paused');
+    else if (reason === 'share_expired' || reason === 'expired') finish('expired');
+    else if (reason === 'replaced') finish('replaced');
+    else finish('ended');
+  };
+  const guest = useMemo(() => saved ? { credential: saved.credential, control: saved.mode === 'control', broker: () => api.guest.session(saved.credential), onEnd } : null, [saved && saved.credential]);
+
+  if (phase === 'viewer' && guest) {
+    return <RemoteViewer deviceId="" hostname={t('guest.sharedBy', { tech: technician })} os="" guest={guest} onClose={() => finish('left')} />;
+  }
+  return (
+    <div className="min-h-full flex items-center justify-center p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-line bg-panel p-6 shadow-2xl space-y-4">
+        <div className="flex items-center gap-2.5"><BrandMark size={28} /><span className="text-[15px] font-semibold text-ink">{t('guest.title')}</span></div>
+        {phase === 'loading' && <div className="flex justify-center py-6"><Spinner size={20} /></div>}
+        {phase === 'invalid' && <>
+          <div className="text-[14px] font-semibold text-ink">{t('guest.invalidTitle')}</div>
+          <p className="text-[12.5px] text-muted">{t('guest.invalidBody')}</p>
+        </>}
+        {phase === 'form' && (
+          <form onSubmit={submit} className="space-y-3">
+            <p className="text-[12.5px] text-muted">{t(mode === 'control' ? 'guest.invitedControl' : 'guest.invitedView', { tech: technician })}</p>
+            <Field label={t('guest.name')}><Input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} autoFocus autoComplete="name" /></Field>
+            <Field label={t('guest.code')} hint={t('guest.codeHint', { tech: technician })}><Input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" className="mono tracking-[0.3em]" /></Field>
+            {error && <div className="text-[12px] text-bad">{error}</div>}
+            <Button type="submit" variant="primary" className="w-full" loading={busy} disabled={!name.trim() || code.length !== 6}>{t('guest.join')}</Button>
+          </form>
+        )}
+        {(phase === 'waiting' || phase === 'paused') && <>
+          <div className="flex items-center gap-2.5"><Spinner size={16} /><span className="text-[14px] font-semibold text-ink">{t(phase === 'paused' ? 'guest.pausedTitle' : 'guest.waitingTitle', { tech: technician })}</span></div>
+          <p className="text-[12.5px] text-muted">{t(phase === 'paused' ? 'guest.pausedBody' : 'guest.waitingBody', { tech: technician })}</p>
+          <Button variant="secondary" className="w-full" onClick={() => finish('left')}>{t('guest.leave')}</Button>
+        </>}
+        {phase === 'ended' && <>
+          <div className="text-[14px] font-semibold text-ink">{t('guest.endedTitle')}</div>
+          <p className="text-[12.5px] text-muted">{tEnum('guest.ended', ended || 'ended')}</p>
+        </>}
+      </div>
+    </div>
+  );
+}
+window.GuestJoinScreen = GuestJoinScreen;
+// guest, when set, makes this the reduced viewer of someone a technician let in
+// (GuestJoinScreen): { credential, control, broker, onEnd }. The relay already
+// drops everything a guest may not send or receive; this only leaves out the
+// controls that would do nothing — files, chat, clipboard, the shortcuts, the
+// input lock — and, in view-only mode, the mouse and keyboard.
+function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
   const toast = useToast();
   const auth = useAuth() || { can: () => false };
   const can = auth.can;
-  const allowFiles = filesOnly || can('devices.files');
+  const guestRef = useRef(guest); guestRef.current = guest;
+  const isGuest = !!guest;
+  const control = !guest || !!guest.control;
+  const allowFiles = !isGuest && (filesOnly || can('devices.files'));
   const isWin = os ? /^win/i.test(os) : true; // unknown host => Windows-style (legacy)
   const isMac = /darwin|macos|mac os/i.test(os || '');
   const shortcutLabel = isMac ? '⌘⌥Esc' : 'Ctrl+Alt+Delete';
-  const canLock = isWin || /linux/i.test(os || ''); // input lock: Windows + Linux (not macOS)
+  const canLock = !isGuest && (isWin || /linux/i.test(os || '')); // input lock: Windows + Linux (not macOS)
   const viewerRef = useRef(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
@@ -608,7 +842,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
   // Either way this tab stops reconnecting until the operator chooses.
   const [conflict, setConflict] = useState(null);
   const takeOverRef = useRef(() => {});
-  const [chatOpen, setChatOpen] = useState(true); // side chat panel visible
+  const [chatOpen, setChatOpen] = useState(!guest); // side chat panel visible
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
   const noticeRef = useRef(null); // last notice toasted, so a reconnect loop doesn't repeat it
@@ -732,19 +966,24 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       if (stopped) return;
       setStatus(retries ? 'reconnecting' : 'connecting');
       let wsUrl, viewerTicket;
+      const g = guestRef.current;
       try {
-        const s = await api.startRemote(deviceId, filesOnly ? 'files' : 'native', filesOnly ? undefined : { replace: !!replace, resume: sessionId || undefined });
+        const s = g ? await g.broker() : await api.startRemote(deviceId, filesOnly ? 'files' : 'native', filesOnly ? undefined : { replace: !!replace, resume: sessionId || undefined });
         wsUrl = api.websocketURL('/ws/remote?session=' + encodeURIComponent(s.id) + '&role=viewer');
         viewerTicket = s.viewer_ticket;
         sessionId = s.id;
       } catch (e) {
+        // A guest's broker refuses for a reason the guest page explains
+        // (the technician left, the invitation ended); retrying here would not.
+        // "too_soon" is only the server spacing out reconnects: retry below.
+        if (g && e.code && e.code !== 'too_soon') { if (!stopped) { setStatus('closed'); g.onEnd(e.code); } return; }
         if (e.code === 'remote_session_active') { if (!stopped) { setConflict('active'); setStatus('closed'); } return; }
         if (!stopped && retries++ < 40) setTimeout(() => connect(), 3000);
         else setStatus('closed');
         return;
       }
       if (stopped) return;
-      const ws = new WebSocket(wsUrl, relayProtocols(viewerTicket));
+      const ws = new WebSocket(wsUrl, g ? ['rmm-v1', 'rmm-ticket.' + viewerTicket, 'rmm-guest.' + g.credential] : relayProtocols(viewerTicket));
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
       ws.onopen = () => {
@@ -761,6 +1000,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       ws.onerror = () => {};
       ws.onclose = (ev) => {
         if (stopped) return;
+        // A guest's session closed on purpose (internal/remote/guest.go): the
+        // guest page says why, and reconnects itself when that makes sense.
+        const gc = guestRef.current;
+        if (gc && GUEST_CLOSE_REASONS[ev.code]) { setStatus('closed'); gc.onEnd(GUEST_CLOSE_REASONS[ev.code]); return; }
         // Codes from the relay (internal/remote/relay.go): the session is in
         // another tab. Reconnecting here would take it back from there.
         if (ev.code === 4409 || ev.code === 4410) { setConflict(ev.code === 4410 ? 'replaced' : 'active'); setStatus('closed'); return; }
@@ -839,8 +1082,9 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       e.preventDefault();
       send(message);
     };
-    // No screen/input wiring in file-transfer-only mode (the canvas isn't shown).
-    if (!filesOnly && cv) {
+    // No screen/input wiring in file-transfer-only mode (the canvas isn't shown),
+    // and none for a guest who may only watch. A guest never pastes.
+    if (!filesOnly && cv && control) {
       cv.addEventListener('pointermove', onMove);
       cv.addEventListener('pointerdown', onDown);
       cv.addEventListener('pointerup', onUp);
@@ -849,7 +1093,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       cv.addEventListener('contextmenu', onCtx);
       window.addEventListener('keydown', kd);
       window.addEventListener('keyup', ku);
-      window.addEventListener('paste', onPaste);
+      if (!isGuest) window.addEventListener('paste', onPaste);
       window.addEventListener('blur', releaseHeldKeys);
     }
     connect();
@@ -870,7 +1114,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
       window.removeEventListener('keyup', ku);
       window.removeEventListener('blur', releaseHeldKeys);
     };
-  }, [deviceId, filesOnly, allowFiles, isMac]);
+  }, [deviceId, filesOnly, allowFiles, isMac, isGuest, control]);
 
   const sendChat = () => { const text = draft.trim(); if (!text) return; sendJSON({ t: 'chat', from: 'tech', text }); setChat((c) => [...c, { from: 'tech', text }]); setDraft(''); };
   const shortcutAvailable = window.RemoteInput.shortcutAvailable(isMac, cad.available);
@@ -938,15 +1182,18 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
         <Icon name={filesOnly ? 'devices' : 'remote'} size={15} className="text-muted" />
         <span className="text-[13px] font-semibold text-ink whitespace-nowrap">{filesOnly ? t('viewer.fileTransferOn', { host: hostname }) : hostname}</span>
         <span className={cx('text-[11px] px-2 py-0.5 rounded-md', statusCls)}>{tEnum('viewer.status', status)}</span>
-        {ver && <span className="text-[10px] text-faint">{t('viewer.sidecar', { version: ver })}</span>}
+        {ver && !isGuest && <span className="text-[10px] text-faint">{t('viewer.sidecar', { version: ver })}</span>}
         <div className="ml-auto flex items-center gap-1 sm:gap-2 whitespace-nowrap">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
+          {isGuest && <span className={cx('text-[11px] px-2 py-0.5 rounded-md', control ? 'bg-warnsoft text-warn' : 'bg-elevated text-muted')}>{tEnum('guest.mode', control ? 'control' : 'view')}</span>}
           {!filesOnly && <>
+            {!isGuest && <>
             <Button variant="ghost" size="sm" icon="key" onClick={sendCtrlAltDelete} disabled={status !== 'streaming' || !shortcutAvailable} title={isMac ? (cad.available ? t('viewer.forceQuit') : t('viewer.retryAfterGrant', { reason: cad.reason })) : !cad.available ? cad.reason : isWin ? t('viewer.winSecurity') : t('viewer.linuxCad')}>{shortcutLabel}</Button>
             {isWin && <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title={t('viewer.uacHint')}>UAC</Button>}
             {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title={t('viewer.lockHint')}>{locked ? t('viewer.locked') : t('viewer.lockInput')}</Button>}
             {allowFiles && <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>{t('viewer.files')}</Button>}
             <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title={t('viewer.chatToggle')}>{t('viewer.chat')}{unread ? ` (${unread})` : ''}</Button>
+            </>}
             {monitors.list.length > 1 && (
               <Select value={String(monitors.selected)} onChange={(e) => { const id = Number(e.target.value); setMonitors((m) => ({ ...m, selected: id })); sendJSON({ t: 'mon', id }); }}
                  aria-label={t('viewer.hostDisplay')} title={t('viewer.chooseDisplay')} className="h-7 w-[150px] bg-card py-0 text-[12px]">
@@ -1033,13 +1280,16 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose }) {
               </div>
             </div>
           )}
-          {notice && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 max-w-[80%] rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
-              <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
-              <span>{notice}</span>
-              <button onClick={() => setNotice(null)} className="text-faint hover:text-ink shrink-0"><Icon name="close" size={13} /></button>
-            </div>
-          )}
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[2] w-[min(92%,640px)] flex flex-col items-center gap-2 pointer-events-none">
+            {!isGuest && can('devices.remote.share') && <GuestRequests deviceId={deviceId} />}
+            {notice && (
+              <div className="pointer-events-auto max-w-full rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
+                <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
+                <span>{notice}</span>
+                <button onClick={() => setNotice(null)} className="text-faint hover:text-ink shrink-0"><Icon name="close" size={13} /></button>
+              </div>
+            )}
+          </div>
         </div>
         {chatOpen && <div className="absolute inset-0 z-[4] w-full border-l border-line bg-app flex flex-col sm:static sm:w-72 sm:shrink-0">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">{t('viewer.chat')}<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title={t('viewer.collapseChat')}><Icon name="chevright" size={16} /></button></div>

@@ -158,6 +158,18 @@ store independent `viewer_ticket_hash` and `agent_ticket_hash` values plus
 single-use timestamps; raw tickets are returned only at session creation and are
 never persisted.
 
+### `remote_shares`
+One-time guest invitations to a device's screen (migration 020,
+docs/08-remote-access.md): `agent_id`, `created_by` (the inviting user), `mode`
+(`view` or `control`), `token_hash` and `code_hash` (the link and the code are
+shown once and never stored), `guest_secret_hash` (the guest's credential, bound
+to the request once the code is accepted), `status` (`open`, `pending`,
+`accepted`, `rejected`, `revoked`, `ended`), `failed_attempts`, the guest's
+name, IP and user agent, and `expires_at` with the request, decision and end
+times. A share past `expires_at` is expired whatever its status says; the
+guest's own sessions are ordinary `remote_sessions` rows whose `created_by` is
+`guest:<share id>`.
+
 ### `audit_log`
 Record of sensitive actions (actor, action, target, detail jsonb, created_at).
 Actions include `job.propose`, `job.approve`, `job.reject`, `job.result`,

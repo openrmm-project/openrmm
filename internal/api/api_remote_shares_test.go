@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/p1ngu/rmm/internal/ai"
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/hub"
@@ -172,7 +173,11 @@ func TestRemoteShareLifecycle(t *testing.T) {
 
 	h := hub.New()
 	agentFrames := h.Add(agent.ID, func() {})
-	srv := New(&config.Config{APIRateLimit: 100000}, st, h, nil, remote.NewManager(st, h, "", "", "", false, false), remote.NewRelay(), nil, nil, nil)
+	cfg := &config.Config{APIRateLimit: 100000}
+	// A real (unconfigured) chat engine: saving the configuration hands it the
+	// AI settings, and the guest-access switch is saved the same way.
+	chat := ai.NewEngine(ai.NewClient("", "", ""), st, nil, nil, cfg)
+	srv := New(cfg, st, h, nil, remote.NewManager(st, h, "", "", "", false, false), remote.NewRelay(), chat, nil, nil)
 	handler := srv.Router()
 	call := func(method, path, authz string, body any) *httptest.ResponseRecorder {
 		t.Helper()

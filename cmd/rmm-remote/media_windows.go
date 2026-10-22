@@ -460,7 +460,8 @@ func (s *session) sendJSON(v any) {
 	s.send(websocket.TextMessage, b)
 }
 
-func runMedia(conn *websocket.Conn, allowFiles bool) error {
+func runMedia(conn *websocket.Conn, opts sessionOptions) error {
+	allowFiles := opts.allowFiles
 	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
 		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}, allowFiles: allowFiles,
 		clipMirror: &clipboardMirror{}}
@@ -470,9 +471,11 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	go watchClipboard(s.clipMirror, func(text string) {
 		s.sendJSON(map[string]any{"t": "clip", "text": text})
 	}, s.done)
-	s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
-		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
-	})
+	if opts.chat {
+		s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
+			s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
+		})
+	}
 	defer func() {
 		if s.chat != nil {
 			s.chat.close()

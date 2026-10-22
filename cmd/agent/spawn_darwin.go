@@ -115,12 +115,15 @@ func retireLegacyRemoteAgent(uid string) {
 func launchSidecar(bin, relay, ticket string, extra ...string) error {
 	filesOnly := false
 	noFiles := false
+	noChat := false
 	for _, arg := range extra {
 		switch arg {
 		case "-files":
 			filesOnly = true
 		case "-no-files":
 			noFiles = true
+		case "-no-chat":
+			noChat = true
 		}
 	}
 	if os.Geteuid() != 0 || filesOnly {
@@ -134,7 +137,7 @@ func launchSidecar(bin, relay, ticket string, extra ...string) error {
 	if err := ensureRemoteAgent(uid); err != nil {
 		return err
 	}
-	if err := writeSessionFile(uid, relay, ticket, filesOnly, noFiles); err != nil {
+	if err := writeSessionFile(uid, relay, ticket, filesOnly, noFiles, noChat); err != nil {
 		return err
 	}
 	// -k restarts the job if a previous session left it running.
@@ -199,9 +202,9 @@ func agentStateDir() string {
 // The ticket is a credential, so it goes to a file owned by the session user
 // with no group or world access — never an argument, which `ps` shows to
 // everyone, and never an environment variable, which launchctl scopes globally.
-func writeSessionFile(uid, relay, ticket string, filesOnly, noFiles bool) error {
+func writeSessionFile(uid, relay, ticket string, filesOnly, noFiles, noChat bool) error {
 	body, err := json.Marshal(map[string]any{
-		"relay": relay, "ticket": ticket, "files_only": filesOnly, "no_files": noFiles,
+		"relay": relay, "ticket": ticket, "files_only": filesOnly, "no_files": noFiles, "no_chat": noChat,
 	})
 	if err != nil {
 		return err

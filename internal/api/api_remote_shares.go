@@ -74,16 +74,24 @@ type guestSessions struct {
 	live map[string]*guestSession // share id -> session
 	// brokered is when each share last got a session, for guestBrokerInterval.
 	brokered map[string]time.Time
+	// chatted is when each guest last wrote, for guestChatInterval.
+	chatted  map[string]time.Time
 	sweeping bool
+
+	// chat feeds the worker that carries chat lines (api_guest_chat.go).
+	chat     chan chatLine
+	chatOnce sync.Once
 }
 
 type guestSession struct {
 	shareID, sessionID, agentID, sponsor string
-	timer                                *time.Timer
+	// name is the guest's, as they gave it when joining.
+	name  string
+	timer *time.Timer
 }
 
 func newGuestSessions() *guestSessions {
-	return &guestSessions{live: map[string]*guestSession{}, brokered: map[string]time.Time{}}
+	return &guestSessions{live: map[string]*guestSession{}, brokered: map[string]time.Time{}, chatted: map[string]time.Time{}}
 }
 
 // allowBroker reports whether a share may get a new session now, and records
@@ -104,6 +112,40 @@ func (g *guestSessions) allowBroker(shareID string, now time.Time) bool {
 	}
 	g.brokered[shareID] = now
 	return true
+}
+
+// allowChat reports whether a guest may write a chat line now, and records it
+// when they may.
+func (g *guestSessions) allowChat(shareID string, now time.Time) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if last, ok := g.chatted[shareID]; ok && now.Sub(last) < guestChatInterval {
+		return false
+	}
+	for id, at := range g.chatted {
+		if now.Sub(at) > time.Minute {
+			delete(g.chatted, id)
+		}
+	}
+	g.chatted[shareID] = now
+	return true
+}
+
+// anyLive reports whether any guest holds a session at all.
+func (g *guestSessions) anyLive() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.live) > 0
+}
+
+// session returns a share's live session, if it has one.
+func (g *guestSessions) session(shareID string) *guestSession {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.live[shareID]
 }
 
 // liveShares lists the shares that hold a session, for the sweep.
@@ -353,6 +395,12 @@ func guestCodeHash(token, code string) string {
 // cleanGuestName keeps a name readable in a banner and an audit line: no
 // control characters, single spaces, and a bounded length.
 func cleanGuestName(raw string) string {
+	return cleanLine(raw, guestNameMax)
+}
+
+// cleanLine is one line of printable text, single-spaced, at most max
+// characters.
+func cleanLine(raw string, max int) string {
 	var b strings.Builder
 	space := false
 	for _, r := range strings.TrimSpace(raw) {
@@ -369,11 +417,11 @@ func cleanGuestName(raw string) string {
 		space = false
 		b.WriteRune(r)
 	}
-	name := []rune(b.String())
-	if len(name) > guestNameMax {
-		name = name[:guestNameMax]
+	line := []rune(b.String())
+	if len(line) > max {
+		line = line[:max]
 	}
-	return strings.TrimSpace(string(name))
+	return strings.TrimSpace(string(line))
 }
 
 // cleanHeaderValue keeps a request header fit to store and show: valid UTF-8
@@ -828,12 +876,14 @@ func (s *Server) guestSession(w http.ResponseWriter, r *http.Request) {
 		s.relay.CloseSession(prev.sessionID, remote.CloseSessionReplaced, "remote_session_replaced")
 		_ = s.store.SetRemoteSessionStatus(r.Context(), prev.sessionID, "ended")
 	}
-	rs, err := s.remote.Start(r.Context(), "native", agent, models.GuestPrincipal(sh.ID), remote.StartOptions{AllowFiles: false})
+	// No chat window of its own on the endpoint: the guest's chat is carried to
+	// the technician's session (api_guest_chat.go).
+	rs, err := s.remote.Start(r.Context(), "native", agent, models.GuestPrincipal(sh.ID), remote.StartOptions{AllowFiles: false, NoChat: true})
 	if err != nil {
 		writeCodedErr(w, http.StatusServiceUnavailable, "device_unavailable", err.Error())
 		return
 	}
-	gs := &guestSession{shareID: sh.ID, sessionID: rs.ID, agentID: sh.AgentID, sponsor: sh.CreatedBy}
+	gs := &guestSession{shareID: sh.ID, sessionID: rs.ID, agentID: sh.AgentID, sponsor: sh.CreatedBy, name: sh.GuestName}
 	shareID := sh.ID
 	gs.timer = time.AfterFunc(time.Until(sh.ExpiresAt), func() {
 		s.endGuest(shareID, remote.CloseGuestExpired, "guest_share_expired")

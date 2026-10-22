@@ -280,7 +280,7 @@ func TestRemoteShareLifecycle(t *testing.T) {
 	}
 
 	// The guest's own session: a native one, owned by the guest principal,
-	// told to the endpoint without file transfer.
+	// told to the endpoint without file transfer and without a chat window.
 	rec = call(http.MethodPost, "/api/guest/session", asGuest, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("guest session: %d %s", rec.Code, rec.Body)
@@ -296,7 +296,7 @@ func TestRemoteShareLifecycle(t *testing.T) {
 		must(json.Unmarshal(frame, &env))
 		var start protocol.RemoteStartMsg
 		must(json.Unmarshal(env.Data, &start))
-		if start.SessionID != sess.ID || start.AllowFiles == nil || *start.AllowFiles {
+		if start.SessionID != sess.ID || start.AllowFiles == nil || *start.AllowFiles || !start.NoChat {
 			t.Fatalf("the endpoint was asked for %+v", start)
 		}
 	case <-time.After(5 * time.Second):

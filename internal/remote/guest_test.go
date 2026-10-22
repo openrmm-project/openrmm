@@ -61,8 +61,9 @@ func TestGuestPolicyFromViewer(t *testing.T) {
 	}
 }
 
-// What the endpoint may send to a guest: the screen and what describes it,
-// never the endpoint's clipboard, chat, or file contents.
+// What the endpoint may send to a guest: the screen and what describes it, and
+// what the person at the machine writes in the chat — never the endpoint's
+// clipboard or file contents.
 func TestGuestPolicyFromAgent(t *testing.T) {
 	text := websocket.TextMessage
 	cases := []struct {
@@ -78,7 +79,7 @@ func TestGuestPolicyFromAgent(t *testing.T) {
 		{"monitors", text, `{"t":"monitors","list":[]}`, true},
 		{"notice", text, `{"t":"notice","text":"Wayland"}`, true},
 		{"clipboard mirror", text, `{"t":"clip","text":"password"}`, false},
-		{"chat from the user", text, `{"t":"chat","from":"user","text":"hi"}`, false},
+		{"chat from the user", text, `{"t":"chat","from":"user","text":"hi"}`, true},
 		{"file listing", text, `{"t":"flist","entries":[]}`, false},
 		{"file metadata", text, `{"t":"fmeta","id":1,"name":"x"}`, false},
 		{"input lock state", text, `{"t":"inputlocked","enabled":true}`, false},
@@ -155,5 +156,122 @@ func TestGuestRelayFiltersBothDirections(t *testing.T) {
 	send(agent, websocket.BinaryMessage, "\x01tile")
 	if got := read(guest); got != "\x01tile" {
 		t.Fatalf("guest received %q, want only the video frame", got)
+	}
+}
+
+// A guest's chat line is heard by the hook but never reaches the endpoint of
+// the guest's own session; what the person at the machine writes there reaches
+// the guest and is heard too; and the server can add a line to either peer.
+func TestRelayChatHookAndSend(t *testing.T) {
+	type heard struct{ agentID, sessionID, role, text string }
+	lines := make(chan heard, 8)
+	r := NewRelay()
+	r.SetChatHook(func(agentID, sessionID, role, text string) {
+		lines <- heard{agentID, sessionID, role, text}
+	})
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := up.Upgrade(w, req, nil)
+		if err != nil {
+			return
+		}
+		if req.URL.Query().Get("role") == "viewer" {
+			_ = r.JoinGuest("session-1", "agent-1", conn, GuestPolicy{})
+			return
+		}
+		_ = r.Join("session-1", "agent-1", "agent", conn)
+	}))
+	defer srv.Close()
+	base := "ws" + strings.TrimPrefix(srv.URL, "http")
+	agent, _, err := websocket.DefaultDialer.Dial(base+"?role=agent", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	guest, _, err := websocket.DefaultDialer.Dial(base+"?role=viewer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guest.Close()
+	send := func(c *websocket.Conn, data string) {
+		t.Helper()
+		if err := c.WriteMessage(websocket.TextMessage, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(c *websocket.Conn) string {
+		t.Helper()
+		_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_, data, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return string(data)
+	}
+	hear := func() heard {
+		t.Helper()
+		select {
+		case h := <-lines:
+			return h
+		case <-time.After(2 * time.Second):
+			t.Fatal("the hook heard nothing")
+			return heard{}
+		}
+	}
+
+	send(guest, `{"t":"chat","text":"hello from the guest"}`)
+	send(guest, `{"t":"kf"}`)
+	if got := read(agent); got != `{"t":"kf"}` {
+		t.Fatalf("endpoint received %q; the guest's chat must not reach it", got)
+	}
+	if h := hear(); h != (heard{"agent-1", "session-1", "viewer", "hello from the guest"}) {
+		t.Fatalf("hook heard %+v", h)
+	}
+
+	send(agent, `{"t":"chat","from":"user","text":"hi"}`)
+	if got := read(guest); got != `{"t":"chat","from":"user","text":"hi"}` {
+		t.Fatalf("guest received %q", got)
+	}
+	if h := hear(); h != (heard{"agent-1", "session-1", "agent", "hi"}) {
+		t.Fatalf("hook heard %+v", h)
+	}
+
+	if err := r.Send("session-1", "viewer", []byte(`{"t":"chat","from":"tech","text":"to the guest"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(guest); !strings.Contains(got, "to the guest") {
+		t.Fatalf("guest received %q", got)
+	}
+	if err := r.Send("session-1", "agent", []byte(`{"t":"chat","from":"tech","text":"to the endpoint"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(agent); !strings.Contains(got, "to the endpoint") {
+		t.Fatalf("endpoint received %q", got)
+	}
+	if err := r.Send("no-such-session", "viewer", []byte(`{}`)); err == nil {
+		t.Fatal("a line was sent to a session that does not exist")
+	}
+}
+
+// chatText reads "t" as the sidecar does: with duplicate keys the last wins,
+// in any case.
+func TestChatText(t *testing.T) {
+	cases := []struct {
+		frame string
+		text  string
+		ok    bool
+	}{
+		{`{"t":"chat","text":"hi"}`, "hi", true},
+		{`{"t":"chat","text":""}`, "", false},
+		{`{"t":"kf","T":"chat","text":"hi"}`, "hi", true},
+		{`{"t":"chat","T":"kf","text":"hi"}`, "", false},
+		{`{"t":"clip","text":"secret"}`, "", false},
+		{`{"t":"chat","text":"` + strings.Repeat("a", chatFrameLimit) + `"}`, "", false},
+		{`not json`, "", false},
+	}
+	for _, c := range cases {
+		if text, ok := chatText([]byte(c.frame)); text != c.text || ok != c.ok {
+			t.Errorf("chatText(%.40q) = %q, %v; want %q, %v", c.frame, text, ok, c.text, c.ok)
+		}
 	}
 }

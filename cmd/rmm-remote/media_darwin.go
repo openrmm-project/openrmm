@@ -383,7 +383,8 @@ func postKey(browserCode int, down bool) {
 
 // ---- relay loop ----
 
-func runMedia(conn *websocket.Conn, allowFiles bool) error {
+func runMedia(conn *websocket.Conn, opts sessionOptions) error {
+	allowFiles := opts.allowFiles
 	type omsg struct {
 		mt int
 		b  []byte
@@ -451,8 +452,10 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 		case <-done:
 		}
 	}
-	openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) })
-	defer closeMacChat()
+	if opts.chat {
+		openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) })
+		defer closeMacChat()
+	}
 	// Asked before the first frame is captured: a grant given now applies to the
 	// next session, since macOS does not hand capture rights to a process that
 	// has already been refused them.
@@ -519,7 +522,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 				var message struct {
 					Text string `json:"text"`
 				}
-				if json.Unmarshal(data, &message) == nil && message.Text != "" {
+				if opts.chat && json.Unmarshal(data, &message) == nil && message.Text != "" {
 					appendMacChat(message.Text, true)
 				}
 			case "mon":

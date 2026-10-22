@@ -92,7 +92,9 @@ type Server struct {
 
 // New builds the API server.
 func New(cfg *config.Config, s *store.Store, h *hub.Hub, j *jobs.Service, rm *remote.Manager, relay *remote.Relay, chat *ai.Engine, sched *scheduler.Scheduler, patchSvc *patches.Service) *Server {
-	return &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, presence: remote.NewPresence(), guests: newGuestSessions(), chat: chat, sched: sched, patches: patchSvc}
+	srv := &Server{cfg: cfg, store: s, hub: h, jobs: j, remote: rm, relay: relay, presence: remote.NewPresence(), guests: newGuestSessions(), chat: chat, sched: sched, patches: patchSvc}
+	relay.SetChatHook(srv.queueChat)
+	return srv
 }
 
 func (s *Server) lockAgentLifecycle(agentID string) func() {

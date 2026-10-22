@@ -12,8 +12,11 @@ import (
 // cannot replace (docs/08-remote-access.md).
 //
 // It is an allowlist in both directions. Anything it does not name is dropped:
-// files, clipboard, chat, Ctrl+Alt+Delete, the input lock, UAC, and whatever
-// a later sidecar adds before this list learns about it.
+// files, clipboard, Ctrl+Alt+Delete, the input lock, UAC, and whatever a later
+// sidecar adds before this list learns about it. Chat is the one exchange in
+// between: the guest's lines never reach this session's endpoint — the server
+// carries them to the technician's session instead (ChatHook) — while what the
+// person at the machine writes here does reach the guest.
 type GuestPolicy struct {
 	// Control adds pointer and keyboard input to the view-only set.
 	Control bool
@@ -85,7 +88,7 @@ func (p GuestPolicy) FromAgent(mt int, data []byte) bool {
 		return false
 	}
 	switch t {
-	case "hello", "monitors", "notice":
+	case "hello", "monitors", "notice", "chat":
 		return true
 	}
 	return false

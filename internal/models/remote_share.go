@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // RemoteShare is a one-time invitation to a device's screen for someone who has
 // no account (docs/08-remote-access.md). The token, the code and the guest's
@@ -69,3 +72,10 @@ func (s *RemoteShare) EffectiveStatus(now time.Time) string {
 // It cannot collide with a user id (a UUID), the admin token ("admin") or an
 // AI principal ("ai:…").
 func GuestPrincipal(shareID string) string { return "guest:" + shareID }
+
+// GuestShareID is GuestPrincipal's inverse: the share behind a session owner,
+// and whether the owner is a guest at all.
+func GuestShareID(principal string) (string, bool) {
+	id, ok := strings.CutPrefix(principal, "guest:")
+	return id, ok && id != ""
+}

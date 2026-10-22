@@ -335,10 +335,29 @@ frame of it in both directions (`internal/remote/guest.go`):
   control* mode, also mouse and keyboard. Everything else is dropped: file
   transfer, clipboard, chat, Ctrl+Alt+Delete, UAC, the input lock;
 - to the guest: the screen, and the `hello`, `monitors` and `notice` messages
-  that describe it. The endpoint's clipboard, chat and files never reach them.
+  that describe it, and what the person at the machine writes in the chat. The
+  endpoint's clipboard and files never reach them.
 
 The filter is the guarantee, so it holds whatever version the endpoint's
 sidecar runs.
+
+**Chat.** The technician, their guests and the person at the machine share one
+conversation, although each guest's session is separate
+(`internal/api/api_guest_chat.go`). The server carries chat lines between the
+technician's session on the device and the sessions of the guests they let
+onto it:
+
+- a guest's line goes to the technician's session: into the chat window on the
+  device as `Tech: <name> (guest): …`, kept on one line, and to the
+  technician's viewer under the guest's name. It never goes to the guest's own
+  session on the device. A guest writes at most one line every 300 ms;
+- what the technician writes, and what the person at the machine writes, reaches
+  every guest of that technician on that device.
+
+The guest's session opens no chat window of its own on the device (sidecar
+0.18 and later, through the agent's `-no-chat`). An older sidecar still opens a
+second window. What the person types there reaches the technician and the
+guests too.
 
 **When it ends.** The guest's socket is closed with a code their page explains:
 

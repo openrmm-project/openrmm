@@ -38,6 +38,11 @@ tag.
   it up at all, so they pulled an unpinned `postgres:16-alpine`. They now take
   the image Compose resolves, digest included, and stop if it cannot be
   resolved.
+- **Notices at the top of a remote session are readable again.** Their
+  background used an opacity on a palette colour, which Tailwind leaves out
+  when the colour is a CSS variable. They were see-through over the black
+  viewer, and with the light theme their dark text disappeared in the black
+  band of *Fit to window*. They now have a solid background.
 
 ### Added
 
@@ -49,8 +54,11 @@ tag.
   invited them accepts them from the top of their own open session on the
   device, and leaves when that session ends. The guest gets a session of their
   own, and the relay filters every frame of it: screen and monitor choice, plus
-  mouse and keyboard in control mode, and never files, clipboard, chat or the
-  shortcuts. Off by default (Settings ▸ Remote access ▸ Guest access); the new
+  mouse and keyboard in control mode, and never files, clipboard or the
+  shortcuts. The technician, the guests and the person at the machine share one
+  chat: the server carries lines between the technician's session and the
+  guests'. Sidecar 0.18 opens no second chat window for a guest's session. Off
+  by default (Settings ▸ Remote access ▸ Guest access); the new
   `devices.remote.share` permission is held only by the administrator role
   until a custom role opts in. Migration 020 adds `remote_shares`. See
   docs/08-remote-access.md.

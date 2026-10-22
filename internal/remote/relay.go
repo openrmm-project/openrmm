@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"sync"
@@ -11,6 +12,20 @@ import (
 
 // pairTimeout bounds how long the first peer waits for its partner.
 const pairTimeout = 60 * time.Second
+
+// sendTimeout bounds a frame the server adds to a session (Send): a peer that
+// cannot take one short line in this long is not reading at all.
+const sendTimeout = 5 * time.Second
+
+// chatFrameLimit is the largest text frame read as a chat line for ChatHook.
+// A longer one still reaches its peer; it is just not carried anywhere else.
+const chatFrameLimit = 16 << 10
+
+// ChatHook hears every chat line a session carries, once it has gone where it
+// was going. role is the peer that wrote it: "agent" for the person at the
+// machine, "viewer" for whoever is watching. The server uses it to make one
+// conversation of a technician's session and their guests' (internal/api).
+type ChatHook func(agentID, sessionID, role, text string)
 
 // Relay pairs two WebSocket peers (agent + viewer) for a session id and pipes
 // frames between them. Tickets are validated by the API before Join. This is the transport plane of the native
@@ -23,6 +38,7 @@ type Relay struct {
 	// closed remembers sessions ended before either peer arrived, so a peer
 	// that connects a moment later cannot open them again.
 	closed map[string]time.Time
+	chat   ChatHook
 }
 
 type pair struct {
@@ -32,7 +48,11 @@ type pair struct {
 	viewer  *websocket.Conn
 	// guest is set when the viewer is a guest: every frame between the two
 	// peers then passes through its allowlist, in both directions.
-	guest     *GuestPolicy
+	guest *GuestPolicy
+	// One writer per connection at a time: the copy loop and a frame the
+	// server adds (Send) may both write to the same peer.
+	agentW, viewerW sync.Mutex
+
 	ready     chan struct{}
 	readyOnce sync.Once
 	done      chan struct{}
@@ -43,6 +63,16 @@ type pair struct {
 // NewRelay creates an empty relay.
 func NewRelay() *Relay {
 	return &Relay{pairs: map[string]*pair{}, blockedAgents: map[string]struct{}{}, closed: map[string]time.Time{}}
+}
+
+// SetChatHook installs the hook for sessions joined from now on.
+func (r *Relay) SetChatHook(h ChatHook) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.chat = h
+	r.mu.Unlock()
 }
 
 func (r *Relay) get(sessionID, agentID string) (*pair, error) {
@@ -149,30 +179,68 @@ func (r *Relay) join(sessionID, agentID, role string, conn *websocket.Conn, gues
 	}
 
 	// Pipe inbound frames from this conn to the partner conn.
+	r.mu.Lock()
+	hook := r.chat
+	r.mu.Unlock()
+	var onChat func(string)
+	if hook != nil {
+		onChat = func(text string) { hook(agentID, sessionID, role, text) }
+	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
 		return errors.New("relay session is closed")
 	}
 	var dst *websocket.Conn
+	var dstW *sync.Mutex
 	var allow func(int, []byte) bool
 	if role == "viewer" {
-		dst = p.agent
+		dst, dstW = p.agent, &p.agentW
 		if p.guest != nil {
 			allow = p.guest.FromViewer
 		}
 	} else {
-		dst = p.viewer
+		dst, dstW = p.viewer, &p.viewerW
 		if p.guest != nil {
 			allow = p.guest.FromAgent
 		}
 	}
 	p.mu.Unlock()
-	err = copyFrames(conn, dst, allow)
+	err = copyFrames(conn, dst, dstW, allow, onChat)
 	if err != nil {
 		log.Printf("remote relay session=%s role=%s ended: %v", sessionID, role, err)
 	}
 	r.drop(sessionID, p)
+	return err
+}
+
+// Send writes one text frame to a peer of a live session ("agent" or
+// "viewer"): a chat line the server carries over from another session.
+func (r *Relay) Send(sessionID, role string, data []byte) error {
+	r.mu.Lock()
+	p := r.pairs[sessionID]
+	r.mu.Unlock()
+	if p == nil {
+		return errors.New("relay session not found")
+	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return errors.New("relay session is closed")
+	}
+	conn, w := p.viewer, &p.viewerW
+	if role == "agent" {
+		conn, w = p.agent, &p.agentW
+	}
+	p.mu.Unlock()
+	if conn == nil {
+		return errors.New("relay peer is not connected")
+	}
+	w.Lock()
+	defer w.Unlock()
+	_ = conn.SetWriteDeadline(time.Now().Add(sendTimeout))
+	err := conn.WriteMessage(websocket.TextMessage, data)
+	_ = conn.SetWriteDeadline(time.Time{})
 	return err
 }
 
@@ -243,17 +311,42 @@ func (r *Relay) CloseSession(sessionID string, code int, reason string) {
 
 // copyFrames forwards every message from src to dst until either side errors.
 // When allow is set, a frame it refuses is dropped and the session goes on.
-func copyFrames(src, dst *websocket.Conn, allow func(int, []byte) bool) error {
+// onChat, when set, hears every chat line from src, refused or not: a guest's
+// line never reaches its own session's endpoint, and is carried elsewhere.
+func copyFrames(src, dst *websocket.Conn, dstW *sync.Mutex, allow func(int, []byte) bool, onChat func(string)) error {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
 			return err
 		}
-		if allow != nil && !allow(mt, data) {
-			continue
+		if allow == nil || allow(mt, data) {
+			dstW.Lock()
+			err := dst.WriteMessage(mt, data)
+			dstW.Unlock()
+			if err != nil {
+				return err
+			}
 		}
-		if err := dst.WriteMessage(mt, data); err != nil {
-			return err
+		if onChat != nil && mt == websocket.TextMessage {
+			if text, ok := chatText(data); ok {
+				onChat(text)
+			}
 		}
 	}
+}
+
+// chatText reads a chat line the way the sidecars do: "t" and "text" into a
+// struct, so duplicate or differently cased keys mean what they mean there.
+func chatText(data []byte) (string, bool) {
+	if len(data) > chatFrameLimit {
+		return "", false
+	}
+	var e struct {
+		T    string `json:"t"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(data, &e) != nil || e.T != "chat" || e.Text == "" {
+		return "", false
+	}
+	return e.Text, true
 }

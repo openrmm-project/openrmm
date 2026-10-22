@@ -601,7 +601,7 @@ function GuestRequests({ deviceId }) {
   if (!pending.length && !guests.length) return null;
   return (<>
     {pending.map((g) => (
-      <div key={g.id} className="pointer-events-auto w-full rounded-lg border border-brandhi/50 bg-panel/95 backdrop-blur px-3.5 py-2.5 shadow-lg flex flex-wrap items-center gap-2.5 text-[12.5px] text-ink">
+      <div key={g.id} className="pointer-events-auto w-full rounded-lg border border-brand bg-card px-3.5 py-2.5 shadow-lg flex flex-wrap items-center gap-2.5 text-[12.5px] text-ink">
         <Icon name="bell" size={15} className="text-brandhi shrink-0" />
         <span className="flex-1 min-w-[180px]">{t('guest.wantsToJoin', { name: g.guest_name, ip: g.guest_ip, mode: tEnum('guest.mode', g.mode) })}</span>
         <Button size="sm" variant="primary" icon="approve" onClick={() => act(() => api.acceptRemoteShare(g.id))}>{t('guest.accept')}</Button>
@@ -609,7 +609,7 @@ function GuestRequests({ deviceId }) {
       </div>
     ))}
     {guests.map((g) => (
-      <div key={g.id} className="pointer-events-auto rounded-full border border-line bg-panel/95 backdrop-blur px-3 py-1 shadow flex items-center gap-2 text-[11.5px] text-ink">
+      <div key={g.id} className="pointer-events-auto rounded-full border border-line2 bg-card px-3 py-1 shadow flex items-center gap-2 text-[11.5px] text-ink">
         <span className={cx('h-2 w-2 rounded-full', g.connected ? 'bg-ok' : 'bg-faint')} />
         <span>{t(g.connected ? 'guest.chipConnected' : 'guest.chipWaiting', { name: g.guest_name, mode: tEnum('guest.mode', g.mode) })}</span>
         <button onClick={() => act(() => api.closeRemoteShare(g.id))} className="text-bad hover:underline">{t('guest.remove')}</button>
@@ -759,7 +759,7 @@ function GuestJoinScreen() {
     else if (reason === 'replaced') finish('replaced');
     else finish('ended');
   };
-  const guest = useMemo(() => saved ? { credential: saved.credential, control: saved.mode === 'control', broker: () => api.guest.session(saved.credential), onEnd } : null, [saved && saved.credential]);
+  const guest = useMemo(() => saved ? { credential: saved.credential, control: saved.mode === 'control', technician: saved.technician, broker: () => api.guest.session(saved.credential), onEnd } : null, [saved && saved.credential]);
 
   if (phase === 'viewer' && guest) {
     return <RemoteViewer deviceId="" hostname={t('guest.sharedBy', { tech: technician })} os="" guest={guest} onClose={() => finish('left')} />;
@@ -893,7 +893,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
           const text = window.RemoteInput.incomingClipText(m);
           if (text && navigator.clipboard?.writeText) { navigator.clipboard.writeText(text).catch(() => {}); }
         }
-        else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, text: m.text }]); if (m.from === 'user' && !openRef.current) setUnread((u) => u + 1); }
+        // Lines from the person at the machine, and — carried over by the server
+        // from the other sessions on this device — from the technician and
+        // their guests (internal/api/api_guest_chat.go).
+        else if (m.t === 'chat') { setChat((c) => [...c, { from: m.from, name: m.name, text: m.text }]); if (!openRef.current) setUnread((u) => u + 1); }
         else if (m.t === 'cad') { if (m.ok) { if (isMac) setCad({ available: true, reason: '' }); toast.info(t('viewer.shortcutSent'), `${hostname}: ${shortcutLabel}`); } else toast.error(t('viewer.shortcutFailed'), m.err || t('viewer.shortcutRejected')); }
         else if (m.t === 'paste') { if (m.ok && isMac) setCad({ available: true, reason: '' }); else if (!m.ok) toast.error(t('viewer.pasteFailed'), m.err || t('viewer.pasteRejected')); }
         else if (m.t === 'monitors') setMonitors({ list: m.list || [], selected: m.selected || 0, all: m.all !== false })
@@ -1116,7 +1119,13 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
     };
   }, [deviceId, filesOnly, allowFiles, isMac, isGuest, control]);
 
-  const sendChat = () => { const text = draft.trim(); if (!text) return; sendJSON({ t: 'chat', from: 'tech', text }); setChat((c) => [...c, { from: 'tech', text }]); setDraft(''); };
+  // A guest's line goes to the server, which hands it to the technician's
+  // session; the guest's own sidecar never sees it.
+  const sendChat = () => { const text = draft.trim(); if (!text) return; sendJSON(isGuest ? { t: 'chat', text } : { t: 'chat', from: 'tech', text }); setChat((c) => [...c, { from: 'self', text }]); setDraft(''); };
+  const chatLabel = (m) => m.from === 'self' ? (isGuest ? t('guest.chatYou') : t('viewer.techYou'))
+    : m.from === 'guest' ? t('viewer.chatGuest', { name: m.name || '?' })
+    : m.from === 'tech' ? t('guest.chatTech', { tech: guest?.technician || '' })
+    : isGuest ? t('guest.chatUser') : hostname;
   const shortcutAvailable = window.RemoteInput.shortcutAvailable(isMac, cad.available);
   const sendCtrlAltDelete = () => {
     if (!shortcutAvailable) { toast.error(t('viewer.shortcutUnavailable'), cad.reason); return; }
@@ -1192,8 +1201,8 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
             {isWin && <Button variant={uac ? 'primary' : 'ghost'} size="sm" icon="shield" onClick={() => sendJSON({ t: 'uac', enable: !uac })} title={t('viewer.uacHint')}>UAC</Button>}
             {canLock && <Button variant={locked ? 'primary' : 'ghost'} size="sm" icon="lock" onClick={() => sendJSON({ t: 'lockinput', enable: !locked })} title={t('viewer.lockHint')}>{locked ? t('viewer.locked') : t('viewer.lockInput')}</Button>}
             {allowFiles && <Button variant="ghost" size="sm" icon="link" onClick={() => browse(rootPath)}>{t('viewer.files')}</Button>}
-            <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title={t('viewer.chatToggle')}>{t('viewer.chat')}{unread ? ` (${unread})` : ''}</Button>
             </>}
+            <Button variant={chatOpen ? 'primary' : 'ghost'} size="sm" icon="chat" onClick={() => setChatOpen((o) => !o)} title={t('viewer.chatToggle')}>{t('viewer.chat')}{unread ? ` (${unread})` : ''}</Button>
             {monitors.list.length > 1 && (
               <Select value={String(monitors.selected)} onChange={(e) => { const id = Number(e.target.value); setMonitors((m) => ({ ...m, selected: id })); sendJSON({ t: 'mon', id }); }}
                  aria-label={t('viewer.hostDisplay')} title={t('viewer.chooseDisplay')} className="h-7 w-[150px] bg-card py-0 text-[12px]">
@@ -1280,10 +1289,13 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
               </div>
             </div>
           )}
+          {/* Solid colours on purpose: the palette is CSS variables, and Tailwind
+              emits nothing for an opacity modifier on one (bg-panel/95), which
+              left these see-through over the black viewer. */}
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[2] w-[min(92%,640px)] flex flex-col items-center gap-2 pointer-events-none">
             {!isGuest && can('devices.remote.share') && <GuestRequests deviceId={deviceId} />}
             {notice && (
-              <div className="pointer-events-auto max-w-full rounded-lg border border-warn/40 bg-warn/[0.12] backdrop-blur px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
+              <div className="pointer-events-auto max-w-full rounded-lg border border-warn bg-card px-3.5 py-2 text-[12px] text-ink flex items-start gap-2 shadow-lg">
                 <Icon name="info" size={14} className="text-warn shrink-0 mt-0.5" />
                 <span>{notice}</span>
                 <button onClick={() => setNotice(null)} className="text-faint hover:text-ink shrink-0"><Icon name="close" size={13} /></button>
@@ -1294,15 +1306,15 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
         {chatOpen && <div className="absolute inset-0 z-[4] w-full border-l border-line bg-app flex flex-col sm:static sm:w-72 sm:shrink-0">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">{t('viewer.chat')}<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title={t('viewer.collapseChat')}><Icon name="chevright" size={16} /></button></div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {chat.length === 0 && <div className="text-[11.5px] text-faint">{t('viewer.noMessages', { host: hostname })}</div>}
+            {chat.length === 0 && <div className="text-[11.5px] text-faint">{isGuest ? t('guest.chatEmpty') : t('viewer.noMessages', { host: hostname })}</div>}
             {chat.map((m, i) => (
-              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'tech' ? 'ml-auto bg-brand text-white shadow-sm shadow-brand/20' : 'mr-auto bg-elevated text-ink border border-line2')}>
-                <div className={cx('text-[10px] mb-0.5 font-semibold', m.from === 'tech' ? 'text-white/75' : 'text-run')}>{m.from === 'tech' ? t('viewer.techYou') : hostname}</div>{m.text}
+              <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'self' ? 'ml-auto bg-brand text-white shadow-sm shadow-brand/20' : 'mr-auto bg-elevated text-ink border border-line2')}>
+                <div className={cx('text-[10px] mb-0.5 font-semibold', m.from === 'self' ? 'text-white/75' : m.from === 'guest' ? 'text-warn' : m.from === 'tech' ? 'text-brandhi' : 'text-run')}>{chatLabel(m)}</div>{m.text}
               </div>
             ))}
           </div>
           <div className="p-2 border-t border-line flex gap-1.5">
-            <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} placeholder={t('viewer.message')} className="text-[12px]" />
+            <Input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} placeholder={t('viewer.message')} maxLength={isGuest ? 1000 : undefined} className="text-[12px]" />
             <Button variant="primary" size="sm" icon="send" onClick={sendChat} disabled={!draft.trim()} />
           </div>
         </div>}

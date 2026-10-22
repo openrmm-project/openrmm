@@ -19,7 +19,8 @@ import (
 // chVideo tile frames + {t:"kf"}) so the same viewer drives both, including file
 // transfer (transfer_linux.go) and in-session chat (a native X11 window,
 // chat_linux.go).
-func runMedia(conn *websocket.Conn, allowFiles bool) error {
+func runMedia(conn *websocket.Conn, opts sessionOptions) error {
+	allowFiles := opts.allowFiles
 	clipMirror := &clipboardMirror{}
 	type omsg struct {
 		mt int
@@ -141,7 +142,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	}
 
 	// announce the running sidecar version (viewer staleness check)
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": true}); e == nil {
+	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": opts.chat}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
@@ -367,7 +368,9 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			if chat != nil {
 				chat.close()
 			}
-			chat = newChatWindowLinux(disp, auth, chatTitle, sendChat)
+			if opts.chat {
+				chat = newChatWindowLinux(disp, auth, chatTitle, sendChat)
+			}
 		}
 
 		ticker := time.NewTicker(pace.active)
@@ -383,7 +386,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			case msg := <-chatInbox:
 				// Reopen the window if the host user closed it (the WM kills the
 				// client, so a new tech message brings it back).
-				if (chat == nil || chat.isClosed()) && chatDisp != "" {
+				if opts.chat && (chat == nil || chat.isClosed()) && chatDisp != "" {
 					if chat != nil {
 						chat.close()
 					}

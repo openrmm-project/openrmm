@@ -346,6 +346,17 @@ that to `POSTGRES_ARCHIVE_TIMEOUT` (default 300s) — `archive_timeout` matters
 because an idle database can otherwise sit on an unarchived segment for hours,
 making the real recovery point far worse than the configured one.
 
+The segments land in the `rmm_pgwal` volume. Before postgres starts, the
+one-shot `postgres-wal-init` service hands that volume to postgres's uid; a
+volume Docker creates belongs to root, and postgres could not archive into it.
+Check that segments are being archived and none has failed (with your
+`POSTGRES_USER` and `POSTGRES_DB` if they are not `rmm`):
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml exec -T postgres \
+  psql -U rmm -d rmm -c 'SELECT archived_count, failed_count, last_failed_wal FROM pg_stat_archiver'
+```
+
 PITR needs a **physical** base backup; the logical dump cannot replay WAL:
 
 ```bash

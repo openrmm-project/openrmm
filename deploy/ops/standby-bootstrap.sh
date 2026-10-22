@@ -27,8 +27,7 @@ create one with: openssl rand -base64 33 > $password_file && chmod 600 $password
 password=$(tr -d '\r\n' < "$password_file")
 [[ ${#password} -ge 16 ]] || die "replication password must be at least 16 characters"
 
-image=$(compose config --format json | sed -n 's/.*"postgres":{"image":"\([^"]*\)".*/\1/p' | head -n1)
-[[ -n "$image" ]] || image=${POSTGRES_IMAGE:-postgres:16-alpine}
+image=$(postgres_image)
 network="${PROJECT}_db"
 
 printf 'creating replication role and slot on the primary\n' >&2

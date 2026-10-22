@@ -45,6 +45,17 @@ compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
+# The postgres image the stack runs, version and digest included, so a helper
+# container is the same server. The scripts used to scrape it from `config
+# --format json` with a pattern that never matched, or skip that, and ran an
+# unpinned postgres:16-alpine instead.
+postgres_image() {
+  local images
+  images=$(compose config --images postgres) || die "cannot resolve the postgres image from $COMPOSE_FILE"
+  [[ -n "$images" ]] || die "no postgres image in $COMPOSE_FILE"
+  printf '%s\n' "${images%%$'\n'*}"
+}
+
 checksum_value() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | { read -r hash _; printf '%s\n' "$hash"; }

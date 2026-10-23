@@ -143,7 +143,7 @@ var activeChat *chatWindow
 func u16(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
 
 func newChatWindow(title string, onSend func(string)) *chatWindow {
-	cw := &chatWindow{onSend: onSend, self: selfLabel(processAccount())}
+	cw := &chatWindow{onSend: onSend, self: selfLabel(sessionAccount())}
 	activeChat = cw
 	ready := make(chan struct{})
 	go func() {

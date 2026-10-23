@@ -453,7 +453,7 @@ func runMedia(conn *websocket.Conn, opts sessionOptions) error {
 		}
 	}
 	if opts.chat {
-		openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) }, processAccount())
+		openMacChat(func(text string) { sendJSON(map[string]any{"t": "chat", "from": "user", "text": text}) }, sessionAccount())
 		defer closeMacChat()
 	}
 	// Asked before the first frame is captured: a grant given now applies to the

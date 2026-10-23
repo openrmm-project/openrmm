@@ -126,7 +126,7 @@ const (
 // macHello is the session greeting. It is sent again whenever what it says
 // changes, and the viewer simply adopts the newest one.
 func macHello(version string, allowFiles, screen, input, inputPending bool) map[string]any {
-	hello := map[string]any{"t": "hello", "v": version, "allow_files": allowFiles, "cad": input, "chat": true, "guest_chat": true, "user": processAccount()}
+	hello := map[string]any{"t": "hello", "v": version, "allow_files": allowFiles, "cad": input, "chat": true, "guest_chat": true, "user": sessionAccount()}
 	if !screen {
 		hello["capture_error"] = macCaptureBlocked
 	}

@@ -46,8 +46,9 @@ func accountName(login string) string {
 }
 
 // processAccount is the account the sidecar runs as, when it is a person's. On
-// Windows and macOS the agent starts it as the signed-in user; on Linux it runs
-// as root, and sessionAccount (seat_linux.go) asks the desktop instead.
+// macOS the agent starts it as the signed-in user. On Windows it runs as SYSTEM
+// in the user's session and on Linux as root, so sessionAccount asks the
+// session (account_windows.go) or the desktop (seat_linux.go) instead.
 func processAccount() string {
 	u, err := user.Current()
 	if err != nil {

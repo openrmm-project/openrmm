@@ -225,8 +225,9 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   technician/user messages separately and use purple/green native text; a
   guest's lines (below) are amber. From sidecar 0.18 the person at the machine
   is named by their account instead of "You" in the window and of the machine
-  name in the console. The hello carries it as `user`: the process's account on
-  Windows and macOS, and on Linux the owner of the active desktop's
+  name in the console. The hello carries it as `user`. On Windows it is the
+  user signed in to the session (the sidecar runs as SYSTEM there). On macOS
+  it is the process's account, and on Linux the owner of the active desktop's
   Xauthority file. A service account, a login screen and LightDM's root-owned
   file give no name, and the old labels stay. Windows
   uses Unicode RichEdit history and a UI-thread message queue; reply text has

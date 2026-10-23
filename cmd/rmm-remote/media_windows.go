@@ -503,7 +503,7 @@ func runMedia(conn *websocket.Conn, opts sessionOptions) error {
 	// Announce optional capabilities as well as the version. Ctrl+Alt+Delete is
 	// a Windows Secure Attention Sequence, not an injectable keyboard chord, so
 	// the viewer only enables its button when SendSAS and the local policy allow it.
-	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "chat": s.chat != nil && s.chat.hwnd != 0, "guest_chat": true, "user": processAccount()}
+	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "chat": s.chat != nil && s.chat.hwnd != 0, "guest_chat": true, "user": sessionAccount()}
 	if err := secureAttentionAvailable(); err != nil {
 		// Announced once per session and never revised, so when the button comes
 		// up greyed this line is the only record of why.

@@ -705,7 +705,32 @@ function ShareAccessModal({ open, onClose, device }) {
 // the reduced viewer. The token leaves the address bar at once; after the code
 // is accepted the page holds only the guest's own credential, for this tab.
 const GUEST_STORE = 'rmm-guest';
+// useStoredTheme is the console's theme on a page outside the console shell:
+// the same saved choice (rmm-theme), applied to the document as Shell does.
+function useStoredTheme() {
+  const [theme, setTheme] = useState(() => { try { return localStorage.getItem('rmm-theme') || 'dark'; } catch (e) { return 'dark'; } });
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('light', theme === 'light');
+    try { localStorage.setItem('rmm-theme', theme); } catch (e) {}
+  }, [theme]);
+  return [theme, () => setTheme((v) => (v === 'dark' ? 'light' : 'dark'))];
+}
+
+// ThemeButton switches the console between dark and light. The guest pages have
+// no top bar to carry the console's own switch.
+function ThemeButton({ theme, onToggle, className }) {
+  const label = theme === 'dark' ? t('app.lightMode') : t('app.darkMode');
+  return (
+    <button onClick={onToggle} title={label} aria-label={label}
+      className={cx('h-8 w-8 shrink-0 flex items-center justify-center rounded-lg border border-line2 bg-elevated text-muted hover:text-ink transition', className)}>
+      <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} />
+    </button>
+  );
+}
+
 function GuestJoinScreen() {
+  const [theme, onToggleTheme] = useStoredTheme();
   const [token] = useState(() => (location.hash || '').replace(/^#/, ''));
   const [saved, setSaved] = useState(() => { try { return JSON.parse(sessionStorage.getItem(GUEST_STORE) || 'null'); } catch (e) { return null; } });
   const [phase, setPhase] = useState(saved ? 'waiting' : (token ? 'loading' : 'invalid'));
@@ -762,12 +787,12 @@ function GuestJoinScreen() {
   const guest = useMemo(() => saved ? { credential: saved.credential, control: saved.mode === 'control', technician: saved.technician, broker: () => api.guest.session(saved.credential), onEnd } : null, [saved && saved.credential]);
 
   if (phase === 'viewer' && guest) {
-    return <RemoteViewer deviceId="" hostname={t('guest.sharedBy', { tech: technician })} os="" guest={guest} onClose={() => finish('left')} />;
+    return <RemoteViewer deviceId="" hostname={t('guest.sharedBy', { tech: technician })} os="" guest={guest} theme={theme} onToggleTheme={onToggleTheme} onClose={() => finish('left')} />;
   }
   return (
     <div className="min-h-full flex items-center justify-center p-4">
       <div className="w-full max-w-sm rounded-2xl border border-line bg-panel p-6 shadow-2xl space-y-4">
-        <div className="flex items-center gap-2.5"><BrandMark size={28} /><span className="text-[15px] font-semibold text-ink">{t('guest.title')}</span></div>
+        <div className="flex items-center gap-2.5"><BrandMark size={28} /><span className="text-[15px] font-semibold text-ink">{t('guest.title')}</span><ThemeButton theme={theme} onToggle={onToggleTheme} className="ml-auto" /></div>
         {phase === 'loading' && <div className="flex justify-center py-6"><Spinner size={20} /></div>}
         {phase === 'invalid' && <>
           <div className="text-[14px] font-semibold text-ink">{t('guest.invalidTitle')}</div>
@@ -801,7 +826,7 @@ window.GuestJoinScreen = GuestJoinScreen;
 // drops everything a guest may not send or receive; this only leaves out the
 // controls that would do nothing — files, chat, clipboard, the shortcuts, the
 // input lock — and, in view-only mode, the mouse and keyboard.
-function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
+function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest, theme, onToggleTheme }) {
   const toast = useToast();
   const auth = useAuth() || { can: () => false };
   const can = auth.can;
@@ -1205,6 +1230,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
         <div className="ml-auto flex items-center gap-1 sm:gap-2 whitespace-nowrap">
           <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => { uploadFile(e.target.files[0]); e.target.value = ''; }} />
           {isGuest && <span className={cx('text-[11px] px-2 py-0.5 rounded-md', control ? 'bg-warnsoft text-warn' : 'bg-elevated text-muted')}>{tEnum('guest.mode', control ? 'control' : 'view')}</span>}
+          {onToggleTheme && <ThemeButton theme={theme} onToggle={onToggleTheme} />}
           {!filesOnly && <>
             {!isGuest && <>
             <Button variant="ghost" size="sm" icon="key" onClick={sendCtrlAltDelete} disabled={status !== 'streaming' || !shortcutAvailable} title={isMac ? (cad.available ? t('viewer.forceQuit') : t('viewer.retryAfterGrant', { reason: cad.reason })) : !cad.available ? cad.reason : isWin ? t('viewer.winSecurity') : t('viewer.linuxCad')}>{shortcutLabel}</Button>

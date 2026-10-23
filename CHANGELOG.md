@@ -18,6 +18,12 @@ tag.
 
 ### Fixed
 
+- **macOS: the remote module now appears in Privacy & Security ▸
+  Accessibility.** It asked through `CGRequestPostEventAccess`. On macOS 15.8
+  that puts a consent sheet on screen, but the app never shows up in the list
+  the sheet sends the person to, so it had to be added by hand. It now asks
+  through `AXIsProcessTrustedWithOptions`, which adds it to the list. Either
+  grant enables mouse and keyboard. Sidecar 0.17.2.
 - **WAL archiving works under `deploy/docker-compose.prod.yml`.** The
   `rmm_pgwal` volume was created by Docker as root, and postgres runs as uid
   70, so `archive_command` failed on every segment with `Permission denied`.

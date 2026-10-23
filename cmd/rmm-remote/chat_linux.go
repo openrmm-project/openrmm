@@ -89,7 +89,7 @@ func newChatWindowLinux(display, authPath, title string, onSend func(string)) *c
 		return nil
 	}
 	name, data := authFromFile(authPath, dnum)
-	c := &chatLinux{conn: conn, onSend: onSend, self: selfLabel(authAccount(authPath))}
+	c := &chatLinux{conn: conn, onSend: onSend, self: selfLabel(desktopAccount(authPath))}
 	if !c.handshake(name, data) {
 		conn.Close()
 		return nil

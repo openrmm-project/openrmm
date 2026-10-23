@@ -227,9 +227,10 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   is named by their account instead of "You" in the window and of the machine
   name in the console. The hello carries it as `user`. On Windows it is the
   user signed in to the session (the sidecar runs as SYSTEM there). On macOS
-  it is the process's account, and on Linux the owner of the active desktop's
-  Xauthority file. A service account, a login screen and LightDM's root-owned
-  file give no name, and the old labels stay. Windows
+  it is the process's account. On Linux it is the owner of the active desktop's
+  Xauthority file (GDM), else the user session logind has active on seat0
+  (`loginctl`; LightDM keeps the file as root). A service account and a login
+  screen give no name, and the old labels stay. Windows
   uses Unicode RichEdit history and a UI-thread message queue; reply text has
   heap-owned storage across Win32 callbacks. Linux/macOS refresh the sidecar
   before launch, just like Windows, so the first new session uses the update.

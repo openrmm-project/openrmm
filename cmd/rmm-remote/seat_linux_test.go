@@ -3,6 +3,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -149,5 +151,52 @@ func TestAuthAccount(t *testing.T) {
 	}
 	if got := authAccount(f); got != accountName(me.Username) {
 		t.Errorf("authAccount = %q, want %q", got, me.Username)
+	}
+}
+
+// logindAccount names the user of the active seat0 session (what LightDM
+// leaves no other trace of), and nobody at a greeter or as root.
+func TestLogindAccount(t *testing.T) {
+	fake := func(seat, session string, err error) (func(args ...string) ([]byte, error), *[][]string) {
+		var calls [][]string
+		return func(args ...string) ([]byte, error) {
+			calls = append(calls, args)
+			if err != nil {
+				return nil, err
+			}
+			if args[0] == "show-seat" {
+				return []byte(seat), nil
+			}
+			return []byte(session), nil
+		}, &calls
+	}
+	cases := []struct {
+		name, seat, session string
+		err                 error
+		want                string
+	}{
+		{"user session", "ActiveSession=2\n", "Name=teste\nClass=user\n", nil, "teste"},
+		{"greeter", "ActiveSession=c1\n", "Name=lightdm\nClass=greeter\n", nil, ""},
+		{"root's session", "ActiveSession=3\n", "Name=root\nClass=user\n", nil, ""},
+		{"no active session", "ActiveSession=\n", "", nil, ""},
+		{"odd session id", "ActiveSession=../2\n", "Name=teste\nClass=user\n", nil, ""},
+		{"no loginctl", "", "", errors.New("exec: not found"), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			run, calls := fake(c.seat, c.session, c.err)
+			if got := logindAccount(run); got != c.want {
+				t.Errorf("logindAccount = %q, want %q", got, c.want)
+			}
+			if c.want != "" {
+				want := [][]string{
+					{"show-seat", "seat0", "--property=ActiveSession"},
+					{"show-session", "2", "--property=Name", "--property=Class"},
+				}
+				if fmt.Sprint(*calls) != fmt.Sprint(want) {
+					t.Errorf("loginctl called with %v, want %v", *calls, want)
+				}
+			}
+		})
 	}
 }

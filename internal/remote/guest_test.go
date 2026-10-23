@@ -336,3 +336,79 @@ func TestRelayRecordsGuestChatSupport(t *testing.T) {
 		t.Fatal("support reported for a session that does not exist")
 	}
 }
+
+// A peer that stops reading must not hold up anyone else's chat lines: Send
+// never waits for it, it only loses its own lines, and another session keeps
+// getting them. (Security audit 2026-10-22: before outboxes, Send waited for
+// the stalled peer's writer forever, and with it every chat line on the server.)
+func TestRelaySendNeverWaitsForAStalledPeer(t *testing.T) {
+	r := NewRelay()
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := up.Upgrade(w, req, nil)
+		if err != nil {
+			return
+		}
+		q := req.URL.Query()
+		_ = r.Join(q.Get("session"), "agent-1", q.Get("role"), conn)
+	}))
+	defer srv.Close()
+	base := "ws" + strings.TrimPrefix(srv.URL, "http") + "?session="
+	dial := func(url string) *websocket.Conn {
+		t.Helper()
+		c, _, err := websocket.DefaultDialer.Dial(url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		return c
+	}
+	stalledAgent := dial(base + "stalled&role=agent")
+	dial(base + "stalled&role=viewer") // never reads
+	dial(base + "healthy&role=agent")
+	healthy := dial(base + "healthy&role=viewer")
+
+	// The screen keeps coming until the server's write to the stalled viewer
+	// blocks, holding that viewer's writer.
+	frame := make([]byte, 1<<20)
+	frame[0] = 0x01
+	go func() {
+		for i := 0; i < 256; i++ {
+			if stalledAgent.WriteMessage(websocket.BinaryMessage, frame) != nil {
+				return
+			}
+		}
+	}()
+	time.Sleep(2 * time.Second)
+
+	start := time.Now()
+	refusedc := make(chan int, 1)
+	go func() {
+		refused := 0
+		for i := 0; i < outboxSize+8; i++ {
+			if r.Send("stalled", "viewer", []byte(`{"t":"chat","from":"tech","text":"x"}`)) != nil {
+				refused++
+			}
+		}
+		refusedc <- refused
+	}()
+	select {
+	case refused := <-refusedc:
+		if took := time.Since(start); took > time.Second {
+			t.Fatalf("Send waited %s for a peer that does not read", took.Round(time.Millisecond))
+		}
+		if refused == 0 {
+			t.Fatal("a full outbox kept accepting lines")
+		}
+	case <-time.After(sendTimeout + 5*time.Second):
+		t.Fatal("Send is still waiting for a peer that does not read")
+	}
+
+	if err := r.Send("healthy", "viewer", []byte(`{"t":"chat","from":"tech","text":"still here"}`)); err != nil {
+		t.Fatal(err)
+	}
+	_ = healthy.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, data, err := healthy.ReadMessage(); err != nil || !strings.Contains(string(data), "still here") {
+		t.Fatalf("the other session's line did not arrive: %q %v", data, err)
+	}
+}

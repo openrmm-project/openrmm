@@ -27,7 +27,9 @@ import (
 //
 // The relay reports each line once it has gone where it was going
 // (remote.ChatHook), and one worker carries them in order, so a guest who is
-// slow to read never holds up a session's own traffic.
+// slow to read never holds up a session's own traffic. The worker only queues
+// each line in the receiving peer's outbox (remote.Relay.Send), so a peer that
+// stops reading loses its own lines and holds up nobody else's.
 
 const (
 	// guestChatMax bounds one line from a guest, in characters.

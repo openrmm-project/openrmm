@@ -18,6 +18,10 @@ const pairTimeout = 60 * time.Second
 // cannot take one short line in this long is not reading at all.
 const sendTimeout = 5 * time.Second
 
+// outboxSize bounds the lines waiting for one peer (Send). A peer that stops
+// reading loses its own lines once its outbox is full; nobody else waits.
+const outboxSize = 32
+
 // chatFrameLimit is the largest text frame read as a chat line for ChatHook.
 // A longer one still reaches its peer; it is just not carried anywhere else.
 const chatFrameLimit = 16 << 10
@@ -50,9 +54,12 @@ type pair struct {
 	// guest is set when the viewer is a guest: every frame between the two
 	// peers then passes through its allowlist, in both directions.
 	guest *GuestPolicy
-	// One writer per connection at a time: the copy loop and a frame the
-	// server adds (Send) may both write to the same peer.
-	agentW, viewerW sync.Mutex
+	// One writer per connection at a time: the copy loop and the outbox (Send)
+	// may both write to the same peer. A one-slot semaphore rather than a
+	// mutex, so the outbox can give up on a peer that stopped reading.
+	agentW, viewerW chan struct{}
+	// outbox holds the lines Send queued for each peer, by role.
+	outbox map[string]chan []byte
 	// guestChat: the endpoint's sidecar said in its hello that it shows a
 	// guest's chat line under the guest's name (sidecar 0.18 and later).
 	guestChat atomic.Bool
@@ -90,7 +97,8 @@ func (r *Relay) get(sessionID, agentID string) (*pair, error) {
 	}
 	p, ok := r.pairs[sessionID]
 	if !ok {
-		p = &pair{agentID: agentID, ready: make(chan struct{}), done: make(chan struct{})}
+		p = &pair{agentID: agentID, ready: make(chan struct{}), done: make(chan struct{}),
+			agentW: make(chan struct{}, 1), viewerW: make(chan struct{}, 1), outbox: map[string]chan []byte{}}
 		r.pairs[sessionID] = p
 	}
 	return p, nil
@@ -200,15 +208,15 @@ func (r *Relay) join(sessionID, agentID, role string, conn *websocket.Conn, gues
 		return errors.New("relay session is closed")
 	}
 	var dst *websocket.Conn
-	var dstW *sync.Mutex
+	var dstW chan struct{}
 	var allow func(int, []byte) bool
 	if role == "viewer" {
-		dst, dstW = p.agent, &p.agentW
+		dst, dstW = p.agent, p.agentW
 		if p.guest != nil {
 			allow = p.guest.FromViewer
 		}
 	} else {
-		dst, dstW = p.viewer, &p.viewerW
+		dst, dstW = p.viewer, p.viewerW
 		if p.guest != nil {
 			allow = p.guest.FromAgent
 		}
@@ -222,8 +230,10 @@ func (r *Relay) join(sessionID, agentID, role string, conn *websocket.Conn, gues
 	return err
 }
 
-// Send writes one text frame to a peer of a live session ("agent" or
-// "viewer"): a chat line the server carries over from another session.
+// Send queues one text frame for a peer of a live session ("agent" or
+// "viewer"): a chat line the server carries over from another session. It
+// never waits for the peer. Each peer has an outbox written in order by its
+// own goroutine, so a peer that stops reading holds up nobody else's lines.
 func (r *Relay) Send(sessionID, role string, data []byte) error {
 	r.mu.Lock()
 	p := r.pairs[sessionID]
@@ -236,20 +246,56 @@ func (r *Relay) Send(sessionID, role string, data []byte) error {
 		p.mu.Unlock()
 		return errors.New("relay session is closed")
 	}
-	conn, w := p.viewer, &p.viewerW
+	conn, w := p.viewer, p.viewerW
 	if role == "agent" {
-		conn, w = p.agent, &p.agentW
+		conn, w = p.agent, p.agentW
 	}
-	p.mu.Unlock()
 	if conn == nil {
+		p.mu.Unlock()
 		return errors.New("relay peer is not connected")
 	}
-	w.Lock()
-	defer w.Unlock()
-	_ = conn.SetWriteDeadline(time.Now().Add(sendTimeout))
-	err := conn.WriteMessage(websocket.TextMessage, data)
-	_ = conn.SetWriteDeadline(time.Time{})
-	return err
+	q := p.outbox[role]
+	if q == nil {
+		q = make(chan []byte, outboxSize)
+		p.outbox[role] = q
+		go p.drainOutbox(conn, w, q)
+	}
+	p.mu.Unlock()
+	select {
+	case q <- data:
+		return nil
+	default:
+		return errors.New("relay peer is not reading")
+	}
+}
+
+// drainOutbox writes a peer's queued lines until its session ends. A line that
+// cannot get the peer's writer within sendTimeout, or be written within it, is
+// dropped: the peer stopped reading. A failed write ends the outbox; the copy
+// loop then fails on the same connection and ends the session.
+func (p *pair) drainOutbox(conn *websocket.Conn, w chan struct{}, q chan []byte) {
+	for {
+		var data []byte
+		select {
+		case <-p.done:
+			return
+		case data = <-q:
+		}
+		select {
+		case w <- struct{}{}:
+		case <-time.After(sendTimeout):
+			continue
+		case <-p.done:
+			return
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(sendTimeout))
+		err := conn.WriteMessage(websocket.TextMessage, data)
+		_ = conn.SetWriteDeadline(time.Time{})
+		<-w
+		if err != nil {
+			return
+		}
+	}
 }
 
 // GuestChat reports whether a session's endpoint shows a guest's chat line —
@@ -333,7 +379,7 @@ func (r *Relay) CloseSession(sessionID string, code int, reason string) {
 // line never reaches its own session's endpoint, and is carried elsewhere.
 // onHello, when set, hears what an endpoint's hello says of guest chat lines,
 // before the hello is passed on.
-func copyFrames(src, dst *websocket.Conn, dstW *sync.Mutex, allow func(int, []byte) bool, onChat func(string), onHello func(bool)) error {
+func copyFrames(src, dst *websocket.Conn, dstW chan struct{}, allow func(int, []byte) bool, onChat func(string), onHello func(bool)) error {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
@@ -345,9 +391,9 @@ func copyFrames(src, dst *websocket.Conn, dstW *sync.Mutex, allow func(int, []by
 			}
 		}
 		if allow == nil || allow(mt, data) {
-			dstW.Lock()
+			dstW <- struct{}{}
 			err := dst.WriteMessage(mt, data)
-			dstW.Unlock()
+			<-dstW
 			if err != nil {
 				return err
 			}

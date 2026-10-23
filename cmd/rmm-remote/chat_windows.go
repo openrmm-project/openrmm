@@ -90,6 +90,8 @@ const (
 	gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC (-4) for SetWindowLongPtr
 
 	emReplaceSel = 0x00C2
+	wmVScroll    = 0x0115
+	sbBottom     = 7
 	emSetSel     = 0x00B1
 
 	swShow   = 5
@@ -324,6 +326,9 @@ func (cw *chatWindow) flushMessages() {
 		procSendMessage.Call(cw.history, 0x0444, 1, uintptr(unsafe.Pointer(&format))) // EM_SETCHARFORMAT, SCF_SELECTION
 		procSendMessage.Call(cw.history, emReplaceSel, 0, uintptr(unsafe.Pointer(u16(line+"\r\n"))))
 	}
+	// A read-only history without focus does not follow its own caret: scroll
+	// it to the newest line, or the person has to scroll down to see it.
+	procSendMessage.Call(cw.history, wmVScroll, sbBottom, 0)
 	procShowWindow.Call(cw.hwnd, swShowNA)
 }
 

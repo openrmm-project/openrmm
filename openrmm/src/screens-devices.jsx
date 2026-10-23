@@ -822,6 +822,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
   const fileInputRef = useRef(null);
   const [status, setStatus] = useState('connecting');
   const [chat, setChat] = useState([]); // { from: 'tech'|'user', text }
+  // The panel follows new lines, unless the reader scrolled up to read back:
+  // then it stays where they are until they return to the bottom.
+  const chatBoxRef = useRef(null);
+  const chatStickRef = useRef(true);
   const [draft, setDraft] = useState('');
   const [fb, setFb] = useState(null); // file browser: null=closed; else { path, entries|null }
   const [fbSel, setFbSel] = useState([]); // selected entry names
@@ -844,6 +848,10 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
   const [conflict, setConflict] = useState(null);
   const takeOverRef = useRef(() => {});
   const [chatOpen, setChatOpen] = useState(!guest); // side chat panel visible
+  useEffect(() => {
+    const box = chatBoxRef.current;
+    if (box && chatStickRef.current) box.scrollTop = box.scrollHeight;
+  }, [chat, chatOpen]);
   const [unread, setUnread] = useState(0);
   const openRef = useRef(true);
   const noticeRef = useRef(null); // last notice toasted, so a reconnect loop doesn't repeat it
@@ -1123,7 +1131,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
 
   // A guest's line goes to the server, which hands it to the technician's
   // session; the guest's own sidecar never sees it.
-  const sendChat = () => { const text = draft.trim(); if (!text) return; sendJSON(isGuest ? { t: 'chat', text } : { t: 'chat', from: 'tech', text }); setChat((c) => [...c, { from: 'self', text }]); setDraft(''); };
+  const sendChat = () => { const text = draft.trim(); if (!text) return; sendJSON(isGuest ? { t: 'chat', text } : { t: 'chat', from: 'tech', text }); chatStickRef.current = true; setChat((c) => [...c, { from: 'self', text }]); setDraft(''); };
   const chatLabel = (m) => m.from === 'self' ? (isGuest ? t('guest.chatYou') : t('viewer.techYou'))
     : m.from === 'guest' ? t('viewer.chatGuest', { name: m.name || '?' })
     : m.from === 'tech' ? t('guest.chatTech', { tech: guest?.technician || '' })
@@ -1307,7 +1315,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
         </div>
         {chatOpen && <div className="absolute inset-0 z-[4] w-full border-l border-line bg-app flex flex-col sm:static sm:w-72 sm:shrink-0">
           <div className="px-3 h-9 flex items-center text-[11.5px] font-semibold text-muted border-b border-line">{t('viewer.chat')}<button onClick={() => setChatOpen(false)} className="ml-auto text-faint hover:text-ink" title={t('viewer.collapseChat')}><Icon name="chevright" size={16} /></button></div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div ref={chatBoxRef} onScroll={(e) => { const el = e.currentTarget; chatStickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48; }} className="flex-1 overflow-y-auto p-3 space-y-2">
             {chat.length === 0 && <div className="text-[11.5px] text-faint">{isGuest ? t('guest.chatEmpty') : t('viewer.noMessages', { host: hostname })}</div>}
             {chat.map((m, i) => (
               <div key={i} className={cx('text-[12px] max-w-[85%] rounded-lg px-2.5 py-1.5', m.from === 'self' ? 'ml-auto bg-brand text-white shadow-sm shadow-brand/20' : 'mr-auto bg-elevated text-ink border border-line2')}>

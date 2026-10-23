@@ -615,7 +615,11 @@ function EnrollCommands({ token, site }) {
   const keyArg = keyList ? ` \\\n  --update-public-key ${shellQuote(keyList)}` : '';
   const winKeyArg = keyList ? ` -UpdatePublicKey '${keyList}'` : '';
   const siteArg = site ? ` \\\n  --site ${shellQuote(site.name)}` : '';
-  const bundleArg = os === 'macos' && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
+  // A managed service whose Macs all take the signed bundle does not offer the
+  // ad-hoc one (RMM_MACOS_ADHOC_BUNDLE=false); an older server says nothing,
+  // and the choice stays.
+  const adhocOffered = configQ.data?.server?.macos_adhoc_bundle !== false;
+  const bundleArg = os === 'macos' && adhocOffered && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
   const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${keyArg}${siteArg}${bundleArg}`;
   const winCmd = `${t('enroll.psComment')}\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}${winKeyArg}`;
   const isWin = os === 'windows';
@@ -641,7 +645,7 @@ function EnrollCommands({ token, site }) {
       )}
       {isWin && <div className="text-[11.5px] text-faint mt-2">{t('enroll.runElevated')}</div>}
       {os === 'macos' && <div className="text-[11.5px] text-faint mt-2">{t('enroll.macSame')}</div>}
-      {os === 'macos' && (
+      {os === 'macos' && adhocOffered && (
         <div className="mt-3">
           <div className="text-[11.5px] text-muted mb-1.5">{t('enroll.bundle')}</div>
           <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">

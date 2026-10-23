@@ -644,6 +644,9 @@ with different consequences:
    that Mac. To switch deliberately, reinstall with the other value; the
    operator is asked for the permissions once. Linux and Windows accept the
    flag and ignore it, so one install command serves a mixed fleet.
+   `RMM_MACOS_ADHOC_BUNDLE=false` takes the choice out of the console's install
+   command, for a managed service whose Macs all take the signed bundle; the
+   OpenRMM Cloud consoles run that way.
 2. **You build the sidecar yourself** (rebranding, auditing, or a patched
    build). Set `RMM_MACOS_CODESIGN_IDENTITY` to a persistent signing identity and
    the grants survive your upgrades, because the DR then follows the certificate

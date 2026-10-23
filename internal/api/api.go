@@ -663,6 +663,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"version":               serverVersion(s.cfg),
 			"base_url":              s.cfg.PublicURL,
 			"allow_unapproved_jobs": s.cfg.AllowUnapprovedJobs,
+			"macos_adhoc_bundle":    s.cfg.MacOSAdhocBundle,
 			// Public keys, not secrets: every installer that pins them was
 			// served by this same origin.
 			"update_public_keys": updatePublicKeys(s.cfg),

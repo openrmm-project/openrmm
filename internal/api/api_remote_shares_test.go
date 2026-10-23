@@ -377,7 +377,10 @@ func TestRemoteShareLifecycle(t *testing.T) {
 	must(err)
 	rejoined := false
 	for _, e := range entries {
-		rejoined = rejoined || strings.Contains(string(e.Detail), `"rejoin":"true"`)
+		var detail map[string]string
+		if json.Unmarshal(e.Detail, &detail) == nil && detail["rejoin"] == "true" {
+			rejoined = true
+		}
 	}
 	if !rejoined {
 		t.Error("coming back is not marked in the audit log")

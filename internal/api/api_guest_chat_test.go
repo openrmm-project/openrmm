@@ -56,7 +56,19 @@ func TestGuestChatIsOneConversation(t *testing.T) {
 		if guest {
 			viewerURL += "&guest=1"
 		}
-		return session{endpoint: endpoint, viewer: dial(viewerURL)}
+		viewer := dial(viewerURL)
+		// A finished handshake does not mean the relay holds the peer yet, and a
+		// line carried to a peer it does not hold is dropped. A notice from the
+		// endpoint reaching the viewer proves both are in (the copy loop starts
+		// only then); it is the one frame every policy passes.
+		if err := endpoint.WriteMessage(websocket.TextMessage, []byte(`{"t":"notice","text":"ready"}`)); err != nil {
+			t.Fatal(err)
+		}
+		_ = viewer.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, _, err := viewer.ReadMessage(); err != nil {
+			t.Fatalf("session %s never paired: %v", id, err)
+		}
+		return session{endpoint: endpoint, viewer: viewer}
 	}
 	tech := open("t1", "u1", false)
 	other := open("t2", "u2", false)

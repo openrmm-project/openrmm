@@ -538,6 +538,9 @@ func (s *Server) createRemoteShare(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Mode    string `json:"mode"`
 		Minutes int    `json:"minutes"`
+		// Reusable lets the guest come back with the same link and code if
+		// they close the page; each time waits for the technician again.
+		Reusable bool `json:"reusable"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -573,12 +576,12 @@ func (s *Server) createRemoteShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := time.Now().Add(time.Duration(in.Minutes) * time.Minute)
-	sh, err := s.store.CreateRemoteShare(r.Context(), agentID, principal, in.Mode, auth.Hash(token), guestCodeHash(token, code), expires)
+	sh, err := s.store.CreateRemoteShare(r.Context(), agentID, principal, in.Mode, auth.Hash(token), guestCodeHash(token, code), expires, in.Reusable)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.auditShare(r.Context(), actorOf(r), "remote.share.create", sh, map[string]string{"expires_at": sh.ExpiresAt.UTC().Format(time.RFC3339)})
+	s.auditShare(r.Context(), actorOf(r), "remote.share.create", sh, map[string]string{"expires_at": sh.ExpiresAt.UTC().Format(time.RFC3339), "reusable": fmt.Sprint(sh.Reusable)})
 	writeJSON(w, http.StatusCreated, map[string]any{"share": s.viewShare(*sh, time.Now()), "token": token, "code": code})
 }
 
@@ -769,7 +772,10 @@ func (s *Server) guestLookup(w http.ResponseWriter, r *http.Request) {
 }
 
 // guestJoin checks the code. The first correct one burns the link, and the
-// guest gets a credential bound to this one request.
+// guest gets a credential bound to this one request. A reusable link takes the
+// code again while it is live: the guest coming back gets a new credential, the
+// previous one stops working and its session ends, and the technician decides
+// again.
 func (s *Server) guestJoin(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Token string `json:"token"`
@@ -810,7 +816,14 @@ func (s *Server) guestJoin(w http.ResponseWriter, r *http.Request) {
 		writeCodedErr(w, http.StatusNotFound, "link_invalid", "this link does not work")
 		return
 	}
-	s.auditShare(r.Context(), "guest", "remote.share.redeem", sh, nil)
+	var rejoin map[string]string
+	if sh.RedeemCount > 1 {
+		// Whoever held the previous credential is out: one guest per
+		// invitation, and this one waits for the technician like the first.
+		s.endGuest(sh.ID, remote.CloseSessionReplaced, "guest_rejoined")
+		rejoin = map[string]string{"rejoin": "true", "redeem_count": fmt.Sprint(sh.RedeemCount)}
+	}
+	s.auditShare(r.Context(), "guest", "remote.share.redeem", sh, rejoin)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"request_id":       sh.ID,
 		"guest_credential": secret,

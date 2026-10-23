@@ -311,6 +311,10 @@ invitation and ends every guest session at once.
 
 - choose **View only** or **View and control**, and a validity of 15 minutes,
   1, 4, 8 or 24 hours;
+- by default a guest who closes the page by mistake may come back with the
+  same link and code until the invitation expires (see below). **Allow only
+  one use** makes the link single-use instead. Over the API, `reusable` in the
+  create request turns coming back on; it is off when omitted;
 - the dialog shows, once, a link `https://<console>/join#<token>` (a 256-bit
   token in the URL fragment, so it never reaches access logs or a `Referer`)
   and a six-digit code. Send the code through another channel than the link.
@@ -323,6 +327,15 @@ and nothing about the device. The guest types their name and the code:
 
 - the first correct code burns the link, whatever the technician decides next;
   a second visitor with the same link and code gets nothing;
+- unless the invitation allows coming back, as the console does by default.
+  Then the code works again while
+  the invitation is waiting or accepted and not expired. Each use issues a new
+  credential, ends the previous one and its session, and waits for the
+  technician again: the banner says the guest wants to join *again*. One guest
+  at a time per invitation, and a rejected, revoked or removed invitation is
+  over either way. Whoever holds the link and the code can therefore replace
+  the guest, but never gets in without the technician. The public IP address
+  is shown, not trusted: many guests share one behind carrier-grade NAT;
 - five wrong codes revoke the link. The link and code endpoints share the login
   rate limiter;
 - the guest then waits. The page holds only a credential bound to this one

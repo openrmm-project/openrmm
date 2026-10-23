@@ -30,13 +30,17 @@ func TestRemoteSharesIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newShare := func(token string, expires time.Time) *models.RemoteShare {
+	newShareOf := func(token string, expires time.Time, reusable bool) *models.RemoteShare {
 		t.Helper()
-		sh, err := st.CreateRemoteShare(ctx, agent.ID, tech.ID, models.RemoteShareView, token, "code-"+token, expires)
+		sh, err := st.CreateRemoteShare(ctx, agent.ID, tech.ID, models.RemoteShareView, token, "code-"+token, expires, reusable)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return sh
+	}
+	newShare := func(token string, expires time.Time) *models.RemoteShare {
+		t.Helper()
+		return newShareOf(token, expires, false)
 	}
 
 	t.Run("two guests racing with the right code: one gets in", func(t *testing.T) {
@@ -104,6 +108,70 @@ func TestRemoteSharesIntegration(t *testing.T) {
 		}
 		if got, err := st.CloseRemoteShare(ctx, sh.ID); err != nil || got.Status != models.RemoteShareEnded {
 			t.Fatalf("removing an accepted guest: %+v %v", got, err)
+		}
+	})
+
+	t.Run("a single-use link takes its code once", func(t *testing.T) {
+		newShare("once", time.Now().Add(time.Hour))
+		if _, err := st.RedeemRemoteShare(ctx, "once", "code-once", "s5", "g", "ip", "ua", 5); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.OpenRemoteShareByToken(ctx, "once"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("lookup of a used single-use link: %v", err)
+		}
+		if _, err := st.RedeemRemoteShare(ctx, "once", "code-once", "s6", "g", "ip", "ua", 5); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a used single-use link took its code again: %v", err)
+		}
+	})
+
+	t.Run("a reusable link takes its code again, for one guest at a time", func(t *testing.T) {
+		sh := newShareOf("again", time.Now().Add(time.Hour), true)
+		first, err := st.RedeemRemoteShare(ctx, "again", "code-again", "first-secret", "Ana", "ip1", "ua", 5)
+		if err != nil || first.RedeemCount != 1 || !first.Reusable {
+			t.Fatalf("first use: %+v %v", first, err)
+		}
+		if _, err := st.DecideRemoteShare(ctx, sh.ID, tech.ID, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.OpenRemoteShareByToken(ctx, "again"); err != nil {
+			t.Fatalf("lookup of a live reusable link: %v", err)
+		}
+		second, err := st.RedeemRemoteShare(ctx, "again", "code-again", "second-secret", "Ana", "ip2", "ua", 5)
+		if err != nil || second.Status != models.RemoteSharePending || second.RedeemCount != 2 || second.DecidedAt != nil || second.GuestIP != "ip2" {
+			t.Fatalf("coming back: %+v %v", second, err)
+		}
+		if _, err := st.RemoteShareByGuestSecret(ctx, "first-secret"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("the previous credential still works: %v", err)
+		}
+		if got, err := st.RemoteShareByGuestSecret(ctx, "second-secret"); err != nil || got.ID != sh.ID {
+			t.Fatalf("the new credential: %+v %v", got, err)
+		}
+		// Wrong codes still count over the link's whole life.
+		if _, err := st.RedeemRemoteShare(ctx, "again", "nope", "s", "g", "ip", "ua", 5); !errors.Is(err, ErrRemoteShareCode) {
+			t.Fatalf("a wrong code on a reusable link: %v", err)
+		}
+	})
+
+	t.Run("a reusable link is over once the technician says so", func(t *testing.T) {
+		rejected := newShareOf("rejected", time.Now().Add(time.Hour), true)
+		if _, err := st.RedeemRemoteShare(ctx, "rejected", "code-rejected", "s7", "g", "ip", "ua", 5); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.DecideRemoteShare(ctx, rejected.ID, tech.ID, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.RedeemRemoteShare(ctx, "rejected", "code-rejected", "s8", "g", "ip", "ua", 5); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a rejected guest came back: %v", err)
+		}
+		removed := newShareOf("removed", time.Now().Add(time.Hour), true)
+		if _, err := st.RedeemRemoteShare(ctx, "removed", "code-removed", "s9", "g", "ip", "ua", 5); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CloseRemoteShare(ctx, removed.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.RedeemRemoteShare(ctx, "removed", "code-removed", "s10", "g", "ip", "ua", 5); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a removed guest came back: %v", err)
 		}
 	})
 

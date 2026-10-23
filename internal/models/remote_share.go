@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// RemoteShare is a one-time invitation to a device's screen for someone who has
-// no account (docs/08-remote-access.md). The token, the code and the guest's
+// RemoteShare is an invitation to a device's screen for someone who has no
+// account (docs/08-remote-access.md): single-use unless Reusable. The token, the code and the guest's
 // credential are never stored or returned in plaintext after creation.
 type RemoteShare struct {
 	ID             string     `json:"id"`
@@ -23,6 +23,11 @@ type RemoteShare struct {
 	RequestedAt    *time.Time `json:"requested_at,omitempty"`
 	DecidedAt      *time.Time `json:"decided_at,omitempty"`
 	EndedAt        *time.Time `json:"ended_at,omitempty"`
+	// Reusable lets the guest come back with the same link and code until the
+	// invitation expires; each use waits for the technician again.
+	Reusable bool `json:"reusable"`
+	// RedeemCount is how many times the code was accepted.
+	RedeemCount int `json:"redeem_count"`
 }
 
 // What a guest may do. View only passes keyframe requests and the monitor

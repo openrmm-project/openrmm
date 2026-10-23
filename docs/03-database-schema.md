@@ -168,7 +168,9 @@ to the request once the code is accepted), `status` (`open`, `pending`,
 name, IP and user agent, and `expires_at` with the request, decision and end
 times. A share past `expires_at` is expired whatever its status says; the
 guest's own sessions are ordinary `remote_sessions` rows whose `created_by` is
-`guest:<share id>`.
+`guest:<share id>`. Migration 021 adds `reusable` (the guest may come back with
+the same link and code while the share is live) and `redeem_count` (how many
+times the code was accepted).
 
 ### `audit_log`
 Record of sensitive actions (actor, action, target, detail jsonb, created_at).

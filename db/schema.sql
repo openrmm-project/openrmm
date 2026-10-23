@@ -993,6 +993,8 @@ CREATE TABLE IF NOT EXISTS remote_shares (
     expires_at        TIMESTAMPTZ NOT NULL,
     requested_at      TIMESTAMPTZ,
     decided_at        TIMESTAMPTZ,
-    ended_at          TIMESTAMPTZ
+    ended_at          TIMESTAMPTZ,
+    reusable          BOOLEAN NOT NULL DEFAULT false,
+    redeem_count      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_remote_shares_agent_creator ON remote_shares(agent_id, created_by);

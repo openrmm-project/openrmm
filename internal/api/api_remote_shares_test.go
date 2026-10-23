@@ -339,6 +339,50 @@ func TestRemoteShareLifecycle(t *testing.T) {
 		t.Fatalf("a link survived five wrong codes: %d %s", rec.Code, rec.Body)
 	}
 
+	// A reusable link takes its code again: the guest coming back gets a new
+	// credential, the previous one stops working, and the technician decides
+	// again. A single-use link does not (above).
+	back := create(map[string]any{"mode": "view", "minutes": 60, "reusable": true})
+	if !back.Share.Reusable {
+		t.Fatalf("the invitation was not made reusable: %+v", back.Share)
+	}
+	rec = call(http.MethodPost, "/api/guest/join", "", map[string]any{"token": back.Token, "code": back.Code, "name": "Back"})
+	must(json.Unmarshal(rec.Body.Bytes(), &joined))
+	asBack := "Guest " + joined.Credential
+	srv.presence.Join(remote.Viewer{SessionID: "tech-tab-3", AgentID: agent.ID, User: tech.ID, Kind: "native"})
+	if rec := call(http.MethodPost, "/api/remote-shares/"+back.Share.ID+"/accept", asTech, nil); rec.Code != http.StatusOK {
+		t.Fatalf("accept: %d %s", rec.Code, rec.Body)
+	}
+	rec = call(http.MethodPost, "/api/guest/join", "", map[string]any{"token": back.Token, "code": back.Code, "name": "Back"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("coming back on a reusable link: %d %s", rec.Code, rec.Body)
+	}
+	var again struct {
+		Credential string `json:"guest_credential"`
+	}
+	must(json.Unmarshal(rec.Body.Bytes(), &again))
+	if again.Credential == "" || again.Credential == joined.Credential {
+		t.Fatal("coming back did not issue a new credential")
+	}
+	if rec := call(http.MethodGet, "/api/guest/request", asBack, nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("the previous credential still works: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(http.MethodGet, "/api/guest/request", "Guest "+again.Credential, nil); !strings.Contains(rec.Body.String(), `"status":"pending"`) {
+		t.Fatalf("the guest coming back is not waiting for the technician: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(http.MethodGet, "/api/remote-shares/pending?agent_id="+agent.ID, asTech, nil); !strings.Contains(rec.Body.String(), `"redeem_count":2`) {
+		t.Fatalf("the technician is not told the guest is coming back: %d %s", rec.Code, rec.Body)
+	}
+	entries, _, err := st.ListAudit(ctx, store.AuditFilter{Action: "remote.share.redeem", Target: agent.ID, Limit: 20})
+	must(err)
+	rejoined := false
+	for _, e := range entries {
+		rejoined = rejoined || strings.Contains(string(e.Detail), `"rejoin":"true"`)
+	}
+	if !rejoined {
+		t.Error("coming back is not marked in the audit log")
+	}
+
 	// A guest whose technician is disabled loses the screen within one sweep,
 	// and a guest cannot ask for session after session.
 	swept := create(map[string]any{"mode": "view", "minutes": 60})

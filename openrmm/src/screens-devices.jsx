@@ -603,7 +603,9 @@ function GuestRequests({ deviceId }) {
     {pending.map((g) => (
       <div key={g.id} className="pointer-events-auto w-full rounded-lg border border-brand bg-card px-3.5 py-2.5 shadow-lg flex flex-wrap items-center gap-2.5 text-[12.5px] text-ink">
         <Icon name="bell" size={15} className="text-brandhi shrink-0" />
-        <span className="flex-1 min-w-[180px]">{t('guest.wantsToJoin', { name: g.guest_name, ip: g.guest_ip, mode: tEnum('guest.mode', g.mode) })}</span>
+        <span className="flex-1 min-w-[180px]">{g.redeem_count > 1
+          ? t('guest.wantsToRejoin', { name: g.guest_name, ip: g.guest_ip, mode: tEnum('guest.mode', g.mode) })
+          : t('guest.wantsToJoin', { name: g.guest_name, ip: g.guest_ip, mode: tEnum('guest.mode', g.mode) })}</span>
         <Button size="sm" variant="primary" icon="approve" onClick={() => act(() => api.acceptRemoteShare(g.id))}>{t('guest.accept')}</Button>
         <Button size="sm" variant="ghost" icon="reject" onClick={() => act(() => api.rejectRemoteShare(g.id))}>{t('guest.reject')}</Button>
       </div>
@@ -624,16 +626,20 @@ function ShareAccessModal({ open, onClose, device }) {
   const toast = useToast();
   const [mode, setMode] = useState('view');
   const [minutes, setMinutes] = useState('60');
+  // A guest who closes the page may come back with the same link and code
+  // until the invitation expires, and you approve each time, unless you ask
+  // for a link that works only once.
+  const [singleUse, setSingleUse] = useState(false);
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState(null); // { link, code, expires_at, mode }
   const listQ = useQuery(['remote-shares', device.id, open], () => open ? api.listRemoteShares(device.id) : Promise.resolve({ shares: [] }), { poll: open ? 5000 : 0 });
-  useEffect(() => { if (open) { setIssued(null); setMode('view'); setMinutes('60'); } }, [open, device.id]);
+  useEffect(() => { if (open) { setIssued(null); setMode('view'); setMinutes('60'); setSingleUse(false); } }, [open, device.id]);
   const create = async () => {
     setBusy(true);
     try {
-      const r = await api.createRemoteShare(device.id, { mode, minutes: Number(minutes) });
+      const r = await api.createRemoteShare(device.id, { mode, minutes: Number(minutes), reusable: !singleUse });
       const link = new URL((window.__BASE_PATH__ || '/') + 'join', location.origin).toString() + '#' + r.token;
-      setIssued({ link, code: r.code, expires_at: r.share.expires_at, mode: r.share.mode });
+      setIssued({ link, code: r.code, expires_at: r.share.expires_at, mode: r.share.mode, reusable: r.share.reusable });
       listQ.refetch();
       toast.success(t('share.created'));
     } catch (e) {
@@ -660,7 +666,7 @@ function ShareAccessModal({ open, onClose, device }) {
             <Field label={t('share.code')}>
               <div className="flex items-center gap-2"><span className="mono text-[22px] tracking-[0.3em] text-ink">{issued.code}</span><CopyButton value={issued.code} /></div>
             </Field>
-            <div className="text-[12px] text-muted">{tEnum('guest.mode', issued.mode)} · {t('share.expires', { when: fmtTime(issued.expires_at) })}</div>
+            <div className="text-[12px] text-muted">{tEnum('guest.mode', issued.mode)} · {t('share.expires', { when: fmtTime(issued.expires_at) })} · {issued.reusable ? t('share.reusableOn') : t('share.singleUse')}</div>
             <div className="flex items-start gap-2 text-[12px] text-warn"><Icon name="info" size={14} className="shrink-0 mt-0.5" /><span>{t('share.onceWarning')}</span></div>
             <div className="text-[12px] text-muted">{t('share.acceptHint')}</div>
           </div>
@@ -677,6 +683,10 @@ function ShareAccessModal({ open, onClose, device }) {
                 {SHARE_LIFETIMES.map((m) => <option key={m} value={String(m)}>{tEnum('share.minutes', m)}</option>)}
               </Select>
             </Field>
+            <label className="sm:col-span-2 flex items-start gap-2.5 cursor-pointer">
+              <Toggle checked={singleUse} onChange={setSingleUse} />
+              <span><span className="block text-[12.5px] text-ink">{t('share.singleUseOption')}</span><span className="block text-[11.5px] text-muted">{t('share.singleUseHint')}</span></span>
+            </label>
           </div>
         )}
         <div>
@@ -686,6 +696,7 @@ function ShareAccessModal({ open, onClose, device }) {
             <div key={s.id} className="flex items-center gap-2 border-b border-line/50 py-1.5 text-[12px]">
               <span className="text-ink">{s.guest_name || tEnum('guest.mode', s.mode)}</span>
               <span className="text-[11px] px-1.5 py-0.5 rounded bg-elevated text-muted">{tEnum('share.status', s.status)}</span>
+              {!s.reusable && <span className="text-[11px] px-1.5 py-0.5 rounded bg-elevated text-muted">{t('share.singleUse')}</span>}
               <span className="text-faint">{t('share.expires', { when: fmtTime(s.expires_at) })}</span>
               <button onClick={() => close(s.id)} className="ml-auto text-bad hover:underline">{s.status === 'accepted' ? t('guest.remove') : t('share.revoke')}</button>
             </div>

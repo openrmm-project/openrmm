@@ -1,6 +1,10 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -230,6 +234,48 @@ func TestUpdatePublicKeys(t *testing.T) {
 		t.Setenv("RMM_UPDATE_PUBLIC_KEY", bad)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "RMM_UPDATE_PUBLIC_KEY") {
 			t.Fatalf("%q: err = %v, want a refusal naming RMM_UPDATE_PUBLIC_KEY", bad, err)
+		}
+	}
+}
+
+// RMM_MANIFEST_PUBLIC_KEY: base64 SPKI DER ECDSA P-256 keys, separated like the
+// update keys. Anything else stops the server, rather than reaching an install
+// command that fails on every Mac without OpenSSL 3.
+func TestManifestPublicKeys(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("RMM_UPDATE_PUBLIC_KEY", "")
+	spki := func(curve elliptic.Curve) string {
+		key, err := ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.StdEncoding.EncodeToString(der)
+	}
+	keyA, keyB := spki(elliptic.P256()), spki(elliptic.P256())
+
+	t.Setenv("RMM_MANIFEST_PUBLIC_KEY", "")
+	c, err := Load()
+	if err != nil || len(c.ManifestPublicKeys) != 0 {
+		t.Fatalf("unset: keys=%v err=%v", c.ManifestPublicKeys, err)
+	}
+	t.Setenv("RMM_MANIFEST_PUBLIC_KEY", keyA+", "+keyB+";"+keyA)
+	c, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.ManifestPublicKeys, ","); got != keyA+","+keyB {
+		t.Fatalf("keys = %q", got)
+	}
+
+	ed := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	for _, bad := range []string{"not-a-key", ed, spki(elliptic.P384()), keyA + ",zz"} {
+		t.Setenv("RMM_MANIFEST_PUBLIC_KEY", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "RMM_MANIFEST_PUBLIC_KEY") {
+			t.Fatalf("%q: err = %v, want a refusal naming RMM_MANIFEST_PUBLIC_KEY", bad, err)
 		}
 	}
 }

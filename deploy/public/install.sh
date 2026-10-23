@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # OpenRMM agent installer (Linux/macOS).
 set -euo pipefail
+# Only the system's own tools. This runs as root, and `sudo` on macOS keeps
+# the caller's PATH, where Homebrew's directories usually come first: they
+# belong to an ordinary account, which could otherwise put an openssl or curl
+# there for root to run, and to answer the signature checks below.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 
-SERVER=""; TOKEN=""; UPDATE_PUBLIC_KEY=""; LAB_MODE=0; REQUIRE_TLS=0; RESET_IDENTITY=0; MACOS_BUNDLE=""
+SERVER=""; TOKEN=""; UPDATE_PUBLIC_KEY=""; MANIFEST_PUBLIC_KEY=""; LAB_MODE=0; REQUIRE_TLS=0; RESET_IDENTITY=0; MACOS_BUNDLE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --server) [ $# -ge 2 ] || { echo "error: --server needs a value"; exit 2; }; SERVER="$2"; shift 2;;
     --token) [ $# -ge 2 ] || { echo "error: --token needs a value"; exit 2; }; TOKEN="$2"; shift 2;;
     --site) [ $# -ge 2 ] || { echo "error: --site needs a value"; exit 2; }; shift 2;;
     --update-public-key) [ $# -ge 2 ] || { echo "error: --update-public-key needs a value"; exit 2; }; UPDATE_PUBLIC_KEY="${UPDATE_PUBLIC_KEY:+$UPDATE_PUBLIC_KEY,}$2"; shift 2;;
+    # The manifest's ECDSA P-256 key(s): what lets a stock macOS (LibreSSL) or
+    # OpenSSL 1.1 check the download, since only OpenSSL 3 checks Ed25519.
+    --manifest-public-key) [ $# -ge 2 ] || { echo "error: --manifest-public-key needs a value"; exit 2; }; MANIFEST_PUBLIC_KEY="${MANIFEST_PUBLIC_KEY:+$MANIFEST_PUBLIC_KEY,}$2"; shift 2;;
     --require-tls) REQUIRE_TLS=1; shift;;
     --lab-mode) LAB_MODE=1; shift;;
     --reset-identity) RESET_IDENTITY=1; shift;;
@@ -53,6 +62,19 @@ if [ -n "$UPDATE_PUBLIC_KEY" ]; then
   set +f
   IFS="$_oldifs"
 fi
+# Counted as they are taken, for the same bash 3.2 reason as below.
+MANIFEST_KEYS=(); MANIFEST_KEY_COUNT=0
+if [ -n "$MANIFEST_PUBLIC_KEY" ]; then
+  _oldifs="$IFS"; IFS=', ;'
+  set -f
+  # shellcheck disable=SC2086
+  for _k in $MANIFEST_PUBLIC_KEY; do
+    [ -n "$_k" ] || continue
+    MANIFEST_KEYS+=("$_k"); MANIFEST_KEY_COUNT=$((MANIFEST_KEY_COUNT + 1))
+  done
+  set +f
+  IFS="$_oldifs"
+fi
 
 # Ed25519 verification needs OpenSSL 3; SHA-256 does not. Requiring it up front
 # refused to run on a stock macOS, which ships LibreSSL as /usr/bin/openssl —
@@ -60,12 +82,27 @@ fi
 # production install always pins a key, so this still cannot be skipped there.
 # Tested through the variable rather than ${#PUBLIC_KEYS[@]}: macOS ships bash
 # 3.2, where an empty array expansion under `set -u` is an unbound variable.
+#
+# Without OpenSSL 3 — a stock macOS ships LibreSSL, Ubuntu 20.04 and RHEL 8
+# OpenSSL 1.1 — the download is checked through the manifest's second
+# signature, ECDSA P-256, which those do check: the console's install command
+# carries its key (--manifest-public-key). The agent still pins the Ed25519 key
+# and checks every update with it in-process, which needs no OpenSSL at all.
+# With PATH limited to the system's directories, that is every Mac: Homebrew's
+# OpenSSL 3 lives in a directory an ordinary account owns.
+VERIFY_WITH=""
 if [ -n "$UPDATE_PUBLIC_KEY" ]; then
-  openssl version | grep -qE '^OpenSSL ([3-9]|[1-9][0-9])\.' || {
-    echo "error: OpenSSL 3.x or newer is required to verify the update signature"
-    echo "       (found: $(openssl version)); install it, or omit --update-public-key in a lab"
+  if openssl version | grep -qE '^OpenSSL ([3-9]|[1-9][0-9])\.'; then
+    VERIFY_WITH=ed25519
+  elif [ "$MANIFEST_KEY_COUNT" -gt 0 ]; then
+    VERIFY_WITH=p256
+  else
+    echo "error: the system's OpenSSL cannot check the Ed25519 update signature"
+    echo "       (found: $(openssl version)), and no --manifest-public-key was given."
+    echo "       Copy the install command again from a current console: it carries the"
+    echo "       manifest key, which this OpenSSL can check. Omit --update-public-key only in a lab."
     exit 1
-  }
+  fi
 fi
 
 # write_pubkey_der <base64-key> <out-file>: wrap a raw Ed25519 key in DER SPKI.
@@ -73,6 +110,26 @@ write_pubkey_der() {
   printf '\060\052\060\005\006\003\053\145\160\003\041\000' > "$2"
   printf '%s' "$1" | openssl base64 -d -A >> "$2" 2>/dev/null || return 1
   [ "$(wc -c < "$2" | tr -d ' ')" = "44" ]
+}
+
+# write_manifest_pem <base64-spki> <out-file>: an ECDSA public key as PEM, the
+# form every OpenSSL and LibreSSL reads.
+write_manifest_pem() {
+  case "$1" in ""|*[!A-Za-z0-9+/=]*) return 1;; esac
+  { echo "-----BEGIN PUBLIC KEY-----"; printf '%s\n' "$1" | fold -w 64; echo "-----END PUBLIC KEY-----"; } > "$2"
+}
+
+# verify_manifest_p256 <manifest> <signature-der>: succeed if any pinned manifest
+# key verifies the ECDSA P-256 signature over the manifest.
+verify_manifest_p256() {
+  local _pem="${TMP_DIR}/manifest-key.pem" _key
+  for _key in "${MANIFEST_KEYS[@]}"; do
+    write_manifest_pem "$_key" "$_pem" || { echo "error: manifest public key is not valid base64"; exit 1; }
+    if openssl dgst -sha256 -verify "$_pem" -signature "$2" "$1" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # verify_under_any_key <digest-file> <signature-file>: succeed if any pinned key verifies.
@@ -302,9 +359,38 @@ actual="$(openssl dgst -sha256 "$CANDIDATE" | awk '{print $NF}')"
 
 if [ -n "$UPDATE_PUBLIC_KEY" ]; then
   # Validate every pinned key up front so a typo fails clearly, not as a mismatch.
+  # The agent pins these whichever way the download is checked below.
   for _k in "${PUBLIC_KEYS[@]}"; do
     write_pubkey_der "$_k" "${TMP_DIR}/keycheck.der" || { echo "error: update public key is not a valid 32-byte base64 key"; exit 1; }
   done
+fi
+if [ "$VERIFY_WITH" = p256 ]; then
+  # The manifest's ECDSA signature, then the agent's SHA-256 in it (checked
+  # above): together they prove the download as the Ed25519 pair below does.
+  curl -fsSL "${SERVER}/dl/SHA256SUMS.p256.sig" -o "${TMP_DIR}/SHA256SUMS.p256.sig" || {
+    echo "error: this server publishes no SHA256SUMS.p256.sig; install OpenSSL 3 to check the Ed25519 signature instead"; exit 1;
+  }
+  read -r p256_version p256_base64 p256_extra < "${TMP_DIR}/SHA256SUMS.p256.sig" || true
+  if [ "$p256_version" != "rmm-ecdsa-p256-sha256-v1" ] || [ -z "$p256_base64" ] || [ -n "${p256_extra:-}" ]; then
+    echo "error: invalid SHA256SUMS.p256.sig format"; exit 1
+  fi
+  printf '%s' "$p256_base64" | openssl base64 -d -A > "${TMP_DIR}/manifest-p256.der" 2>/dev/null || {
+    echo "error: the manifest's P-256 signature is not valid base64"; exit 1;
+  }
+  verify_manifest_p256 "$MANIFEST" "${TMP_DIR}/manifest-p256.der" || {
+    echo "error: P-256 manifest signature verification failed (no pinned manifest key matched)"; exit 1;
+  }
+  # The agent's own Ed25519 signature, kept beside it as the path below keeps
+  # it: every later update needs it. This OpenSSL cannot check it, but the
+  # binary just proven authentic can, in-process, under the pinned key — so a
+  # wrong --update-public-key fails here and not at the first update.
+  curl -fsSL "${SERVER}/dl/${BIN}.sig" -o "$ARTIFACT_SIG_TEXT"
+  chmod 0755 "$CANDIDATE"
+  "$CANDIDATE" -verify-own-signature "$ARTIFACT_SIG_TEXT" -update-public-key "$UPDATE_PUBLIC_KEY" || {
+    echo "error: Ed25519 artifact signature verification failed (no pinned key matched)"; exit 1;
+  }
+  echo "Verified with the manifest's P-256 signature (this OpenSSL cannot check Ed25519)."
+elif [ "$VERIFY_WITH" = ed25519 ]; then
   curl -fsSL "${SERVER}/dl/SHA256SUMS.sig" -o "$SIG_TEXT"
   read -r sig_version sig_base64 extra < "$SIG_TEXT" || true
   if [ "$sig_version" != "rmm-ed25519-sha256-v1" ] || [ -z "$sig_base64" ] || [ -n "${extra:-}" ]; then

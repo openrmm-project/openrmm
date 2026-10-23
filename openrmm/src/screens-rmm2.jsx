@@ -614,9 +614,15 @@ function EnrollCommands({ token, site }) {
   const missingKey = /^https:\/\//i.test(agentsBase) && !keyList;
   const keyArg = keyList ? ` \\\n  --update-public-key ${shellQuote(keyList)}` : '';
   const winKeyArg = keyList ? ` -UpdatePublicKey '${keyList}'` : '';
+  // The manifest's P-256 key (RMM_MANIFEST_PUBLIC_KEY): with it, a stock macOS
+  // (LibreSSL) or OpenSSL 1.1 can check the download, since only OpenSSL 3
+  // checks Ed25519. Windows checks Ed25519 itself and needs none. Only next to
+  // an update key, which the agent pins for every later update either way.
+  const manifestList = (configQ.data?.server?.manifest_public_keys || []).join(',');
+  const manifestArg = keyList && manifestList ? ` \\\n  --manifest-public-key ${shellQuote(manifestList)}` : '';
   const siteArg = site ? ` \\\n  --site ${shellQuote(site.name)}` : '';
   const bundleArg = os === 'macos' && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
-  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${keyArg}${siteArg}${bundleArg}`;
+  const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${keyArg}${manifestArg}${siteArg}${bundleArg}`;
   const winCmd = `${t('enroll.psComment')}\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}${winKeyArg}`;
   const isWin = os === 'windows';
   const cmd = isWin ? winCmd : nixCmd;

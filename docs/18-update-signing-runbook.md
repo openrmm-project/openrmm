@@ -63,6 +63,9 @@ key, and drop the old key once the fleet has converged (see
 4. Store secrets in GitHub → Settings → Secrets and variables → Actions:
    - `RMM_SIGNING_KEY` = private key
    - `RMM_UPDATE_PUBLIC_KEY` = public key
+   - `RMM_SIGNING_KEY_P256` and `RMM_MANIFEST_PUBLIC_KEY`, the manifest's
+     second key pair (see [The manifest's P-256 key](#the-manifests-p-256-key)),
+     kept the same way: the private one in the `release` Environment.
 
    The build embeds the public key; the `publish` job signs and asserts that the
    private key derives the configured public key before publishing.
@@ -178,6 +181,41 @@ first install pins one key.
    `update: new agent staged; restarting`. Auto-update honors `RMM_AUTO_UPDATE=0`
    to disable and `RMM_UPDATE_INTERVAL` to tune cadence.
 3. For a large fleet, roll out in phases — a canary cohort before 100%.
+
+## The manifest's P-256 key
+
+`install.sh` checks Ed25519 with `openssl pkeyutl -rawin`, which only OpenSSL 3
+has. A stock macOS ships LibreSSL as `/usr/bin/openssl`, and Ubuntu 20.04 and
+RHEL 8 ship OpenSSL 1.1, so on those hosts every production install was refused.
+Each release therefore signs `SHA256SUMS` a second time, with ECDSA P-256
+(`SHA256SUMS.p256.sig`), which every `openssl dgst -verify` can check.
+
+When the system's OpenSSL is not 3 (every Mac, since the installer takes its
+tools only from the system's directories and never Homebrew's, which an
+ordinary account owns), `install.sh` checks that signature with the key given in
+`--manifest-public-key`, then the agent's SHA-256 in the manifest. The binary is
+then proven to be the published one, and it checks its own Ed25519 signature
+in-process (`-verify-own-signature`) under the pinned `--update-public-key`, so
+a wrong update key still fails the install. Nothing else changes: the agent pins
+only the Ed25519 keys, and every update is checked with them, in Go.
+
+1. Generate: `./bin/rmm-sign -gen-key-p256` prints `RMM_MANIFEST_PUBLIC_KEY`
+   (base64 SPKI DER, public) and `RMM_SIGNING_KEY_P256` (base64 PKCS#8,
+   PRIVATE). Custody the private key like the Ed25519 one.
+2. CI: `RMM_SIGNING_KEY_P256` in the `release` Environment,
+   `RMM_MANIFEST_PUBLIC_KEY` as a repository secret. The `publish` job refuses
+   to sign when either is missing or they do not match. Locally,
+   `make dist-signed` needs both in the environment as well.
+3. Server: set `RMM_MANIFEST_PUBLIC_KEY`. The console then adds
+   `--manifest-public-key` to the Linux and macOS install commands it shows.
+   Windows checks Ed25519 itself and needs no second key.
+
+What a leak exposes: with the private P-256 key, someone who can also serve
+files from your `/dl` origin can have a host **without OpenSSL 3** install a
+binary of theirs. The installed fleet is not affected, since updates are
+checked with Ed25519 only. Rotation needs no agent change, because no agent
+pins this key: set `RMM_MANIFEST_PUBLIC_KEY=<old>,<new>` on the server, publish
+a release signed with the new key, then drop the old one.
 
 ## Key rotation
 

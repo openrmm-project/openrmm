@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestConfigReportsTheBuildVersionIntegration(t *testing.T) {
 	if err := st.CreateSession(ctx, user.ID, auth.Hash(token), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	handler := (&Server{cfg: &config.Config{APIRateLimit: 10000, Version: "9.8.7"}, store: st}).Router()
+	handler := (&Server{cfg: &config.Config{APIRateLimit: 10000, Version: "9.8.7", ManifestPublicKeys: []string{"manifest-key"}}, store: st}).Router()
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
@@ -59,7 +60,9 @@ func TestConfigReportsTheBuildVersionIntegration(t *testing.T) {
 	}
 	var out struct {
 		Server struct {
-			Version string `json:"version"`
+			Version            string   `json:"version"`
+			UpdatePublicKeys   []string `json:"update_public_keys"`
+			ManifestPublicKeys []string `json:"manifest_public_keys"`
 		} `json:"server"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -67,5 +70,13 @@ func TestConfigReportsTheBuildVersionIntegration(t *testing.T) {
 	}
 	if out.Server.Version != "9.8.7" {
 		t.Errorf("server.version = %q, want the build's 9.8.7", out.Server.Version)
+	}
+	// The console puts the manifest key in the Linux/macOS install command; an
+	// empty list is [] and not null, as for the update keys.
+	if len(out.Server.ManifestPublicKeys) != 1 || out.Server.ManifestPublicKeys[0] != "manifest-key" {
+		t.Errorf("server.manifest_public_keys = %v", out.Server.ManifestPublicKeys)
+	}
+	if out.Server.UpdatePublicKeys == nil || !strings.Contains(rec.Body.String(), `"update_public_keys":[]`) {
+		t.Errorf("server.update_public_keys is not an empty list: %s", rec.Body.String())
 	}
 }

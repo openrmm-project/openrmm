@@ -18,6 +18,31 @@ tag.
 
 ### Fixed
 
+- **Agents install on a stock macOS and on Linux with OpenSSL 1.1.**
+  `install.sh` checked the Ed25519 signatures with `openssl pkeyutl -rawin`,
+  which only OpenSSL 3 has, so a production install was refused on every Mac
+  without Homebrew's OpenSSL (macOS ships LibreSSL) and on Ubuntu 20.04 and
+  RHEL 8. CI never saw it, because its macOS job installs OpenSSL 3 first.
+  - Each release now signs `SHA256SUMS` a second time with ECDSA P-256
+    (`SHA256SUMS.p256.sig`), which any `openssl dgst -verify` can check.
+  - Without OpenSSL 3, `install.sh` checks that signature with the key in the
+    new `--manifest-public-key` flag, then the agent's SHA-256 in the manifest.
+    The agent, now proven to be the published one, then checks its own Ed25519
+    signature under the pinned update key (`-verify-own-signature`).
+  - `install.sh` now takes its tools only from the system's directories
+    (`/usr/sbin:/usr/bin:/sbin:/bin`). `sudo` on macOS keeps the caller's
+    PATH, where Homebrew's directories, owned by an ordinary account, usually
+    come first, so root could run an `openssl` or `curl` planted there. As a
+    result every Mac installs through the P-256 signature, Homebrew's OpenSSL 3
+    included: **a server that enrols Macs needs `RMM_MANIFEST_PUBLIC_KEY`**,
+    which deploy/QUICKSTART.md gives for the published release.
+  - The server publishes `RMM_MANIFEST_PUBLIC_KEY` and the console adds the
+    flag to the Linux and macOS install commands. Updates are unchanged: the
+    agent still pins only the Ed25519 keys and checks every update in Go.
+  - CI now runs signed installs on macOS with the system's LibreSSL and
+    `/bin/bash`, and on Linux with a stand-in for OpenSSL 1.1.
+  - Releases need a new key pair, `RMM_SIGNING_KEY_P256` and
+    `RMM_MANIFEST_PUBLIC_KEY` (docs/18-update-signing-runbook.md).
 - **WAL archiving works under `deploy/docker-compose.prod.yml`.** The
   `rmm_pgwal` volume was created by Docker as root, and postgres runs as uid
   70, so `archive_command` failed on every segment with `Permission denied`.

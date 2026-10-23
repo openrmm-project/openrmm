@@ -111,6 +111,7 @@ func main() {
 	printVer := flag.Bool("print-version", false, "print the agent version and exit (used to validate a self-update download)")
 	checkUpgradeFrom := flag.String("check-upgrade-from", "", "exit unsuccessfully if this build is older than the supplied version")
 	emergencyUpdateRollback := flag.Bool("emergency-update-rollback", false, "restore only the previous binary recorded by a signed pending update")
+	verifyOwnSignature := flag.String("verify-own-signature", "", "check this binary against the given detached signature under -update-public-key and exit (used by install.sh when its OpenSSL cannot check Ed25519)")
 	flag.Parse()
 
 	if *printVer {
@@ -126,6 +127,13 @@ func main() {
 	}
 	runtimeUpdatePublicKey = strings.TrimSpace(*updateKey)
 	runtimeUpdateVerify = strings.TrimSpace(*updateVerify)
+	if *verifyOwnSignature != "" {
+		if err := verifyOwnArtifactSignature(*verifyOwnSignature); err != nil {
+			log.Print(err)
+			os.Exit(2)
+		}
+		return
+	}
 	if *emergencyUpdateRollback {
 		if err := emergencyRollback(); err != nil {
 			log.Fatal(err)

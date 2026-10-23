@@ -39,6 +39,9 @@ RMM_MCP_PUBLIC_URL=https://mcp.rmm.example.com
 # The key the release's agents and installers are signed with. With the
 # published images, use exactly this value.
 RMM_UPDATE_PUBLIC_KEY=MhH1ZCiPzlPMvHUBrx52yZ49Co2KlutYNC913Zkq0L0=
+# The key of the release manifest's second signature. The console adds it to
+# the Linux/macOS install commands, so a Mac without OpenSSL 3 can install.
+RMM_MANIFEST_PUBLIC_KEY=MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJjrsgG3GOZkXpGq6ITp4qlsRjYD5cCeJpKduel59AQlQgNYqePBMNqykk/sz+1XhuoJoOpw3MVDMxR03hchteA==
 
 COMPOSE_FILE=docker-compose.prod.yml:docker-compose.images.yml:docker-compose.caddy.yml
 AGENTS_HOST=agents.rmm.example.com

@@ -1,5 +1,6 @@
 // Command rmm-sign generates Ed25519 signing keys and detached signatures for
-// OpenRMM agent/sidecar artifacts published under /dl.
+// OpenRMM agent/sidecar artifacts published under /dl, and the manifest's
+// second signature with ECDSA P-256 (p256.go).
 package main
 
 import (
@@ -20,7 +21,49 @@ func main() {
 	genKey := flag.Bool("gen-key", false, "generate a new Ed25519 signing keypair")
 	printPublicKey := flag.Bool("print-public-key", false, "print the public key derived from the configured private key")
 	key := flag.String("key", os.Getenv("RMM_SIGNING_KEY"), "base64 Ed25519 private key; defaults to RMM_SIGNING_KEY")
+	genKeyP256 := flag.Bool("gen-key-p256", false, "generate a new ECDSA P-256 keypair for the manifest's second signature")
+	printPublicKeyP256 := flag.Bool("print-public-key-p256", false, "print the P-256 public key derived from the configured P-256 private key")
+	p256 := flag.Bool("p256", false, "sign the given files (the SHA256SUMS manifest) with the P-256 key, writing <file>.p256.sig")
+	keyP256 := flag.String("key-p256", os.Getenv("RMM_SIGNING_KEY_P256"), "base64 PKCS#8 P-256 private key; defaults to RMM_SIGNING_KEY_P256")
 	flag.Parse()
+
+	if *genKeyP256 {
+		priv, pub, err := generateP256()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("RMM_MANIFEST_PUBLIC_KEY=%s\n", pub)
+		fmt.Printf("RMM_SIGNING_KEY_P256=%s\n", priv)
+		return
+	}
+	if *printPublicKeyP256 {
+		priv, err := decodeP256PrivateKey(*keyP256)
+		if err != nil {
+			log.Fatal(err)
+		}
+		_, pub, err := encodeP256(priv)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(pub)
+		return
+	}
+	if *p256 {
+		if flag.NArg() == 0 {
+			log.Fatal("usage: rmm-sign -p256 -key-p256 <base64-pkcs8-key> SHA256SUMS")
+		}
+		priv, err := decodeP256PrivateKey(*keyP256)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, path := range flag.Args() {
+			if err := signFileP256(path, priv); err != nil {
+				log.Fatalf("%s: %v", path, err)
+			}
+			fmt.Printf("signed %s.p256.sig\n", path)
+		}
+		return
+	}
 
 	if *genKey {
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)

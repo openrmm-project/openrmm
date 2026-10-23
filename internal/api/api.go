@@ -642,6 +642,9 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			// Public keys, not secrets: every installer that pins them was
 			// served by this same origin.
 			"update_public_keys": updatePublicKeys(s.cfg),
+			// The manifest's second signature, for installers whose OpenSSL
+			// cannot check Ed25519 (a stock macOS, OpenSSL 1.1).
+			"manifest_public_keys": nonNilKeys(s.cfg.ManifestPublicKeys),
 		},
 	})
 }
@@ -658,10 +661,14 @@ func serverVersion(cfg *config.Config) string {
 // updatePublicKeys is never null in JSON, so the console can tell "none
 // configured" from an older server that does not send the field at all.
 func updatePublicKeys(cfg *config.Config) []string {
-	if len(cfg.UpdatePublicKeys) == 0 {
+	return nonNilKeys(cfg.UpdatePublicKeys)
+}
+
+func nonNilKeys(keys []string) []string {
+	if len(keys) == 0 {
 		return []string{}
 	}
-	return cfg.UpdatePublicKeys
+	return keys
 }
 
 // updateConfig persists editable runtime config. Secret inputs are write-only:

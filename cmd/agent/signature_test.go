@@ -119,3 +119,46 @@ func TestVerifyLocalArtifactAcceptsAnyRingKey(t *testing.T) {
 		t.Fatal("signature verified against a key not in the ring")
 	}
 }
+
+// -verify-own-signature: install.sh's check on a host whose OpenSSL cannot
+// check Ed25519. The running binary (here the test binary) must verify under
+// the pinned key, and a wrong key or a malformed signature file must fail.
+func TestVerifyOwnArtifactSignature(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	other, _, _ := ed25519.GenerateKey(rand.Reader)
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := fileSHA256(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	sigPath := filepath.Join(dir, "agent.sig")
+	body := fmt.Sprintf("%s %s\n", signatureVersion, base64.StdEncoding.EncodeToString(ed25519.Sign(priv, sum[:])))
+	if err := os.WriteFile(sigPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := runtimeUpdatePublicKey
+	t.Cleanup(func() { runtimeUpdatePublicKey = old })
+	runtimeUpdatePublicKey = base64.StdEncoding.EncodeToString(pub)
+	if err := verifyOwnArtifactSignature(sigPath); err != nil {
+		t.Fatalf("own signature rejected: %v", err)
+	}
+	runtimeUpdatePublicKey = base64.StdEncoding.EncodeToString(other)
+	if err := verifyOwnArtifactSignature(sigPath); err == nil {
+		t.Fatal("own signature verified under a key that did not sign it")
+	}
+	runtimeUpdatePublicKey = base64.StdEncoding.EncodeToString(pub)
+	if err := os.WriteFile(sigPath, []byte("not a signature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyOwnArtifactSignature(sigPath); err == nil {
+		t.Fatal("a malformed signature file verified")
+	}
+	if err := verifyOwnArtifactSignature(filepath.Join(dir, "missing.sig")); err == nil {
+		t.Fatal("a missing signature file verified")
+	}
+}

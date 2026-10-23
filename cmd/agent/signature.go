@@ -228,6 +228,27 @@ func verifyLocalArtifactSignature(path string, sig []byte) error {
 	return fmt.Errorf("no trusted update key matched")
 }
 
+// verifyOwnArtifactSignature checks the running binary against the detached
+// signature at sigPath under the pinned update keys. install.sh runs it on a
+// host whose OpenSSL cannot check Ed25519, after the manifest's P-256
+// signature has already proven this binary is the published one: it catches a
+// wrong --update-public-key at install time, instead of at the first update,
+// which refuses a binary with no valid local signature proof.
+func verifyOwnArtifactSignature(sigPath string) error {
+	sig, err := readLocalArtifactSignature(sigPath)
+	if err != nil {
+		return fmt.Errorf("read signature: %w", err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := verifyLocalArtifactSignature(exe, sig); err != nil {
+		return fmt.Errorf("this binary does not verify under the pinned update key: %w", err)
+	}
+	return nil
+}
+
 func verifyFileSignature(path string, pub ed25519.PublicKey, sig []byte) error {
 	sum, err := fileSHA256(path)
 	if err != nil {

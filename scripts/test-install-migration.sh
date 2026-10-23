@@ -384,7 +384,8 @@ planted_tools_ignored() {
   [ "$ok" = 0 ] && [ ! -e "${WORK}/planted-ran" ]
 }
 check "an openssl or curl planted in PATH or Homebrew's keg is never run" planted_tools_ignored
-check "the agent from the signed install is still in place" sh -c '"$1" -print-version | grep -qx 9.9.11' _ "$NEW_DEST"
+signed_version_installed() { "$NEW_DEST" -print-version | grep -qx '9.9.11'; }
+check "the agent from the signed install is still in place" signed_version_installed
 
 echo "== uninstalling =="
 # What an agent leaves beside itself once it has run for a while: its log, a

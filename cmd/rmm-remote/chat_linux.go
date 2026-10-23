@@ -51,6 +51,7 @@ const (
 )
 
 type chatLinux struct {
+	self string // how the person here is named (selfLabel)
 	conn net.Conn
 	r    *bufio.Reader
 
@@ -88,7 +89,7 @@ func newChatWindowLinux(display, authPath, title string, onSend func(string)) *c
 		return nil
 	}
 	name, data := authFromFile(authPath, dnum)
-	c := &chatLinux{conn: conn, onSend: onSend}
+	c := &chatLinux{conn: conn, onSend: onSend, self: selfLabel(authAccount(authPath))}
 	if !c.handshake(name, data) {
 		conn.Close()
 		return nil
@@ -427,13 +428,18 @@ func (c *chatLinux) redraw() {
 		}
 		if strings.HasPrefix(m, "You: ") {
 			color = 0x146b38
+			m = c.self + ": " + strings.TrimPrefix(m, "You: ")
+		}
+		if strings.HasPrefix(m, chatGuestPrefix) {
+			color = 0xa15c00 // amber: a guest, neither the technician nor the person here
+			m = strings.TrimPrefix(m, chatGuestPrefix)
 		}
 		c.foreground(color)
 		c.imageText(chatPad, y, clip(m, 68))
 		y += chatLineH
 	}
 	c.foreground(0x146b38)
-	c.imageText(chatPad, chatH-chatPad, clip("You > "+string(c.input), 68))
+	c.imageText(chatPad, chatH-chatPad, clip(c.self+" > "+string(c.input), 68))
 }
 
 func (c *chatLinux) foreground(color uint32) {

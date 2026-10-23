@@ -3,13 +3,15 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
 extern void rmmChatSend(char *text);
+// How the window names the person here: their account, or "You" (selfLabel).
+static NSString *selfLabel;
 
 @interface RMMChatController : NSObject <NSWindowDelegate>
 @property(strong) NSWindow *window;
 @property(strong) NSTextView *history;
 @property(strong) NSTextField *input;
 - (void)send:(id)sender;
-- (void)append:(NSString *)text technician:(BOOL)technician;
+- (void)append:(NSString *)text role:(int)role;
 @end
 
 @implementation RMMChatController
@@ -59,13 +61,17 @@ extern void rmmChatSend(char *text);
     NSString *text = [self.input.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!text.length) return;
     rmmChatSend((char *)text.UTF8String); // Go copies before returning
-    [self append:text technician:NO];
+    [self append:text role:0];
     self.input.stringValue = @"";
 }
-- (void)append:(NSString *)text technician:(BOOL)technician {
-    NSColor *color = technician ? [NSColor colorWithSRGBRed:0.85 green:0.71 blue:1 alpha:1]
+// role: 0 the person here (selfLabel), 1 the technician, 2 a guest, whose text
+// already starts with their label (chatLine in chat.go).
+- (void)append:(NSString *)text role:(int)role {
+    NSColor *color = role == 1 ? [NSColor colorWithSRGBRed:0.85 green:0.71 blue:1 alpha:1]
+                   : role == 2 ? [NSColor colorWithSRGBRed:0.96 green:0.76 blue:0.42 alpha:1]
                                : [NSColor colorWithSRGBRed:0.64 green:0.91 blue:0.71 alpha:1];
-    NSString *line = [NSString stringWithFormat:@"%@: %@\n", technician ? @"Technician" : @"You", text];
+    NSString *line = role == 2 ? [NSString stringWithFormat:@"%@\n", text]
+                   : [NSString stringWithFormat:@"%@: %@\n", role == 1 ? @"Technician" : (selfLabel ? selfLabel : @"You"), text];
     NSDictionary *attributes = @{NSForegroundColorAttributeName:color, NSFontAttributeName:[NSFont systemFontOfSize:13]};
     [self.history.textStorage appendAttributedString:[[[NSAttributedString alloc] initWithString:line attributes:attributes] autorelease]];
     [self.history scrollRangeToVisible:NSMakeRange(self.history.string.length, 0)];
@@ -169,13 +175,19 @@ void rmmUIStop(void) {
             modifierFlags:0 timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:YES];
     });
 }
-void rmmChatOpen(void) {
-    dispatch_sync(dispatch_get_main_queue(), ^{ chat = [[RMMChatController alloc] init]; });
+void rmmChatOpen(const char *selfName) {
+    NSString *label = [[NSString alloc] initWithUTF8String:selfName];
+    if (!label.length) { [label release]; label = [@"You" copy]; }
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [selfLabel release];
+        selfLabel = label;
+        chat = [[RMMChatController alloc] init];
+    });
 }
-void rmmChatAppend(const char *text, int technician) {
+void rmmChatAppend(const char *text, int role) {
     // Copy before dispatching; the caller frees its C string immediately.
     NSString *value = [[NSString alloc] initWithUTF8String:text];
-    dispatch_async(dispatch_get_main_queue(), ^{ if (value) [chat append:value technician:technician != 0]; });
+    dispatch_async(dispatch_get_main_queue(), ^{ if (value) [chat append:value role:role]; });
     [value release];
 }
 void rmmChatClose(void) {

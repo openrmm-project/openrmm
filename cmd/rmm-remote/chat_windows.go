@@ -127,6 +127,7 @@ type msgStruct struct {
 }
 
 type chatWindow struct {
+	self       string // how the person here is named (selfLabel)
 	hwnd       uintptr
 	history    uintptr
 	input      uintptr
@@ -142,7 +143,7 @@ var activeChat *chatWindow
 func u16(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
 
 func newChatWindow(title string, onSend func(string)) *chatWindow {
-	cw := &chatWindow{onSend: onSend}
+	cw := &chatWindow{onSend: onSend, self: selfLabel(processAccount())}
 	activeChat = cw
 	ready := make(chan struct{})
 	go func() {
@@ -311,6 +312,11 @@ func (cw *chatWindow) flushMessages() {
 		}
 		if strings.HasPrefix(line, "You: ") {
 			color = 0x00B5E8A4
+			line = cw.self + ": " + strings.TrimPrefix(line, "You: ")
+		}
+		if strings.HasPrefix(line, chatGuestPrefix) {
+			color = 0x006BC2F5 // amber: a guest, neither the technician nor the person here
+			line = strings.TrimPrefix(line, chatGuestPrefix)
 		}
 		format := chatCharFormat{Mask: 0x40000000, Color: color} // CFM_COLOR
 		format.Size = uint32(unsafe.Sizeof(format))

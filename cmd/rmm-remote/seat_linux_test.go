@@ -2,7 +2,12 @@
 
 package main
 
-import "testing"
+import (
+	"os"
+	"os/user"
+	"path/filepath"
+	"testing"
+)
 
 func cmd(args ...string) []byte {
 	var b []byte
@@ -118,5 +123,31 @@ func TestAllDigits(t *testing.T) {
 		if allDigits(s) {
 			t.Errorf("allDigits(%q) = true", s)
 		}
+	}
+}
+
+// The desktop's owner is whoever owns its Xauthority file; a file of root's (a
+// login screen, or LightDM's) names nobody.
+func TestAuthAccount(t *testing.T) {
+	if got := authAccount("/etc/hostname"); got != "" {
+		t.Errorf("a root-owned file named %q", got)
+	}
+	if got := authAccount("/no/such/file"); got != "" {
+		t.Errorf("a missing file named %q", got)
+	}
+	uid := os.Getuid()
+	if uid < 1000 || uid == 65534 {
+		t.Skip("needs a regular account to own the test file")
+	}
+	f := filepath.Join(t.TempDir(), "Xauthority")
+	if err := os.WriteFile(f, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	me, err := user.Current()
+	if err != nil {
+		t.Skip(err)
+	}
+	if got := authAccount(f); got != accountName(me.Username) {
+		t.Errorf("authAccount = %q, want %q", got, me.Username)
 	}
 }

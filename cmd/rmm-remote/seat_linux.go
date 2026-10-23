@@ -18,8 +18,10 @@ import (
 	"bytes"
 	"log"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type xServer struct {
@@ -116,6 +118,36 @@ func selectActive(cands []xServer, activeVT int) (xServer, bool) {
 
 // findActiveX scans /proc for X servers and returns the active one's display +
 // auth file. ok is false when no X server is running (headless / pure Wayland).
+// sessionAccount is the person whose desktop is active: the owner of its
+// Xauthority file. The sidecar itself runs as root here.
+func sessionAccount() string {
+	if _, auth, ok := findActiveX(); ok {
+		if a := authAccount(auth); a != "" {
+			return a
+		}
+	}
+	return processAccount()
+}
+
+// authAccount is the account an Xauthority file belongs to, when it is a
+// person's: a login screen's file belongs to the display manager, a system
+// account below uid 1000 (LightDM keeps every session's file as root).
+func authAccount(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid < 1000 || st.Uid == 65534 {
+		return ""
+	}
+	u, err := user.LookupId(strconv.FormatUint(uint64(st.Uid), 10))
+	if err != nil {
+		return ""
+	}
+	return accountName(u.Username)
+}
+
 func findActiveX() (display, auth string, ok bool) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {

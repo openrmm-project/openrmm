@@ -131,6 +131,20 @@ func TestGuestChatIsOneConversation(t *testing.T) {
 	send(tech.viewer, `{"t":"chat","from":"tech","text":"marker"}`)
 	expect(tech.endpoint, "tech", "", "marker")
 	expect(joao.viewer, "tech", "", "marker")
+	expect(maria.viewer, "tech", "", "marker")
+
+	// Once the technician's sidecar says it shows guests by name (0.18), a
+	// guest's line reaches its window as a guest's, not inside a technician's.
+	send(tech.endpoint, `{"t":"hello","v":"0.18.0","guest_chat":true}`)
+	_ = tech.viewer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, data, err := tech.viewer.ReadMessage(); err != nil || !strings.Contains(string(data), "guest_chat") {
+		t.Fatalf("the hello did not reach the technician: %q %v", data, err)
+	}
+	time.Sleep(guestChatInterval)
+	send(joao.viewer, `{"t":"chat","text":"De novo"}`)
+	expect(tech.endpoint, "guest", "João", "De novo")
+	expect(tech.viewer, "guest", "João", "De novo")
+	expect(maria.viewer, "guest", "João", "De novo")
 }
 
 // A guest writes at most one line per guestChatInterval.

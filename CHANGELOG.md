@@ -57,11 +57,15 @@ tag.
   mouse and keyboard in control mode, and never files, clipboard or the
   shortcuts. The technician, the guests and the person at the machine share one
   chat: the server carries lines between the technician's session and the
-  guests'. Sidecar 0.18 opens no second chat window for a guest's session. Off
+  guests'. Sidecar 0.18 opens no second chat window for a guest's session, and
+  shows a guest's lines under their name in a colour of their own. Off
   by default (Settings ▸ Remote access ▸ Guest access); the new
   `devices.remote.share` permission is held only by the administrator role
   until a custom role opts in. Migration 020 adds `remote_shares`. See
   docs/08-remote-access.md.
+- **The chat names the person at the machine by their account** (sidecar
+  0.18): in the device's chat window instead of "You", and in the console
+  instead of the machine's name.
 - **Self-hosting from the published images.** `deploy/docker-compose.images.yml`
   runs the release images from `ghcr.io/openrmm-project`, pinned by version and
   digest, on top of the production Compose file. It fills the agents door's

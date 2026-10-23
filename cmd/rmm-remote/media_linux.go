@@ -142,7 +142,7 @@ func runMedia(conn *websocket.Conn, opts sessionOptions) error {
 	}
 
 	// announce the running sidecar version (viewer staleness check)
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": opts.chat}); e == nil {
+	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": opts.chat, "guest_chat": true, "user": sessionAccount()}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
@@ -260,7 +260,7 @@ func runMedia(conn *websocket.Conn, opts sessionOptions) error {
 							note = "✓ Your keyboard and mouse have been released."
 						}
 						select { // transparency notice in the host chat window
-						case chatInbox <- note:
+						case chatInbox <- "Tech: " + note:
 						default:
 						}
 					}
@@ -268,11 +268,12 @@ func runMedia(conn *websocket.Conn, opts sessionOptions) error {
 			case "chat":
 				var cm struct {
 					From string `json:"from"`
+					Name string `json:"name"`
 					Text string `json:"text"`
 				}
-				if json.Unmarshal(data, &cm) == nil && cm.From == "tech" && cm.Text != "" {
+				if json.Unmarshal(data, &cm) == nil && (cm.From == "tech" || cm.From == "guest") && cm.Text != "" {
 					select {
-					case chatInbox <- cm.Text:
+					case chatInbox <- chatLine(cm.From, cm.Name, cm.Text):
 					default:
 					}
 				}
@@ -393,7 +394,7 @@ func runMedia(conn *websocket.Conn, opts sessionOptions) error {
 					chat = newChatWindowLinux(chatDisp, chatAuth, chatTitle, sendChat)
 				}
 				if chat != nil {
-					chat.append("Tech: " + msg)
+					chat.append(msg)
 				}
 			case <-ticker.C:
 				// Backpressure: if the writer hasn't drained what we already

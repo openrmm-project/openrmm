@@ -222,7 +222,13 @@ endpoint ↔ your **hbbs/hbbr** (self-hosted or a plan) ↔ the technician's vie
   the input worker. Its action depends on the desktop's shortcut configuration;
   it is not the Windows security screen and may open a logout dialog.
 - **Chat roles:** the console and native Windows, Linux and macOS windows label
-  technician/user messages separately and use purple/green native text. Windows
+  technician/user messages separately and use purple/green native text; a
+  guest's lines (below) are amber. From sidecar 0.18 the person at the machine
+  is named by their account instead of "You" in the window and of the machine
+  name in the console. The hello carries it as `user`: the process's account on
+  Windows and macOS, and on Linux the owner of the active desktop's
+  Xauthority file. A service account, a login screen and LightDM's root-owned
+  file give no name, and the old labels stay. Windows
   uses Unicode RichEdit history and a UI-thread message queue; reply text has
   heap-owned storage across Win32 callbacks. Linux/macOS refresh the sidecar
   before launch, just like Windows, so the first new session uses the update.
@@ -347,10 +353,13 @@ conversation, although each guest's session is separate
 technician's session on the device and the sessions of the guests they let
 onto it:
 
-- a guest's line goes to the technician's session: into the chat window on the
-  device as `Tech: <name> (guest): …`, kept on one line, and to the
-  technician's viewer under the guest's name. It never goes to the guest's own
-  session on the device. A guest writes at most one line every 300 ms;
+- a guest's line goes to the technician's session, kept on one line: into the
+  chat window on the device, and to the technician's viewer under the guest's
+  name. A sidecar that announces `guest_chat` in its hello (0.18 and later)
+  shows it as `<name> (guest): …` in a colour of its own. An older one gets
+  `{from: "tech"}` with the name in the text, and shows
+  `Technician: <name> (guest): …`. It never goes to the guest's own session on
+  the device. A guest writes at most one line every 300 ms;
 - what the technician writes, and what the person at the machine writes, reaches
   every guest of that technician on that device.
 

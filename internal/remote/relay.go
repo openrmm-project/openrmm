@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -52,6 +53,9 @@ type pair struct {
 	// One writer per connection at a time: the copy loop and a frame the
 	// server adds (Send) may both write to the same peer.
 	agentW, viewerW sync.Mutex
+	// guestChat: the endpoint's sidecar said in its hello that it shows a
+	// guest's chat line under the guest's name (sidecar 0.18 and later).
+	guestChat atomic.Bool
 
 	ready     chan struct{}
 	readyOnce sync.Once
@@ -186,6 +190,10 @@ func (r *Relay) join(sessionID, agentID, role string, conn *websocket.Conn, gues
 	if hook != nil {
 		onChat = func(text string) { hook(agentID, sessionID, role, text) }
 	}
+	var onHello func(bool)
+	if role == "agent" {
+		onHello = p.guestChat.Store
+	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -206,7 +214,7 @@ func (r *Relay) join(sessionID, agentID, role string, conn *websocket.Conn, gues
 		}
 	}
 	p.mu.Unlock()
-	err = copyFrames(conn, dst, dstW, allow, onChat)
+	err = copyFrames(conn, dst, dstW, allow, onChat, onHello)
 	if err != nil {
 		log.Printf("remote relay session=%s role=%s ended: %v", sessionID, role, err)
 	}
@@ -242,6 +250,16 @@ func (r *Relay) Send(sessionID, role string, data []byte) error {
 	err := conn.WriteMessage(websocket.TextMessage, data)
 	_ = conn.SetWriteDeadline(time.Time{})
 	return err
+}
+
+// GuestChat reports whether a session's endpoint shows a guest's chat line —
+// {"t":"chat","from":"guest","name":…} — under the guest's name. An older
+// sidecar shows every line from the console side as the technician's.
+func (r *Relay) GuestChat(sessionID string) bool {
+	r.mu.Lock()
+	p := r.pairs[sessionID]
+	r.mu.Unlock()
+	return p != nil && p.guestChat.Load()
 }
 
 // CloseAgent terminates every active native relay for a revoked endpoint.
@@ -313,11 +331,18 @@ func (r *Relay) CloseSession(sessionID string, code int, reason string) {
 // When allow is set, a frame it refuses is dropped and the session goes on.
 // onChat, when set, hears every chat line from src, refused or not: a guest's
 // line never reaches its own session's endpoint, and is carried elsewhere.
-func copyFrames(src, dst *websocket.Conn, dstW *sync.Mutex, allow func(int, []byte) bool, onChat func(string)) error {
+// onHello, when set, hears what an endpoint's hello says of guest chat lines,
+// before the hello is passed on.
+func copyFrames(src, dst *websocket.Conn, dstW *sync.Mutex, allow func(int, []byte) bool, onChat func(string), onHello func(bool)) error {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
 			return err
+		}
+		if onHello != nil && mt == websocket.TextMessage {
+			if guestChat, ok := helloGuestChat(data); ok {
+				onHello(guestChat)
+			}
 		}
 		if allow == nil || allow(mt, data) {
 			dstW.Lock()
@@ -333,6 +358,21 @@ func copyFrames(src, dst *websocket.Conn, dstW *sync.Mutex, allow func(int, []by
 			}
 		}
 	}
+}
+
+// helloGuestChat reads "guest_chat" from an endpoint's hello.
+func helloGuestChat(data []byte) (bool, bool) {
+	if len(data) > chatFrameLimit {
+		return false, false
+	}
+	var e struct {
+		T         string `json:"t"`
+		GuestChat bool   `json:"guest_chat"`
+	}
+	if json.Unmarshal(data, &e) != nil || e.T != "hello" {
+		return false, false
+	}
+	return e.GuestChat, true
 }
 
 // chatText reads a chat line the way the sidecars do: "t" and "text" into a

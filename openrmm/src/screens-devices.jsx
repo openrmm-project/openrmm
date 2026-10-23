@@ -831,6 +831,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
   const [uac, setUac] = useState(false); // UAC prompts moved to the interactive desktop
   const [locked, setLocked] = useState(false); // host's physical keyboard/mouse blocked (Windows)
   const [ver, setVer] = useState(null);  // running sidecar version (staleness check)
+  const [hostUser, setHostUser] = useState(''); // the account signed in at the machine (sidecar 0.18+)
   const [cad, setCad] = useState({ available: false, reason: t('viewer.waitingModule') });
   const [monitors, setMonitors] = useState({ list: [], selected: 0, all: true }); // host displays; empty unless there are two or more
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
@@ -876,6 +877,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
         const m = JSON.parse(ev.data);
         if (m.t === 'hello') {
           setVer(m.v);
+          setHostUser(m.user || '');
           setCad({ available: !!m.cad, reason: m.cad_error || (m.cad ? '' : t('viewer.updateModule')) });
           // A capture the endpoint cannot perform is the black screen this
           // viewer would otherwise show without explanation.
@@ -1125,7 +1127,7 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest }) {
   const chatLabel = (m) => m.from === 'self' ? (isGuest ? t('guest.chatYou') : t('viewer.techYou'))
     : m.from === 'guest' ? t('viewer.chatGuest', { name: m.name || '?' })
     : m.from === 'tech' ? t('guest.chatTech', { tech: guest?.technician || '' })
-    : isGuest ? t('guest.chatUser') : hostname;
+    : hostUser || (isGuest ? t('guest.chatUser') : hostname);
   const shortcutAvailable = window.RemoteInput.shortcutAvailable(isMac, cad.available);
   const sendCtrlAltDelete = () => {
     if (!shortcutAvailable) { toast.error(t('viewer.shortcutUnavailable'), cad.reason); return; }

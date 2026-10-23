@@ -18,8 +18,8 @@ import (
 // onto it:
 //
 //   - a guest writes: the line goes to the technician's session — to its
-//     window on the endpoint, labelled with the guest's name, and to the
-//     technician's viewer — and to the technician's other guests there;
+//     window on the endpoint, under the guest's name, and to the technician's
+//     viewer — and to the technician's other guests there;
 //   - the technician writes, or the person at the machine writes in the
 //     technician's window: every guest of that technician there gets it;
 //   - the person at the machine writes in a guest's window: the technician and
@@ -105,10 +105,15 @@ func (s *Server) carryGuestChat(line chatLine, shareID string) {
 			return
 		}
 		toViewers = chatFrame("guest", gs.name, text)
-		// The endpoint's window labels every line from the console side as the
-		// technician's, so the guest's name goes in the line itself.
-		toEndpoint := chatFrame("tech", "", gs.name+" (guest): "+text)
+		// A sidecar from 0.18 on shows a guest's line under the guest's name, in
+		// a colour of its own. An older one shows every line from the console
+		// side as the technician's, so for it the name goes in the line itself.
+		legacy := chatFrame("tech", "", gs.name+" (guest): "+text)
 		for _, tech := range s.presence.ForUser(gs.agentID, gs.sponsor, "native") {
+			toEndpoint := legacy
+			if s.relay.GuestChat(tech.SessionID) {
+				toEndpoint = toViewers
+			}
 			_ = s.relay.Send(tech.SessionID, "agent", toEndpoint)
 		}
 	} else {

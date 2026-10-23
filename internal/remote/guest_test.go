@@ -275,3 +275,64 @@ func TestChatText(t *testing.T) {
 		}
 	}
 }
+
+// The relay remembers whether an endpoint's sidecar shows a guest's chat line
+// under the guest's name, from the hello it sends, before passing it on.
+func TestRelayRecordsGuestChatSupport(t *testing.T) {
+	r := NewRelay()
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := up.Upgrade(w, req, nil)
+		if err != nil {
+			return
+		}
+		_ = r.Join("session-1", "agent-1", req.URL.Query().Get("role"), conn)
+	}))
+	defer srv.Close()
+	base := "ws" + strings.TrimPrefix(srv.URL, "http")
+	agent, _, err := websocket.DefaultDialer.Dial(base+"?role=agent", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	viewer, _, err := websocket.DefaultDialer.Dial(base+"?role=viewer", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer viewer.Close()
+	hello := func(frame string) {
+		t.Helper()
+		if err := agent.WriteMessage(websocket.TextMessage, []byte(frame)); err != nil {
+			t.Fatal(err)
+		}
+		_ = viewer.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if _, _, err := viewer.ReadMessage(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.GuestChat("session-1") {
+		t.Fatal("support assumed before any hello")
+	}
+	hello(`{"t":"hello","v":"0.17.1"}`)
+	if r.GuestChat("session-1") {
+		t.Fatal("a 0.17 hello read as support")
+	}
+	hello(`{"t":"hello","v":"0.18.0","guest_chat":true}`)
+	if !r.GuestChat("session-1") {
+		t.Fatal("a 0.18 hello was not recorded")
+	}
+	// A viewer cannot claim it for the endpoint.
+	if err := viewer.WriteMessage(websocket.TextMessage, []byte(`{"t":"hello","guest_chat":false}`)); err != nil {
+		t.Fatal(err)
+	}
+	_ = agent.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := agent.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	if !r.GuestChat("session-1") {
+		t.Fatal("the viewer's frame changed what the endpoint announced")
+	}
+	if r.GuestChat("no-such-session") {
+		t.Fatal("support reported for a session that does not exist")
+	}
+}

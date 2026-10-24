@@ -21,6 +21,12 @@ function useAuth() { return uC(AuthCtx); }
 // "admin" rather than as a person, and turned a leaked automation token into a
 // console. Tokens are for the API and automation.
 function LoginScreen({ onAuthed, onForgot }) {
+  // Two steps: who, then how. The console recognises an account that signs in
+  // through single sign-on — a managed service's owner, or any linked account —
+  // and sends it to the provider; everyone else gets the password field. Nobody
+  // has to know which button is theirs, and the owner of a managed console is
+  // never offered a password path the provider's second factor does not guard.
+  const [step, setStep] = useState('who'); // 'who' | 'password' | 'sso' (on its way to the provider)
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -31,7 +37,7 @@ function LoginScreen({ onAuthed, onForgot }) {
   // build flag: one bundle serves an install with no provider and one behind
   // Entra. Until it replies there is no button, which is the right default —
   // an SSO button that fails is worse than none.
-  const [sso, setSso] = useState({ enabled: false, label: '' });
+  const [sso, setSso] = useState({ enabled: false, label: '', button: false });
 
   uE(() => {
     let live = true;
@@ -53,6 +59,17 @@ function LoginScreen({ onAuthed, onForgot }) {
       sso_no_account: 'auth.err.ssoNoAccount',
     }[reason] || 'auth.err.sso'));
   }, []);
+
+  const identify = async () => {
+    if (busy || !username.trim()) return;
+    setBusy(true); setErr(null);
+    try {
+      const method = sso.enabled ? await api.authMethod(username.trim()) : 'password';
+      if (method === 'sso') { setStep('sso'); api.ssoStart(location.pathname + location.search); return; }
+      setStep('password');
+    } finally { setBusy(false); }
+  };
+  const anotherAccount = () => { setStep('who'); setPassword(''); setCode(''); setNeed2fa(false); setErr(null); };
 
   const doLogin = async () => {
     if (busy || !username.trim() || !password) return;
@@ -83,14 +100,26 @@ function LoginScreen({ onAuthed, onForgot }) {
           <div className="text-[15px] font-semibold text-ink">{t('auth.title')}</div>
           <div className="text-[12.5px] text-muted mt-1">{t('auth.selfHosted', { base: api.API_BASE })}</div>
 
+          {step === 'password' ? (
           <form className="mt-5 space-y-3" onSubmit={(e) => { e.preventDefault(); doLogin(); }}>
-            <Field label={t('auth.username')}><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus /></Field>
-            <Field label={t('auth.password')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></Field>
+            <div className="flex items-center justify-between gap-2 text-[12.5px]">
+              <span className="text-ink truncate">{username.trim()}</span>
+              <button type="button" onClick={anotherAccount} className="text-faint hover:text-muted transition shrink-0">{t('auth.changeUser')}</button>
+            </div>
+            <Field label={t('auth.password')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus /></Field>
             {need2fa && <Field label={t('auth.code')} hint={t('auth.code.hint')}><Input value={code} onChange={(e) => setCode(e.target.value)} placeholder={t('auth.code.placeholder')} autoFocus className="mono tracking-widest" /></Field>}
             {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
             <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={busy || !username.trim() || !password}>{t('auth.signIn')}</Button>
           </form>
-          {sso.enabled && (
+          ) : (
+          <form className="mt-5 space-y-3" onSubmit={(e) => { e.preventDefault(); identify(); }}>
+            <Field label={t('auth.username')}><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus /></Field>
+            {step === 'sso' && <div className="text-[12.5px] text-muted">{t('auth.ssoRedirect')}</div>}
+            {err && <div className="text-[12.5px] text-bad flex items-center gap-1.5"><Icon name="alert" size={13} />{err}</div>}
+            <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy || step === 'sso'} disabled={busy || step === 'sso' || !username.trim()}>{t('auth.continue')}</Button>
+          </form>
+          )}
+          {sso.enabled && sso.button && (
             <>
               <div className="flex items-center gap-3 my-4">
                 <div className="h-px flex-1 bg-line" />
@@ -103,7 +132,7 @@ function LoginScreen({ onAuthed, onForgot }) {
               </Button>
             </>
           )}
-          <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.forgot')}</button>
+          {step === 'password' && <button type="button" onClick={onForgot} className="mt-3 w-full text-center text-[12px] text-faint hover:text-muted transition">{t('auth.forgot')}</button>}
         </Card>
       </div>
     </div>

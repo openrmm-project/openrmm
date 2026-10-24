@@ -103,6 +103,10 @@ func (s *Server) oidcStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": s.oidcProvider() != nil,
 		"label":   s.cfg.OIDCButtonLabel,
+		// The first step sends linked and marked accounts to the provider by
+		// itself; the button is for a first single sign-on that links a local
+		// account, or creates one (always shown then). See OIDCShowButton.
+		"button": s.cfg.OIDCShowButton || s.cfg.OIDCAutoProvision,
 	})
 }
 

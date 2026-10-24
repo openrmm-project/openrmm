@@ -70,3 +70,22 @@ test('the real transport preserves a current session when the exchange returns 4
   assert.equal(JSON.parse(stored).token,'owner');
   assert.equal(browser.api.currentRole(),'tech');
 });
+
+// Two steps: who, then how. An account that signs in through single sign-on —
+// a managed service's owner, marked from the start — is sent to the provider by
+// the first step, so it is never offered a password field the provider's
+// second factor does not guard. The SSO button stays where the server keeps it:
+// for a local account's first single sign-on, and with automatic accounts.
+test('the sign-in screen asks who first, and sends single sign-on accounts to the provider', async () => {
+  const app = await readFile(path.join(root, 'src', 'app.jsx'), 'utf8');
+  const login = app.slice(app.indexOf('function LoginScreen('), app.indexOf('function ForgotPasswordScreen('));
+  assert.match(login, /api\.authMethod\(username\.trim\(\)\)/, 'the first step asks the server how this account signs in');
+  assert.match(login, /if \(method === 'sso'\) \{ setStep\('sso'\); api\.ssoStart\(/, 'an SSO account goes straight to the provider');
+  assert.match(login, /step === 'password' \? \(/, 'the password field only after the first step');
+  assert.match(login, /\{sso\.enabled && sso\.button && \(/, 'the SSO button only when the server keeps it');
+  assert.match(login, /\{step === 'password' && <button type="button" onClick=\{onForgot\}/, '"Forgot password" only on the password step');
+
+  const client = await readFile(path.join(root, 'src', 'mockapi.jsx'), 'utf8');
+  assert.match(client, /POST\('\/api\/auth\/method', \{ username \}\)/);
+  assert.match(client, /catch \(e\) \{ return 'password'; \}/, 'a failed first step falls back to the password field');
+});

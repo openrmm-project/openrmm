@@ -252,7 +252,8 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error
 // ListUsers returns all users (without password hashes).
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at FROM users ORDER BY username`)
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at,
+		        oidc_subject <> '' OR sso_required FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +261,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt, &u.SSO); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

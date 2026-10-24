@@ -93,6 +93,9 @@ var migrationV20SQL string
 //go:embed migrations/021_remote_share_reentry.sql
 var migrationV21SQL string
 
+//go:embed migrations/022_user_sso_required.sql
+var migrationV22SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -115,6 +118,7 @@ var migrations = []migration{
 	{version: 19, name: "oidc_browser_handoff", sql: migrationV19SQL},
 	{version: 20, name: "remote_shares", sql: migrationV20SQL},
 	{version: 21, name: "remote_share_reentry", sql: migrationV21SQL},
+	{version: 22, name: "user_sso_required", sql: migrationV22SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

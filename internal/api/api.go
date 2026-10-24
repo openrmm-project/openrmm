@@ -128,6 +128,7 @@ func (s *Server) Router() http.Handler {
 
 	// Unauthenticated auth endpoints — strictly rate-limited (anti brute-force).
 	authLimiter := s.rateLimit(authRateLimit)
+	r.With(authLimiter, maxBody).Post("/api/auth/method", s.authMethod)
 	r.With(authLimiter, maxBody).Post("/api/auth/login", s.login)
 	r.With(authLimiter, maxBody).Post("/api/auth/bootstrap", s.bootstrapAdmin) // first admin: admin token + no users yet
 	// Unauthenticated by nature — someone who cannot sign in is the only caller.
@@ -400,6 +401,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermUsersManage)).Get("/users/{id}/scopes", s.getUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)
+		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/sso", s.setUserSSO)
 		// Disable is the non-destructive counterpart to delete: the account stops
 		// working, the record of what it did stays.
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/disable", s.setUserDisabled(true))

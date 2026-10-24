@@ -122,6 +122,32 @@ func (s *Server) bootstrapAdmin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "role": u.Role, "permissions": perms, "user": u})
 }
 
+// authMethod is the login screen's first step: given a username, how that
+// account signs in. "sso" when single sign-on is on and the account signs in
+// through it — linked, or marked before its first sign-in, as a managed
+// service's owner is — so the screen sends the browser to the provider instead
+// of asking for a password that would be refused. Everything else, an unknown
+// name included, is "password": the answer tells nothing about which accounts
+// exist beyond the single sign-on ones, whose address is their owner's.
+func (s *Server) authMethod(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string `json:"username"`
+	}
+	if err := decode(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	method := "password"
+	if username := strings.TrimSpace(in.Username); username != "" && s.oidcProvider() != nil {
+		if id, _, _, err := s.store.GetUserAuth(r.Context(), username); err == nil {
+			if sso, err := s.signsInWithSSO(r.Context(), id); err == nil && sso {
+				method = "sso"
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"method": method})
+}
+
 // login verifies credentials and returns a session bearer token.
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -723,6 +749,43 @@ func (s *Server) reset2FA(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.2fa.reset", target, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"totp_enabled": false})
+}
+
+// setUserSSO marks an account as signing in through single sign-on only, or
+// clears the mark, ending its sessions when it marks. A managed service's provisioning marks the owner's account
+// as soon as it creates it: until its first single sign-on links it, the
+// account otherwise had a password sign-in and "Forgot password", which no
+// provider second factor guards. Clearing the mark does not unlink an identity
+// already linked; turning single sign-on off is still the break-glass.
+func (s *Server) setUserSSO(w http.ResponseWriter, r *http.Request) {
+	target := chi.URLParam(r, "id")
+	if _, ok := s.requireUserManage(w, r, target); !ok {
+		return
+	}
+	var in struct {
+		Required *bool `json:"required"`
+	}
+	if err := decode(r, &in); err != nil || in.Required == nil {
+		writeErr(w, http.StatusBadRequest, "required (true or false) is needed")
+		return
+	}
+	if err := s.store.SetUserSSORequired(r.Context(), target, *in.Required); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	// Marked, the account's sessions end, as a disable ends them: one opened
+	// with a password before the mark — through "Forgot password", say — would
+	// otherwise outlive it by up to sessionTTL. The next sign-in goes through
+	// the provider. The caller's own session goes too when it marks itself.
+	if *in.Required {
+		if err := s.store.DeleteUserSessions(r.Context(), target); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	detail, _ := json.Marshal(map[string]bool{"required": *in.Required})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.sso_required", target, detail)
+	writeJSON(w, http.StatusOK, map[string]bool{"sso_required": *in.Required})
 }
 
 // disable2FA turns 2FA off, requiring a current code to do so.

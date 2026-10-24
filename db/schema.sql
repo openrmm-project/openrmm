@@ -998,3 +998,7 @@ CREATE TABLE IF NOT EXISTS remote_shares (
     redeem_count      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_remote_shares_agent_creator ON remote_shares(agent_id, created_by);
+
+-- Migration 022: an account that must sign in through single sign-on even
+-- before its first sign-in links it (a managed service's owner account).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_required BOOLEAN NOT NULL DEFAULT false;

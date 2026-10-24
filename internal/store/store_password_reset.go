@@ -94,13 +94,28 @@ func (s *Store) PasswordResetsSince(ctx context.Context, userID string, since ti
 	return n, err
 }
 
-// UserLinkedToSSO reports whether an account is linked to an identity-provider
-// identity.
+// UserLinkedToSSO reports whether an account signs in through the identity
+// provider: linked to a provider identity, or marked to be (sso_required)
+// before its first single sign-on links it.
 func (s *Store) UserLinkedToSSO(ctx context.Context, userID string) (bool, error) {
 	var linked bool
-	err := s.pool.QueryRow(ctx, `SELECT oidc_subject <> '' FROM users WHERE id=$1`, userID).Scan(&linked)
+	err := s.pool.QueryRow(ctx, `SELECT oidc_subject <> '' OR sso_required FROM users WHERE id=$1`, userID).Scan(&linked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	}
 	return linked, err
+}
+
+// SetUserSSORequired marks an account as signing in through single sign-on
+// only, before or after its first sign-in, or clears the mark. Clearing it does
+// not unlink an identity already linked.
+func (s *Store) SetUserSSORequired(ctx context.Context, userID string, required bool) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE users SET sso_required=$2 WHERE id=$1`, userID, required)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

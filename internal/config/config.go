@@ -197,6 +197,13 @@ type Config struct {
 	// Label on the console's sign-in button, so it reads "Sign in with Okta"
 	// rather than something generic.
 	OIDCButtonLabel string
+	// Whether the sign-in screen shows that button (RMM_OIDC_SHOW_BUTTON, on by
+	// default). The first step already sends every linked or marked account to
+	// the provider; the button is how a local account that is neither yet does
+	// its first single sign-on and gets linked. A managed service whose only
+	// single sign-on account is its marked owner turns it off. With automatic
+	// accounts it is always shown: a first-time user has nothing to recognise.
+	OIDCShowButton bool
 }
 
 func env(key, def string) string {
@@ -351,6 +358,7 @@ func Load() (*Config, error) {
 		OIDCAutoProvision: os.Getenv("RMM_OIDC_AUTO_PROVISION") == "true",
 		OIDCDefaultRole:   env("RMM_OIDC_DEFAULT_ROLE", "readonly"),
 		OIDCButtonLabel:   env("RMM_OIDC_BUTTON_LABEL", "Single sign-on"),
+		OIDCShowButton:    os.Getenv("RMM_OIDC_SHOW_BUTTON") != "false",
 	}
 	keys, err := parseUpdatePublicKeys(os.Getenv("RMM_UPDATE_PUBLIC_KEY"))
 	if err != nil {

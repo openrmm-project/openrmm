@@ -41,6 +41,7 @@ Everything else has a working default:
 | `RMM_OIDC_AUTO_PROVISION` | `false` | create an account on first successful sign-in |
 | `RMM_OIDC_DEFAULT_ROLE` | `readonly` | the role such an account is created with |
 | `RMM_OIDC_BUTTON_LABEL` | `Single sign-on` | so the button can read "Sign in with Okta" |
+| `RMM_OIDC_SHOW_BUTTON` | `true` | `false` hides the button; always shown with `RMM_OIDC_AUTO_PROVISION=true` (see below) |
 | `RMM_OIDC_ACR_VALUES` | empty | comma-separated acceptable authentication contexts; sent as `acr_values` and checked against the signed `acr` claim (any match) |
 | `RMM_OIDC_REQUIRED_AMR` | empty | comma-separated authentication methods; every entry must occur in the signed `amr` array |
 
@@ -127,6 +128,33 @@ the mailbox, would step around the provider's MFA, conditional access and
 offboarding. Setting `RMM_OIDC_ENABLED=false` is the break-glass: linked accounts
 sign in with their passwords again.
 
+**An account can be single sign-on only before its first sign-in.** Until the
+first single sign-on links an account, it used to keep both paths: a password
+sign-in and "Forgot password". For a managed service whose owner is meant to
+sign in only through its portal and the portal's second factor, that was a way
+around both, and one a customer found on day one. `PUT /api/users/{id}/sso`
+with `{"required": true}` (`users.manage`, audited as `user.sso_required`)
+marks the account; from then on it is treated exactly like a linked one, and
+the first single sign-on links it as before. `{"required": false}` clears the
+mark, without unlinking an identity already linked. OpenRMM Cloud's
+provisioning marks the owner's account as soon as it creates it. The users list
+reports either state as `sso`.
+
+**The login screen asks who, then how.** The first step sends the username to
+`POST /api/auth/method`, which answers `sso` when single sign-on is on and the
+account signs in through it (linked or marked), and `password` otherwise — for
+an unknown name too, so it reveals only the single sign-on accounts, whose
+names are their owners' addresses. An `sso` answer sends the browser to the
+provider at once; nobody has to know which button is theirs. The separate
+button stays by default: it is how a local account that is neither linked nor
+marked does its first single sign-on and gets linked. `RMM_OIDC_SHOW_BUTTON=false`
+hides it where every single sign-on account is already linked or marked, as
+OpenRMM Cloud's consoles do; with `RMM_OIDC_AUTO_PROVISION=true` it is always
+shown, since a first-time user has no account the first step could recognise.
+
+Marking an account ends its sessions, as disabling one does: a session opened
+with a password before the mark would otherwise outlive it by up to seven days.
+
 Connecting an MCP client works through the provider too: the OAuth consent page
 offers the same single sign-on button, see
 [17-mcp-oauth](17-mcp-oauth.md#signing-in-through-single-sign-on).
@@ -183,7 +211,7 @@ specific reason is logged and audited, never shown — "no account for
 bob@example.com" on a login page is an account enumerator.
 
 Audit actions: `user.sso.login`, `user.sso.linked`, `user.sso.provisioned`,
-`user.sso.denied`.
+`user.sso.denied`, `user.sso_required`.
 
 If discovery fails at startup the server still starts, logs it, and shows no SSO
 button. Agents, the scheduler and local sign-in do not depend on the provider,

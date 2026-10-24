@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-24
+
 ### Security
 
 - **A managed console's owner can no longer step around single sign-on before

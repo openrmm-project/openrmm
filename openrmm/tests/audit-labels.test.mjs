@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const LOCALES = ['en', 'pt-BR', 'es', 'de', 'zh-CN', 'ja'];
+const LOCALES = ['en', 'pt-BR', 'es', 'de', 'zh-CN', 'ja', 'ru', 'ko', 'ms'];
 
 async function goFiles(dir, out = []) {
   for (const e of await readdir(dir, { withFileTypes: true })) {

@@ -34,6 +34,11 @@ const SOURCE = 'en';
 const locales = Object.keys(strings);
 const englishKeys = Object.keys(strings[SOURCE]).sort();
 const placeholders = (value) => (String(value).match(/\{(\w+)\}/g) || []).sort().join(',');
+const pluralSource = (key) => {
+  const base = key.replace(/\.(zero|two|few|many)$/, '');
+  return base !== key && `${base}.one` in strings[SOURCE] && `${base}.other` in strings[SOURCE]
+    ? `${base}.other` : null;
+};
 
 test('the locales declared in i18n.jsx all have a table', async () => {
   const i18n = await readFile(path.join(root, 'src', 'i18n.jsx'), 'utf8');
@@ -42,27 +47,33 @@ test('the locales declared in i18n.jsx all have a table', async () => {
 });
 
 for (const locale of locales) {
-  test(`${locale} carries exactly the English key set`, () => {
+  test(`${locale} carries the English key set and only valid extra plural forms`, () => {
     const keys = Object.keys(strings[locale]);
     const missing = englishKeys.filter((k) => !(k in strings[locale]));
-    const extra = keys.filter((k) => !englishKeys.includes(k));
+    const extra = keys.filter((k) => !englishKeys.includes(k) && !pluralSource(k));
     assert.deepEqual(missing, [], `missing: ${missing.slice(0, 5).join(', ')}`);
     assert.deepEqual(extra, [], `not in English: ${extra.slice(0, 5).join(', ')}`);
   });
 
   test(`${locale} keeps every placeholder`, () => {
     for (const key of englishKeys) {
+      assert.equal(typeof strings[locale][key], 'string', `${key}: not a string`);
+      assert.ok(strings[locale][key].trim(), `${key}: empty translation`);
       assert.equal(placeholders(strings[locale][key]), placeholders(strings[SOURCE][key]),
         `${key}: placeholders differ from English`);
+    }
+    for (const key of Object.keys(strings[locale]).filter((k) => !englishKeys.includes(k))) {
+      assert.equal(placeholders(strings[locale][key]), placeholders(strings[SOURCE][pluralSource(key)]),
+        `${key}: plural placeholders differ from English`);
     }
   });
 }
 
-// The linguistically reviewed locales, only. de, zh-CN and ja have full key
-// coverage but still await review by native speakers. A handful of values are identical in every
-// language on purpose — 'Patches', 'tok_…', 'OpenRMM' — so this asserts the
+// Translation coverage does not imply review by a native speaker. A handful of
+// values are identical in every language on purpose — 'Patches', 'tok_…',
+// 'OpenRMM' — so this asserts the
 // bulk was translated rather than every line.
-for (const locale of ['pt-BR', 'es']) {
+for (const locale of ['pt-BR', 'es', 'ru', 'ko', 'ms']) {
   test(`${locale} is translated, not copied from English`, () => {
     const identical = englishKeys.filter((k) => strings[locale][k] === strings[SOURCE][k]);
     assert.ok(identical.length < englishKeys.length * 0.15,
@@ -81,6 +92,50 @@ test('the signed-out screens are translated in every locale', () => {
     for (const key of authKeys) {
       assert.equal(typeof strings[locale][key], 'string', `${locale} is missing ${key}`);
     }
+  }
+});
+
+test('Russian plurals handle zero, teens, few, many and fractions', async () => {
+  const { i18nSandbox } = await import('./i18n-sandbox.mjs');
+  const sb = await i18nSandbox();
+  sb.setLocale('ru');
+  for (const [n, noun] of [[0, 'устройств'], [1, 'устройство'], [2, 'устройства'],
+    [5, 'устройств'], [11, 'устройств'], [21, 'устройство'], [22, 'устройства'],
+    [25, 'устройств'], [1.5, 'устройства']]) {
+    assert.equal(sb.tn('bulk.devices', n), `${n} ${noun}`);
+  }
+  for (const key of englishKeys.filter((k) => k.endsWith('.one') && `${k.slice(0, -4)}.other` in strings.en)) {
+    const base = key.slice(0, -4);
+    for (const form of ['few', 'many']) assert.ok(strings.ru[`${base}.${form}`], `${base}.${form}`);
+  }
+  delete sb.window.LOCALE_STRINGS.ru['bulk.devices.few'];
+  assert.equal(sb.tn('bulk.devices', 2), '2 устройства', 'a missing category uses the local other form');
+  sb.setLocale('en');
+  assert.equal(sb.tn('missing.count', 2), 'missing.count.other');
+  sb.setLocale('pt-BR');
+  assert.equal(sb.tn('bulk.devices', 0), '0 dispositivos');
+  sb.setLocale('ko');
+  assert.equal(sb.tn('bulk.devices', 2), '기기 2대');
+  sb.setLocale('ms');
+  assert.equal(sb.tn('bulk.devices', 2), '2 peranti');
+});
+
+test('new languages support regional browser tags and remember explicit choices', async () => {
+  const source = await readFile(path.join(root, 'src', 'i18n.jsx'), 'utf8');
+  for (const [candidate, expected] of [['ru-RU', 'ru'], ['ko-KR', 'ko'], ['ms-MY', 'ms'], ['MS-bn', 'ms']]) {
+    const store = {};
+    const sandbox = { window: {}, navigator: { languages: [candidate, 'en'] },
+      localStorage: { getItem: (k) => store[k], setItem: (k, v) => { store[k] = v; } },
+      document: { documentElement: {} }, Intl };
+    vm.createContext(sandbox);
+    vm.runInContext(source, sandbox);
+    assert.equal(sandbox.window.getLocale(), expected);
+    assert.equal(sandbox.document.documentElement.lang, expected);
+    sandbox.window.setLocale('en');
+    sandbox.window.setLocale(expected);
+    sandbox.navigator.languages = ['en'];
+    vm.runInContext(`{${source}}`, sandbox);
+    assert.equal(sandbox.window.getLocale(), expected, 'saved choice wins over browser');
   }
 });
 

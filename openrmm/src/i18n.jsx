@@ -31,6 +31,9 @@ const LOCALES = [
   { code: 'de',    name: 'German',     nativeName: 'Deutsch',  nativeReviewed: false },
   { code: 'zh-CN', name: 'Chinese',    nativeName: '中文',      nativeReviewed: false },
   { code: 'ja',    name: 'Japanese',   nativeName: '日本語',     nativeReviewed: false },
+  { code: 'ru',    name: 'Russian',    nativeName: 'Русский',   nativeReviewed: false },
+  { code: 'ko',    name: 'Korean',     nativeName: '한국어',     nativeReviewed: false },
+  { code: 'ms',    name: 'Malay',      nativeName: 'Bahasa Melayu', nativeReviewed: false },
 ];
 
 const STORAGE_KEY = 'rmm-locale';
@@ -81,13 +84,18 @@ function t(key, vars) {
   return interpolate(found, vars);
 }
 
-/* Plurals. tn('bulk.devices', 3) reads 'bulk.devices.one' or 'bulk.devices.other'
- * as the language's own rules pick (Intl.PluralRules), with {n} filled in. Every
- * language here needs only those two forms. Zero takes the plural everywhere —
- * CLDR files 0 under "one" in Portuguese, but "0 dispositivo" reads as a typo. */
+/* Plurals follow Intl.PluralRules, including Russian's few and many forms.
+ * Languages without an explicit category fall back to their own other form.
+ * Keep the Portuguese zero exception: "0 dispositivo" reads as a typo. */
 function tn(key, n, vars) {
-  const form = n !== 0 && new Intl.PluralRules(currentLocale).select(n) === 'one' ? 'one' : 'other';
-  return t(key + '.' + form, { n, ...vars });
+  const category = new Intl.PluralRules(currentLocale).select(n);
+  const form = n === 0 && category === 'one' ? 'other' : category;
+  const fallbackKey = key + '.' + (form === 'one' ? 'one' : 'other');
+  const found = lookup(currentLocale, key + '.' + form)
+    ?? lookup(currentLocale, key + '.other')
+    ?? lookup('en', fallbackKey)
+    ?? fallbackKey;
+  return interpolate(found, { n, ...vars });
 }
 
 /* "a, b and c" in the console's language — the conjunction is the language's,

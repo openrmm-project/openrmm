@@ -117,9 +117,11 @@ policies — created disabled) and **moves or deletions of devices**; a person
 approves each one. Fleet and audit tools count in the database and hand back
 download links instead of reading rows into the model.
 
-## ✅ Console in six languages (done)
-English, Portuguese (Brazil), Spanish, German, Japanese and Simplified Chinese,
-each with the full key set.
+## ✅ Console in nine languages (done)
+English, Portuguese (Brazil), Spanish, German, Japanese, Simplified Chinese,
+Russian, Korean and Malay, each with the full key set. Russian includes the
+additional plural forms selected by `Intl.PluralRules`. German, Chinese, Japanese,
+Russian, Korean and Malay still await review by native speakers.
 
 ## ✅ Release and distribution (done)
 Signed agent and sidecar artifacts (Ed25519, staged key rotation without

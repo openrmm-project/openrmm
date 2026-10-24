@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-24
+
 ### Security
 
 - **`rmm-sign` no longer prints the private keys.** The `-key` and `-key-p256`

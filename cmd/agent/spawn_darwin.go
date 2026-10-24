@@ -3,6 +3,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,6 +25,11 @@ const remoteAgentLabel = "io.openrmm.remote"
 
 // legacyRemoteAgentLabel is what endpoints installed before that rename carry.
 const legacyRemoteAgentLabel = "com.openrmm.remote"
+
+// launchctl runs /bin/launchctl; a variable so the tests can stand in for it.
+var launchctl = func(args ...string) ([]byte, error) {
+	return exec.Command("/bin/launchctl", args...).CombinedOutput()
+}
 
 func remoteAgentPlistPath(label string) string {
 	return filepath.Join("/Library/LaunchAgents", label+".plist")
@@ -66,8 +73,8 @@ func ensureRemoteAgent(uid string) error {
 	// Lightweight Code Requirement when the job is bootstrapped. Replacing an
 	// ad-hoc signed bundle leaves that cache pointing at the previous CDHash and
 	// kickstart then fails with OS_REASON_CODESIGNING ("needs LWCR update").
-	_, _ = exec.Command("/bin/launchctl", "bootout", "gui/"+uid+"/"+remoteAgentLabel).CombinedOutput()
-	if out, err := exec.Command("/bin/launchctl", "bootstrap", "gui/"+uid, path).CombinedOutput(); err != nil {
+	_, _ = launchctl("bootout", "gui/"+uid+"/"+remoteAgentLabel)
+	if out, err := launchctl("bootstrap", "gui/"+uid, path); err != nil {
 		return fmt.Errorf("launchctl bootstrap %s: %w: %s", remoteAgentLabel, err, strings.TrimSpace(string(out)))
 	}
 	log.Printf("remote: refreshed the %s LaunchAgent", remoteAgentLabel)
@@ -87,7 +94,7 @@ func retireLegacyRemoteAgent(uid string) {
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	_, _ = exec.Command("/bin/launchctl", "bootout", "gui/"+uid+"/"+legacyRemoteAgentLabel).CombinedOutput()
+	_, _ = launchctl("bootout", "gui/"+uid+"/"+legacyRemoteAgentLabel)
 	if err := os.Remove(path); err != nil {
 		log.Printf("remote: remove %s: %v", path, err)
 		return
@@ -137,16 +144,107 @@ func launchSidecar(bin, relay, ticket string, extra ...string) error {
 	if err := ensureRemoteAgent(uid); err != nil {
 		return err
 	}
-	if err := writeSessionFile(uid, relay, ticket, filesOnly, noFiles, noChat); err != nil {
+	return startSessionJob(uid, sessionJobDir(), relay, ticket, filesOnly, noFiles, noChat)
+}
+
+// sessionJobPrefix names the LaunchAgent job of one desktop session.
+//
+// Every session gets a job of its own. They used to share the one job above,
+// restarted for each new session (kickstart -k), which killed the session
+// already running: a guest's session ended the technician's it depends on,
+// that ended the guest's, and the two kept replacing each other; two
+// technicians on one Mac did the same. Privacy grants are not affected: macOS
+// keys them to the app's code identity, not to the launchd label.
+const sessionJobPrefix = remoteAgentLabel + ".session."
+
+// sessionJobDir holds the session jobs' plists and parameter files: root's, so
+// only root writes them; each parameter file is chowned to the session user.
+func sessionJobDir() string {
+	return filepath.Join(agentStateDir(), "remote-sessions")
+}
+
+// startSessionJob starts one session's sidecar as a new LaunchAgent job in the
+// console user's session, leaving any other session running. Jobs of sessions
+// that have ended are removed first.
+func startSessionJob(uid, dir, relay, ticket string, filesOnly, noFiles, noChat bool) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// -k restarts the job if a previous session left it running.
-	out, err := exec.Command("/bin/launchctl", "kickstart", "-k", "gui/"+uid+"/"+remoteAgentLabel).CombinedOutput()
-	if err != nil {
-		_ = os.Remove(sessionFilePath())
-		return fmt.Errorf("launchctl kickstart %s: %w: %s", remoteAgentLabel, err, strings.TrimSpace(string(out)))
+	_ = os.Chown(dir, 0, 0)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return err
+	}
+	reapSessionJobs(uid, dir)
+
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return err
+	}
+	label := sessionJobPrefix + hex.EncodeToString(id[:])
+	params := filepath.Join(dir, label+".json")
+	plist := filepath.Join(dir, label+".plist")
+	if err := writeSessionFile(params, uid, relay, ticket, filesOnly, noFiles, noChat); err != nil {
+		return err
+	}
+	if err := os.WriteFile(plist, []byte(sessionJobPlist(label, params)), 0o644); err != nil {
+		_ = os.Remove(params)
+		return err
+	}
+	_ = os.Chown(plist, 0, 0)
+	if out, err := launchctl("bootstrap", "gui/"+uid, plist); err != nil {
+		_ = os.Remove(params)
+		_ = os.Remove(plist)
+		return fmt.Errorf("launchctl bootstrap %s: %w: %s", label, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// sessionJobPlist starts the sidecar as soon as the job is bootstrapped, once:
+// it reads its parameters from params and deletes them.
+func sessionJobPlist(label, params string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>%s</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>%s</string>
+    <string>-session</string>
+    <string>%s</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+`, label, sidecarExePath(""), params)
+}
+
+// reapSessionJobs boots out the jobs of sessions whose sidecar is no longer
+// running and deletes their files. A running one is left alone.
+func reapSessionJobs(uid, dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, sessionJobPrefix) || !strings.HasSuffix(name, ".plist") {
+			continue
+		}
+		label := strings.TrimSuffix(name, ".plist")
+		target := "gui/" + uid + "/" + label
+		out, err := launchctl("print", target)
+		if err == nil && strings.Contains(string(out), "state = running") {
+			continue
+		}
+		if err == nil {
+			_, _ = launchctl("bootout", target)
+		}
+		_ = os.Remove(filepath.Join(dir, name))
+		_ = os.Remove(filepath.Join(dir, label+".json"))
+	}
 }
 
 // startDirect is the non-GUI path: no session, no user switch.
@@ -181,9 +279,11 @@ func consoleUID() (string, error) {
 	return strconv.FormatUint(uint64(stat.Uid), 10), nil
 }
 
-// sessionFilePath is fixed, because a LaunchAgent's plist is static and cannot
-// carry a per-user name. Ownership, not the path, is what keeps it private: the
-// file is chowned to the session user and never readable by anyone else.
+// sessionFilePath is where the shared job (remoteAgentPlist) reads its
+// parameters. The installer still writes that job, and earlier agents started
+// every session through it; sessions now each get their own job and file
+// (startSessionJob). Ownership, not the path, keeps a parameter file private:
+// it is chowned to the session user and never readable by anyone else.
 func sessionFilePath() string {
 	return filepath.Join(agentStateDir(), "remote-session.json")
 }
@@ -202,14 +302,13 @@ func agentStateDir() string {
 // The ticket is a credential, so it goes to a file owned by the session user
 // with no group or world access — never an argument, which `ps` shows to
 // everyone, and never an environment variable, which launchctl scopes globally.
-func writeSessionFile(uid, relay, ticket string, filesOnly, noFiles, noChat bool) error {
+func writeSessionFile(path, uid, relay, ticket string, filesOnly, noFiles, noChat bool) error {
 	body, err := json.Marshal(map[string]any{
 		"relay": relay, "ticket": ticket, "files_only": filesOnly, "no_files": noFiles, "no_chat": noChat,
 	})
 	if err != nil {
 		return err
 	}
-	path := sessionFilePath()
 	_ = os.Remove(path)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return err

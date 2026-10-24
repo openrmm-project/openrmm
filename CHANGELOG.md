@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-24
+
 ### Fixed
 
 - **Guest access to a Mac no longer loops.** Every remote session on a Mac

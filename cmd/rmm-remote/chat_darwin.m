@@ -1,6 +1,7 @@
 //go:build darwin && cgo
 
 #import <Cocoa/Cocoa.h>
+#import <ApplicationServices/ApplicationServices.h>
 #import <CoreGraphics/CoreGraphics.h>
 extern void rmmChatSend(char *text);
 
@@ -89,10 +90,29 @@ int rmmRequestScreenCapture(void) {
     return allowed ? 1 : 0;
 }
 
+// Either grant lets CGEventPost reach the HID tap: Accessibility, which is what
+// Privacy & Security ▸ Accessibility lists and what adding the app there by
+// hand gives, or the narrower "post events" one.
+int rmmInputTrusted(void) {
+    return (AXIsProcessTrusted() || CGPreflightPostEventAccess()) ? 1 : 0;
+}
+
+// Asks through Accessibility, not CGRequestPostEventAccess. On macOS 15.8 the
+// latter puts its consent sheet up, but the app never appears in the
+// Accessibility list the sheet sends the person to, so there was nothing to
+// switch on and the app had to be added by hand. AXIsProcessTrustedWithOptions
+// with the prompt option adds the app to that list (switched off) and shows
+// the same kind of sheet. Only one of the two is asked: macOS drops a second
+// prompt while the first is on screen.
 int rmmRequestPostEvents(void) {
     __block BOOL allowed = NO;
     void (^request)(void) = ^{
-        allowed = CGPreflightPostEventAccess() || CGRequestPostEventAccess();
+        if (rmmInputTrusted()) {
+            allowed = YES;
+            return;
+        }
+        NSDictionary *options = @{(id)kAXTrustedCheckOptionPrompt: @YES};
+        allowed = AXIsProcessTrustedWithOptions((CFDictionaryRef)options);
     };
     if ([NSThread isMainThread]) request();
     else dispatch_sync(dispatch_get_main_queue(), request);
@@ -115,7 +135,7 @@ void rmmPermissionNotice(int screenAllowed, int accessibilityAllowed) {
         // The caller says "allowed" also while the Accessibility request is
         // still to come: macOS takes one prompt at a time, and until the sidecar
         // has asked, the app is not in the Accessibility list to be switched on.
-        BOOL accessibilityMissing = !accessibilityAllowed && !CGPreflightPostEventAccess();
+        BOOL accessibilityMissing = !accessibilityAllowed && !rmmInputTrusted();
         if (!screenMissing && !accessibilityMissing) return;
 
         if (!chat || !chat.window || permissionAlert) return;

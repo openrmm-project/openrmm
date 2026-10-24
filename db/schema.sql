@@ -863,9 +863,6 @@ CREATE INDEX IF NOT EXISTS idx_oidc_states_expiry ON oidc_login_states (expires_
 -- produce the same column order the migrations do, and these arrive last.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer  TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_subject TEXT NOT NULL DEFAULT '';
--- Must sign in through single sign-on even before its first sign-in links it
--- (a managed service's owner account; migration 022).
-ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_required BOOLEAN NOT NULL DEFAULT false;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity
     ON users (oidc_issuer, oidc_subject)
@@ -1001,3 +998,7 @@ CREATE TABLE IF NOT EXISTS remote_shares (
     redeem_count      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_remote_shares_agent_creator ON remote_shares(agent_id, created_by);
+
+-- Migration 022: an account that must sign in through single sign-on even
+-- before its first sign-in links it (a managed service's owner account).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_required BOOLEAN NOT NULL DEFAULT false;

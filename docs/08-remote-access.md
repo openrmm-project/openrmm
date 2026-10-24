@@ -496,6 +496,15 @@ and shares the POSIX file transfer (`transfer_posix.go`).
   Accessibility only once Screen Recording is allowed — or after a minute, since
   a dismissed prompt leaves nothing to observe.
 
+  **Requesting Accessibility (sidecar 0.17.2+).** The input request uses
+  `AXIsProcessTrustedWithOptions` with `kAXTrustedCheckOptionPrompt` so macOS
+  can list the bundle in Privacy & Security ▸ Accessibility. The previous
+  `CGRequestPostEventAccess` request showed a consent sheet on the test Mac
+  (macOS 15.8), but left no entry to enable in that list. The check accepts
+  either an Accessibility grant or an existing post-event grant. The prompt
+  is asynchronous: a false return means access is not yet granted, and input
+  continues to be posted while the person at the Mac answers it.
+
   Both grants reach the running process, measured on macOS 15.8: capture
   resumed seconds after Screen Recording was allowed (the viewer's banner is
   withdrawn), and mouse and keyboard worked in the same session right after

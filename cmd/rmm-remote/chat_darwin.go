@@ -3,7 +3,7 @@
 package main
 
 /*
-#cgo LDFLAGS: -framework Cocoa
+#cgo LDFLAGS: -framework Cocoa -framework ApplicationServices
 #include <stdlib.h>
 void rmmUIRun(void);
 void rmmUIStop(void);

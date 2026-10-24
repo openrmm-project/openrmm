@@ -1,7 +1,10 @@
 package config
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"net/url"
@@ -27,7 +30,13 @@ type Config struct {
 	// the installers refuse a production install without a key to pin — and a
 	// command a technician copies must work as copied.
 	UpdatePublicKeys []string
-	DatabaseURL      string // PostgreSQL connection string
+	// ManifestPublicKeys are the ECDSA P-256 keys the /dl manifest's second
+	// signature (SHA256SUMS.p256.sig) is made with (RMM_MANIFEST_PUBLIC_KEY,
+	// base64 SPKI DER, separated like the update keys). The console adds them to
+	// the Linux/macOS install command: install.sh checks that signature where
+	// the shell's OpenSSL cannot check Ed25519 (a stock macOS, OpenSSL 1.1).
+	ManifestPublicKeys []string
+	DatabaseURL        string // PostgreSQL connection string
 
 	// Bootstrap admin API token. On first start this is accepted as a valid
 	// bearer token so you can create real tokens / enroll agents.
@@ -348,6 +357,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.UpdatePublicKeys = keys
+	manifestKeys, err := parseManifestPublicKeys(os.Getenv("RMM_MANIFEST_PUBLIC_KEY"))
+	if err != nil {
+		return nil, err
+	}
+	c.ManifestPublicKeys = manifestKeys
 	if c.AdminToken == "" {
 		return nil, fmt.Errorf("RMM_ADMIN_TOKEN is required (set a long random string, e.g. `openssl rand -hex 32`)")
 	}
@@ -415,6 +429,34 @@ func splitCSV(s string) []string {
 	return out
 }
 
+// parseManifestPublicKeys takes base64 SPKI DER ECDSA P-256 public keys,
+// separated like the update keys. A key of another type or curve is refused
+// here, rather than by every installer the console's command reaches.
+func parseManifestPublicKeys(raw string) ([]string, error) {
+	var keys []string
+	for i, k := range strings.FieldsFunc(raw, keySeparator) {
+		der, err := base64.StdEncoding.DecodeString(k)
+		if err != nil {
+			return nil, fmt.Errorf("RMM_MANIFEST_PUBLIC_KEY: entry %d is not base64", i+1)
+		}
+		pub, err := x509.ParsePKIXPublicKey(der)
+		if err != nil {
+			return nil, fmt.Errorf("RMM_MANIFEST_PUBLIC_KEY: entry %d is not a public key: %v", i+1, err)
+		}
+		if ec, ok := pub.(*ecdsa.PublicKey); !ok || ec.Curve != elliptic.P256() {
+			return nil, fmt.Errorf("RMM_MANIFEST_PUBLIC_KEY: entry %d is not an ECDSA P-256 key", i+1)
+		}
+		if !slices.Contains(keys, k) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func keySeparator(r rune) bool {
+	return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+}
+
 // parseUpdatePublicKeys takes base64 Ed25519 public keys, separated by commas,
 // semicolons or whitespace — the form every signing tool here prints. Hex is
 // refused although the agent's flag mentions it: a 64-character hex key is also
@@ -423,9 +465,7 @@ func splitCSV(s string) []string {
 // the server instead of reaching a technician's clipboard.
 func parseUpdatePublicKeys(raw string) ([]string, error) {
 	var keys []string
-	for i, k := range strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	}) {
+	for i, k := range strings.FieldsFunc(raw, keySeparator) {
 		b, err := base64.StdEncoding.DecodeString(k)
 		if err != nil || len(b) != ed25519.PublicKeySize {
 			return nil, fmt.Errorf("RMM_UPDATE_PUBLIC_KEY: entry %d is not a base64 Ed25519 public key", i+1)

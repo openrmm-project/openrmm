@@ -37,3 +37,15 @@ test('the install commands carry the server\'s update keys, and say so when ther
   assert.match(enroll, /-Token \$\{token\}\$\{winKeyArg\}/, 'the Windows command includes the key');
   assert.match(enroll, /missingKey && \(/, 'an HTTPS server without keys is called out, not left to fail');
 });
+
+// Without OpenSSL 3 (a stock macOS, OpenSSL 1.1) install.sh checks the
+// manifest's P-256 signature instead of Ed25519, with the key the command
+// carries. Without it such a host refused every production install.
+test('the Linux/macOS command carries the manifest key, next to the update key', async () => {
+  const screens = await readFile(path.join(root, 'src/screens-rmm2.jsx'), 'utf8');
+  const enroll = screens.slice(screens.indexOf('function EnrollCommands('), screens.indexOf('function SiteDetail('));
+  assert.match(enroll, /server\?\.manifest_public_keys/, 'the key comes from the server config');
+  assert.match(enroll, /keyList && manifestList \? ` \\\\\\n  --manifest-public-key \$\{shellQuote\(manifestList\)\}`/);
+  assert.match(enroll, /--token \$\{token\}\$\{keyArg\}\$\{manifestArg\}/, 'the Linux/macOS command includes it');
+  assert.doesNotMatch(enroll, /winCmd = .*manifest/, 'Windows checks Ed25519 itself');
+});

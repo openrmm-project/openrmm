@@ -390,6 +390,24 @@ jobs:
           printf '%s' "$signature" | openssl base64 -d -A > "$tmp/signature.bin"
           openssl dgst -sha256 -binary "$tmp/artifact" > "$tmp/artifact.digest"
           openssl pkeyutl -verify -pubin -inkey "$tmp/public.der" -keyform DER -rawin -in "$tmp/artifact.digest" -sigfile "$tmp/signature.bin"
+          # The manifest's P-256 signature, checked as install.sh checks it by
+          # the system's own openssl, which on macOS is LibreSSL.
+          /usr/bin/openssl version | grep -q LibreSSL
+          keys="$("$tmp/rmm-sign" -gen-key-p256)"
+          manifest_key="$(printf '%s\n' "$keys" | sed -n 's/^RMM_MANIFEST_PUBLIC_KEY=//p')"
+          export RMM_SIGNING_KEY_P256="$(printf '%s\n' "$keys" | sed -n 's/^RMM_SIGNING_KEY_P256=//p')"
+          printf 'macOS manifest signature test' > "$tmp/SHA256SUMS"
+          "$tmp/rmm-sign" -p256 "$tmp/SHA256SUMS" >/dev/null
+          read -r format signature < "$tmp/SHA256SUMS.p256.sig"
+          test "$format" = rmm-ecdsa-p256-sha256-v1
+          { echo "-----BEGIN PUBLIC KEY-----"; printf '%s\n' "$manifest_key" | fold -w 64; echo "-----END PUBLIC KEY-----"; } > "$tmp/manifest.pem"
+          printf '%s' "$signature" | /usr/bin/openssl base64 -d -A > "$tmp/manifest.sig"
+          /usr/bin/openssl dgst -sha256 -verify "$tmp/manifest.pem" -signature "$tmp/manifest.sig" "$tmp/SHA256SUMS"
+          printf 'changed' >> "$tmp/SHA256SUMS"
+          # Not "! cmd": errexit ignores a negated command, so it could never fail.
+          if /usr/bin/openssl dgst -sha256 -verify "$tmp/manifest.pem" -signature "$tmp/manifest.sig" "$tmp/SHA256SUMS"; then
+            echo "a changed manifest verified"; exit 1
+          fi
       # The one platform where the agent moves out of /usr/local/bin, and the
       # only place the installer's BSD stat syntax is exercised.
       - name: Installer migration and uninstall

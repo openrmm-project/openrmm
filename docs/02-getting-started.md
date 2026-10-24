@@ -99,13 +99,20 @@ installer's explicit identity-reset option (`--reset-identity` on Linux/macOS or
 
 ### Production installer requirements
 
-The served installers default to production mode and require HTTPS, OpenSSL 3,
-an enrollment token, and the release's Ed25519 public update key. For example:
+The served installers default to production mode and require HTTPS, an
+enrollment token, and the release's Ed25519 public update key. `install.sh`
+uses only the system's tools, and checks the Ed25519 signatures when the
+system's OpenSSL is 3. Otherwise, on every Mac (LibreSSL) and on Ubuntu 20.04
+and RHEL 8 (OpenSSL 1.1), it checks the manifest's ECDSA P-256 signature
+instead, with the key in `--manifest-public-key`. The console adds that flag
+when the server has `RMM_MANIFEST_PUBLIC_KEY` set, so a server that enrols Macs
+needs it. For example:
 
 ```bash
 curl -fsSL https://agents.rmm.example.com/install.sh | sudo bash -s -- \
   --server https://agents.rmm.example.com --token "$TOKEN" \
-  --update-public-key '<BASE64_ED25519_PUBLIC_KEY>' --require-tls
+  --update-public-key '<BASE64_ED25519_PUBLIC_KEY>' \
+  --manifest-public-key '<BASE64_P256_PUBLIC_KEY>' --require-tls
 ```
 
 ```powershell

@@ -28,7 +28,8 @@ bootstrap token.
 
 Production installers first perform this one-shot enrollment, then install the
 long-lived service without the enrollment token in its arguments. They require
-an HTTPS origin, OpenSSL 3, and `--update-public-key`/`-UpdatePublicKey`, and set
+an HTTPS origin and `--update-public-key`/`-UpdatePublicKey` (on Linux and macOS,
+OpenSSL 3 or the manifest's P-256 key in `--manifest-public-key`), and set
 `-require-tls -update-verify strict`. Plain HTTP or missing update trust is
 available only through explicit lab mode.
 

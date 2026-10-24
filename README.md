@@ -137,8 +137,9 @@ uses port `8080` instead.
 
 Production is intentionally different: provision file-backed secrets with
 `deploy/ops/provision-secrets.sh`, terminate TLS at a trusted edge, and keep the
-three published listeners bound to loopback. Agent installation requires HTTPS,
-OpenSSL 3, and `--update-public-key`/`-UpdatePublicKey`; insecure installation is
+three published listeners bound to loopback. Agent installation requires HTTPS
+and `--update-public-key`/`-UpdatePublicKey` (on Linux and macOS, OpenSSL 3 or the
+manifest's P-256 key in `--manifest-public-key`); insecure installation is
 available only through explicit lab mode. See
 [`deploy/README-production.md`](deploy/README-production.md).
 

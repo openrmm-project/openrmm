@@ -75,18 +75,20 @@ static int rmmPostKey(CGEventSourceRef src, CGKeyCode key, bool down, CGEventFla
 static int rmmForceQuitStep = 0;
 static int rmmForceQuitProgress(void) { return rmmForceQuitStep; }
 
-// What CGPreflightPostEventAccess said when the chord was sent. Recorded, not
+// What the input preflight said when the chord was sent. Recorded, not
 // obeyed: see rmmInputPreflight below.
 static int rmmForceQuitPreflight = 0;
 static int rmmForceQuitPreflightResult(void) { return rmmForceQuitPreflight; }
 
-// CGPreflightPostEventAccess is a report, not a gate. In the process that asked
-// for Accessibility it keeps answering "denied" after the person at the Mac
-// allows it — half an hour later on macOS 15.8 — while the events themselves
-// are delivered: mouse and keyboard worked in that very session. Gating the
-// shortcuts on it made Command-V and Force Quit fail exactly there. So they are
-// always posted, and the answer only goes to the log.
-static int rmmInputPreflight(void) { return CGPreflightPostEventAccess() ? 1 : 0; }
+// The preflight is a report, not a gate. In the process that asked for
+// Accessibility CGPreflightPostEventAccess keeps answering "denied" after the
+// person at the Mac allows it — half an hour later on macOS 15.8 — while the
+// events themselves are delivered: mouse and keyboard worked in that very
+// session. Gating the shortcuts on it made Command-V and Force Quit fail exactly
+// there. So they are always posted, and the answer only goes to the log.
+// rmmInputTrusted (chat_darwin.m) also counts an Accessibility grant.
+int rmmInputTrusted(void);
+static int rmmInputPreflight(void) { return rmmInputTrusted(); }
 
 // Command-Option-Escape opens Force Quit Applications. The shortcut is matched
 // against the modifier state the WindowServer maintains, and that state is fed

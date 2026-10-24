@@ -63,8 +63,9 @@ OpenRMM is an open-source, self-hosted RMM built around three choices:
   your own SMTP relay (or an operator's shared service, to confirmed addresses only).
 - **Append-only audit trail** — triggers, a non-owner database role and a hash
   chain; searchable, exportable as CSV, and queryable by the assistant.
-- **Six languages** — the console is fully translated into English, Portuguese
-  (Brazil), Spanish, German, Japanese and Simplified Chinese.
+- **Nine languages** — the console is fully translated into English, Portuguese
+  (Brazil), Spanish, German, Japanese, Simplified Chinese, Russian, Korean and
+  Malay. The newer translations await review by native speakers.
 
 ## Architecture at a glance
 

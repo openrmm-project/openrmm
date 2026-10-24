@@ -77,7 +77,7 @@ As of v0.7.2, verified end-to-end against PostgreSQL:
   a catalog with approval + classification, patch policies (maintenance windows,
   auto-approve, exclusions), reboot orchestration and a compliance report — all
   approval/scope/audit-gated. See [16-patch-management](16-patch-management.md).
-- React frontend (`openrmm/`) wired to the backend, translated into six
+- React frontend (`openrmm/`) wired to the backend, translated into nine
   languages; cross-platform Go agent that **self-updates** from the server
   (`/dl` ETag, Ed25519-signed artifacts).
 - Production Compose with file-backed secrets, an npm-built frontend and

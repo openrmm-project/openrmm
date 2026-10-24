@@ -6,6 +6,13 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- Russian, Korean and Malay console translations, including browser-language
+  detection and a persistent language choice. Russian counts use the appropriate
+  one, few, many and fractional plural forms. The new translations await review
+  by native speakers.
+
 ## [0.7.2] - 2026-10-24
 
 ### Security

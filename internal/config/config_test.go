@@ -294,3 +294,20 @@ func TestManifestPublicKeys(t *testing.T) {
 		}
 	}
 }
+
+// The single sign-on button is shown unless RMM_OIDC_SHOW_BUTTON=false: the
+// first login step sends linked and marked accounts to the provider, and the
+// button is how a local account does its first single sign-on.
+func TestOIDCShowButton(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	for value, want := range map[string]bool{"": true, "true": true, "false": false} {
+		t.Setenv("RMM_OIDC_SHOW_BUTTON", value)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.OIDCShowButton != want {
+			t.Errorf("RMM_OIDC_SHOW_BUTTON=%q: %v, want %v", value, c.OIDCShowButton, want)
+		}
+	}
+}

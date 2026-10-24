@@ -107,6 +107,11 @@ type User struct {
 	// mail through the operator's shared service goes only to confirmed
 	// addresses; changing the address clears it.
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
+	// SSO is whether the account signs in through single sign-on only: linked
+	// to a provider identity, or marked to be before its first sign-in (a
+	// managed service's owner). Listed for the users screen; it has no effect
+	// while single sign-on is off.
+	SSO bool `json:"sso"`
 }
 
 // Disabled reports whether this account may still authenticate.

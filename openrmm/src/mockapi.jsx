@@ -224,6 +224,12 @@ const api = {
   async ssoStatus() {
     try { return await GET('/api/auth/oidc'); } catch (e) { return { enabled: false }; }
   },
+  // The first step of signing in: how this username signs in, "sso" or
+  // "password". Any failure reads as "password", which is what the screen
+  // asked for before there was a first step.
+  async authMethod(username) {
+    try { return (await POST('/api/auth/method', { username })).method || 'password'; } catch (e) { return 'password'; }
+  },
   // A full page navigation, not a fetch: the provider needs to see the browser
   // to show its own login and consent, and it will not answer an XHR.
   ssoStart(redirectTo) {

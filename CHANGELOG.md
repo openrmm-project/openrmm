@@ -6,6 +6,28 @@ tag.
 
 ## [Unreleased]
 
+### Security
+
+- **A managed console's owner can no longer step around single sign-on before
+  first using it.** An account only became single sign-on only once its first
+  single sign-on linked it. Until then it kept a password sign-in and "Forgot
+  password", which no provider second factor guards: the first OpenRMM Cloud
+  customer set a password through "Forgot password" and signed in without the
+  portal or its two-factor authentication.
+  - An account can now be marked single sign-on only before its first sign-in
+    (`PUT /api/users/{id}/sso`, `users.manage`, audited as `user.sso_required`;
+    migration 022). A marked account is treated exactly like a linked one:
+    password sign-in is refused with `sso_required` and password reset sends
+    nothing, and marking ends the account's sessions. OpenRMM Cloud's
+    provisioning marks the owner's account as soon as it creates it.
+    `RMM_OIDC_ENABLED=false` is still the break-glass.
+  - The login screen asks who, then how: `POST /api/auth/method` answers `sso`
+    for an account that signs in through single sign-on, and the screen sends
+    it to the provider by itself. Everyone else, an unknown name included, gets
+    the password field. The separate button stays by default, for a local
+    account's first single sign-on; `RMM_OIDC_SHOW_BUTTON=false` hides it (Cloud
+    consoles), and automatic accounts always show it.
+
 ## [0.7.1] - 2026-10-24
 
 ### Fixed

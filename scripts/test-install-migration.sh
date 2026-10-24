@@ -64,7 +64,8 @@ while [ \$# -gt 0 ]; do
       grep -q '^rmm-ed25519-sha256-v1 ' "\$2" || exit 1
       : > "${WORK}/verified-own"; exit 0;;
     -check-upgrade-from) previous="\$2"; shift 2;;
-    -action) action="\$2"; shift 2;;
+    # Recorded, so the uninstall test can tell the agent was never run.
+    -action) action="\$2"; printf '%s\n' "\$2" >> "${WORK}/agent-actions"; shift 2;;
     -health-file) health="\$2"; shift 2;;
     *) shift;;
   esac
@@ -99,7 +100,9 @@ echo "== an endpoint installed at the previous location =="
 if [ -n "$LEGACY_DEST" ]; then
   mkdir -p "$(dirname "$LEGACY_DEST")" "$STATE_DIR"
   write_stub_agent "$LEGACY_DEST" "9.9.8"
-  printf 'stub service for 9.9.8\n' > "$SERVICE_PATH"
+  # The LaunchDaemon names the binary it runs: that is what makes the file at
+  # the previous location an install to migrate rather than a stray file.
+  printf '<string>%s</string>\n' "$LEGACY_DEST" > "$SERVICE_PATH"
 else
   mkdir -p "$(dirname "$NEW_DEST")" "$STATE_DIR"
   write_stub_agent "$NEW_DEST" "9.9.8"
@@ -289,7 +292,7 @@ restore_openssl() {
 # a mark, and fails.
 PLANTED="${WORK}/planted"
 mkdir -p "$PLANTED"
-for tool in openssl curl; do
+for tool in openssl curl id uname tr dirname stat rm launchctl systemctl tccutil; do
   printf '#!/bin/sh\n: > "%s"\nexit 1\n' "${WORK}/planted-ran" > "${PLANTED}/${tool}"
   chmod 0755 "${PLANTED}/${tool}"
 done
@@ -399,7 +402,12 @@ for name in $LEFTOVERS; do printf 'x' > "${AGENT_DIR}/${name}"; done
 mkdir -p "${AGENT_DIR}/rmm-remote.new.stage"
 # Not ours: only removed when an agent sat beside it, so this must survive.
 if [ "$OS" = "darwin" ]; then printf 'x' > /usr/local/bin/agent.log; fi
-bash "${REPO_ROOT}/deploy/public/uninstall.sh" >/dev/null
+# With the planted tools first in PATH, as `sudo` hands it over on a Mac.
+rm -f "${WORK}/agent-actions" "${WORK}/planted-ran"
+env PATH="${PLANTED}:$PATH" bash "${REPO_ROOT}/deploy/public/uninstall.sh" >"${WORK}/uninstall.log" 2>&1 ||
+  { echo "  FAIL: uninstall failed"; cat "${WORK}/uninstall.log"; fail=1; }
+check "uninstall never ran the agent binary" test ! -e "${WORK}/agent-actions"
+check "nor a tool planted in the caller's PATH" test ! -e "${WORK}/planted-ran"
 leftovers_gone() {
   for name in $LEFTOVERS rmm-remote.new.stage; do
     [ ! -e "${AGENT_DIR}/${name}" ] || { echo "    still there: ${AGENT_DIR}/${name}"; return 1; }
@@ -414,6 +422,31 @@ fi
 check "uninstall removed the agent" test ! -e "$NEW_DEST"
 check "uninstall removed the service definition" test ! -e "$SERVICE_PATH"
 check "uninstall removed the enrolment state" test ! -e "$STATE_DIR"
+
+echo "== a file at the previous location with no service is never run =="
+# On a Mac /usr/local/bin usually belongs to the account that owns Homebrew. An
+# rmm-agent planted there, with no LaunchDaemon running it, must not be run as
+# root by an install or an uninstall.
+if [ "$OS" = "darwin" ]; then
+  mkdir -p "$(dirname "$LEGACY_DEST")"
+  printf '#!/bin/sh\n: > "%s"\nexit 0\n' "${WORK}/legacy-ran" > "$LEGACY_DEST"
+  chmod 0755 "$LEGACY_DEST"
+  rm -f "${WORK}/legacy-ran"
+  if bash "${REPO_ROOT}/deploy/public/install.sh" \
+      --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/planted-legacy.log" 2>&1; then
+    check "a fresh install did not run it" test ! -e "${WORK}/legacy-ran"
+    check "and said it was ignored" grep -q "Ignoring $LEGACY_DEST" "${WORK}/planted-legacy.log"
+    check "and installed at the new location" test -x "$NEW_DEST"
+  else
+    echo "  FAIL: a fresh install with a stray file at the previous location failed"
+    cat "${WORK}/planted-legacy.log"
+    fail=1
+  fi
+  bash "${REPO_ROOT}/deploy/public/uninstall.sh" >/dev/null 2>&1 || { echo "  FAIL: uninstall failed"; fail=1; }
+  check "nor did the uninstall" test ! -e "${WORK}/legacy-ran"
+  check "which removed it with the rest" test ! -e "$LEGACY_DEST"
+  check "and left no agent behind" test ! -e "$NEW_DEST"
+fi
 
 [ "$fail" = "0" ] || { echo "installer migration test FAILED"; exit 1; }
 echo "installer migration test passed"

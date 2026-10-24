@@ -8,6 +8,28 @@ tag.
 
 ### Security
 
+- **`rmm-sign` no longer prints the private keys.** The `-key` and `-key-p256`
+  flags took their defaults from `RMM_SIGNING_KEY` and `RMM_SIGNING_KEY_P256`,
+  and the flag package prints defaults in `-h` and in every usage error. With
+  a key loaded for signing, a mistyped flag put it on the terminal or in a
+  build log. The keys are now read from the environment after parsing, only by
+  the operation that signs; a test runs help, bad flags and bad keys with
+  stand-in keys in the environment and fails if one shows up.
+- **The installer and the uninstaller no longer run a planted `rmm-agent` or
+  planted tools as root.** On a Mac, `/usr/local/bin` usually belongs to the
+  account that owns Homebrew, and `sudo` keeps the caller's PATH, which puts
+  it first.
+  - `install.sh` ran `/usr/local/bin/rmm-agent -print-version` whenever no agent
+    was at the new location, even on a fresh install. It now treats that file
+    as an install to migrate only when the LaunchDaemon in
+    `/Library/LaunchDaemons` runs it, and otherwise leaves it alone.
+  - `uninstall.sh` ran `-action stop` and `-action uninstall` on both agent
+    locations. It now stops the service with `launchctl` or `systemctl` and
+    never runs the agent.
+  - `uninstall.sh` takes its tools only from the system's directories, as
+    `install.sh` now does.
+  - Found by an independent review; no exploitation is known.
+
 - **Built with Go 1.26.10.** Server, agents, the remote sidecar on Linux and
   Windows, and the images move from Go 1.26.9. It distrusts compromised
   intermediate certificates in `crypto/x509` (GO-2026-6809), which govulncheck

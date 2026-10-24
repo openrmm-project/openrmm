@@ -241,6 +241,23 @@ assert_safe_ancestors() {
   done
 }
 
+# legacy_install_present: an agent at the location used before the move out of
+# /usr/local/bin, AND the LaunchDaemon that runs it. Only then is that binary
+# run (for its version, to stop and restart it), and running it gives nobody
+# anything new, since launchd already runs it as root at every boot. Without
+# the daemon it is just a file in a directory the account that owns Homebrew
+# can usually write to: running it would hand that account root, so it is
+# left alone. /Library/LaunchDaemons is root's, so the daemon cannot be planted.
+legacy_install_present() {
+  [ -n "$LEGACY_DEST" ] && [ -x "$LEGACY_DEST" ] || return 1
+  if [ -f /Library/LaunchDaemons/rmm-agent.plist ] &&
+     grep -qF "<string>${LEGACY_DEST}</string>" /Library/LaunchDaemons/rmm-agent.plist; then
+    return 0
+  fi
+  echo "Ignoring $LEGACY_DEST: no OpenRMM service runs it, so it is not run or removed."
+  return 1
+}
+
 detect_service_config() {
   for path in /etc/systemd/system/rmm-agent.service /lib/systemd/system/rmm-agent.service /usr/lib/systemd/system/rmm-agent.service; do
     if [ -f "$path" ]; then SERVICE_KIND=systemd; SERVICE_PATH="$path"; return 0; fi
@@ -424,7 +441,7 @@ if [ -x "$DEST" ]; then
   current_version="$($DEST -print-version)" || { echo "error: installed agent version could not be read"; exit 1; }
   "$CANDIDATE" -check-upgrade-from "$current_version" || { echo "error: refusing agent downgrade"; exit 1; }
   HAD_OLD=1
-elif [ -n "$LEGACY_DEST" ] && [ -x "$LEGACY_DEST" ]; then
+elif legacy_install_present; then
   # An endpoint installed before the agent moved out of /usr/local/bin. Its
   # service is stopped now and its definition is only removed once the new
   # install is healthy, so a failure here leaves the old one to be restarted.

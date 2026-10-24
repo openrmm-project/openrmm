@@ -8,95 +8,121 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 )
 
 const signatureVersion = "rmm-ed25519-sha256-v1"
 
 func main() {
-	genKey := flag.Bool("gen-key", false, "generate a new Ed25519 signing keypair")
-	printPublicKey := flag.Bool("print-public-key", false, "print the public key derived from the configured private key")
-	key := flag.String("key", os.Getenv("RMM_SIGNING_KEY"), "base64 Ed25519 private key; defaults to RMM_SIGNING_KEY")
-	genKeyP256 := flag.Bool("gen-key-p256", false, "generate a new ECDSA P-256 keypair for the manifest's second signature")
-	printPublicKeyP256 := flag.Bool("print-public-key-p256", false, "print the P-256 public key derived from the configured P-256 private key")
-	p256 := flag.Bool("p256", false, "sign the given files (the SHA256SUMS manifest) with the P-256 key, writing <file>.p256.sig")
-	keyP256 := flag.String("key-p256", os.Getenv("RMM_SIGNING_KEY_P256"), "base64 PKCS#8 P-256 private key; defaults to RMM_SIGNING_KEY_P256")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
+}
 
-	if *genKeyP256 {
+// run is the command, with its environment and output passed in so a test can
+// see everything it prints. The private keys are never flag defaults: the flag
+// package prints a default in -h and in every usage error, which put the key
+// from the environment on the terminal or in a build log. They are read from
+// the environment only after parsing, by the operation that signs.
+func run(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("rmm-sign", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	genKey := fs.Bool("gen-key", false, "generate a new Ed25519 signing keypair")
+	printPublicKey := fs.Bool("print-public-key", false, "print the public key derived from the configured private key")
+	key := fs.String("key", "", "base64 Ed25519 private key; RMM_SIGNING_KEY when not given (prefer it: arguments are visible to other processes)")
+	genKeyP256 := fs.Bool("gen-key-p256", false, "generate a new ECDSA P-256 keypair for the manifest's second signature")
+	printPublicKeyP256 := fs.Bool("print-public-key-p256", false, "print the P-256 public key derived from the configured P-256 private key")
+	p256 := fs.Bool("p256", false, "sign the given files (the SHA256SUMS manifest) with the P-256 key, writing <file>.p256.sig")
+	keyP256 := fs.String("key-p256", "", "base64 PKCS#8 P-256 private key; RMM_SIGNING_KEY_P256 when not given")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	fail := func(format string, a ...any) int {
+		fmt.Fprintf(stderr, "rmm-sign: "+format+"\n", a...)
+		return 1
+	}
+	ed25519Key := func() string { return flagOrEnv(*key, getenv, "RMM_SIGNING_KEY") }
+	p256Key := func() string { return flagOrEnv(*keyP256, getenv, "RMM_SIGNING_KEY_P256") }
+
+	switch {
+	case *genKeyP256:
 		priv, pub, err := generateP256()
 		if err != nil {
-			log.Fatal(err)
+			return fail("%v", err)
 		}
-		fmt.Printf("RMM_MANIFEST_PUBLIC_KEY=%s\n", pub)
-		fmt.Printf("RMM_SIGNING_KEY_P256=%s\n", priv)
-		return
-	}
-	if *printPublicKeyP256 {
-		priv, err := decodeP256PrivateKey(*keyP256)
+		fmt.Fprintf(stdout, "RMM_MANIFEST_PUBLIC_KEY=%s\n", pub)
+		fmt.Fprintf(stdout, "RMM_SIGNING_KEY_P256=%s\n", priv)
+		return 0
+	case *printPublicKeyP256:
+		priv, err := decodeP256PrivateKey(p256Key())
 		if err != nil {
-			log.Fatal(err)
+			return fail("%v", err)
 		}
 		_, pub, err := encodeP256(priv)
 		if err != nil {
-			log.Fatal(err)
+			return fail("%v", err)
 		}
-		fmt.Println(pub)
-		return
-	}
-	if *p256 {
-		if flag.NArg() == 0 {
-			log.Fatal("usage: rmm-sign -p256 -key-p256 <base64-pkcs8-key> SHA256SUMS")
+		fmt.Fprintln(stdout, pub)
+		return 0
+	case *p256:
+		if fs.NArg() == 0 {
+			return fail("usage: rmm-sign -p256 SHA256SUMS (key in RMM_SIGNING_KEY_P256)")
 		}
-		priv, err := decodeP256PrivateKey(*keyP256)
+		priv, err := decodeP256PrivateKey(p256Key())
 		if err != nil {
-			log.Fatal(err)
+			return fail("%v", err)
 		}
-		for _, path := range flag.Args() {
+		for _, path := range fs.Args() {
 			if err := signFileP256(path, priv); err != nil {
-				log.Fatalf("%s: %v", path, err)
+				return fail("%s: %v", path, err)
 			}
-			fmt.Printf("signed %s.p256.sig\n", path)
+			fmt.Fprintf(stdout, "signed %s.p256.sig\n", path)
 		}
-		return
-	}
-
-	if *genKey {
+		return 0
+	case *genKey:
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			log.Fatal(err)
+			return fail("%v", err)
 		}
-		fmt.Printf("RMM_UPDATE_PUBLIC_KEY=%s\n", base64.StdEncoding.EncodeToString(pub))
-		fmt.Printf("RMM_SIGNING_KEY=%s\n", base64.StdEncoding.EncodeToString(priv))
-		return
-	}
-	if *printPublicKey {
-		priv, err := decodePrivateKey(*key)
+		fmt.Fprintf(stdout, "RMM_UPDATE_PUBLIC_KEY=%s\n", base64.StdEncoding.EncodeToString(pub))
+		fmt.Fprintf(stdout, "RMM_SIGNING_KEY=%s\n", base64.StdEncoding.EncodeToString(priv))
+		return 0
+	case *printPublicKey:
+		priv, err := decodePrivateKey(ed25519Key())
 		if err != nil {
-			log.Fatal(err)
+			return fail("%v", err)
 		}
-		pub := priv.Public().(ed25519.PublicKey)
-		fmt.Println(base64.StdEncoding.EncodeToString(pub))
-		return
+		fmt.Fprintln(stdout, base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey)))
+		return 0
 	}
 
-	if flag.NArg() == 0 {
-		log.Fatal("usage: rmm-sign -key <base64-private-key> <artifact> [artifact...]")
+	if fs.NArg() == 0 {
+		return fail("usage: rmm-sign <artifact> [artifact...] (key in RMM_SIGNING_KEY)")
 	}
-	priv, err := decodePrivateKey(*key)
+	priv, err := decodePrivateKey(ed25519Key())
 	if err != nil {
-		log.Fatal(err)
+		return fail("%v", err)
 	}
-	for _, path := range flag.Args() {
+	for _, path := range fs.Args() {
 		if err := signFile(path, priv); err != nil {
-			log.Fatalf("%s: %v", path, err)
+			return fail("%s: %v", path, err)
 		}
-		fmt.Printf("signed %s.sig\n", path)
+		fmt.Fprintf(stdout, "signed %s.sig\n", path)
 	}
+	return 0
+}
+
+// flagOrEnv is the flag's value when one was given, else the environment's.
+func flagOrEnv(flagValue string, getenv func(string) string, name string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return getenv(name)
 }
 
 func decodePrivateKey(v string) (ed25519.PrivateKey, error) {

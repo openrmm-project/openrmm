@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,4 +106,95 @@ func verifyP256(data []byte, sigB64, pubB64 string) bool {
 	}
 	sum := sha256.Sum256(data)
 	return ecdsa.VerifyASN1(pub, sum[:], sig)
+}
+
+// The private keys live in the environment while a release signs. Help, a
+// mistyped flag, a missing argument and a bad key must never print them: the
+// flag package used to show them as the flags' defaults.
+func TestRunNeverPrintsPrivateKeys(t *testing.T) {
+	const edCanary = "CANARY-ED25519-PRIVATE-KEY-0123456789"
+	const p256Canary = "CANARY-P256-PRIVATE-KEY-0123456789"
+	getenv := func(name string) string {
+		switch name {
+		case "RMM_SIGNING_KEY":
+			return edCanary
+		case "RMM_SIGNING_KEY_P256":
+			return p256Canary
+		}
+		return ""
+	}
+	for _, tc := range []struct {
+		args []string
+		code int
+	}{
+		{[]string{"-h"}, 0},
+		{[]string{"--help"}, 0},
+		{[]string{"-no-such-flag"}, 2},
+		{[]string{"-key"}, 2},
+		{[]string{"-key-p256"}, 2},
+		{[]string{"-p256"}, 1},
+		{[]string{}, 1},
+		{[]string{"-print-public-key"}, 1},
+		{[]string{"-print-public-key-p256"}, 1},
+		{[]string{"-p256", filepath.Join(t.TempDir(), "SHA256SUMS")}, 1},
+	} {
+		var stdout, stderr strings.Builder
+		code := run(tc.args, getenv, &stdout, &stderr)
+		out := stdout.String() + stderr.String()
+		if code != tc.code {
+			t.Errorf("%v: exit %d, want %d (%s)", tc.args, code, tc.code, out)
+		}
+		if strings.Contains(out, edCanary) || strings.Contains(out, p256Canary) {
+			t.Errorf("%v printed a private key:\n%s", tc.args, out)
+		}
+	}
+	// Control: help is really printed, with the flags it describes.
+	var help strings.Builder
+	run([]string{"-h"}, getenv, io.Discard, &help)
+	if !strings.Contains(help.String(), "-key-p256") || !strings.Contains(help.String(), "RMM_SIGNING_KEY_P256") {
+		t.Fatalf("help does not describe the key flags:\n%s", help.String())
+	}
+}
+
+// The key still comes from the environment when no flag gives one, and a flag
+// given explicitly wins over it.
+func TestRunKeyFromEnvironmentOrFlag(t *testing.T) {
+	envPriv, envPub, err := generateP256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagPriv, flagPub, err := generateP256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(name string) string {
+		if name == "RMM_SIGNING_KEY_P256" {
+			return envPriv
+		}
+		return ""
+	}
+	var out strings.Builder
+	if code := run([]string{"-print-public-key-p256"}, getenv, &out, io.Discard); code != 0 || strings.TrimSpace(out.String()) != envPub {
+		t.Fatalf("from the environment: exit %d, %q", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"-key-p256", flagPriv, "-print-public-key-p256"}, getenv, &out, io.Discard); code != 0 || strings.TrimSpace(out.String()) != flagPub {
+		t.Fatalf("from the flag: exit %d, %q", code, out.String())
+	}
+
+	manifest := filepath.Join(t.TempDir(), "SHA256SUMS")
+	if err := os.WriteFile(manifest, []byte("0123abcd  rmm-agent-linux-amd64\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"-p256", manifest}, getenv, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("signing with the environment's key: exit %d", code)
+	}
+	line, err := os.ReadFile(manifest + ".p256.sig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(string(line))
+	if len(fields) != 2 || !verifyP256([]byte("0123abcd  rmm-agent-linux-amd64\n"), fields[1], envPub) {
+		t.Fatalf("the signature does not verify under the environment's key: %q", line)
+	}
 }

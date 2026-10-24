@@ -110,6 +110,12 @@ type Config struct {
 	// AllowUnapprovedJobs lets ad-hoc job creators set require_approval=false.
 	// Default false: every human/AI-initiated script run requires approval.
 	AllowUnapprovedJobs bool
+	// MacOSAdhocBundle offers the ad-hoc macOS remote bundle next to the signed
+	// one in the console's install command (docs/08-remote-access.md). On by
+	// default, for an operator who builds the sidecar without the project's
+	// certificate; a managed service whose Macs all take the signed bundle
+	// turns it off (RMM_MACOS_ADHOC_BUNDLE=false).
+	MacOSAdhocBundle bool
 	// TrustProxyHeaders enables reading X-Forwarded-For for the IP allowlist
 	// (only enable when behind a trusted reverse proxy).
 	TrustProxyHeaders bool
@@ -319,6 +325,7 @@ func Load() (*Config, error) {
 		AlertsHourlyLimit:          envInt("RMM_ALERTS_HOURLY_LIMIT", 120),
 		MCPAllowedIPs:              splitCSV(os.Getenv("RMM_MCP_ALLOWED_IPS")),
 		AllowUnapprovedJobs:        os.Getenv("RMM_ALLOW_UNAPPROVED_JOBS") == "true",
+		MacOSAdhocBundle:           os.Getenv("RMM_MACOS_ADHOC_BUNDLE") != "false",
 		TrustProxyHeaders:          os.Getenv("RMM_TRUST_PROXY_HEADERS") == "true",
 		AllowLegacyAgentRelay:      os.Getenv("RMM_ALLOW_LEGACY_AGENT_RELAY") == "true",
 		EnforceConsoleRelayIngress: os.Getenv("RMM_ENFORCE_CONSOLE_RELAY_INGRESS") == "true",

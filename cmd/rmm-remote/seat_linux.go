@@ -16,10 +16,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
+	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 type xServer struct {
@@ -116,6 +121,94 @@ func selectActive(cands []xServer, activeVT int) (xServer, bool) {
 
 // findActiveX scans /proc for X servers and returns the active one's display +
 // auth file. ok is false when no X server is running (headless / pure Wayland).
+// sessionAccount is the person whose desktop is active. The sidecar itself
+// runs as root here, so it asks the desktop (desktopAccount).
+func sessionAccount() string {
+	auth := ""
+	if _, a, ok := findActiveX(); ok {
+		auth = a
+	}
+	return desktopAccount(auth)
+}
+
+// desktopAccount names the person at a desktop whose Xauthority file is auth:
+// that file's owner when it is a person's (GDM keeps it in the user's runtime
+// directory); else the user session logind has active on seat0 (LightDM keeps
+// every session's file as root); else the sidecar's own account.
+func desktopAccount(auth string) string {
+	if a := authAccount(auth); a != "" {
+		return a
+	}
+	if a := logindAccount(runLoginctl); a != "" {
+		return a
+	}
+	return processAccount()
+}
+
+// logindAccount is the user of the session logind has active on seat0, when it
+// is a person's own session and not a display manager's greeter.
+func logindAccount(loginctl func(args ...string) ([]byte, error)) string {
+	out, err := loginctl("show-seat", "seat0", "--property=ActiveSession")
+	if err != nil {
+		return ""
+	}
+	id := loginctlProperties(out)["ActiveSession"]
+	if id == "" || strings.ContainsAny(id, "/ \t") {
+		return ""
+	}
+	out, err = loginctl("show-session", id, "--property=Name", "--property=Class")
+	if err != nil {
+		return ""
+	}
+	props := loginctlProperties(out)
+	if props["Class"] != "user" {
+		return ""
+	}
+	return accountName(props["Name"])
+}
+
+// loginctlProperties reads loginctl show-* output: one Key=value per line.
+func loginctlProperties(out []byte) map[string]string {
+	props := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			props[k] = v
+		}
+	}
+	return props
+}
+
+// runLoginctl runs loginctl for logindAccount. Systems without systemd have no
+// loginctl, and the name is simply not found.
+func runLoginctl(args ...string) ([]byte, error) {
+	path, err := exec.LookPath("loginctl")
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, path, args...).Output()
+}
+
+// authAccount is the account an Xauthority file belongs to, when it is a
+// person's: a login screen's file belongs to the display manager, a system
+// account below uid 1000 (LightDM keeps every session's file as root).
+func authAccount(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid < 1000 || st.Uid == 65534 {
+		return ""
+	}
+	u, err := user.LookupId(strconv.FormatUint(uint64(st.Uid), 10))
+	if err != nil {
+		return ""
+	}
+	return accountName(u.Username)
+}
+
 func findActiveX() (display, auth string, ok bool) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {

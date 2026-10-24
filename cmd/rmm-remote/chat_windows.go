@@ -90,6 +90,8 @@ const (
 	gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC (-4) for SetWindowLongPtr
 
 	emReplaceSel = 0x00C2
+	wmVScroll    = 0x0115
+	sbBottom     = 7
 	emSetSel     = 0x00B1
 
 	swShow   = 5
@@ -127,6 +129,7 @@ type msgStruct struct {
 }
 
 type chatWindow struct {
+	self       string // how the person here is named (selfLabel)
 	hwnd       uintptr
 	history    uintptr
 	input      uintptr
@@ -142,7 +145,7 @@ var activeChat *chatWindow
 func u16(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
 
 func newChatWindow(title string, onSend func(string)) *chatWindow {
-	cw := &chatWindow{onSend: onSend}
+	cw := &chatWindow{onSend: onSend, self: selfLabel(sessionAccount())}
 	activeChat = cw
 	ready := make(chan struct{})
 	go func() {
@@ -311,6 +314,11 @@ func (cw *chatWindow) flushMessages() {
 		}
 		if strings.HasPrefix(line, "You: ") {
 			color = 0x00B5E8A4
+			line = cw.self + ": " + strings.TrimPrefix(line, "You: ")
+		}
+		if strings.HasPrefix(line, chatGuestPrefix) {
+			color = 0x006BC2F5 // amber: a guest, neither the technician nor the person here
+			line = strings.TrimPrefix(line, chatGuestPrefix)
 		}
 		format := chatCharFormat{Mask: 0x40000000, Color: color} // CFM_COLOR
 		format.Size = uint32(unsafe.Sizeof(format))
@@ -318,6 +326,9 @@ func (cw *chatWindow) flushMessages() {
 		procSendMessage.Call(cw.history, 0x0444, 1, uintptr(unsafe.Pointer(&format))) // EM_SETCHARFORMAT, SCF_SELECTION
 		procSendMessage.Call(cw.history, emReplaceSel, 0, uintptr(unsafe.Pointer(u16(line+"\r\n"))))
 	}
+	// A read-only history without focus does not follow its own caret: scroll
+	// it to the newest line, or the person has to scroll down to see it.
+	procSendMessage.Call(cw.history, wmVScroll, sbBottom, 0)
 	procShowWindow.Call(cw.hwnd, swShowNA)
 }
 

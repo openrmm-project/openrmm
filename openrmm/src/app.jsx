@@ -477,6 +477,13 @@ function App() {
   // Standalone native-remote tab: ?dev=<id>&host=<name>&os=<os> renders just the
   // viewer, which brokers its own session and auto-reconnects (auth via sessionStorage).
   const params = new URLSearchParams(location.search);
+  // An invitation link (/join#<token>) is opened by someone with no account:
+  // no sign-in and no console, only the guest page (screens-devices.jsx).
+  if (/\/join\/?$/.test(location.pathname)) {
+    const GJ = window.GuestJoinScreen;
+    const guestCtx = { user: null, role: null, permissions: [], logout: () => {}, can: () => false };
+    return <AuthCtx.Provider value={guestCtx}><ToastProvider><GJ /></ToastProvider></AuthCtx.Provider>;
+  }
   const remoteDev = params.get('dev');
   if (remoteDev) {
     const RV = window.RemoteViewer;

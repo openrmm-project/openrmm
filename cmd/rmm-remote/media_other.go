@@ -13,6 +13,6 @@ import (
 // media_windows.go, Linux (X11) in media_linux.go, and macOS (CoreGraphics) in
 // media_darwin.go. Everything else (e.g. *BSD) lands here. We return an error
 // so the relay session ends cleanly instead of hanging with a black screen.
-func runMedia(_ *websocket.Conn, _ bool) error {
+func runMedia(_ *websocket.Conn, _ sessionOptions) error {
 	return fmt.Errorf("native remote media engine not yet implemented on %s", runtime.GOOS)
 }

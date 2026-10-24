@@ -80,3 +80,16 @@ func TestCloseSessionTellsTheViewerWhy(t *testing.T) {
 		t.Fatalf("the viewer must learn it was replaced, or its reconnect loop takes the session back; got %v", err)
 	}
 }
+
+// A session closed before either peer connected stays closed: a guest removed
+// between brokering and connecting must not get in a moment later.
+func TestCloseSessionBeforeThePeersArrive(t *testing.T) {
+	r := NewRelay()
+	r.CloseSession("session-1", CloseGuestEnded, "guest_removed")
+	if _, err := r.get("session-1", "agent-1"); err == nil {
+		t.Fatal("a closed session was opened again")
+	}
+	if _, err := r.get("session-2", "agent-1"); err != nil {
+		t.Fatalf("an unrelated session was refused: %v", err)
+	}
+}

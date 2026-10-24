@@ -205,6 +205,21 @@ func TestOIDCDisabledIgnoresItsOwnSettings(t *testing.T) {
 // The console builds its install command from these keys, and the installers
 // refuse a production install without one, so a malformed value must stop the
 // server rather than reach a technician's clipboard.
+// The ad-hoc macOS bundle is offered unless the operator turns it off.
+func TestMacOSAdhocBundle(t *testing.T) {
+	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	for value, want := range map[string]bool{"": true, "true": true, "false": false} {
+		t.Setenv("RMM_MACOS_ADHOC_BUNDLE", value)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.MacOSAdhocBundle != want {
+			t.Errorf("RMM_MACOS_ADHOC_BUNDLE=%q: offered=%v, want %v", value, c.MacOSAdhocBundle, want)
+		}
+	}
+}
+
 func TestUpdatePublicKeys(t *testing.T) {
 	t.Setenv("RMM_ADMIN_TOKEN", strings.Repeat("a", 32))
 	keyA := base64.StdEncoding.EncodeToString(make([]byte, 32))

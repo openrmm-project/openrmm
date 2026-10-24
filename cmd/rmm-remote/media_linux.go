@@ -19,7 +19,8 @@ import (
 // chVideo tile frames + {t:"kf"}) so the same viewer drives both, including file
 // transfer (transfer_linux.go) and in-session chat (a native X11 window,
 // chat_linux.go).
-func runMedia(conn *websocket.Conn, allowFiles bool) error {
+func runMedia(conn *websocket.Conn, opts sessionOptions) error {
+	allowFiles := opts.allowFiles
 	clipMirror := &clipboardMirror{}
 	type omsg struct {
 		mt int
@@ -141,7 +142,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	}
 
 	// announce the running sidecar version (viewer staleness check)
-	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": true}); e == nil {
+	if b, e := json.Marshal(map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "cad": true, "chat": opts.chat, "guest_chat": true, "user": sessionAccount()}); e == nil {
 		out <- omsg{websocket.TextMessage, b}
 	}
 
@@ -259,7 +260,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 							note = "✓ Your keyboard and mouse have been released."
 						}
 						select { // transparency notice in the host chat window
-						case chatInbox <- note:
+						case chatInbox <- "Tech: " + note:
 						default:
 						}
 					}
@@ -267,11 +268,12 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			case "chat":
 				var cm struct {
 					From string `json:"from"`
+					Name string `json:"name"`
 					Text string `json:"text"`
 				}
-				if json.Unmarshal(data, &cm) == nil && cm.From == "tech" && cm.Text != "" {
+				if json.Unmarshal(data, &cm) == nil && (cm.From == "tech" || cm.From == "guest") && cm.Text != "" {
 					select {
-					case chatInbox <- cm.Text:
+					case chatInbox <- chatLine(cm.From, cm.Name, cm.Text):
 					default:
 					}
 				}
@@ -367,7 +369,9 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			if chat != nil {
 				chat.close()
 			}
-			chat = newChatWindowLinux(disp, auth, chatTitle, sendChat)
+			if opts.chat {
+				chat = newChatWindowLinux(disp, auth, chatTitle, sendChat)
+			}
 		}
 
 		ticker := time.NewTicker(pace.active)
@@ -383,14 +387,14 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 			case msg := <-chatInbox:
 				// Reopen the window if the host user closed it (the WM kills the
 				// client, so a new tech message brings it back).
-				if (chat == nil || chat.isClosed()) && chatDisp != "" {
+				if opts.chat && (chat == nil || chat.isClosed()) && chatDisp != "" {
 					if chat != nil {
 						chat.close()
 					}
 					chat = newChatWindowLinux(chatDisp, chatAuth, chatTitle, sendChat)
 				}
 				if chat != nil {
-					chat.append("Tech: " + msg)
+					chat.append(msg)
 				}
 			case <-ticker.C:
 				// Backpressure: if the writer hasn't drained what we already

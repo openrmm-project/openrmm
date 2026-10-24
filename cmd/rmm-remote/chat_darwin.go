@@ -7,8 +7,8 @@ package main
 #include <stdlib.h>
 void rmmUIRun(void);
 void rmmUIStop(void);
-void rmmChatOpen(void);
-void rmmChatAppend(const char *text, int technician);
+void rmmChatOpen(const char *selfName);
+void rmmChatAppend(const char *text, int role);
 void rmmChatClose(void);
 int rmmSetClipboard(const char *text);
 char *rmmReadClipboard(void);
@@ -42,21 +42,27 @@ var macChat struct {
 	send func(string)
 }
 
-func openMacChat(send func(string)) {
+// openMacChat opens the window. account names the person here (selfLabel).
+func openMacChat(send func(string), account string) {
 	macChat.Lock()
 	macChat.send = send
 	macChat.Unlock()
-	C.rmmChatOpen()
+	c := C.CString(account)
+	defer C.free(unsafe.Pointer(c))
+	C.rmmChatOpen(c)
 }
 
-func appendMacChat(text string, technician bool) {
+// Who a line in the macOS chat window is from (rmmChatAppend's role).
+const (
+	chatRoleYou   = 0
+	chatRoleTech  = 1
+	chatRoleGuest = 2 // the text carries the guest's label (chatLine)
+)
+
+func appendMacChat(text string, role int) {
 	c := C.CString(text)
 	defer C.free(unsafe.Pointer(c))
-	role := C.int(0)
-	if technician {
-		role = 1
-	}
-	C.rmmChatAppend(c, role)
+	C.rmmChatAppend(c, C.int(role))
 }
 
 func closeMacChat() {

@@ -188,6 +188,8 @@ type RemoteStartMsg struct {
 	RelayURL   string `json:"relay_url,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	AllowFiles *bool  `json:"allow_files,omitempty"`
+	// NoChat: the sidecar opens no chat window for this session (a guest's).
+	NoChat bool `json:"no_chat,omitempty"`
 }
 
 // Remote session kinds (RemoteStartMsg.Kind).

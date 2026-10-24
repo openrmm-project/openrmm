@@ -460,7 +460,8 @@ func (s *session) sendJSON(v any) {
 	s.send(websocket.TextMessage, b)
 }
 
-func runMedia(conn *websocket.Conn, allowFiles bool) error {
+func runMedia(conn *websocket.Conn, opts sessionOptions) error {
+	allowFiles := opts.allowFiles
 	s := &session{conn: conn, out: make(chan wsMsg, 32), done: make(chan struct{}),
 		inputCh: make(chan []byte, 256), uploads: map[uint8]*os.File{}, allowFiles: allowFiles,
 		clipMirror: &clipboardMirror{}}
@@ -470,9 +471,11 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	go watchClipboard(s.clipMirror, func(text string) {
 		s.sendJSON(map[string]any{"t": "clip", "text": text})
 	}, s.done)
-	s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
-		s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
-	})
+	if opts.chat {
+		s.chat = newChatWindow("OpenRMM — Chat with technician", func(text string) {
+			s.sendJSON(map[string]any{"t": "chat", "from": "user", "text": text})
+		})
+	}
 	defer func() {
 		if s.chat != nil {
 			s.chat.close()
@@ -500,7 +503,7 @@ func runMedia(conn *websocket.Conn, allowFiles bool) error {
 	// Announce optional capabilities as well as the version. Ctrl+Alt+Delete is
 	// a Windows Secure Attention Sequence, not an injectable keyboard chord, so
 	// the viewer only enables its button when SendSAS and the local policy allow it.
-	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "chat": s.chat != nil && s.chat.hwnd != 0}
+	hello := map[string]any{"t": "hello", "v": remoteVersion, "allow_files": allowFiles, "chat": s.chat != nil && s.chat.hwnd != 0, "guest_chat": true, "user": sessionAccount()}
 	if err := secureAttentionAvailable(); err != nil {
 		// Announced once per session and never revised, so when the button comes
 		// up greyed this line is the only record of why.
@@ -663,6 +666,8 @@ func (s *session) onMessage(mt int, data []byte) {
 	var e struct {
 		T      string `json:"t"`
 		Text   string `json:"text"`
+		From   string `json:"from"`
+		Name   string `json:"name"`
 		ID     uint8  `json:"id"`
 		Enable bool   `json:"enable"`
 	}
@@ -686,7 +691,7 @@ func (s *session) onMessage(mt int, data []byte) {
 		s.kfReq.Store(true)
 	case "chat":
 		if s.chat != nil {
-			s.chat.append("Tech: " + e.Text)
+			s.chat.append(chatLine(e.From, e.Name, e.Text))
 		}
 	case "uac":
 		go s.setUAC(e.Enable)

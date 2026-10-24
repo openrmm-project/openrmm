@@ -35,6 +35,10 @@ type Provider interface {
 
 type StartOptions struct {
 	AllowFiles bool
+	// NoChat asks the sidecar not to open its chat window on the endpoint: a
+	// guest's session, whose chat the server carries to the technician's.
+	// Sidecars before 0.18 open it anyway.
+	NoChat bool
 }
 
 // Manager holds the configured providers and shared dependencies.
@@ -184,7 +188,7 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 // agent and viewer. The relay pairs peers by non-secret session id. kind tells
 // the agent which module to attach (desktop sidecar vs. elevated terminal); it is
 // also recorded as the session provider so the audit/list reflect what was opened.
-func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string, allowFiles *bool) (*models.RemoteSession, error) {
+func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdBy, provider, kind string, allowFiles *bool, noChat bool) (*models.RemoteSession, error) {
 	if !m.hub.IsOnline(agent.ID) {
 		return nil, fmt.Errorf("agent %s is offline", agent.ID)
 	}
@@ -205,7 +209,7 @@ func (m *Manager) brokerRelay(ctx context.Context, agent *models.Agent, createdB
 	}
 
 	// Tell the agent to connect the requested remote module to the relay.
-	start := protocol.RemoteStartMsg{SessionID: rs.ID, AgentTicket: agentTicket, Token: agentTicket, Kind: kind, AllowFiles: allowFiles}
+	start := protocol.RemoteStartMsg{SessionID: rs.ID, AgentTicket: agentTicket, Token: agentTicket, Kind: kind, AllowFiles: allowFiles, NoChat: noChat}
 	data, _ := json.Marshal(start)
 	frame, _ := json.Marshal(protocol.Envelope{Type: protocol.MsgRemoteStart, Data: data})
 	if !m.hub.Send(agent.ID, frame) {
@@ -222,7 +226,7 @@ func (p *nativeProvider) Name() string { return "native" }
 // StartSession brokers a relayed remote-desktop session (media sidecar).
 func (p *nativeProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error) {
 	allowFiles := opts.AllowFiles
-	return p.m.brokerRelay(ctx, agent, createdBy, "native", protocol.RemoteKindDesktop, &allowFiles)
+	return p.m.brokerRelay(ctx, agent, createdBy, "native", protocol.RemoteKindDesktop, &allowFiles, opts.NoChat)
 }
 
 // ---------- files (file transfer only — no screen capture) ----------
@@ -238,7 +242,7 @@ func (p *filesProvider) Name() string { return "files" }
 // browser in-band via the Files button, which stays the native provider.)
 func (p *filesProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
 	allowFiles := true
-	return p.m.brokerRelay(ctx, agent, createdBy, "files", protocol.RemoteKindFiles, &allowFiles)
+	return p.m.brokerRelay(ctx, agent, createdBy, "files", protocol.RemoteKindFiles, &allowFiles, false)
 }
 
 // ---------- terminal (elevated shell over the relay) ----------
@@ -252,7 +256,7 @@ func (p *terminalProvider) Name() string { return "terminal" }
 // agent's privileges — and the agent runs as a system service (root on
 // Linux/macOS, SYSTEM on Windows), so the terminal session is elevated.
 func (p *terminalProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
-	return p.m.brokerRelay(ctx, agent, createdBy, "terminal", protocol.RemoteKindTerminal, nil)
+	return p.m.brokerRelay(ctx, agent, createdBy, "terminal", protocol.RemoteKindTerminal, nil, false)
 }
 
 // ---------- meshcentral ----------

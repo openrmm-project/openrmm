@@ -10,7 +10,7 @@ const ROLES = { admin: 3, tech: 2, readonly: 1 };
 const DEFAULT_ROLE_PERMS = {
   readonly: ['devices.view', 'devices.remote', 'clients.view'],
   tech: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'tasks.view', 'policies.view', 'scripts.view', 'patches.view', 'patches.manage', 'devices.view', 'devices.manage', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'reports.view'],
-  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage'],
+  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'devices.remote.share', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage'],
 };
 const PERM_ALIASES = { admin: 'settings.manage', tech: 'jobs.manage', readonly: 'devices.view' };
 const AUTH_KEY = 'rmm-ai-auth';
@@ -95,6 +95,27 @@ async function request(method, path, body, attempt = 0) {
   }
   // Any mutation invalidates all live queries so the UI refreshes immediately.
   if (method !== 'GET') bus.emit('*');
+  return out;
+}
+// guestCall is the transport for someone a technician invited: no account, no
+// session, and none of request()'s session handling. A 401 here means the
+// guest's credential is no longer good, not that an operator was signed out.
+async function guestCall(method, path, credential, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (credential) headers.Authorization = 'Guest ' + credential;
+  let res;
+  try {
+    res = await fetch(API_BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  } catch (e) {
+    throw apiError(0, t('api.unreachable', { base: API_BASE }));
+  }
+  const text = await res.text();
+  let out; try { out = text ? JSON.parse(text) : undefined; } catch (e) { out = undefined; }
+  if (!res.ok) {
+    const err = apiError(res.status, (out && out.error) || res.statusText);
+    if (out && out.code) err.code = out.code;
+    throw err;
+  }
   return out;
 }
 const GET = (p) => request('GET', p);
@@ -246,6 +267,20 @@ const api = {
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider, opts) { return POST('/api/devices/' + id + '/remote', { provider, ...(opts || {}) }); },
+  // Guest invitations: issued for a device, decided from the technician's own
+  // remote session (docs/08-remote-access.md).
+  createRemoteShare(id, body) { return POST('/api/devices/' + id + '/remote-shares', body); },
+  listRemoteShares(id) { return GET('/api/devices/' + id + '/remote-shares'); },
+  pendingRemoteShares(agentId) { return GET('/api/remote-shares/pending' + qs({ agent_id: agentId })); },
+  acceptRemoteShare(id) { return POST('/api/remote-shares/' + id + '/accept'); },
+  rejectRemoteShare(id) { return POST('/api/remote-shares/' + id + '/reject'); },
+  closeRemoteShare(id) { return DELETE('/api/remote-shares/' + id); },
+  guest: {
+    lookup(token) { return guestCall('POST', '/api/guest/lookup', '', { token }); },
+    join(token, code, name) { return guestCall('POST', '/api/guest/join', '', { token, code, name }); },
+    status(credential) { return guestCall('GET', '/api/guest/request', credential); },
+    session(credential) { return guestCall('POST', '/api/guest/session', credential, {}); },
+  },
   getRemoteCapabilities(id) { return GET('/api/devices/' + id + '/remote-capabilities'); },
   setDeviceSite(id, site_id) { return PATCH('/api/devices/' + id + '/site', { site_id }); },
   deleteDevice(id) { return DELETE('/api/devices/' + id); },

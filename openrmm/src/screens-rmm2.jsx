@@ -621,7 +621,11 @@ function EnrollCommands({ token, site }) {
   const manifestList = (configQ.data?.server?.manifest_public_keys || []).join(',');
   const manifestArg = keyList && manifestList ? ` \\\n  --manifest-public-key ${shellQuote(manifestList)}` : '';
   const siteArg = site ? ` \\\n  --site ${shellQuote(site.name)}` : '';
-  const bundleArg = os === 'macos' && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
+  // A managed service whose Macs all take the signed bundle does not offer the
+  // ad-hoc one (RMM_MACOS_ADHOC_BUNDLE=false); an older server says nothing,
+  // and the choice stays.
+  const adhocOffered = configQ.data?.server?.macos_adhoc_bundle !== false;
+  const bundleArg = os === 'macos' && adhocOffered && macBundle === 'adhoc' ? ' \\\n  --macos-bundle adhoc' : '';
   const nixCmd = `curl -fsSL ${agentsBase}/install.sh | sudo bash -s -- \\\n  --server ${agentsBase} \\\n  --token ${token}${keyArg}${manifestArg}${siteArg}${bundleArg}`;
   const winCmd = `${t('enroll.psComment')}\n& ([scriptblock]::Create((iwr -useb ${agentsBase}/install.ps1))) -Server ${agentsBase} -Token ${token}${winKeyArg}`;
   const isWin = os === 'windows';
@@ -647,7 +651,7 @@ function EnrollCommands({ token, site }) {
       )}
       {isWin && <div className="text-[11.5px] text-faint mt-2">{t('enroll.runElevated')}</div>}
       {os === 'macos' && <div className="text-[11.5px] text-faint mt-2">{t('enroll.macSame')}</div>}
-      {os === 'macos' && (
+      {os === 'macos' && adhocOffered && (
         <div className="mt-3">
           <div className="text-[11.5px] text-muted mb-1.5">{t('enroll.bundle')}</div>
           <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">
@@ -2074,6 +2078,7 @@ function ConfigPanel() {
       meshcentral_token_key: '',
       meshcentral_enabled: c.remote.meshcentral_enabled !== false,
       rustdesk_enabled: !!c.remote.rustdesk_enabled,
+      guest_access: !!c.remote.guest_access,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -2082,7 +2087,7 @@ function ConfigPanel() {
     try {
       await api.updateConfig({
         ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key },
-        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled },
+        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled, guest_access: form.guest_access },
       });
       set('ai_api_key', ''); set('meshcentral_token_key', '');
       toast.success(t('cfg.saved'), t('cfg.savedMsg'));
@@ -2111,6 +2116,7 @@ function ConfigPanel() {
           <Field label={t('cfg.meshUser')}><Input value={form.meshcentral_user} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>{/* i18n-ignore: an account name */}
           <Field label={t('cfg.meshToken')} hint={c.remote.meshcentral_token_set ? t('cfg.meshTokenSet') : t('cfg.meshTokenHint')}><Input type="password" value={form.meshcentral_token_key} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>{/* i18n-ignore: MeshCentral's own field name */}
           <Field label="RustDesk" hint={t('cfg.rustdeskHint')}><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
+          <Field label={t('cfg.guestAccess')} hint={t('cfg.guestAccessHint')}><Select value={form.guest_access ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('guest_access', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
         </div>
       </Card>
       <Card className="p-4 md:col-span-2">

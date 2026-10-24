@@ -46,6 +46,7 @@ func main() {
 	printVer := flag.Bool("print-version", false, "print the sidecar version and exit")
 	filesOnly := flag.Bool("files", false, "file-transfer-only mode: no screen capture/streaming")
 	noFiles := flag.Bool("no-files", false, "disable in-band file transfer in desktop mode")
+	noChat := flag.Bool("no-chat", false, "open no chat window for the person at the machine (a guest's session)")
 	session := flag.String("session", "", "read the session parameters from this file and delete it (macOS LaunchAgent)")
 	flag.Parse()
 	if *printVer {
@@ -68,7 +69,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("rmm-remote: session file: %v", err)
 		}
-		*relay, *ticket, *filesOnly, *noFiles = p.Relay, p.Ticket, p.FilesOnly, p.NoFiles
+		*relay, *ticket, *filesOnly, *noFiles, *noChat = p.Relay, p.Ticket, p.FilesOnly, p.NoFiles, p.NoChat
 	}
 	if *relay == "" {
 		log.Fatal("rmm-remote: -relay (or RMM_RELAY_URL) is required")
@@ -101,16 +102,25 @@ func main() {
 	if *filesOnly {
 		run = runFilesOnly // file transfer without screen capture
 	}
-	allowFiles := !*noFiles
+	opts := sessionOptions{allowFiles: !*noFiles, chat: !*noChat}
 	if *filesOnly {
-		allowFiles = true
+		opts.allowFiles = true
 	}
-	if err := runPlatformUI(!*filesOnly, func() error { return run(conn, allowFiles) }); err != nil {
+	if err := runPlatformUI(!*filesOnly, func() error { return run(conn, opts) }); err != nil {
 		log.Printf("rmm-remote: session ended: %v", err)
 	}
 }
 
-const remoteVersion = "0.17.2"
+const remoteVersion = "0.18.0"
+
+// sessionOptions is what the agent asked of one session.
+type sessionOptions struct {
+	allowFiles bool // in-band file transfer
+	// chat is the chat window for the person at the machine. A guest's session
+	// has none: the server carries the guest's chat to the technician's
+	// session, whose window is the one conversation.
+	chat bool
+}
 
 // sessionParams is what the agent hands to a LaunchAgent-started sidecar.
 type sessionParams struct {
@@ -118,6 +128,7 @@ type sessionParams struct {
 	Ticket    string `json:"ticket"`
 	FilesOnly bool   `json:"files_only"`
 	NoFiles   bool   `json:"no_files"`
+	NoChat    bool   `json:"no_chat"`
 }
 
 // readSessionFile consumes the file: the ticket is single-use, and leaving it on

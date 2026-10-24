@@ -114,6 +114,17 @@ func (p *Presence) ForUser(agentID, user, kind string) []Viewer {
 	return out
 }
 
+// Session returns the viewer attached to one session of an endpoint.
+func (p *Presence) Session(agentID, sessionID string) (Viewer, bool) {
+	if p == nil {
+		return Viewer{}, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v, ok := p.viewers[agentID][sessionID]
+	return v, ok
+}
+
 // Remove forgets a session now, before its socket's own cleanup runs. A
 // replaced session is closed asynchronously; without this the session that
 // replaced it would find it still attached and be refused.

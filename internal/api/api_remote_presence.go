@@ -43,21 +43,38 @@ func (s *Server) listRemotePresence(w http.ResponseWriter, r *http.Request) {
 	type namedViewer struct {
 		remote.Viewer
 		UserName string `json:"user_name"`
+		// A guest someone let in: their name as they gave it, and the
+		// technician supervising them, so nobody mistakes an outsider on the
+		// screen for a colleague.
+		Guest       bool   `json:"guest,omitempty"`
+		SponsorName string `json:"sponsor_name,omitempty"`
 	}
 	named := make([]namedViewer, 0, len(viewers))
 	names := map[string]string{}
-	for _, v := range viewers {
-		label, ok := names[v.User]
+	userName := func(id string) string {
+		label, ok := names[id]
 		if !ok {
-			label = v.User
-			if user, err := s.store.GetUserByID(r.Context(), v.User); err == nil && user != nil && user.Username != "" {
+			label = id
+			if user, err := s.store.GetUserByID(r.Context(), id); err == nil && user != nil && user.Username != "" {
 				label = user.Username
-			} else if strings.HasPrefix(v.User, "ai:") {
+			} else if strings.HasPrefix(id, "ai:") {
 				label = "AI assistant"
 			}
-			names[v.User] = label
+			names[id] = label
 		}
-		named = append(named, namedViewer{Viewer: v, UserName: label})
+		return label
+	}
+	for _, v := range viewers {
+		if shareID, ok := strings.CutPrefix(v.User, "guest:"); ok {
+			nv := namedViewer{Viewer: v, UserName: "guest", Guest: true}
+			if sh, err := s.store.GetRemoteShare(r.Context(), shareID); err == nil {
+				nv.UserName = sh.GuestName
+				nv.SponsorName = userName(sh.CreatedBy)
+			}
+			named = append(named, nv)
+			continue
+		}
+		named = append(named, namedViewer{Viewer: v, UserName: userName(v.User)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"viewers": named})
 }

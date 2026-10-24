@@ -67,7 +67,7 @@ SELECT 'admin', permission FROM (VALUES
     ('policies.view'), ('policies.manage'),
     ('scripts.view'), ('scripts.manage'),
     ('patches.view'), ('patches.manage'), ('patches.policies.manage'),
-    ('devices.view'), ('devices.manage'), ('devices.delete'), ('devices.remote'), ('devices.files'), ('devices.terminal'),
+    ('devices.view'), ('devices.manage'), ('devices.delete'), ('devices.remote'), ('devices.files'), ('devices.terminal'), ('devices.remote.share'),
     ('clients.view'), ('clients.manage'),
     ('reports.view'), ('audit.view'),
     ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage')
@@ -973,3 +973,28 @@ CREATE TABLE IF NOT EXISTS oidc_console_handoffs (
     expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_oidc_console_handoff_expiry ON oidc_console_handoffs(expires_at);
+
+-- One-time guest access to a remote session (migration 020).
+CREATE TABLE IF NOT EXISTS remote_shares (
+    id                UUID PRIMARY KEY,
+    agent_id          UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    created_by        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode              TEXT NOT NULL CHECK (mode IN ('view', 'control')),
+    token_hash        TEXT NOT NULL UNIQUE,
+    code_hash         TEXT NOT NULL,
+    guest_secret_hash TEXT UNIQUE,
+    status            TEXT NOT NULL DEFAULT 'open'
+                      CHECK (status IN ('open', 'pending', 'accepted', 'rejected', 'revoked', 'ended')),
+    failed_attempts   INTEGER NOT NULL DEFAULT 0,
+    guest_name        TEXT NOT NULL DEFAULT '',
+    guest_ip          TEXT NOT NULL DEFAULT '',
+    guest_user_agent  TEXT NOT NULL DEFAULT '',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ NOT NULL,
+    requested_at      TIMESTAMPTZ,
+    decided_at        TIMESTAMPTZ,
+    ended_at          TIMESTAMPTZ,
+    reusable          BOOLEAN NOT NULL DEFAULT false,
+    redeem_count      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_remote_shares_agent_creator ON remote_shares(agent_id, created_by);

@@ -52,6 +52,15 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	if rs.Kind != protocol.RemoteKindFiles && !allowFiles {
 		extra = append(extra, "-no-files")
 	}
+	// A guest's session: the server carries its chat to the technician's
+	// session, so a window of its own would be a second one that reaches nobody.
+	if rs.Kind != protocol.RemoteKindFiles && rs.NoChat {
+		if sidecarSupportsNoChat(bin) {
+			extra = append(extra, "-no-chat")
+		} else {
+			log.Printf("remote: cached sidecar predates -no-chat; it opens its chat window")
+		}
+	}
 	// launchSidecar is per-OS: on Windows it spawns into the interactive user
 	// session (CreateProcessAsUser) so a session-0 service can still capture the
 	// desktop, falling back to a direct launch; elsewhere it's a plain exec.
@@ -136,6 +145,12 @@ func (a *agent) legacyRelayURL(ticket string) string {
 
 func sidecarSupportsTicket(path string) bool {
 	return exec.Command(path, "-print-version").Run() == nil
+}
+
+// sidecarSupportsNoChat asks the sidecar for its version with -no-chat set: one
+// that does not know the flag refuses it and exits non-zero.
+func sidecarSupportsNoChat(path string) bool {
+	return exec.Command(path, "-no-chat", "-print-version").Run() == nil
 }
 
 func sidecarArgs(relay, ticket string, extra []string) []string {

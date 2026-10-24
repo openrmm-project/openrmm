@@ -703,6 +703,18 @@ intended path for official builds is Developer ID.
   The agent also rewrites its own LaunchAgent plist whenever it no longer
   matches, because agents update themselves and installers do not re-run.
 
+  **Each session runs as a job of its own** (since agent 0.7.1):
+  `io.openrmm.remote.session.<random>`, whose plist and parameter file live in
+  `/etc/rmm-agent/remote-sessions` and which launchd starts at once in the
+  console user's session. Every session used to go through the one
+  `io.openrmm.remote` job, restarted for each (`kickstart -k`), which killed the
+  session already running: a guest's session ended the technician's it depends
+  on, which ended the guest's, over and over, and two technicians on one Mac
+  did the same to each other. The privacy grants are unaffected, since macOS
+  keys them to the app's code identity, not to the launchd label. Jobs whose
+  sidecar has exited are booted out, with their files, when the next session
+  starts; `uninstall.sh` stops any still running.
+
   The old identifier's **privacy rows are not cleared automatically**, and
   never were in practice: `tccutil reset` resolves an identifier through
   LaunchServices and refuses one whose app is gone (`No such bundle identifier`,

@@ -104,6 +104,14 @@ if [ "$OS" = "darwin" ]; then
     echo "Removed the rmm-agent LaunchDaemon"
   fi
   CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo 0)"
+  # Each remote session runs as a LaunchAgent job of its own; stop any still
+  # running. Their files go with the state directory below.
+  if [ "$CONSOLE_UID" != "0" ]; then
+    for plist in "${STATE_DIR}"/remote-sessions/"${REMOTE_LABEL}".session.*.plist; do
+      [ -f "$plist" ] || continue
+      launchctl bootout "gui/${CONSOLE_UID}/$(basename "$plist" .plist)" >/dev/null 2>&1 || true
+    done
+  fi
   for label in "$REMOTE_LABEL" "$LEGACY_REMOTE_LABEL"; do
     plist="/Library/LaunchAgents/${label}.plist"
     if [ "$CONSOLE_UID" != "0" ]; then

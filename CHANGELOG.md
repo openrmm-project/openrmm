@@ -6,6 +6,16 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Guest access to a Mac no longer loops.** Every remote session on a Mac
+  went through one LaunchAgent job, restarted for each new session, which
+  killed the session already running. A guest's session therefore ended the
+  technician's session it depends on, which ended the guest's, and the two
+  kept replacing each other; two technicians on one Mac did the same. Each
+  session now runs as a launchd job of its own, and jobs of ended sessions are
+  removed when the next one starts. Privacy grants are unaffected.
+
 ## [0.7.0] - 2026-10-24
 
 ### Security

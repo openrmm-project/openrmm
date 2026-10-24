@@ -58,8 +58,14 @@ previous=""
 while [ \$# -gt 0 ]; do
   case "\$1" in
     -print-version) echo "\$version"; exit 0;;
+    # The real agent checks its Ed25519 signature in-process; the stand-in
+    # only records that install.sh asked, with a signature file to check.
+    -verify-own-signature)
+      grep -q '^rmm-ed25519-sha256-v1 ' "\$2" || exit 1
+      : > "${WORK}/verified-own"; exit 0;;
     -check-upgrade-from) previous="\$2"; shift 2;;
-    -action) action="\$2"; shift 2;;
+    # Recorded, so the uninstall test can tell the agent was never run.
+    -action) action="\$2"; printf '%s\n' "\$2" >> "${WORK}/agent-actions"; shift 2;;
     -health-file) health="\$2"; shift 2;;
     *) shift;;
   esac
@@ -94,7 +100,9 @@ echo "== an endpoint installed at the previous location =="
 if [ -n "$LEGACY_DEST" ]; then
   mkdir -p "$(dirname "$LEGACY_DEST")" "$STATE_DIR"
   write_stub_agent "$LEGACY_DEST" "9.9.8"
-  printf 'stub service for 9.9.8\n' > "$SERVICE_PATH"
+  # The LaunchDaemon names the binary it runs: that is what makes the file at
+  # the previous location an install to migrate rather than a stray file.
+  printf '<string>%s</string>\n' "$LEGACY_DEST" > "$SERVICE_PATH"
 else
   mkdir -p "$(dirname "$NEW_DEST")" "$STATE_DIR"
   write_stub_agent "$NEW_DEST" "9.9.8"
@@ -216,6 +224,172 @@ if [ "$OS" = "darwin" ]; then
   mv "${owned}.real" "$owned"
 fi
 
+echo "== signed installs: Ed25519 with OpenSSL 3, the P-256 manifest signature without =="
+# Production pins keys, and the download is checked one of two ways: the
+# Ed25519 signatures where the system's OpenSSL is 3, or the manifest's ECDSA
+# P-256 signature where it is not — every Mac (LibreSSL), and Linux with
+# OpenSSL 1.1, which is played here by swapping the system's openssl for a
+# wrapper that answers as 1.1 would. On macOS the installer runs through
+# /bin/bash, the bash 3.2 that `curl | sudo bash` runs there.
+SIGNER=""
+for c in openssl /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl; do
+  # By its physical path: the cases below move both the system's openssl and
+  # Homebrew's keg link out of the way.
+  if "$c" version 2>/dev/null | grep -qE '^OpenSSL ([3-9]|[1-9][0-9])\.'; then
+    c="$(command -v "$c")"
+    SIGNER="$(cd "$(dirname "$c")" && pwd -P)/$(basename "$c")"
+    break
+  fi
+done
+[ -n "$SIGNER" ] || { echo "error: signing the test build needs OpenSSL 3"; exit 1; }
+KEYS="${WORK}/keys"
+mkdir -p "$KEYS"
+"$SIGNER" genpkey -algorithm ed25519 -out "${KEYS}/ed25519.pem" 2>/dev/null
+ED_PUB="$("$SIGNER" pkey -in "${KEYS}/ed25519.pem" -pubout -outform DER | tail -c 32 | "$SIGNER" base64 -A)"
+p256_key() {
+  "$SIGNER" ecparam -name prime256v1 -genkey -noout -out "${KEYS}/$1.pem"
+  "$SIGNER" ec -in "${KEYS}/$1.pem" -pubout -outform DER 2>/dev/null | "$SIGNER" base64 -A
+}
+P256_PUB="$(p256_key p256)"
+OTHER_P256_PUB="$(p256_key other)"
+sign_ed25519() {
+  "$SIGNER" dgst -sha256 -binary "$1" > "${KEYS}/digest"
+  "$SIGNER" pkeyutl -sign -inkey "${KEYS}/ed25519.pem" -rawin -in "${KEYS}/digest" -out "${KEYS}/sig"
+  printf 'rmm-ed25519-sha256-v1 %s\n' "$("$SIGNER" base64 -A < "${KEYS}/sig")" > "$1.sig"
+}
+# publish_signed <version>: a healthy build, signed as a release signs it.
+publish_signed() {
+  write_stub_agent "${SERVED}/${BIN}" "$1"
+  (cd "$SERVED" && (sha256sum "$BIN" 2>/dev/null || shasum -a 256 "$BIN") > SHA256SUMS)
+  sign_ed25519 "${SERVED}/${BIN}"
+  sign_ed25519 "${SERVED}/SHA256SUMS"
+  "$SIGNER" dgst -sha256 -sign "${KEYS}/p256.pem" -out "${KEYS}/p256.sig" "${SERVED}/SHA256SUMS"
+  printf 'rmm-ecdsa-p256-sha256-v1 %s\n' "$("$SIGNER" base64 -A < "${KEYS}/p256.sig")" > "${SERVED}/SHA256SUMS.p256.sig"
+}
+publish_signed "9.9.11"
+
+# Linux: the system's openssl answers as OpenSSL 1.1 would, for one install.
+SWAPPED_OPENSSL=""
+play_openssl_1_1() {
+  SWAPPED_OPENSSL="$(PATH=/usr/sbin:/usr/bin:/sbin:/bin command -v openssl)"
+  mv "$SWAPPED_OPENSSL" "${SWAPPED_OPENSSL}.real-by-test"
+  cat > "$SWAPPED_OPENSSL" <<WRAP
+#!/usr/bin/env bash
+case "\$1" in
+  version) echo "OpenSSL 1.1.1w  11 Sep 2023"; exit 0;;
+  pkeyutl) echo "pkeyutl: Unrecognized flag rawin" >&2; exit 1;;
+esac
+exec "${SWAPPED_OPENSSL}.real-by-test" "\$@"
+WRAP
+  chmod 0755 "$SWAPPED_OPENSSL"
+}
+restore_openssl() {
+  [ -n "$SWAPPED_OPENSSL" ] || return 0
+  mv -f "${SWAPPED_OPENSSL}.real-by-test" "$SWAPPED_OPENSSL"
+  SWAPPED_OPENSSL=""
+}
+# Stand-ins an ordinary account could plant for root to run. Running one leaves
+# a mark, and fails.
+PLANTED="${WORK}/planted"
+mkdir -p "$PLANTED"
+for tool in openssl curl id uname tr dirname stat rm launchctl systemctl tccutil; do
+  printf '#!/bin/sh\n: > "%s"\nexit 1\n' "${WORK}/planted-ran" > "${PLANTED}/${tool}"
+  chmod 0755 "${PLANTED}/${tool}"
+done
+KEG=/opt/homebrew/opt/openssl@3
+KEG_PLANTED=0
+plant_keg() {
+  [ "$OS" = darwin ] || return 0
+  if [ -e "$KEG" ] || [ -L "$KEG" ]; then mv "$KEG" "${KEG}.real-by-test"; fi
+  mkdir -p "${KEG}/bin"
+  cp "${PLANTED}/openssl" "${KEG}/bin/openssl"
+  KEG_PLANTED=1
+}
+unplant_keg() {
+  [ "$KEG_PLANTED" = 1 ] || return 0
+  rm -rf "$KEG"
+  if [ -e "${KEG}.real-by-test" ] || [ -L "${KEG}.real-by-test" ]; then mv "${KEG}.real-by-test" "$KEG"; fi
+  KEG_PLANTED=0
+}
+trap 'restore_openssl; unplant_keg; cleanup' EXIT
+
+# signed_install <log> <openssl3|1.1> [install.sh arguments...]. The mode only
+# matters on Linux; a Mac's system openssl is always LibreSSL. INSTALL_PATH is
+# the PATH the installer is started with.
+signed_install() {
+  log="$1"; mode="$2"; shift 2
+  rm -f "${WORK}/verified-own"
+  shell=bash
+  if [ "$OS" = darwin ]; then shell=/bin/bash; elif [ "$mode" = 1.1 ]; then play_openssl_1_1; fi
+  env PATH="${INSTALL_PATH:-$PATH}" "$shell" "${REPO_ROOT}/deploy/public/install.sh" \
+    --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode "$@" >"$log" 2>&1
+  rc=$?
+  restore_openssl
+  return "$rc"
+}
+if [ "$OS" = darwin ]; then
+  check "the system openssl is LibreSSL" sh -c '/usr/bin/openssl version | grep -q LibreSSL'
+  NO_OPENSSL3=darwin
+else
+  NO_OPENSSL3=1.1
+  ed25519_install() {
+    signed_install "${WORK}/ed25519.log" openssl3 --update-public-key "$ED_PUB" --manifest-public-key "$P256_PUB" &&
+      ! grep -q "P-256" "${WORK}/ed25519.log" && [ ! -e "${WORK}/verified-own" ]
+  }
+  check "with OpenSSL 3 the Ed25519 signatures are checked" ed25519_install
+fi
+p256_install() {
+  signed_install "${WORK}/p256.log" "$NO_OPENSSL3" --update-public-key "$ED_PUB" --manifest-public-key "$P256_PUB" &&
+    grep -q "Verified with the manifest's P-256 signature" "${WORK}/p256.log"
+}
+check "without it the manifest's P-256 signature is checked" p256_install
+check "and the agent was asked to check its own Ed25519 signature" test -e "${WORK}/verified-own"
+check "the agent's signature was kept beside it" grep -q '^rmm-ed25519-sha256-v1 ' "${NEW_DEST}.sig"
+wrong_manifest_key_refused() {
+  ! signed_install "${WORK}/wrongkey.log" "$NO_OPENSSL3" --update-public-key "$ED_PUB" --manifest-public-key "$OTHER_P256_PUB" &&
+    grep -q "P-256 manifest signature verification failed" "${WORK}/wrongkey.log"
+}
+check "a manifest signed by another key is refused" wrong_manifest_key_refused
+tampered_manifest_refused() {
+  cp "${SERVED}/SHA256SUMS" "${KEYS}/SHA256SUMS.good"
+  printf '%064d  rmm-agent-other\n' 0 >> "${SERVED}/SHA256SUMS"
+  ! signed_install "${WORK}/tampered.log" "$NO_OPENSSL3" --update-public-key "$ED_PUB" --manifest-public-key "$P256_PUB" &&
+    grep -q "P-256 manifest signature verification failed" "${WORK}/tampered.log"
+  ok=$?
+  cp "${KEYS}/SHA256SUMS.good" "${SERVED}/SHA256SUMS"
+  return "$ok"
+}
+check "a changed manifest is refused" tampered_manifest_refused
+missing_p256_refused() {
+  mv "${SERVED}/SHA256SUMS.p256.sig" "${KEYS}/p256.sig.served"
+  ! signed_install "${WORK}/missing.log" "$NO_OPENSSL3" --update-public-key "$ED_PUB" --manifest-public-key "$P256_PUB" &&
+    grep -q "publishes no SHA256SUMS.p256.sig" "${WORK}/missing.log"
+  ok=$?
+  mv "${KEYS}/p256.sig.served" "${SERVED}/SHA256SUMS.p256.sig"
+  return "$ok"
+}
+check "a server without the P-256 signature is refused" missing_p256_refused
+no_manifest_key_refused() {
+  ! signed_install "${WORK}/nokey.log" "$NO_OPENSSL3" --update-public-key "$ED_PUB" &&
+    grep -q -- "--manifest-public-key" "${WORK}/nokey.log"
+}
+check "without OpenSSL 3 or a manifest key the install is refused" no_manifest_key_refused
+# The installer runs as root and takes its tools from the system's directories
+# only: never from the caller's PATH, nor from Homebrew's, which an ordinary
+# account owns.
+planted_tools_ignored() {
+  rm -f "${WORK}/planted-ran"
+  plant_keg
+  INSTALL_PATH="${PLANTED}:$PATH" signed_install "${WORK}/planted.log" openssl3 \
+    --update-public-key "$ED_PUB" --manifest-public-key "$P256_PUB"
+  ok=$?
+  unplant_keg
+  [ "$ok" = 0 ] && [ ! -e "${WORK}/planted-ran" ]
+}
+check "an openssl or curl planted in PATH or Homebrew's keg is never run" planted_tools_ignored
+signed_version_installed() { "$NEW_DEST" -print-version | grep -qx '9.9.11'; }
+check "the agent from the signed install is still in place" signed_version_installed
+
 echo "== uninstalling =="
 # What an agent leaves beside itself once it has run for a while: its log, a
 # rollback copy from a self-update, and what fetching the remote sidecar
@@ -228,7 +402,12 @@ for name in $LEFTOVERS; do printf 'x' > "${AGENT_DIR}/${name}"; done
 mkdir -p "${AGENT_DIR}/rmm-remote.new.stage"
 # Not ours: only removed when an agent sat beside it, so this must survive.
 if [ "$OS" = "darwin" ]; then printf 'x' > /usr/local/bin/agent.log; fi
-bash "${REPO_ROOT}/deploy/public/uninstall.sh" >/dev/null
+# With the planted tools first in PATH, as `sudo` hands it over on a Mac.
+rm -f "${WORK}/agent-actions" "${WORK}/planted-ran"
+env PATH="${PLANTED}:$PATH" bash "${REPO_ROOT}/deploy/public/uninstall.sh" >"${WORK}/uninstall.log" 2>&1 ||
+  { echo "  FAIL: uninstall failed"; cat "${WORK}/uninstall.log"; fail=1; }
+check "uninstall never ran the agent binary" test ! -e "${WORK}/agent-actions"
+check "nor a tool planted in the caller's PATH" test ! -e "${WORK}/planted-ran"
 leftovers_gone() {
   for name in $LEFTOVERS rmm-remote.new.stage; do
     [ ! -e "${AGENT_DIR}/${name}" ] || { echo "    still there: ${AGENT_DIR}/${name}"; return 1; }
@@ -243,6 +422,31 @@ fi
 check "uninstall removed the agent" test ! -e "$NEW_DEST"
 check "uninstall removed the service definition" test ! -e "$SERVICE_PATH"
 check "uninstall removed the enrolment state" test ! -e "$STATE_DIR"
+
+echo "== a file at the previous location with no service is never run =="
+# On a Mac /usr/local/bin usually belongs to the account that owns Homebrew. An
+# rmm-agent planted there, with no LaunchDaemon running it, must not be run as
+# root by an install or an uninstall.
+if [ "$OS" = "darwin" ]; then
+  mkdir -p "$(dirname "$LEGACY_DEST")"
+  printf '#!/bin/sh\n: > "%s"\nexit 0\n' "${WORK}/legacy-ran" > "$LEGACY_DEST"
+  chmod 0755 "$LEGACY_DEST"
+  rm -f "${WORK}/legacy-ran"
+  if bash "${REPO_ROOT}/deploy/public/install.sh" \
+      --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/planted-legacy.log" 2>&1; then
+    check "a fresh install did not run it" test ! -e "${WORK}/legacy-ran"
+    check "and said it was ignored" grep -q "Ignoring $LEGACY_DEST" "${WORK}/planted-legacy.log"
+    check "and installed at the new location" test -x "$NEW_DEST"
+  else
+    echo "  FAIL: a fresh install with a stray file at the previous location failed"
+    cat "${WORK}/planted-legacy.log"
+    fail=1
+  fi
+  bash "${REPO_ROOT}/deploy/public/uninstall.sh" >/dev/null 2>&1 || { echo "  FAIL: uninstall failed"; fail=1; }
+  check "nor did the uninstall" test ! -e "${WORK}/legacy-ran"
+  check "which removed it with the rest" test ! -e "$LEGACY_DEST"
+  check "and left no agent behind" test ! -e "$NEW_DEST"
+fi
 
 [ "$fail" = "0" ] || { echo "installer migration test FAILED"; exit 1; }
 echo "installer migration test passed"

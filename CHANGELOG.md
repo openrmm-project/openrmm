@@ -8,6 +8,28 @@ tag.
 
 ### Security
 
+- **`rmm-sign` no longer prints the private keys.** The `-key` and `-key-p256`
+  flags took their defaults from `RMM_SIGNING_KEY` and `RMM_SIGNING_KEY_P256`,
+  and the flag package prints defaults in `-h` and in every usage error. With
+  a key loaded for signing, a mistyped flag put it on the terminal or in a
+  build log. The keys are now read from the environment after parsing, only by
+  the operation that signs; a test runs help, bad flags and bad keys with
+  stand-in keys in the environment and fails if one shows up.
+- **The installer and the uninstaller no longer run a planted `rmm-agent` or
+  planted tools as root.** On a Mac, `/usr/local/bin` usually belongs to the
+  account that owns Homebrew, and `sudo` keeps the caller's PATH, which puts
+  it first.
+  - `install.sh` ran `/usr/local/bin/rmm-agent -print-version` whenever no agent
+    was at the new location, even on a fresh install. It now treats that file
+    as an install to migrate only when the LaunchDaemon in
+    `/Library/LaunchDaemons` runs it, and otherwise leaves it alone.
+  - `uninstall.sh` ran `-action stop` and `-action uninstall` on both agent
+    locations. It now stops the service with `launchctl` or `systemctl` and
+    never runs the agent.
+  - `uninstall.sh` takes its tools only from the system's directories, as
+    `install.sh` now does.
+  - Found by an independent review; no exploitation is known.
+
 - **Built with Go 1.26.10.** Server, agents, the remote sidecar on Linux and
   Windows, and the images move from Go 1.26.9. It distrusts compromised
   intermediate certificates in `crypto/x509` (GO-2026-6809), which govulncheck
@@ -18,6 +40,31 @@ tag.
 
 ### Fixed
 
+- **Agents install on a stock macOS and on Linux with OpenSSL 1.1.**
+  `install.sh` checked the Ed25519 signatures with `openssl pkeyutl -rawin`,
+  which only OpenSSL 3 has, so a production install was refused on every Mac
+  without Homebrew's OpenSSL (macOS ships LibreSSL) and on Ubuntu 20.04 and
+  RHEL 8. CI never saw it, because its macOS job installs OpenSSL 3 first.
+  - Each release now signs `SHA256SUMS` a second time with ECDSA P-256
+    (`SHA256SUMS.p256.sig`), which any `openssl dgst -verify` can check.
+  - Without OpenSSL 3, `install.sh` checks that signature with the key in the
+    new `--manifest-public-key` flag, then the agent's SHA-256 in the manifest.
+    The agent, now proven to be the published one, then checks its own Ed25519
+    signature under the pinned update key (`-verify-own-signature`).
+  - `install.sh` now takes its tools only from the system's directories
+    (`/usr/sbin:/usr/bin:/sbin:/bin`). `sudo` on macOS keeps the caller's
+    PATH, where Homebrew's directories, owned by an ordinary account, usually
+    come first, so root could run an `openssl` or `curl` planted there. As a
+    result every Mac installs through the P-256 signature, Homebrew's OpenSSL 3
+    included: **a server that enrols Macs needs `RMM_MANIFEST_PUBLIC_KEY`**,
+    which deploy/QUICKSTART.md gives for the published release.
+  - The server publishes `RMM_MANIFEST_PUBLIC_KEY` and the console adds the
+    flag to the Linux and macOS install commands. Updates are unchanged: the
+    agent still pins only the Ed25519 keys and checks every update in Go.
+  - CI now runs signed installs on macOS with the system's LibreSSL and
+    `/bin/bash`, and on Linux with a stand-in for OpenSSL 1.1.
+  - Releases need a new key pair, `RMM_SIGNING_KEY_P256` and
+    `RMM_MANIFEST_PUBLIC_KEY` (docs/18-update-signing-runbook.md).
 - **macOS: the remote module now appears in Privacy & Security ▸
   Accessibility.** It asked through `CGRequestPostEventAccess`. On macOS 15.8
   that puts a consent sheet on screen, but the app never shows up in the list

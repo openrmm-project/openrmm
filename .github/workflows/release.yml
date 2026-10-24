@@ -145,6 +145,24 @@ jobs:
           printf '%s' "$signature" | openssl base64 -d -A > "$tmp/signature.bin"
           openssl dgst -sha256 -binary "$tmp/artifact" > "$tmp/artifact.digest"
           openssl pkeyutl -verify -pubin -inkey "$tmp/public.der" -keyform DER -rawin -in "$tmp/artifact.digest" -sigfile "$tmp/signature.bin"
+          # The manifest's P-256 signature, checked as install.sh checks it by
+          # the system's own openssl, which on macOS is LibreSSL.
+          /usr/bin/openssl version | grep -q LibreSSL
+          keys="$("$tmp/rmm-sign" -gen-key-p256)"
+          manifest_key="$(printf '%s\n' "$keys" | sed -n 's/^RMM_MANIFEST_PUBLIC_KEY=//p')"
+          export RMM_SIGNING_KEY_P256="$(printf '%s\n' "$keys" | sed -n 's/^RMM_SIGNING_KEY_P256=//p')"
+          printf 'macOS manifest signature test' > "$tmp/SHA256SUMS"
+          "$tmp/rmm-sign" -p256 "$tmp/SHA256SUMS" >/dev/null
+          read -r format signature < "$tmp/SHA256SUMS.p256.sig"
+          test "$format" = rmm-ecdsa-p256-sha256-v1
+          { echo "-----BEGIN PUBLIC KEY-----"; printf '%s\n' "$manifest_key" | fold -w 64; echo "-----END PUBLIC KEY-----"; } > "$tmp/manifest.pem"
+          printf '%s' "$signature" | /usr/bin/openssl base64 -d -A > "$tmp/manifest.sig"
+          /usr/bin/openssl dgst -sha256 -verify "$tmp/manifest.pem" -signature "$tmp/manifest.sig" "$tmp/SHA256SUMS"
+          printf 'changed' >> "$tmp/SHA256SUMS"
+          # Not "! cmd": errexit ignores a negated command, so it could never fail.
+          if /usr/bin/openssl dgst -sha256 -verify "$tmp/manifest.pem" -signature "$tmp/manifest.sig" "$tmp/SHA256SUMS"; then
+            echo "a changed manifest verified"; exit 1
+          fi
 
   portable:
     name: Portable release binaries
@@ -348,6 +366,7 @@ jobs:
       attestations: write
     env:
       RMM_UPDATE_PUBLIC_KEY: ${{ secrets.RMM_UPDATE_PUBLIC_KEY }}
+      RMM_MANIFEST_PUBLIC_KEY: ${{ secrets.RMM_MANIFEST_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -380,13 +399,21 @@ jobs:
         run: |
           syft dir:release -o spdx-json=release/SBOM.spdx.json
           (cd release && sha256sum rmm-agent-* rmm-remote-* install.sh install.ps1 uninstall.sh SBOM.spdx.json > SHA256SUMS)
+      # Two signatures on the manifest: Ed25519 (with every artifact), and ECDSA
+      # P-256, which a stock macOS (LibreSSL) and OpenSSL 1.1 can check where
+      # they cannot check Ed25519. install.sh takes whichever the host can.
       - name: Sign release artifacts
         env:
           RMM_SIGNING_KEY: ${{ secrets.RMM_SIGNING_KEY }}
+          RMM_SIGNING_KEY_P256: ${{ secrets.RMM_SIGNING_KEY_P256 }}
         run: |
           test -n "$RMM_SIGNING_KEY"
+          test -n "$RMM_SIGNING_KEY_P256"
+          test -n "$RMM_MANIFEST_PUBLIC_KEY"
           test "$(./rmm-sign -print-public-key)" = "$RMM_UPDATE_PUBLIC_KEY"
+          test "$(./rmm-sign -print-public-key-p256)" = "$RMM_MANIFEST_PUBLIC_KEY"
           ./rmm-sign release/rmm-agent-* release/rmm-remote-* release/SHA256SUMS
+          ./rmm-sign -p256 release/SHA256SUMS
       # Build-provenance attestation is unavailable for user-owned private repos
       # on the Free plan ("Feature not available for user-owned private
       # repositories"). Keep it non-blocking so the signed release still
@@ -435,6 +462,7 @@ jobs:
         run: |
           cd deploy/public
           test -f SHA256SUMS.sig
+          test -f SHA256SUMS.p256.sig
           for f in rmm-agent-* rmm-remote-*; do
             case "$f" in *.sig) continue ;; esac
             test -f "$f.sig" || { echo "missing $f.sig"; exit 1; }

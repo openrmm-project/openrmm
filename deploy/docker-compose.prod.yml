@@ -128,6 +128,8 @@ services:
       # The key /dl is signed with. The console puts it in the install command;
       # without it every HTTPS enrollment copied from the console is refused.
       RMM_UPDATE_PUBLIC_KEY: ${RMM_UPDATE_PUBLIC_KEY:?set the update signing public key (bin/rmm-sign -print-public-key)}
+      # The manifest's P-256 key, for installs on hosts without OpenSSL 3.
+      RMM_MANIFEST_PUBLIC_KEY: ${RMM_MANIFEST_PUBLIC_KEY:-}
       RMM_DATABASE_URL: "postgres://${POSTGRES_USER:-rmm}@postgres:5432/${POSTGRES_DB:-rmm}?sslmode=disable"
       RMM_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
       RMM_ADMIN_TOKEN_FILE: /run/secrets/admin_token

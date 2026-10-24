@@ -91,6 +91,7 @@ agent-dist:
 sign-dist: require-release-config
 	@test -f deploy/public/SHA256SUMS || (echo "deploy/public/SHA256SUMS is required; run make checksums" && exit 1)
 	@set -e; files=""; for file in deploy/public/rmm-agent-* deploy/public/rmm-remote-*; do case "$$file" in *.sig) continue;; esac; test ! -f "$$file" || files="$$files $$file"; done; test -n "$$files"; ./bin/rmm-sign $$files deploy/public/SHA256SUMS
+	@./bin/rmm-sign -p256 deploy/public/SHA256SUMS
 
 require-release-config: signer
 	@case "$(origin VERSION)" in "command line"|environment) ;; *) echo "VERSION=vX.Y.Z must be set explicitly for a signed release"; exit 1;; esac
@@ -98,6 +99,9 @@ require-release-config: signer
 	@test -n "$$RMM_SIGNING_KEY" || (echo "RMM_SIGNING_KEY is required"; exit 1)
 	@test -n "$$RMM_UPDATE_PUBLIC_KEY" || (echo "RMM_UPDATE_PUBLIC_KEY is required"; exit 1)
 	@test "$$($(CURDIR)/bin/rmm-sign -print-public-key)" = "$$RMM_UPDATE_PUBLIC_KEY" || (echo "signing key does not match RMM_UPDATE_PUBLIC_KEY"; exit 1)
+	@test -n "$$RMM_SIGNING_KEY_P256" || (echo "RMM_SIGNING_KEY_P256 is required (the manifest's second signature)"; exit 1)
+	@test -n "$$RMM_MANIFEST_PUBLIC_KEY" || (echo "RMM_MANIFEST_PUBLIC_KEY is required"; exit 1)
+	@test "$$($(CURDIR)/bin/rmm-sign -print-public-key-p256)" = "$$RMM_MANIFEST_PUBLIC_KEY" || (echo "P-256 signing key does not match RMM_MANIFEST_PUBLIC_KEY"; exit 1)
 
 agent-dist-signed:
 	@$(MAKE) require-release-config
@@ -114,7 +118,7 @@ remote-dist-signed:
 	@$(MAKE) sign-dist
 
 dist-clean:
-	rm -f deploy/public/rmm-agent-* deploy/public/rmm-remote-* deploy/public/SHA256SUMS deploy/public/SHA256SUMS.new deploy/public/SHA256SUMS.sig deploy/public/SBOM.* deploy/public/*.intoto.jsonl
+	rm -f deploy/public/rmm-agent-* deploy/public/rmm-remote-* deploy/public/SHA256SUMS deploy/public/SHA256SUMS.new deploy/public/SHA256SUMS.sig deploy/public/SHA256SUMS.p256.sig deploy/public/SBOM.* deploy/public/*.intoto.jsonl
 
 checksums:
 	@set -e; tmp=deploy/public/SHA256SUMS.new; : > "$$tmp"; for file in deploy/public/rmm-agent-* deploy/public/rmm-remote-*; do case "$$file" in *.sig) continue;; esac; if test -f "$$file"; then hash=$$(openssl dgst -sha256 "$$file" | cut -d ' ' -f 2); printf '%s  %s\n' "$$hash" "$${file##*/}" >> "$$tmp"; fi; done; test -s "$$tmp"; mv "$$tmp" deploy/public/SHA256SUMS

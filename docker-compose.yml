@@ -30,6 +30,7 @@ services:
       # Public URL is the nginx origin (it proxies /api, /ws, /mcp).
       RMM_PUBLIC_URL: "${RMM_PUBLIC_URL:-http://localhost:3005}"
       RMM_UPDATE_PUBLIC_KEY: "${RMM_UPDATE_PUBLIC_KEY:-}"
+      RMM_MANIFEST_PUBLIC_KEY: "${RMM_MANIFEST_PUBLIC_KEY:-}"
       RMM_MCP_PUBLIC_URL: "${RMM_MCP_PUBLIC_URL:-http://localhost:3005}"
       RMM_MCP_OAUTH_ENABLED: "${RMM_MCP_OAUTH_ENABLED:-false}"
       RMM_MCP_ALLOWED_IPS: "${RMM_MCP_ALLOWED_IPS:-}"

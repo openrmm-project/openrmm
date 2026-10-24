@@ -88,7 +88,8 @@ designed defense-first. This summarizes the posture; details live in
   bearer-token auth, which uses no cookies).
 - Keep `RMM_ALLOW_UNAPPROVED_JOBS` unset (approval stays mandatory).
 - For production agents, publish signed `/dl` artifacts. The current installers
-  require HTTPS, OpenSSL 3, and `--update-public-key`/`-UpdatePublicKey`, and
+  require HTTPS and `--update-public-key`/`-UpdatePublicKey` (on Linux and macOS,
+  OpenSSL 3 or the manifest's P-256 key in `--manifest-public-key`), and
   install the service with strict update verification and TLS required. Lab mode
   is explicit and is not a production fallback.
 

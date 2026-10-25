@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-25
+
 ### Added
 
 - Russian, Korean and Malay console translations, including browser-language

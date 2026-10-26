@@ -162,6 +162,9 @@ func main() {
 	// must not delay building the server or block the agent hub. It logs and
 	// carries on — local sign-in does not depend on it.
 	srv.InitOIDC(ctx)
+	// After discovery: the device limit comes from the identity provider's
+	// entitlement endpoint, when it names one (OpenRMM Cloud).
+	go srv.RunDeviceLimit(schedCtx)
 
 	httpServer := &http.Server{
 		Addr:         cfg.HTTPAddr,

@@ -430,6 +430,29 @@ function Topbar({ route, navigate, onToggleTheme, theme, onOpenNav }) {
 }
 
 /* -------------------------------- Router ---------------------------------- */
+// DeviceLimitBanner tells the people who add devices that the plan is nearly
+// or entirely full, and an administrator where to increase it. A console with
+// no limit (self-hosted) never shows it.
+function DeviceLimitBanner() {
+  const { can } = useAuth();
+  const visible = can('devices.view') && (can('enrollment.manage') || can('settings.manage'));
+  const q = useQuery(['device-limit', visible], () => visible ? api.deviceLimit() : Promise.resolve(null), { invalidateOn: ['devices'], poll: visible ? 60000 : 0 });
+  const d = q.data;
+  if (!d || !(d.limit > 0) || (d.level !== 'warning' && d.level !== 'limit')) return null;
+  const full = d.level === 'limit';
+  const vars = { used: d.used, limit: d.limit, date: d.enforce_from ? new Date(d.enforce_from).toLocaleDateString(getLocale()) : '' };
+  const text = !full ? t('devlimit.warning', vars) : d.enforce_from ? t('devlimit.fullFrom', vars) : t('devlimit.full', vars);
+  return (
+    <div role="status" className={cx('flex flex-wrap items-center gap-2.5 border-b px-4 py-2 text-[12.5px]', full ? 'border-bad/25 bg-badsoft text-bad' : 'border-warn/25 bg-warnsoft text-warn')}>
+      <Icon name="alert" size={14} className="shrink-0" />
+      <span className="flex-1 min-w-[200px]">{text}</span>
+      {d.upgrade_url && can('settings.manage') && (
+        <a href={d.upgrade_url} target="_blank" rel="noopener noreferrer" className="rounded-md border border-current px-2.5 py-1 font-semibold hover:opacity-80">{t('devlimit.increase')}</a>
+      )}
+    </div>
+  );
+}
+
 function Shell() {
   const { can } = useAuth();
   const [route, setRoute] = useState({ name: 'dashboard', params: {} });
@@ -467,6 +490,7 @@ function Shell() {
       <Sidebar route={route} navigate={navigate} mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar route={route} navigate={navigate} theme={theme} onOpenNav={() => setMobileNavOpen(true)} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+        <DeviceLimitBanner />
         <main className={cx('flex-1 min-h-0', fullBleed ? 'overflow-hidden' : 'overflow-y-auto scroll-area')}>
           <ErrorBoundary key={route.name}><Screen route={route} navigate={navigate} /></ErrorBoundary>
         </main>

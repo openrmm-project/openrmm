@@ -41,6 +41,8 @@ type FakeIDP struct {
 	// Deny, when set, makes /authorize answer with this OAuth error instead of
 	// a code, the way a provider reports a user who declined or failed MFA.
 	Deny string
+	// Discovery, when set, adds fields to the discovery document.
+	Discovery map[string]any
 
 	key *rsa.PrivateKey
 }
@@ -65,13 +67,17 @@ func New(t testing.TB) *FakeIDP {
 	t.Cleanup(idp.Server.Close)
 
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{
+		doc := map[string]any{
 			"issuer":                                idp.Issuer,
 			"authorization_endpoint":                idp.Issuer + "/authorize",
 			"token_endpoint":                        idp.Issuer + "/token",
 			"jwks_uri":                              idp.Issuer + "/jwks",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
-		})
+		}
+		for k, v := range idp.Discovery {
+			doc[k] = v
+		}
+		writeJSON(w, doc)
 	})
 
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {

@@ -33,6 +33,7 @@ function DevicesScreen({ navigate }) {
   const { can } = useAuth();
   const sitesQ = useQuery(['sites-all'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
   const clientsQ = useQuery(['clients-all'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
+  const limitQ = useQuery(['device-limit-count'], () => api.deviceLimit(), { invalidateOn: ['devices'] });
   const [q, setQ] = useState('');
   const [osF, setOsF] = useState('all');
   const [statusF, setStatusF] = useState('all');
@@ -64,7 +65,8 @@ function DevicesScreen({ navigate }) {
 
   return (
     <Page wide>
-      <PageHeader title={t('title.devices')} subtitle={tn('devices.agentCount', devices.length) + ' · ' + t('devices.onlineCount', { n: devices.filter((d) => d.status === 'online').length })}
+      <PageHeader title={t('title.devices')} subtitle={tn('devices.agentCount', devices.length) + ' · ' + t('devices.onlineCount', { n: devices.filter((d) => d.status === 'online').length })
+        + (limitQ.data?.limit > 0 ? ' · ' + t('devlimit.ofPlan', { used: limitQ.data.used, limit: limitQ.data.limit }) : '')}
         actions={can('jobs.create') && <Button icon="flash" onClick={() => setBulkOpen(true)}>{t('devices.deployMany')}</Button>} />
 
       <Card className="mb-4">

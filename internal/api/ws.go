@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/p1ngu/rmm/internal/auth"
+	"github.com/p1ngu/rmm/internal/devicelimit"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
 	"github.com/p1ngu/rmm/internal/remote"
@@ -148,14 +149,23 @@ func (s *Server) attachAgentConnection(ctx context.Context, agentID string, conn
 // the one it already stored).
 func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (id, token, cancelCredentialRotationID string, err error) {
 	if reg.EnrollToken != "" {
-		siteID, groupID, err := s.store.ConsumeEnrollToken(ctx, reg.EnrollToken)
-		if err != nil {
+		// The plan's device limit, when one is enforced, is checked in the same
+		// transaction that consumes the token and creates the agent.
+		limit := s.enforcedDeviceLimit(time.Now())
+		token = auth.NewToken()
+		a, err := s.store.EnrollAgent(ctx, reg.EnrollToken, limit, reg.Hostname, reg.OS, reg.Arch, reg.Version, auth.Hash(token))
+		if errors.Is(err, devicelimit.ErrLimitReached) {
+			go s.observeDeviceLimitNow()
+			return "", "", "", errors.New(devicelimit.RefusalMessage(limit))
+		}
+		if errors.Is(err, store.ErrNotFound) {
 			return "", "", "", errors.New("invalid or exhausted enroll token")
 		}
-		token = auth.NewToken()
-		a, err := s.store.CreateAgent(ctx, reg.Hostname, reg.OS, reg.Arch, reg.Version, auth.Hash(token), siteID, groupID)
 		if err != nil {
 			return "", "", "", err
+		}
+		if limit > 0 {
+			go s.observeDeviceLimitNow()
 		}
 		return a.ID, token, "", nil
 	}

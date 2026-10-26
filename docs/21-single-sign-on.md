@@ -237,3 +237,20 @@ an RMM that has adopted their outage.
   described above. Without either the console accepts whatever the provider
   did, a single password included, and the server says so in its log at
   startup.
+
+## OpenRMM Cloud: the plan's device limit
+
+An identity provider that names `openrmm_entitlement_endpoint` in its discovery
+document is an OpenRMM Cloud portal. The console then calls that endpoint every
+15 minutes with its own client id and secret (HTTP Basic) and its device count,
+and gets back how many devices its plan covers, when the limit starts to apply
+and the portal page where the plan is changed.
+
+- The endpoint is used only over HTTPS on the issuer's own host, and redirects
+  are not followed: the request carries the client secret.
+- An enrolment past the limit is refused, and the installer prints the reason.
+  Devices already enrolled are never affected; deleting a device frees its place.
+- The last answer is stored, so a restart or a portal outage keeps the limit the
+  console last knew. An answer the console cannot read changes nothing.
+- Any other identity provider has no such field: a self-hosted console has no
+  device limit.

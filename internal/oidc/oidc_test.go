@@ -317,3 +317,46 @@ func TestExternalProviderInterop(t *testing.T) {
 		}
 	}
 }
+
+// An OpenRMM Cloud portal names its entitlement endpoint in discovery; the
+// console sends its client secret there, so only HTTPS on the issuer's own
+// host is accepted.
+func TestEntitlementEndpoint(t *testing.T) {
+	const issuer = "https://openrmm.io"
+	for raw, want := range map[string]string{
+		"":                                        "",
+		"https://openrmm.io/oidc/entitlement":     "https://openrmm.io/oidc/entitlement",
+		"https://OPENRMM.io/oidc/entitlement":     "https://OPENRMM.io/oidc/entitlement",
+		"http://openrmm.io/oidc/entitlement":      "",
+		"https://evil.example/oidc/entitlement":   "",
+		"https://openrmm.io.evil.example/x":       "",
+		"https://user:pw@openrmm.io/x":            "",
+		"https://openrmm.io/x?redirect=elsewhere": "",
+		"https://openrmm.io/x#frag":               "",
+		"//openrmm.io/x":                          "",
+		"/oidc/entitlement":                       "",
+	} {
+		if got := entitlementEndpoint(issuer, raw); got != want {
+			t.Errorf("entitlementEndpoint(%q) = %q, want %q", raw, got, want)
+		}
+	}
+	if (*Provider)(nil).EntitlementEndpoint() != "" {
+		t.Error("no provider, no endpoint")
+	}
+}
+
+func TestEntitlementEndpointFromDiscovery(t *testing.T) {
+	idp := newFakeIDP(t)
+	// The fake provider serves plain HTTP: its endpoint is read and refused.
+	idp.Discovery = map[string]any{"openrmm_entitlement_endpoint": idp.Issuer + "/oidc/entitlement"}
+	p, err := Discover(context.Background(), Config{Issuer: idp.Issuer, ClientID: oidctest.ClientID, ClientSecret: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.EntitlementEndpoint(); got != "" {
+		t.Errorf("an http endpoint must be ignored, got %q", got)
+	}
+	if id, secret := p.ClientCredentials(); id != oidctest.ClientID || secret != "s" {
+		t.Errorf("client credentials %q %q", id, secret)
+	}
+}

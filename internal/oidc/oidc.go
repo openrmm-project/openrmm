@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -110,6 +111,43 @@ func Discover(ctx context.Context, cfg Config) (*Provider, error) {
 		},
 		verifier: provider.Verifier(&coreoidc.Config{ClientID: cfg.ClientID}),
 	}, nil
+}
+
+// EntitlementEndpoint is where an OpenRMM Cloud portal answers how many devices
+// this console's plan covers: "openrmm_entitlement_endpoint" in its discovery
+// document. Any other provider has none, and the console then has no device
+// limit. The request carries this console's client secret, so the endpoint is
+// accepted only over HTTPS on the issuer's own host; anything else is ignored
+// rather than trusted.
+func (p *Provider) EntitlementEndpoint() string {
+	var meta struct {
+		Endpoint string `json:"openrmm_entitlement_endpoint"`
+	}
+	if p == nil || p.provider == nil || p.provider.Claims(&meta) != nil {
+		return ""
+	}
+	return entitlementEndpoint(p.cfg.Issuer, meta.Endpoint)
+}
+
+// entitlementEndpoint returns raw when it is an HTTPS URL on the issuer's host
+// with no credentials, query or fragment, and "" otherwise.
+func entitlementEndpoint(issuerURL, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	endpoint, err := url.Parse(raw)
+	issuer, ierr := url.Parse(issuerURL)
+	if err != nil || ierr != nil || endpoint.Scheme != "https" || endpoint.User != nil || endpoint.Host == "" ||
+		!strings.EqualFold(endpoint.Host, issuer.Host) || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return ""
+	}
+	return endpoint.String()
+}
+
+// ClientCredentials are the client id and secret this console was registered
+// with, which also authenticate its entitlement requests.
+func (p *Provider) ClientCredentials() (id, secret string) {
+	return p.cfg.ClientID, p.cfg.ClientSecret
 }
 
 // AuthCodeURL is where the browser is sent to sign in.

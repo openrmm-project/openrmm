@@ -84,6 +84,10 @@ type Server struct {
 	oidc   *oidc.Provider
 	oidcMu sync.RWMutex
 
+	// deviceLimit is the plan's device limit as the portal last stated it
+	// (RunDeviceLimit); the zero value is no limit.
+	deviceLimit deviceLimitCache
+
 	// agentLifecycle stores one stable lock per agent. It linearizes that agent's
 	// authentication, lease attachment, frames, revocation, and credential
 	// transitions without allowing slow DB I/O from one endpoint to stall others.
@@ -243,6 +247,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermClientsManage)).Delete("/sites/{id}", s.deleteSite)
 
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices", s.listDevices)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/limit", s.deviceLimitInfo)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/remote-capabilities", s.getRemoteCapabilities)

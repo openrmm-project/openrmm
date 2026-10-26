@@ -6,6 +6,19 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Device limit for OpenRMM Cloud consoles.** A console whose identity
+  provider names an entitlement endpoint (`openrmm_entitlement_endpoint` in its
+  discovery document — the OpenRMM Cloud portal) asks it every 15 minutes how
+  many devices its plan covers, reporting how many it holds. Enrolments past the
+  limit are refused in the same transaction that would create the agent, without
+  spending a use of the enrollment token, and the installer prints why. Devices
+  already enrolled keep working. Administrators see the count against the plan,
+  a banner from 80% with a link to increase the plan, and an alert at 80% and at
+  the limit. The last answer is kept in the database, so a portal outage neither
+  lifts nor tightens the limit. Self-hosted consoles have no limit.
+
 ## [0.7.3] - 2026-10-25
 
 ### Added

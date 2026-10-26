@@ -270,6 +270,8 @@ const api = {
 
   /* ---- devices ---- */
   listDevices(params) { return GET('/api/devices' + qs(params || {})); },
+  // The plan's device limit (OpenRMM Cloud) and how many devices count against it.
+  deviceLimit() { return GET('/api/devices/limit'); },
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider, opts) { return POST('/api/devices/' + id + '/remote', { provider, ...(opts || {}) }); },

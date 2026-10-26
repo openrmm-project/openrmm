@@ -1,0 +1,6 @@
+# docs.openrmm.io: every page is meant to be found. The sitemap is the one
+# Starlight writes at build time from `site` in astro.config.mjs.
+User-agent: *
+Allow: /
+
+Sitemap: https://docs.openrmm.io/sitemap-index.xml

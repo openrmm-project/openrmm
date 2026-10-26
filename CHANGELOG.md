@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-26
+
 ### Added
 
 - **Device limit for OpenRMM Cloud consoles.** A console whose identity

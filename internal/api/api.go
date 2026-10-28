@@ -88,6 +88,10 @@ type Server struct {
 	// (RunDeviceLimit); the zero value is no limit.
 	deviceLimit deviceLimitCache
 
+	// supportHTTP reaches the portal for the self-hosted support link; nil is a
+	// plain client (tests point it at a TLS test server).
+	supportHTTP *http.Client
+
 	// agentLifecycle stores one stable lock per agent. It linearizes that agent's
 	// authentication, lease attachment, frames, revocation, and credential
 	// transitions without allowing slow DB I/O from one endpoint to stall others.
@@ -248,6 +252,9 @@ func (s *Server) Router() http.Handler {
 
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices", s.listDevices)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/limit", s.deviceLimitInfo)
+		r.With(s.requirePermission(models.PermSettingsManage)).Get("/support", s.supportInfo)
+		r.With(s.requirePermission(models.PermSettingsManage)).Put("/support", s.setSupportKey)
+		r.With(s.requirePermission(models.PermSettingsManage)).Delete("/support", s.removeSupportKey)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/remote-capabilities", s.getRemoteCapabilities)

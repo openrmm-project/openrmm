@@ -48,6 +48,12 @@ func (s *Store) GetAppSetting(ctx context.Context, key string) (*AppSetting, err
 	return &st, nil
 }
 
+// DeleteAppSetting removes a setting; a missing one is not an error.
+func (s *Store) DeleteAppSetting(ctx context.Context, key string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM app_settings WHERE key=$1`, key)
+	return err
+}
+
 // UpsertAppSetting writes a setting value.
 func (s *Store) UpsertAppSetting(ctx context.Context, key, value string, secret bool) error {
 	_, err := s.pool.Exec(ctx, `

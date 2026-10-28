@@ -6,6 +6,17 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Support link for self-hosted consoles.** With an OpenRMM support key from
+  the portal (Settings ▸ Support), a self-hosted console reports every 6 hours
+  how many devices it manages, its version and a random console id. Nothing else
+  is sent, and nothing at all without a key. The key is checked with the portal
+  before it is kept, stored encrypted, and never shown back. The plan never
+  limits the console: administrators see the plan, the usage, and a banner when
+  the fleet outgrows it. `RMM_SUPPORT_ENDPOINT` points the reports at another
+  portal. See docs/22-selfhost-support.md.
+
 ## [0.8.0] - 2026-10-26
 
 ### Added

@@ -1198,6 +1198,7 @@ function SettingsScreen() {
     ...(can('settings.manage') ? [{ value: 'config', label: t('settings.tab.config') }] : []),
     ...(can('settings.manage') ? [{ value: 'email', label: t('settings.tab.email') }] : []),
     ...(can('enrollment.manage') ? [{ value: 'enroll', label: t('settings.tab.enroll') }] : []),
+    ...(can('settings.manage') ? [{ value: 'support', label: t('settings.tab.support') }] : []),
   ];
   return (
     <Page>
@@ -1210,6 +1211,7 @@ function SettingsScreen() {
       {tab === 'config' && can('settings.manage') && <ConfigPanel />}
       {tab === 'email' && can('settings.manage') && <SMTPPanel />}
       {tab === 'enroll' && can('enrollment.manage') && <EnrollPanel canAdmin={can('enrollment.manage')} />}
+      {tab === 'support' && can('settings.manage') && <SupportPanel />}
       </ErrorBoundary>
     </Page>
   );
@@ -2140,6 +2142,68 @@ function ConfigPanel() {
 // administrator cannot repoint authentication mail. Alerts are the tenant's own:
 // they leave only through the server set here, never the account transport, and
 // with no server alert mail is off.
+// SupportPanel links a self-hosted console to an OpenRMM support plan. With a
+// key the console reports its device count and version to the portal every
+// six hours; without one it sends nothing. A Cloud console has support in its
+// plan and nothing to configure here.
+function SupportPanel() {
+  const toast = useToast();
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const q = useQuery(['support'], () => api.support(), { invalidateOn: ['support'] });
+  const d = q.data;
+  const save = async () => {
+    setBusy(true);
+    try { await api.setSupportKey(key.trim()); setKey(''); q.refetch(); toast.success(t('support.saved')); }
+    catch (e) { toast.error(t('support.saveFailed'), e.message); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try { await api.removeSupportKey(); q.refetch(); toast.success(t('support.removed')); }
+    catch (e) { toast.error(t('support.saveFailed'), e.message); }
+    finally { setBusy(false); }
+  };
+  const day = (v) => v ? new Date(v).toLocaleDateString(getLocale()) : '';
+  if (!d) return q.loading ? <Skeleton className="h-48 w-full rounded-2xl" /> : null;
+  const st = d.state;
+  return (
+    <Card className="p-4 max-w-2xl">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="info" size={15} /></div>
+        <div className="text-[13px] font-semibold text-ink">{t('support.title')}</div>
+        {st && <span className="ml-auto"><StatusPill status={st.status === 'active' ? 'online' : st.status === 'ending' ? 'warning' : 'offline'} label={t('support.status.' + st.status)} size="sm" /></span>}
+      </div>
+      {d.cloud ? (
+        <div className="text-[12.5px] text-muted">{t('support.cloud')}</div>
+      ) : (
+        <>
+          <div className="text-[12px] text-muted mb-3">{t('support.intro')}</div>
+          {st && (
+            <div className="rounded-lg border border-line bg-elevated/40 px-3 py-2.5 mb-3 text-[12.5px] text-ink space-y-1">
+              <div>{t('support.plan', { devices: st.plan_devices, interval: t('support.' + st.billing_interval) })}</div>
+              <div className={cx(st.over_limit && 'text-warn font-medium')}>{t('support.usage', { used: st.devices_used, limit: st.plan_devices })}</div>
+              {st.over_limit && <div className="text-warn">{st.action_required_by ? t('support.overBy', { used: st.devices_used, limit: st.plan_devices, date: day(st.action_required_by) }) : t('support.over', { used: st.devices_used, limit: st.plan_devices })}</div>}
+              {st.paid_through && <div className="text-muted">{t('support.paidThrough', { date: day(st.paid_through) })}</div>}
+              {st.checked_at && <div className="text-muted">{t('support.checked', { date: new Date(st.checked_at).toLocaleString(getLocale()) })}</div>}
+              {st.last_error && <div className="text-bad">{t('support.lastError', { error: st.last_error })}</div>}
+              {st.portal_url && <a href={st.portal_url} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 font-semibold text-brand hover:underline">{t('support.portal')}</a>}
+            </div>
+          )}
+          {!d.configured && <div className="text-[12px] text-muted mb-3">{t('support.notConfigured')}</div>}
+          <Field label={t('support.keyLabel')} hint={t('support.keyHint')}>
+            <Input type="password" autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} />
+          </Field>
+          <div className="flex gap-2 mt-3">
+            <Button variant="primary" onClick={save} disabled={busy || !key.trim()}>{t('support.save')}</Button>
+            {d.configured && <Button variant="ghost" onClick={remove} disabled={busy}>{t('support.remove')}</Button>}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function SMTPPanel() {
   return <SMTPProfilePanel />;
 }

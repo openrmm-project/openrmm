@@ -453,6 +453,26 @@ function DeviceLimitBanner() {
   );
 }
 
+// SupportBanner tells administrators of a self-hosted console when its fleet
+// has outgrown its OpenRMM support plan. It only informs: nothing is blocked.
+function SupportBanner() {
+  const { can } = useAuth();
+  const visible = can('settings.manage');
+  const q = useQuery(['support-banner', visible], () => visible ? api.support() : Promise.resolve(null), { invalidateOn: ['support'], poll: visible ? 600000 : 0 });
+  const st = q.data && q.data.configured && q.data.state;
+  if (!st || !st.over_limit || st.status === 'ended') return null;
+  const vars = { used: st.devices_used, limit: st.plan_devices, date: st.action_required_by ? new Date(st.action_required_by).toLocaleDateString(getLocale()) : '' };
+  return (
+    <div role="status" className="flex flex-wrap items-center gap-2.5 border-b border-warn/25 bg-warnsoft px-4 py-2 text-[12.5px] text-warn">
+      <Icon name="alert" size={14} className="shrink-0" />
+      <span className="flex-1 min-w-[200px]">{st.action_required_by ? t('support.overBy', vars) : t('support.over', vars)}</span>
+      {st.portal_url && (
+        <a href={st.portal_url} target="_blank" rel="noopener noreferrer" className="rounded-md border border-current px-2.5 py-1 font-semibold hover:opacity-80">{t('support.portal')}</a>
+      )}
+    </div>
+  );
+}
+
 function Shell() {
   const { can } = useAuth();
   const [route, setRoute] = useState({ name: 'dashboard', params: {} });
@@ -491,6 +511,7 @@ function Shell() {
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar route={route} navigate={navigate} theme={theme} onOpenNav={() => setMobileNavOpen(true)} onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
         <DeviceLimitBanner />
+        <SupportBanner />
         <main className={cx('flex-1 min-h-0', fullBleed ? 'overflow-hidden' : 'overflow-y-auto scroll-area')}>
           <ErrorBoundary key={route.name}><Screen route={route} navigate={navigate} /></ErrorBoundary>
         </main>

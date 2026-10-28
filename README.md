@@ -225,8 +225,8 @@ Contributing is unaffected by that: you keep the copyright in your work. The
 the alternative is a project that can never change its own terms. See
 [CONTRIBUTING](CONTRIBUTING.md).
 
-### Trademark
+### Logo
 
-"OpenRMM" and its logo are trademarks of Miquéias Gonçalves. The AGPL licenses
-the code, not the name: a fork is welcome under a name of its own. See
-[TRADEMARKS](TRADEMARKS.md).
+The OpenRMM logo and icons belong to Miquéias Gonçalves. The AGPL licenses the
+code, not the logo: a fork is welcome with a logo of its own. See the
+[logo policy](TRADEMARKS.md).

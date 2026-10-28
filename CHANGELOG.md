@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-28
+
 ### Added
 
 - **Support link for self-hosted consoles.** With an OpenRMM support key from
@@ -16,6 +18,21 @@ tag.
   limits the console: administrators see the plan, the usage, and a banner when
   the fleet outgrows it. `RMM_SUPPORT_ENDPOINT` points the reports at another
   portal. See docs/22-selfhost-support.md.
+
+### Security
+
+- **Agent: patch identifiers are checked before any package manager runs.**
+  The server only sends identifiers the agent itself reported and an operator
+  approved; the agent now also refuses any that could act as an option or a
+  script fragment (a KB number or update GUID on Windows, a package name on
+  Linux, a label not starting with "-" on macOS), and reports them as failed.
+
+### Tests
+
+- The agent's connection session, message dispatch, job cancellation, patch
+  scan parsing and inventory helpers are covered (cmd/agent 36% → 53%).
+- CI measures coverage with the database tests in, for every package, and
+  shows it per package in the job summary (Database migrations workflow).
 
 ## [0.8.0] - 2026-10-26
 

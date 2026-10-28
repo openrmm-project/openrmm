@@ -14,6 +14,9 @@ people who build it behind your installation:
 The plan does not cover your servers, operating system, network, Docker or
 backups, or custom development.
 
+Available in OpenRMM v0.9.0 and later. Update both server and console images
+before linking a plan.
+
 ## Linking the console to the plan
 
 The plan covers a number of devices, and the console reports how many it

@@ -165,6 +165,7 @@ func main() {
 	// After discovery: the device limit comes from the identity provider's
 	// entitlement endpoint, when it names one (OpenRMM Cloud).
 	go srv.RunDeviceLimit(schedCtx)
+	go srv.RunSupportLink(schedCtx)
 
 	httpServer := &http.Server{
 		Addr:         cfg.HTTPAddr,

@@ -6,6 +6,19 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-28
+
+### Added
+
+- **Support link for self-hosted consoles.** With an OpenRMM support key from
+  the portal (Settings ▸ Support), a self-hosted console reports every 6 hours
+  how many devices it manages, its version and a random console id. Nothing else
+  is sent, and nothing at all without a key. The key is checked with the portal
+  before it is kept, stored encrypted, and never shown back. The plan never
+  limits the console: administrators see the plan, the usage, and a banner when
+  the fleet outgrows it. `RMM_SUPPORT_ENDPOINT` points the reports at another
+  portal. See docs/22-selfhost-support.md.
+
 ### Security
 
 - **Agent: patch identifiers are checked before any package manager runs.**
@@ -13,6 +26,10 @@ tag.
   approved; the agent now also refuses any that could act as an option or a
   script fragment (a KB number or update GUID on Windows, a package name on
   Linux, a label not starting with "-" on macOS), and reports them as failed.
+
+- Update the build-only `postcss-selector-parser` dependency to 6.1.5 for
+  GHSA-rj75-hqrm-r3gf. The parser processes the project's trusted stylesheets
+  during the console build; it is not shipped in the browser bundle.
 
 ### Tests
 

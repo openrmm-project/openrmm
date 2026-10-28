@@ -26,7 +26,7 @@ every action the AI proposes.
 
 ## What is built (this repo)
 
-As of v0.8.0, verified end-to-end against PostgreSQL:
+As of v0.9.0, verified end-to-end against PostgreSQL:
 
 - Agent enrollment + persistent WebSocket + heartbeat + inventory.
 - Job lifecycle: propose → **human approval** → dispatch → result, fully audited.

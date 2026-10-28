@@ -3,7 +3,7 @@
 # Go toolchain. Override if `go` isn't on PATH, e.g.:
 #   make remote-dist GO=$(ls -d $HOME/go/pkg/mod/golang.org/toolchain@*/bin/go | head -1)
 GO ?= go
-VERSION ?= 0.8.0
+VERSION ?= 0.9.0
 AGENT_LDFLAGS := -X main.agentVersion=$(patsubst v%,%,$(VERSION))
 ifdef RMM_UPDATE_PUBLIC_KEY
 AGENT_LDFLAGS += -X main.updatePublicKey=$(RMM_UPDATE_PUBLIC_KEY)

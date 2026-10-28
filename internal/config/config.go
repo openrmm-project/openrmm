@@ -149,6 +149,11 @@ type Config struct {
 	// the endpoint is disabled; when set, scrapers must send it as a bearer token.
 	MetricsToken string
 
+	// SupportEndpoint is where a self-hosted console with an OpenRMM support key
+	// reports its device count (internal/supportlink). Without a key nothing is
+	// ever sent. RMM_SUPPORT_ENDPOINT points it at a staging portal.
+	SupportEndpoint string
+
 	// Version is the release the server binary was built from (main.version,
 	// stamped at build time). Not read from the environment: it describes the
 	// binary, and an operator setting it would only make it wrong.
@@ -341,6 +346,7 @@ func Load() (*Config, error) {
 		SettingsEncryptionKey:      settingsKey,
 		APIRateLimit:               envInt("RMM_API_RATE_LIMIT", 600),
 		MetricsToken:               os.Getenv("RMM_METRICS_TOKEN"),
+		SupportEndpoint:            env("RMM_SUPPORT_ENDPOINT", "https://openrmm.io/api/support/usage"),
 		AlertRetentionDays:         envInt("RMM_ALERT_RETENTION_DAYS", 90),
 		CheckResultRetentionDays:   envInt("RMM_CHECK_RESULT_RETENTION_DAYS", 90),
 		NotificationRetentionDays:  envInt("RMM_NOTIFICATION_RETENTION_DAYS", 90),

@@ -3,6 +3,8 @@ name: Database migrations
 env:
   GO_VERSION: '1.26.10'
 
+# The database tests, and the coverage of every Go package with them in.
+#
 # Same reasoning as ci.yml: a superseded pull-request run is wasted budget, a
 # run on main is the one that says whether main is good.
 concurrency:
@@ -13,30 +15,28 @@ on:
   push:
     branches: [main]
     paths:
-      - 'internal/store/**'
-      - 'internal/settings/**'
-      - 'internal/api/**'
-      - 'internal/notify/**'
-      - 'internal/ai/**'
-      - 'internal/mcpserver/**'
-      - 'internal/patches/**'
-      - 'internal/scheduler/**'
+      # Any Go change: this job also measures coverage, with the database
+      # tests in, for every package.
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
       - 'db/schema.sql'
-      - 'cmd/server/main.go'
+      - 'internal/store/migrations/**'
+      - 'internal/store/testdata/**'
       - '.github/workflows/migrations.yml'
+      - '.github/scripts/coverage-summary.py'
   pull_request:
     paths:
-      - 'internal/store/**'
-      - 'internal/settings/**'
-      - 'internal/api/**'
-      - 'internal/notify/**'
-      - 'internal/ai/**'
-      - 'internal/mcpserver/**'
-      - 'internal/patches/**'
-      - 'internal/scheduler/**'
+      # Any Go change: this job also measures coverage, with the database
+      # tests in, for every package.
+      - '**/*.go'
+      - 'go.mod'
+      - 'go.sum'
       - 'db/schema.sql'
-      - 'cmd/server/main.go'
+      - 'internal/store/migrations/**'
+      - 'internal/store/testdata/**'
       - '.github/workflows/migrations.yml'
+      - '.github/scripts/coverage-summary.py'
 
 jobs:
   postgres:
@@ -68,18 +68,25 @@ jobs:
           # Go baked into the runner image, which is how CI kept building on a
           # release that already had published security fixes.
           check-latest: true
-      # Whole packages, not an allowlist of test names: every DB-backed test
-      # skips silently without RMM_TEST_DATABASE_URL, so a named pattern means a
-      # new integration test is added, passes locally, and never runs here again.
-      # Postgres is already provisioned above; running the unit tests alongside
-      # it costs nothing.
+      # Every package, not an allowlist: every DB-backed test skips silently
+      # without RMM_TEST_DATABASE_URL, so a list of names or packages means a new
+      # integration test is added, passes locally, and never runs here again. A
+      # package list had already bitten twice (settings and api, then ai,
+      # mcpserver, patches and scheduler grew DB-backed tests that CI had never
+      # run). Running ./... with Postgres up closes that for good.
       #
-      # The package list has the same failure mode as a test-name list, and had
-      # already bitten: settings and api grew DB-backed tests that ran nowhere,
-      # because neither the list below nor the path filter above mentioned them.
-      # A DB-backed test in a package that is not listed here does not exist.
-      # It bit again: ai, mcpserver, patches and scheduler all had DB-backed
-      # tests — the AI's proposal and scope guarantees among them — that CI had
-      # never run. Every package that reads RMM_TEST_DATABASE_URL belongs here:
-      #   grep -rl RMM_TEST_DATABASE_URL --include=*_test.go internal | xargs -n1 dirname | sort -u
-      - run: go test ./internal/store ./internal/settings ./internal/api ./internal/notify ./internal/ai ./internal/mcpserver ./internal/patches ./internal/scheduler -count=1
+      # Coverage is measured here because only here do the DB-backed tests run:
+      # elsewhere store, api and the scheduler read near zero. -coverpkg counts
+      # a statement covered by any package's tests (the API tests exercise the
+      # store, for one).
+      - name: Unit and database tests, with coverage
+        run: go test ./... -count=1 -covermode=atomic -coverpkg=./... -coverprofile=coverage.out
+      - name: Coverage summary
+        if: always() && hashFiles('coverage.out') != ''
+        run: python3 .github/scripts/coverage-summary.py coverage.out | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && hashFiles('coverage.out') != ''
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 14

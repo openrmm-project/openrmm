@@ -7,10 +7,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/p1ngu/rmm/internal/protocol"
 )
@@ -144,8 +146,12 @@ func scanAptPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("apt patch scan: %w", err)
 	}
+	return parseAptUpgrade(string(out)), nil
+}
+
+func parseAptUpgrade(out string) []protocol.PatchItem {
 	var items []protocol.PatchItem
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if !strings.HasPrefix(line, "Inst ") {
 			continue
 		}
@@ -172,7 +178,7 @@ func scanAptPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 			Identifier: pkg, Title: pkg + " " + ver, Classification: class, Version: ver,
 		})
 	}
-	return items, nil
+	return items
 }
 
 // scanDnfPatches parses `dnf -q updateinfo list` (advisory type/severity pkg).
@@ -181,8 +187,12 @@ func scanDnfPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dnf patch scan: %w", err)
 	}
+	return parseDnfUpdateinfo(string(out)), nil
+}
+
+func parseDnfUpdateinfo(out string) []protocol.PatchItem {
 	var items []protocol.PatchItem
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
 			continue
@@ -194,7 +204,7 @@ func scanDnfPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 			Classification: classifyDnf(typ),
 		})
 	}
-	return items, nil
+	return items
 }
 
 func classifyDnf(typ string) string {
@@ -220,8 +230,12 @@ func scanDarwinPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("macOS softwareupdate scan: %w", err)
 	}
+	return parseSoftwareUpdateList(string(out)), nil
+}
+
+func parseSoftwareUpdateList(out string) []protocol.PatchItem {
 	var items []protocol.PatchItem
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(out, "\n")
 	for i, line := range lines {
 		l := strings.TrimSpace(line)
 		if !strings.HasPrefix(l, "* Label:") {
@@ -242,7 +256,7 @@ func scanDarwinPatches(ctx context.Context) ([]protocol.PatchItem, error) {
 			Identifier: label, Title: title, Classification: class, RebootRequired: reboot,
 		})
 	}
-	return items, nil
+	return items
 }
 
 // ---------- install ----------
@@ -254,17 +268,70 @@ func installPatches(identifiers []string) ([]protocol.PatchResultItem, bool) {
 	if len(identifiers) == 0 {
 		return nil, false
 	}
+	ids, refused := splitPatchIdentifiers(runtime.GOOS, identifiers)
+	// Nothing well-formed left: never reach a package manager, which would read
+	// an empty list as "install everything".
+	if len(ids) == 0 {
+		return refused, false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
+	var results []protocol.PatchResultItem
+	var reboot bool
 	switch runtime.GOOS {
 	case "windows":
-		return installWindowsPatches(ctx, identifiers)
+		results, reboot = installWindowsPatches(ctx, ids)
 	case "linux":
-		return installLinuxPatches(ctx, identifiers)
+		results, reboot = installLinuxPatches(ctx, ids)
 	case "darwin":
-		return installDarwinPatches(ctx, identifiers)
+		results, reboot = installDarwinPatches(ctx, ids)
 	}
-	return nil, false
+	return append(results, refused...), reboot
+}
+
+var (
+	windowsPatchID = regexp.MustCompile(`^(KB[0-9]{1,10}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`)
+	linuxPatchID   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+:_~@-]{0,254}$`)
+)
+
+// validPatchIdentifier reports whether id has the shape this platform's scan
+// produces: a KB number or update GUID on Windows (it is placed in a PowerShell
+// script), a package name on Linux, a softwareupdate label on macOS. The server
+// only sends identifiers this agent reported and an operator approved; this is
+// the agent's own check that none can become an option or a script fragment.
+func validPatchIdentifier(goos, id string) bool {
+	switch goos {
+	case "windows":
+		return windowsPatchID.MatchString(id)
+	case "linux":
+		return linuxPatchID.MatchString(id)
+	default:
+		if id == "" || len(id) > 256 || strings.HasPrefix(id, "-") {
+			return false
+		}
+		for _, r := range id {
+			if unicode.IsControl(r) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// splitPatchIdentifiers separates the identifiers to install from those
+// refused, each refusal reported as a failed result.
+func splitPatchIdentifiers(goos string, identifiers []string) ([]string, []protocol.PatchResultItem) {
+	var ids []string
+	var refused []protocol.PatchResultItem
+	for _, id := range identifiers {
+		if validPatchIdentifier(goos, id) {
+			ids = append(ids, id)
+			continue
+		}
+		log.Printf("patch identifier refused: not a valid %s patch identifier", goos)
+		refused = append(refused, protocol.PatchResultItem{Identifier: id, Error: "refused: not a valid patch identifier"})
+	}
+	return ids, refused
 }
 
 // uniformResult marks every requested identifier success/failure (used by the

@@ -27,6 +27,10 @@ tag.
   script fragment (a KB number or update GUID on Windows, a package name on
   Linux, a label not starting with "-" on macOS), and reports them as failed.
 
+- Update the build-only `postcss-selector-parser` dependency to 6.1.5 for
+  GHSA-rj75-hqrm-r3gf. The parser processes the project's trusted stylesheets
+  during the console build; it is not shipped in the browser bundle.
+
 ### Tests
 
 - The agent's connection session, message dispatch, job cancellation, patch

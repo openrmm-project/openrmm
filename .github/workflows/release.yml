@@ -110,7 +110,7 @@ jobs:
 
   installer-macos:
     name: macOS installer gate
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -206,7 +206,11 @@ jobs:
     # x86_64 from here. CI has been doing exactly that for every PR, so the
     # release was shipping less than CI proved buildable, and Intel Macs were
     # left with no remote module at all.
-    runs-on: macos-14
+    #
+    # macos-15: GitHub retires the macOS 14 images on 2026-11-02, with brownouts
+    # before. MACOSX_DEPLOYMENT_TARGET below keeps the binaries running on
+    # macOS 12, whatever SDK the runner carries.
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       APPLE_SIGNING_P12: ${{ secrets.APPLE_SIGNING_P12 }}

@@ -128,7 +128,7 @@ jobs:
     name: macOS native chat and remote sidecar
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     # The same signing identity the release uses, so the bundle this job
     # publishes as an artifact is the one operators can actually install without
     # re-granting permissions. Absent — on a fork, or before one exists — the
@@ -356,7 +356,7 @@ jobs:
     # change touches something macOS-specific. The BSD-only defects this job
     # exists to catch are invisible everywhere else.
     if: needs.changes.outputs.installers == 'true' && (github.event_name != 'pull_request' || needs.changes.outputs.macos == 'true')
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

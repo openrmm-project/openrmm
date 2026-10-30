@@ -134,19 +134,22 @@ Units of work targeted at an agent.
 |--------|------|-------|
 | id | uuid PK | |
 | agent_id | uuid FK → agents | cascade delete |
-| type | text | `run_script` (extensible) |
+| type | text | `run_script`, or `device_query` (a built-in read-only query; `script` holds the request as JSON) |
 | description | text | human summary |
 | shell | text | `bash`/`sh`/`powershell`/`cmd`/`python` |
 | script | text | source to run |
 | status | text | `awaiting_approval`→`pending`→`sent`→`running`→`completed`/`failed`, or `rejected` |
 | requires_approval | bool | true for AI proposals |
-| created_by | text | actor (`admin`, `api`, `ai:<actor>`) |
-| approved_by | text | nullable |
+| created_by | text | actor (`admin`, `api`, `ai:<actor>`, `mcp:<actor>`) |
+| approved_by | text | nullable. For an autonomous job, its basis: `autonomy: <permission>` or `pre-approved by <admin> (hash …)` |
 | task_id | uuid | set when the job was produced by a scheduled task (nullable) |
 | batch_id | uuid | bulk deployment: jobs created together share it; one batch per company (nullable) |
 | exit_code | int | nullable until finished |
 | stdout, stderr | text | result output |
 | created_at, updated_at | timestamptz | |
+| autonomy | text | `''`, `query` or `preapproved`: why it ran without approval at the time ([23](23-ai-autonomy.md)) |
+| script_id | uuid FK → scripts | the library script a parameterised or released run came from; `ON DELETE SET NULL` |
+| params | jsonb | the declared parameters it carried, sent to the agent as environment variables |
 
 ### `inventory`
 Latest snapshot per agent (`agent_id` PK, `data` jsonb, `collected_at`).
@@ -210,6 +213,10 @@ to its sites, and a deleted site nulls the agents'/enroll-tokens' `site_id`.
 Reusable script library: `id`, `name`, `description`, `category`,
 `shell` (`bash`/`sh`/`powershell`/`cmd`/`python`), `body`, `default_args`, `created_at`,
 `updated_at`. Run on a device via `/run-script`, which creates a job.
+`params` (jsonb) declares its parameters. `ai_released_by`, `ai_released_at` and
+`ai_released_hash` record a release for the AI, bound to the SHA-256 of shell,
+body and parameters; `ai_failure_streak` counts consecutive failed autonomous
+runs ([23](23-ai-autonomy.md)).
 
 ### `script_categories`
 The catalogue of category names (`id`, `name`, `created_at`), added by migration

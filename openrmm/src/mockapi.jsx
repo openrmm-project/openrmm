@@ -10,7 +10,7 @@ const ROLES = { admin: 3, tech: 2, readonly: 1 };
 const DEFAULT_ROLE_PERMS = {
   readonly: ['devices.view', 'devices.remote', 'clients.view'],
   tech: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'tasks.view', 'policies.view', 'scripts.view', 'patches.view', 'patches.manage', 'devices.view', 'devices.manage', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'reports.view'],
-  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'devices.remote.share', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage'],
+  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'devices.remote.share', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage', 'ai.autonomy.manage'],
 };
 const PERM_ALIASES = { admin: 'settings.manage', tech: 'jobs.manage', readonly: 'devices.view' };
 const AUTH_KEY = 'rmm-ai-auth';
@@ -437,6 +437,12 @@ const api = {
   listScripts() { return GET('/api/scripts'); },
   createScript(body) { return POST('/api/scripts', body); },
   updateScript(id, body) { return PUT('/api/scripts/' + id, body); },
+  // Release a library script for the AI to run without approval, or withdraw
+  // it (docs/23-ai-autonomy.md). The server applies its own rules either way.
+  setScriptAIRelease(id, release) { return POST('/api/scripts/' + id + '/ai-release', { release: !!release }); },
+  // A library script with declared parameters, run by a person: the values go
+  // with the script id and are checked against the declaration.
+  runLibraryScript(agentId, scriptId, params) { return POST('/api/devices/' + agentId + '/run-script', { script_id: scriptId, params }); },
   deleteScript(id) { return DELETE('/api/scripts/' + id); },
   // Categories are not rows: they exist while scripts name them. Listing them is
   // what lets the editor offer what already exists instead of asking for free

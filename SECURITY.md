@@ -9,8 +9,24 @@ designed defense-first. This summarizes the posture; details live in
 
 - **AI proposes, humans dispose.** The AI and the MCP surface create
   approval-gated job proposals (`propose_script`, bulk deploy, or high-level
-  proposal tools). They have **no** tool that runs a script or deletes anything
-  itself. Nothing reaches a machine from an AI proposal without a human approval.
+  proposal tools). They have **no** tool that runs a free-form script or deletes
+  anything itself. Nothing that changes a device runs without a person approving
+  it, either at the time or in advance.
+- **Autonomy is opt-in, bounded and separate per channel**
+  ([`docs/23-ai-autonomy.md`](docs/23-ai-autonomy.md)). Two tool classes can run
+  without an approval at the time, and only for roles granted them (no built-in
+  role is): the agent's built-in **read-only device queries** (no code is sent;
+  parameters come from closed sets), and **pre-approved actions** — library
+  scripts an administrator released, bound to the hash of their content (any
+  edit revokes the release), with typed parameters passed as environment
+  variables and a server-enforced deny list (reboot, install, delete, accounts,
+  firewall, agent removal, patches, persistence, registry/security settings,
+  downloads and dynamic code can never be released). The built-in chat and MCP
+  have separate permissions; one device at a time; per-user, per-device and daily
+  limits; a circuit breaker that withdraws a release after repeated failures;
+  output bounded and secret-redacted before the model sees it; and a global
+  **pause** in Settings ▸ AI. Every autonomous run is an audited job whose
+  approver line states its basis.
 - **Configuration is proposed too.** `propose_task`, `propose_check` and
   `propose_policy` write the row **disabled** and stamped `proposed_by`; the
   scheduler only ever selects `WHERE enabled`, and a database CHECK constraint

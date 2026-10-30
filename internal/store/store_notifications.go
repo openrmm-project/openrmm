@@ -14,6 +14,9 @@ const (
 	NotifyAgentOffline   = "agent_offline"
 	NotifyAgentRecovered = "agent_recovered"
 	NotifyJobFailed      = "job_failed"
+	// NotifyAIReleaseRevoked: a script released for the AI failed enough times
+	// in a row that its release was withdrawn (docs/23-ai-autonomy.md).
+	NotifyAIReleaseRevoked = "ai_release_revoked"
 )
 
 // NotificationEventTypes is the full set, in the order the preferences screen
@@ -21,6 +24,7 @@ const (
 // not become a subscription row nobody will ever match.
 var NotificationEventTypes = []string{
 	NotifyCheckFailed, NotifyCheckRecovered, NotifyAgentOffline, NotifyAgentRecovered, NotifyJobFailed,
+	NotifyAIReleaseRevoked,
 }
 
 // ValidNotificationEvent reports whether an event type is one we deliver.
@@ -38,6 +42,8 @@ var defaultSubscribed = map[string]bool{
 	NotifyAgentOffline:   true,
 	NotifyAgentRecovered: true,
 	NotifyJobFailed:      false,
+	// Rare, and it changes what the AI may do: on unless someone opts out.
+	NotifyAIReleaseRevoked: true,
 }
 
 // DefaultSubscribed reports the out-of-the-box preference for an event type.

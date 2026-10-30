@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -766,27 +767,47 @@ func (s *Store) AgentScope(ctx context.Context, agentID string) (siteID, clientI
 
 // ===================== Scripts =====================
 
-const scriptCols = `id, name, description, category, shell, body, default_args, created_at, updated_at`
+const scriptCols = `id, name, description, category, shell, body, default_args, created_at, updated_at,
+	params, ai_released_by, ai_released_at, ai_released_hash`
 
 func scanScript(row pgx.Row) (*models.Script, error) {
 	var sc models.Script
-	err := row.Scan(&sc.ID, &sc.Name, &sc.Description, &sc.Category, &sc.Shell, &sc.Body, &sc.DefaultArgs, &sc.CreatedAt, &sc.UpdatedAt)
+	var params []byte
+	err := row.Scan(&sc.ID, &sc.Name, &sc.Description, &sc.Category, &sc.Shell, &sc.Body, &sc.DefaultArgs, &sc.CreatedAt, &sc.UpdatedAt,
+		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &sc.Params); err != nil {
+			return nil, err
+		}
+	}
+	if sc.Params == nil {
+		sc.Params = []models.ScriptParam{}
+	}
+	sc.AIReleased = sc.AIReleaseCurrent()
 	return &sc, nil
+}
+
+func scriptParamsJSON(params []models.ScriptParam) []byte {
+	if params == nil {
+		params = []models.ScriptParam{}
+	}
+	raw, _ := json.Marshal(params)
+	return raw
 }
 
 // CreateScript adds a script to the library.
 func (s *Store) CreateScript(ctx context.Context, sc *models.Script) (*models.Script, error) {
 	sc.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO scripts (id, name, description, category, shell, body, default_args)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs)
+		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params))
 	if err != nil {
 		return nil, err
 	}
@@ -943,12 +964,81 @@ func (s *Store) ListScripts(ctx context.Context) ([]models.Script, error) {
 	return out, rows.Err()
 }
 
-// UpdateScript edits a script.
-func (s *Store) UpdateScript(ctx context.Context, sc *models.Script) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE scripts SET name=$2, description=$3, category=$4, shell=$5, body=$6, default_args=$7, updated_at=now() WHERE id=$1`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs)
-	return err
+// UpdateScript edits a script. An edit to what runs — the shell, the body or
+// the declared parameters — revokes a release for the AI in the same statement,
+// so there is no moment at which the new content is released under the old
+// one's approval. revoked reports whether a release was withdrawn.
+func (s *Store) UpdateScript(ctx context.Context, sc *models.Script) (revoked bool, err error) {
+	err = s.pool.QueryRow(ctx,
+		`WITH old AS (SELECT shell, body, params, ai_released_hash FROM scripts WHERE id=$1 FOR UPDATE)
+		 UPDATE scripts AS s SET name=$2, description=$3, category=$4, shell=$5, body=$6, default_args=$7, params=$8,
+		   ai_released_by   = CASE WHEN changed.yes THEN NULL ELSE s.ai_released_by END,
+		   ai_released_at   = CASE WHEN changed.yes THEN NULL ELSE s.ai_released_at END,
+		   ai_released_hash = CASE WHEN changed.yes THEN '' ELSE s.ai_released_hash END,
+		   updated_at=now()
+		 FROM old, LATERAL (SELECT (old.shell <> $5 OR old.body <> $6 OR old.params <> $8::jsonb) AS yes) AS changed
+		 WHERE s.id=$1
+		 RETURNING (changed.yes AND old.ai_released_hash <> '')`,
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params)).Scan(&revoked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return revoked, err
+}
+
+// SetScriptAIRelease releases a script for the AI, bound to contentHash — the
+// hash of the content the releasing admin reviewed, read at readAt. If the
+// script was edited since, nothing is released and ErrConflict says so: the
+// release would otherwise approve content nobody looked at.
+func (s *Store) SetScriptAIRelease(ctx context.Context, id, releasedBy, contentHash string, readAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE scripts SET ai_released_by=$2, ai_released_at=now(), ai_released_hash=$3, ai_failure_streak=0
+		 WHERE id=$1 AND updated_at=$4`, id, releasedBy, contentHash, readAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		if _, err := s.GetScript(ctx, id); err != nil {
+			return err
+		}
+		return ErrConflict
+	}
+	return nil
+}
+
+// ClearScriptAIRelease withdraws a release. It reports whether there was one.
+func (s *Store) ClearScriptAIRelease(ctx context.Context, id string) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE scripts SET ai_released_by=NULL, ai_released_at=NULL, ai_released_hash='', ai_failure_streak=0
+		 WHERE id=$1 AND ai_released_hash <> ''`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// RecordAIScriptOutcome counts consecutive failed autonomous runs of a
+// released script. At limit failures in a row the release is withdrawn in the
+// same statement, and revoked reports it: a script that keeps failing on device
+// after device is doing something nobody released it to do.
+func (s *Store) RecordAIScriptOutcome(ctx context.Context, id string, success bool, limit int) (revoked bool, err error) {
+	// One UPDATE, deciding from the row as it was: two data-modifying
+	// statements on the same row in one query would leave which one wins to
+	// Postgres.
+	err = s.pool.QueryRow(ctx,
+		`WITH old AS (SELECT ai_failure_streak, ai_released_hash FROM scripts WHERE id=$1 FOR UPDATE),
+		 trip AS (SELECT (NOT $2::boolean AND old.ai_failure_streak + 1 >= $3::int AND old.ai_released_hash <> '') AS yes FROM old)
+		 UPDATE scripts AS s SET
+		   ai_failure_streak = CASE WHEN $2::boolean OR trip.yes THEN 0 ELSE s.ai_failure_streak + 1 END,
+		   ai_released_by    = CASE WHEN trip.yes THEN NULL ELSE s.ai_released_by END,
+		   ai_released_at    = CASE WHEN trip.yes THEN NULL ELSE s.ai_released_at END,
+		   ai_released_hash  = CASE WHEN trip.yes THEN '' ELSE s.ai_released_hash END
+		 FROM trip WHERE s.id=$1
+		 RETURNING trip.yes`, id, success, limit).Scan(&revoked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return revoked, err
 }
 
 // DeleteScript removes a script.

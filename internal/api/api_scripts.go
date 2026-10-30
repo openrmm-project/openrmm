@@ -2,12 +2,15 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/p1ngu/rmm/internal/autonomy"
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +166,10 @@ func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
 	if sc.Shell == "" {
 		sc.Shell = models.ShellBash
 	}
+	if err := autonomy.ValidateParamSchema(sc.Shell, sc.Params); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	out, err := s.store.CreateScript(r.Context(), &sc)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -182,9 +189,20 @@ func (s *Server) updateScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc.ID = chi.URLParam(r, "id")
-	if err := s.store.UpdateScript(r.Context(), &sc); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := autonomy.ValidateParamSchema(sc.Shell, sc.Params); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	revoked, err := s.store.UpdateScript(r.Context(), &sc)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if revoked {
+		// The edit changed what runs, so the AI can no longer run it on the old
+		// release: an administrator has to look at the new content and release it.
+		detail, _ := json.Marshal(map[string]any{"reason": "edited", "name": sc.Name})
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "script.ai_release.revoked", sc.ID, detail)
 	}
 	out, _ := s.store.GetScript(r.Context(), sc.ID)
 	s.store.RegisterScriptCategory(r.Context(), out.Category)
@@ -202,6 +220,61 @@ func (s *Server) deleteScript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+// setScriptAIRelease releases a library script for the AI to run without
+// approval, or withdraws the release (docs/23-ai-autonomy.md). Releasing needs
+// scripts.manage and ai.autonomy.manage; the server's rules (deny list,
+// parameter schema) apply whatever the caller marks. The release is bound to
+// the hash of the content the caller just read: an edit in between is refused.
+func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
+	var in struct {
+		Release *bool `json:"release"`
+	}
+	if err := decode(r, &in); err != nil || in.Release == nil {
+		writeErr(w, http.StatusBadRequest, "release (true or false) required")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	sc, err := s.store.GetScript(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if !*in.Release {
+		had, err := s.store.ClearScriptAIRelease(r.Context(), id)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if had {
+			detail, _ := json.Marshal(map[string]any{"reason": "withdrawn", "name": sc.Name})
+			_ = s.store.AddAudit(r.Context(), actorOf(r), "script.ai_release.revoked", id, detail)
+		}
+		out, _ := s.store.GetScript(r.Context(), id)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if err := autonomy.CheckRelease(sc); err != nil {
+		writeCodedErr(w, http.StatusUnprocessableEntity, "release_refused", err.Error())
+		return
+	}
+	hash := models.ScriptContentHash(sc.Shell, sc.Body, sc.Params)
+	if err := s.store.SetScriptAIRelease(r.Context(), id, actorOf(r), hash, sc.UpdatedAt); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeErr(w, http.StatusConflict, "the script was edited meanwhile; review it again before releasing")
+			return
+		}
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"name": sc.Name, "hash": hash, "shell": sc.Shell, "params": len(sc.Params)})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script.ai_release", id, detail)
+	out, _ := s.store.GetScript(r.Context(), id)
+	writeJSON(w, http.StatusOK, out)
+}
+
 // runLibraryScript runs a stored script on a device, creating an approval-gated
 // job (or pre-approved when require_approval=false and the caller can manage jobs).
 func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
@@ -209,8 +282,9 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ScriptID        string `json:"script_id"`
-		RequireApproval *bool  `json:"require_approval"`
+		ScriptID        string         `json:"script_id"`
+		RequireApproval *bool          `json:"require_approval"`
+		Params          map[string]any `json:"params"`
 	}
 	if err := decode(r, &in); err != nil || in.ScriptID == "" {
 		writeErr(w, http.StatusBadRequest, "script_id required")
@@ -219,6 +293,23 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 	sc, err := s.store.GetScript(r.Context(), in.ScriptID)
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	// A script with declared parameters takes values only from their accepted
+	// sets, delivered as environment variables. It always waits for approval:
+	// the values are part of what the approver is agreeing to.
+	if len(sc.Params) > 0 || len(in.Params) > 0 {
+		params, err := autonomy.ValidateParamValues(sc.Params, in.Params)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		job, err := s.jobs.ProposeScriptWithParams(r.Context(), chi.URLParam(r, "id"), sc, params, "library: "+sc.Name, actorOf(r))
+		if err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, job)
 		return
 	}
 	// Approval mandatory unless the deployer opted into unapproved jobs and the

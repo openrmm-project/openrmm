@@ -37,7 +37,9 @@ function ScriptsScreen() {
             </div>
             <div className="text-[13.5px] font-semibold text-ink group-hover:text-brandhi transition-colors">{s.name}</div>
             <div className="text-[12px] text-muted mt-1 line-clamp-2 leading-snug">{s.description}</div>
-            <div className="text-[11px] text-faint mt-2.5 flex items-center gap-1.5"><Icon name="grid" size={11} />{s.category}</div>
+            <div className="text-[11px] text-faint mt-2.5 flex items-center gap-1.5"><Icon name="grid" size={11} />{s.category}
+              {s.ai_released && <span className="ml-auto inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{t('script.aiReleasedBadge')}</span>}
+            </div>
           </button>
         ))}
       </div>
@@ -153,13 +155,17 @@ function ScriptEditor({ script, onClose, categories = [] }) {
   const [category, setCategory] = useState(script?.category || t('script.defaultCategory'));
   const [shell, setShell] = useState(script?.shell || 'bash');
   const [body, setBody] = useState(script?.body || '');
+  const [params, setParams] = useState(script?.params || []);
   const [busy, setBusy] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const readOnly = !can('scripts.manage');
+  // What the release is bound to: an edit here withdraws it on save, so the
+  // drawer says so before the operator saves rather than after.
+  const contentChanged = !!script && (shell !== script.shell || body !== script.body || JSON.stringify(params) !== JSON.stringify(script.params || []));
 
   const save = async () => {
     setBusy(true);
-    try { const b = { name, description: desc, category, shell, body }; if (script) await api.updateScript(script.id, b); else await api.createScript(b); toast.success(script ? t('script.saved') : t('script.created')); onClose(); }
+    try { const b = { name, description: desc, category, shell, body, params }; if (script) await api.updateScript(script.id, b); else await api.createScript(b); toast.success(script ? t('script.saved') : t('script.created')); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
   };
   const del = async () => { await api.deleteScript(script.id); toast.info(t('script.deleted')); onClose(); };
@@ -188,6 +194,8 @@ function ScriptEditor({ script, onClose, categories = [] }) {
         <Field label={t('common.description')}><Input value={desc} onChange={(e) => setDesc(e.target.value)} disabled={readOnly} /></Field>
         <Field label={t('deploy.shell')} className="w-44"><Select value={shell} onChange={(e) => setShell(e.target.value)} disabled={readOnly}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>
         <Field label={t('script.body')}>{readOnly ? <CodeBlock code={body} shell={shell} maxHeight={420} /> : <CodeEditor value={body} onChange={setBody} shell={shell} minHeight={300} />}</Field>
+        <ScriptParamsEditor params={params} onChange={setParams} shell={shell} readOnly={readOnly} />
+        {script && <AIReleasePanel script={script} contentChanged={contentChanged} />}
       </div>
       {!readOnly && (
         <div className="px-5 py-3.5 border-t border-line flex justify-between gap-2">
@@ -195,7 +203,7 @@ function ScriptEditor({ script, onClose, categories = [] }) {
           <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!name || !body}>{script ? t('script.save') : t('script.create')}</Button></div>
         </div>
       )}
-      {runOpen && <RunOnDevice script={{ name, shell, body }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
+      {runOpen && <RunOnDevice script={{ id: script?.id, name, shell, body, params: script?.params || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
     </Drawer>
   );
 }
@@ -204,10 +212,19 @@ function RunOnDevice({ script, devMap, onClose, onDone }) {
   const toast = useToast();
   const [dev, setDev] = useState('');
   const [busy, setBusy] = useState(false);
+  const declared = script.params || [];
+  const [values, setValues] = useState(() => Object.fromEntries(declared.map((p) => [p.name, p.kind === 'enum' ? (p.values || [])[0] || '' : ''])));
   const devices = Object.values(devMap);
+  const missing = declared.some((p) => !values[p.name]);
   const run = async () => {
     setBusy(true);
-    try { await api.runScript(dev, { shell: script.shell, script: script.body, description: t('script.runDesc', { name: script.name }), name: script.name }); toast.success(t('run.created'), t('script.queuedOn', { host: devMap[dev].hostname })); onClose(); onDone(); }
+    try {
+      // With declared parameters the stored script runs, by id, with the values
+      // as data; the server checks them against the declaration.
+      if (declared.length > 0) await api.runLibraryScript(dev, script.id, values);
+      else await api.runScript(dev, { shell: script.shell, script: script.body, description: t('script.runDesc', { name: script.name }), name: script.name });
+      toast.success(t('run.created'), t('script.queuedOn', { host: devMap[dev].hostname })); onClose(); onDone();
+    }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
   };
   return (
@@ -216,9 +233,94 @@ function RunOnDevice({ script, devMap, onClose, onDone }) {
         <div className="text-[15px] font-semibold text-ink mb-1">{t('script.runTitle', { name: script.name })}</div>
         <div className="text-[12.5px] text-muted mb-4">{t('script.runHint')}</div>
         <Field label={t('script.targetDevice')}><Select value={dev} onChange={(e) => setDev(e.target.value)}><option value="">{t('script.chooseDevice')}</option>{devices.map((d) => <option key={d.id} value={d.id}>{t('script.deviceOption', { host: d.hostname, status: statusLabel(d.status) })}</option>)}</Select></Field>
-        <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" icon="plus" loading={busy} disabled={!dev} onClick={run}>{t('script.createJob')}</Button></div>
+        {declared.map((p) => (
+          <Field key={p.name} label={p.name} hint={p.description || undefined} className="mt-3">
+            {p.kind === 'enum'
+              ? <Select value={values[p.name]} onChange={(e) => setValues((v) => ({ ...v, [p.name]: e.target.value }))}>{(p.values || []).map((v) => <option key={v} value={v}>{v}</option>)}</Select>
+              : <Input className="mono" value={values[p.name]} onChange={(e) => setValues((v) => ({ ...v, [p.name]: e.target.value }))} placeholder={p.pattern} />}
+          </Field>
+        ))}
+        <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" icon="plus" loading={busy} disabled={!dev || missing} onClick={run}>{t('script.createJob')}</Button></div>
       </div>
     </Modal>
+  );
+}
+
+// The values a script accepts, each with a closed set: a list of values or a
+// pattern the whole value must match. They reach the script as environment
+// variables (OPENRMM_PARAM_<NAME>), never pasted into its text. cmd takes none:
+// it expands variables into its own command line.
+function ScriptParamsEditor({ params, onChange, shell, readOnly }) {
+  const update = (i, patch) => onChange(params.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  const remove = (i) => onChange(params.filter((_, j) => j !== i));
+  const add = () => onChange([...params, { name: '', description: '', kind: 'enum', values: [] }]);
+  if (shell === 'cmd') {
+    return <div className="text-[11.5px] text-faint flex items-center gap-1.5"><Icon name="info" size={12} />{t('script.paramsNoCmd')}</div>;
+  }
+  if (readOnly && params.length === 0) return null;
+  const example = shell === 'powershell' ? '$env:OPENRMM_PARAM_NAME' : shell === 'python' ? 'os.environ["OPENRMM_PARAM_NAME"]' : '"$OPENRMM_PARAM_NAME"';
+  return (
+    <div className="rounded-xl border border-line p-3 space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div><div className="text-[12.5px] font-semibold text-ink">{t('script.params')}</div><div className="text-[11.5px] text-faint">{t('script.paramsHelp', { example })}</div></div>
+        {!readOnly && <Button size="sm" variant="ghost" icon="plus" onClick={add} disabled={params.length >= 8}>{t('script.paramAdd')}</Button>}
+      </div>
+      {params.map((p, i) => (
+        <div key={i} className="grid grid-cols-[1fr_auto] gap-2 rounded-lg border border-line bg-elevated/30 p-2.5">
+          <div className="grid sm:grid-cols-3 gap-2">
+            <Input className="mono h-8" value={p.name} disabled={readOnly} placeholder={t('script.paramName')} onChange={(e) => update(i, { name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })} />
+            <Select className="h-8" value={p.kind} disabled={readOnly} onChange={(e) => update(i, e.target.value === 'enum' ? { kind: 'enum', pattern: undefined, values: [] } : { kind: 'pattern', values: undefined, pattern: '' })}>
+              <option value="enum">{t('script.paramEnum')}</option><option value="pattern">{t('script.paramPattern')}</option>
+            </Select>
+            {p.kind === 'enum'
+              ? <Input className="mono h-8" value={(p.values || []).join(', ')} disabled={readOnly} placeholder={t('script.paramValues')} onChange={(e) => update(i, { values: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })} />
+              : <Input className="mono h-8" value={p.pattern || ''} disabled={readOnly} placeholder="[A-Za-z0-9._-]{1,32}" onChange={(e) => update(i, { pattern: e.target.value })} />}{/* i18n-ignore: a regular expression */}
+            <Input className="h-8 sm:col-span-3" value={p.description || ''} disabled={readOnly} placeholder={t('script.paramDescription')} onChange={(e) => update(i, { description: e.target.value })} />
+          </div>
+          {!readOnly && <Button size="sm" variant="ghost" icon="trash" onClick={() => remove(i)} title={t('script.paramRemove')} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Releasing a script for the AI (docs/23-ai-autonomy.md). Only for those who
+// hold both scripts.manage and ai.autonomy.manage; everyone else sees whether
+// it is released. The server decides what can be released, whatever is asked.
+function AIReleasePanel({ script, contentChanged }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [current, setCurrent] = useState(script);
+  const canRelease = can('scripts.manage') && can('ai.autonomy.manage');
+  const released = !!current.ai_released;
+  if (!released && !canRelease) return null;
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const out = await api.setScriptAIRelease(current.id, !released);
+      setCurrent(out);
+      toast.success(released ? t('script.aiWithdrawn') : t('script.aiReleased'));
+    } catch (e) { toast.error(released ? t('script.aiWithdrawFailed') : t('script.aiReleaseFailed'), e.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className={cx('rounded-xl border p-3', released ? 'border-brand/30 bg-brandsoft/30' : 'border-line')}>
+      <div className="flex items-start gap-3">
+        <div className="h-8 w-8 rounded-lg bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi shrink-0"><Icon name="sparkle" size={15} /></div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[12.5px] font-semibold text-ink">{released ? t('script.aiReleasedTitle') : t('script.aiReleaseTitle')}</div>
+          <div className="text-[11.5px] text-muted mt-0.5 leading-relaxed">
+            {released
+              ? t('script.aiReleasedBy', { who: current.ai_released_by || '?', when: current.ai_released_at ? timeAgo(current.ai_released_at) : '', hash: (current.ai_released_hash || '').slice(0, 12) })
+              : t('script.aiReleaseHelp')}
+          </div>
+          {contentChanged && released && <div className="text-[11.5px] text-warn mt-1.5 flex items-center gap-1.5"><Icon name="alert" size={12} />{t('script.aiEditWithdraws')}</div>}
+          {contentChanged && !released && canRelease && <div className="text-[11.5px] text-faint mt-1.5">{t('script.aiSaveFirst')}</div>}
+        </div>
+        {canRelease && <Button size="sm" variant={released ? 'ghost' : 'secondary'} loading={busy} disabled={!released && contentChanged} onClick={toggle}>{released ? t('script.aiWithdraw') : t('script.aiRelease')}</Button>}
+      </div>
+    </div>
   );
 }
 
@@ -2081,6 +2183,7 @@ function ConfigPanel() {
       meshcentral_enabled: c.remote.meshcentral_enabled !== false,
       rustdesk_enabled: !!c.remote.rustdesk_enabled,
       guest_access: !!c.remote.guest_access,
+      autonomy_paused: !!c.ai.autonomy_paused,
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -2088,7 +2191,7 @@ function ConfigPanel() {
     setSaving(true);
     try {
       await api.updateConfig({
-        ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key },
+        ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key, autonomy_paused: form.autonomy_paused },
         remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled, guest_access: form.guest_access },
       });
       set('ai_api_key', ''); set('meshcentral_token_key', '');
@@ -2107,6 +2210,9 @@ function ConfigPanel() {
           <Field label={t('cfg.baseUrl')}><Input className="mono" value={form.ai_base_url} disabled={!can('settings.manage')} onChange={(e) => set('ai_base_url', e.target.value)} placeholder="https://api.openai.com/v1" /></Field>
           <Field label={t('cfg.model')}><Input className="mono" value={form.ai_model} disabled={!can('settings.manage')} onChange={(e) => set('ai_model', e.target.value)} placeholder="gpt-4o-mini" /></Field>{/* i18n-ignore: a model identifier */}
           <Field label={t('cfg.apiKey')} hint={c.ai.api_key_set ? t('cfg.keySet') : t('cfg.writeOnly')}><Input type="password" value={form.ai_api_key} disabled={!can('settings.manage')} onChange={(e) => set('ai_api_key', e.target.value)} placeholder={c.ai.api_key_set ? '••••••••••••••••' : 'sk-...'} autoComplete="new-password" /></Field>
+          {/* Everything the AI may do without approval, off at once for every
+              role: for an incident or a suspicion. */}
+          <Field label={t('cfg.autonomy')} hint={t('cfg.autonomyHint')}><Select value={form.autonomy_paused ? 'paused' : 'allowed'} disabled={!can('settings.manage')} onChange={(e) => set('autonomy_paused', e.target.value === 'paused')}><option value="allowed">{t('cfg.autonomyAllowed')}</option><option value="paused">{t('cfg.autonomyPaused')}</option></Select></Field>
         </div>
       </Card>
       <Card className="p-4">

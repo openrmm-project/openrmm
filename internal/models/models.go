@@ -29,7 +29,25 @@ const (
 // Job type values.
 const (
 	JobRunScript = "run_script"
+	// JobDeviceQuery runs one of the agent's built-in read-only queries
+	// (protocol.DeviceQuery*). Its Script holds the query request as JSON; no
+	// shell is involved and no code is sent to the device.
+	JobDeviceQuery = "device_query"
 )
+
+// How a job came to run without a person approving it at the time
+// (docs/23-ai-autonomy.md). Empty for every other job.
+const (
+	AutonomyNone        = ""
+	AutonomyQuery       = "query"       // a read-only device query the user's role allows
+	AutonomyPreapproved = "preapproved" // a library script an admin released in advance
+)
+
+// MinAgentVersionAutonomy is the first agent release that answers device
+// queries and passes a script's parameters through its environment. An older
+// agent would run a parameterised script without its parameters, so the server
+// refuses both up front.
+const MinAgentVersionAutonomy = "0.10.0"
 
 // Supported script shells.
 const (
@@ -149,6 +167,15 @@ type Job struct {
 	Stderr           string    `json:"stderr"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	// Autonomy says why the job ran without approval at the time: a device
+	// query its creator's role allows, or a script released in advance. Empty
+	// for every other job.
+	Autonomy string `json:"autonomy,omitempty"`
+	// ScriptID and Params are set for a released library script: the script it
+	// was built from, and the declared parameters, which reach the device as
+	// environment variables and never as script text.
+	ScriptID *string           `json:"script_id,omitempty"`
+	Params   map[string]string `json:"params,omitempty"`
 }
 
 // EnrollToken authorizes a new agent to register.

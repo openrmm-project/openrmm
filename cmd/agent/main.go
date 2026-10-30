@@ -485,6 +485,10 @@ func (a *agent) handleFrame(raw []byte) {
 // runJobScript is the script runner, replaceable in tests.
 var runJobScript = runScriptCtx
 
+// runJobScriptEnv runs a released script with its parameters in the
+// environment. A variable for tests, like runJobScript.
+var runJobScriptEnv = runScriptCtxEnv
+
 func (a *agent) runJob(job protocol.JobMsg) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	// Claiming the id in running and checking it happen under one lock, so two
@@ -508,8 +512,24 @@ func (a *agent) runJob(job protocol.JobMsg) {
 		return
 	}
 
-	log.Printf("running job %s (%s)", job.JobID, job.Shell)
-	exitCode, stdout, stderr := runJobScript(ctx, job.Shell, job.Script)
+	var exitCode int
+	var stdout, stderr string
+	switch {
+	case job.Type == protocol.JobTypeDeviceQuery:
+		log.Printf("running job %s (device query)", job.JobID)
+		exitCode, stdout, stderr = runDeviceQuery(ctx, job.Script)
+	case len(job.Params) > 0:
+		log.Printf("running job %s (%s, %d parameters)", job.JobID, job.Shell, len(job.Params))
+		env, err := paramEnv(job.Shell, job.Params)
+		if err != nil {
+			exitCode, stderr = 2, err.Error()
+		} else {
+			exitCode, stdout, stderr = runJobScriptEnv(ctx, job.Shell, job.Script, env)
+		}
+	default:
+		log.Printf("running job %s (%s)", job.JobID, job.Shell)
+		exitCode, stdout, stderr = runJobScript(ctx, job.Shell, job.Script)
+	}
 	if ctx.Err() == context.Canceled {
 		stderr = strings.TrimSpace(stderr + "\n[canceled by operator]")
 		if exitCode == 0 {
@@ -1146,6 +1166,12 @@ func writeTempScript(script, extension string) (string, func(), error) {
 // (timeout or operator cancel) kills the process — and on Windows its whole
 // child tree (taskkill /T), so a stuck downloader/installer dies too.
 func runScriptCtx(ctx context.Context, shell, script string) (int, string, string) {
+	return runScriptCtxEnv(ctx, shell, script, nil)
+}
+
+// runScriptCtxEnv is runScriptCtx with extra environment variables: a released
+// script's parameters, which reach it as data and never as script text.
+func runScriptCtxEnv(ctx context.Context, shell, script string, extraEnv []string) (int, string, string) {
 	var cmd *exec.Cmd
 	switch shell {
 	case "powershell":
@@ -1185,6 +1211,12 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 		cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
 	default:
 		return 2, "", "unsupported shell: " + shell
+	}
+	if len(extraEnv) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, extraEnv...)
 	}
 	if runtime.GOOS == "windows" {
 		// Default ctx-cancel only kills the direct child; kill the tree instead.

@@ -33,6 +33,7 @@ const GROUPS = [
   ]],
   ['Using OpenRMM', [
     ['docs/06-ai-chat.md', 'ai-chat', 'AI assistant'],
+    ['docs/23-ai-autonomy.md', 'ai-autonomy', 'AI autonomy'],
     ['docs/08-remote-access.md', 'remote-access', 'Remote access'],
     ['docs/10-monitoring-policies.md', 'monitoring-policies', 'Monitoring, policies and alerts'],
     ['docs/16-patch-management.md', 'patch-management', 'Update management'],

@@ -344,6 +344,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermScriptsManage)).Post("/scripts", s.createScript)
 		r.With(s.requirePermission(models.PermScriptsManage)).Put("/scripts/{id}", s.updateScript)
 		r.With(s.requirePermission(models.PermScriptsManage)).Delete("/scripts/{id}", s.deleteScript)
+		r.With(s.requirePermission(models.PermScriptsManage), s.requirePermission(models.PermAIAutonomyManage)).
+			Post("/scripts/{id}/ai-release", s.setScriptAIRelease)
 		// Their own prefix rather than /scripts/categories: a category name is not
 		// a script id, and a sibling path would sit next to /scripts/{id} where
 		// only chi's static-before-param rule keeps them apart.
@@ -662,6 +664,9 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"model":       eff.AIModel,
 			"configured":  eff.AIAPIKey != "",
 			"api_key_set": eff.AIAPIKey != "",
+			// Everything the AI may do without approval, off at once for every
+			// role (docs/23-ai-autonomy.md).
+			"autonomy_paused": eff.AIAutonomyPaused,
 		},
 		"remote": map[string]any{
 			"providers":             []string{"native", "terminal", "meshcentral"},
@@ -776,6 +781,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.meshcentral_enabled", before.MeshCentralEnabled != after.MeshCentralEnabled)
 	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
 	add("remote.guest_access", before.RemoteGuestAccess != after.RemoteGuestAccess)
+	add("ai.autonomy_paused", before.AIAutonomyPaused != after.AIAutonomyPaused)
 	return out
 }
 

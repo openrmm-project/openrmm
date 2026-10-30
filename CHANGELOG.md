@@ -6,6 +6,42 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
+  [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
+  run without a person approving at the time, and only for roles granted them —
+  no built-in role is:
+  - **device queries** (`query_device`): the agent's built-in, read-only reports
+    on processes, services, events, disk, network, the system and installed
+    software. No code is sent; parameters come from closed sets;
+  - **pre-approved actions** (`run_preapproved_action`): library scripts an
+    administrator released, bound to the hash of their content, with typed
+    parameters passed as environment variables.
+
+  The built-in chat (`ai.autonomy.query`, `ai.autonomy.run`) and MCP
+  (`mcp.autonomy.query`, `mcp.autonomy.run`) have separate permissions; without
+  them the same calls create requests for approval. Releasing needs
+  `ai.autonomy.manage` (held by the built-in administrator). A server-enforced
+  deny list keeps reboots, installs, deletions, accounts, firewall, agent removal,
+  patches, persistence, registry and security settings, downloads and dynamic
+  code from ever being released. One device at a time; per-user, per-device and
+  daily limits; a circuit breaker that withdraws a release after 3 failures in a
+  row (with an email); output bounded and secret-redacted before the model sees
+  it; a global **pause** in Settings ▸ AI. Every autonomous run is an audited job
+  labelled **Ran automatically**, whose approver line states its basis.
+- **Script parameters.** Library scripts can declare up to eight parameters, each
+  with a list of values or a pattern. They reach the script as
+  `OPENRMM_PARAM_<NAME>` environment variables, never as script text; running such
+  a script asks for the values and always waits for approval. cmd scripts take
+  none.
+- **AI release withdrawn** email notification (on by default).
+
+### Changed
+
+- The agent runs device queries and passes script parameters from **0.10.0**;
+  the server refuses both for older agents.
+
 ## [0.9.0] - 2026-10-28
 
 ### Added

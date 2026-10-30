@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -24,6 +25,9 @@ var (
 	// ErrConflict is returned when an operation cannot safely replace existing
 	// state, such as a second credential rotation while one is pending.
 	ErrConflict = errors.New("conflict")
+	// ErrRateLimited is returned when an autonomous job would exceed one of its
+	// limits (AutonomyLimits). Nothing was created.
+	ErrRateLimited = errors.New("rate limited")
 )
 
 // Store wraps a pgx connection pool.
@@ -396,30 +400,109 @@ func (s *Store) APITokenExists(ctx context.Context, hash string) (bool, error) {
 // ---------- Jobs ----------
 
 const jobCols = `id, agent_id, type, description, shell, script, status, requires_approval,
-	created_by, approved_by, task_id, batch_id, exit_code, stdout, stderr, created_at, updated_at`
+	created_by, approved_by, task_id, batch_id, exit_code, stdout, stderr, created_at, updated_at,
+	autonomy, script_id, params`
 
 func scanJob(row pgx.Row) (*models.Job, error) {
 	var j models.Job
+	var params []byte
 	err := row.Scan(&j.ID, &j.AgentID, &j.Type, &j.Description, &j.Shell, &j.Script, &j.Status,
 		&j.RequiresApproval, &j.CreatedBy, &j.ApprovedBy, &j.TaskID, &j.BatchID, &j.ExitCode, &j.Stdout, &j.Stderr,
-		&j.CreatedAt, &j.UpdatedAt)
+		&j.CreatedAt, &j.UpdatedAt, &j.Autonomy, &j.ScriptID, &params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &j.Params); err != nil {
+			return nil, err
+		}
+	}
+	if len(j.Params) == 0 {
+		j.Params = nil
+	}
 	return &j, nil
+}
+
+func jobParamsJSON(params map[string]string) []byte {
+	if params == nil {
+		return []byte("{}")
+	}
+	raw, _ := json.Marshal(params)
+	return raw
 }
 
 // CreateJob inserts a new job.
 func (s *Store) CreateJob(ctx context.Context, j *models.Job) (*models.Job, error) {
 	j.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by, task_id, batch_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, j.Status, j.RequiresApproval, j.CreatedBy, j.TaskID, j.BatchID)
+		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by, task_id, batch_id,
+		   approved_by, autonomy, script_id, params)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, j.Status, j.RequiresApproval, j.CreatedBy, j.TaskID, j.BatchID,
+		j.ApprovedBy, j.Autonomy, j.ScriptID, jobParamsJSON(j.Params))
 	if err != nil {
+		return nil, err
+	}
+	return s.GetJob(ctx, j.ID)
+}
+
+// AutonomyLimits bounds the jobs the AI starts without approval. A zero field
+// is not checked.
+type AutonomyLimits struct {
+	Window          time.Duration // the rolling window the two counts below cover
+	PerCreator      int           // jobs of this kind one creator may start in Window
+	PerDevice       int           // jobs of this kind one device may receive in Window
+	DailyPerCreator int           // jobs of this kind one creator may start in 24 hours
+}
+
+// CreateAutonomousJob inserts a job the AI starts without approval at the
+// time, unless it would exceed limits. The count and the insert share a
+// transaction serialised per creator and per device, so a burst of parallel
+// calls cannot all pass the check before any of them is recorded.
+func (s *Store) CreateAutonomousJob(ctx context.Context, j *models.Job, limits AutonomyLimits) (*models.Job, error) {
+	if j.Autonomy == models.AutonomyNone {
+		return nil, fmt.Errorf("not an autonomous job")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Two locks, always taken in the same order, so two callers never wait on
+	// each other in a cycle.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('autonomy:creator:' || $1))`, j.CreatedBy); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('autonomy:device:' || $1))`, j.AgentID); err != nil {
+		return nil, err
+	}
+	var byCreator, byDevice, daily int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE created_by=$2 AND created_at > now() - make_interval(secs => $4)),
+		        count(*) FILTER (WHERE agent_id=$3 AND created_at > now() - make_interval(secs => $4)),
+		        count(*) FILTER (WHERE created_by=$2)
+		 FROM jobs WHERE autonomy=$1 AND created_at > now() - interval '24 hours'`,
+		j.Autonomy, j.CreatedBy, j.AgentID, limits.Window.Seconds()).Scan(&byCreator, &byDevice, &daily); err != nil {
+		return nil, err
+	}
+	if (limits.PerCreator > 0 && byCreator >= limits.PerCreator) ||
+		(limits.PerDevice > 0 && byDevice >= limits.PerDevice) ||
+		(limits.DailyPerCreator > 0 && daily >= limits.DailyPerCreator) {
+		return nil, ErrRateLimited
+	}
+	j.ID = newID()
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by,
+		   approved_by, autonomy, script_id, params)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9,$10,$11,$12)`,
+		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, models.JobPending, j.CreatedBy,
+		j.ApprovedBy, j.Autonomy, j.ScriptID, jobParamsJSON(j.Params)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return s.GetJob(ctx, j.ID)
@@ -483,6 +566,10 @@ func (s *Store) ListDispatchableJobs(ctx context.Context, agentID string) ([]mod
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+jobCols+` FROM jobs WHERE agent_id=$1 AND status IN ('pending','sent')
 		 AND EXISTS (SELECT 1 FROM agents a WHERE a.id=jobs.agent_id AND a.revoked_at IS NULL)
+		 -- An autonomous job is re-sent only shortly after it was created: the
+		 -- permission, pause and release it ran under were checked then, not now
+		 -- (jobs.AutonomousRedeliveryWindow).
+		 AND (autonomy = '' OR created_at > now() - interval '5 minutes')
 		 ORDER BY created_at`, agentID)
 	if err != nil {
 		return nil, err

@@ -8,6 +8,18 @@ const (
 	PermAIChatUse = "ai_chat.use"
 	PermMCPUse    = "mcp.use"
 
+	// Risk-based autonomy (docs/23-ai-autonomy.md). The built-in chat and
+	// external MCP clients have separate switches, so trusting one never trusts
+	// the other. No built-in role holds the query and run permissions: a custom
+	// role opts in. Nothing that changes a device is ever covered by them.
+	PermAIAutonomyQuery  = "ai.autonomy.query"
+	PermAIAutonomyRun    = "ai.autonomy.run"
+	PermMCPAutonomyQuery = "mcp.autonomy.query"
+	PermMCPAutonomyRun   = "mcp.autonomy.run"
+	// PermAIAutonomyManage releases library scripts for the AI to run without
+	// approval. It also needs scripts.manage.
+	PermAIAutonomyManage = "ai.autonomy.manage"
+
 	PermAlertsView   = "alerts.view"
 	PermAlertsManage = "alerts.manage"
 
@@ -83,6 +95,11 @@ func PermissionCatalog() []Permission {
 	return []Permission{
 		{PermAIChatUse, "AI Chat", "Open AI Chat and send messages.", "AI"},
 		{PermMCPUse, "MCP", "Connect external MCP clients to AI tools.", "AI"},
+		{PermAIAutonomyQuery, "AI chat: query devices without approval", "Let the built-in AI run read-only device queries (processes, services, events, disk, network) without asking first.", "AI"},
+		{PermAIAutonomyRun, "AI chat: run pre-approved actions", "Let the built-in AI run library scripts an administrator released in advance, without asking first.", "AI"},
+		{PermMCPAutonomyQuery, "MCP: query devices without approval", "Let external MCP clients run read-only device queries without asking first.", "AI"},
+		{PermMCPAutonomyRun, "MCP: run pre-approved actions", "Let external MCP clients run library scripts released in advance, without asking first.", "AI"},
+		{PermAIAutonomyManage, "Release scripts for the AI", "Mark library scripts that the AI may run without approval. Also needs Manage scripts.", "AI"},
 		{PermAlertsView, "View alerts", "List and inspect alerts.", "Alerts"},
 		{PermAlertsManage, "Manage alerts", "Acknowledge and resolve alerts.", "Alerts"},
 		{PermJobsView, "View jobs", "List jobs and approval history.", "Jobs"},
@@ -167,6 +184,8 @@ func DefaultRolePermissions(role string) []string {
 			PermAuditView,
 			PermSettingsManage, PermEnrollmentManage, PermAPITokensManage,
 			PermUsersManage, PermUsersEmailManage, PermRolesManage,
+			// Releasing scripts, but not using autonomy: that is a custom role's.
+			PermAIAutonomyManage,
 		}
 	default:
 		return nil

@@ -8,8 +8,13 @@ It reuses the **exact same permission-filtered tool catalog and implementations*
 as the built-in chat (`ai.ToolsForPermissions` / `ai.Execute`), so both surfaces
 behave identically. Write-capable tools **propose**: jobs land in
 `awaiting_approval`, and tasks, checks and policies land disabled and stamped for
-review. External AI never executes a script directly and never deletes. The single
-tool that acts, `install_patches`, is bounded by what a person already approved.
+review. External AI never executes a free-form script and never deletes. The
+tools that act are bounded: `install_patches` by what a person already approved,
+and — only for roles granted `mcp.autonomy.query` / `mcp.autonomy.run`, which are
+separate from the built-in chat's — `query_device` (read-only built-in queries)
+and `run_preapproved_action` (scripts an administrator released). Without those
+permissions they create requests for approval. See
+[23-ai-autonomy](23-ai-autonomy.md).
 
 Verified end-to-end: `initialize` → `tools/list` → `tools/call` over HTTP, with
 scoped tokens and IP allowlisting.

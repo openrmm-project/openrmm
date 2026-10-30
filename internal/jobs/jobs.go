@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -44,6 +45,25 @@ type Sender interface {
 type Notifier interface {
 	QueueJobFailed(ctx context.Context, agentID, hostname, jobID, description string)
 }
+
+// AutonomyStore is what jobs the AI starts without approval need beyond Store
+// (docs/23-ai-autonomy.md). *store.Store satisfies it; a store without it
+// refuses autonomous jobs rather than running them unlimited.
+type AutonomyStore interface {
+	CreateAutonomousJob(ctx context.Context, j *models.Job, limits store.AutonomyLimits) (*models.Job, error)
+	RecordAIScriptOutcome(ctx context.Context, id string, success bool, limit int) (bool, error)
+	GetScript(ctx context.Context, id string) (*models.Script, error)
+}
+
+// ReleaseNotifier tells people when a script's release for the AI was
+// withdrawn after repeated failures. Optional, like Notifier.
+type ReleaseNotifier interface {
+	QueueAIReleaseRevoked(ctx context.Context, agentID, hostname, scriptID, scriptName string, failures int)
+}
+
+// ReleaseFailureLimit is how many autonomous runs of a released script may fail
+// in a row before its release is withdrawn.
+const ReleaseFailureLimit = 3
 
 // Service coordinates jobs across the store and the live-agent hub.
 type Service struct {
@@ -83,6 +103,165 @@ func agentCanRunShell(a *models.Agent, shell string) error {
 	return fmt.Errorf("%s runs %s scripts only from agent %s or later; it reports %s",
 		a.Hostname, shell, minimum, reported)
 }
+
+// agentAcceptsAutonomy refuses a device too old for device queries or for a
+// script's parameters. An older agent would answer a query with "unsupported
+// shell", and would run a parameterised script without its parameters.
+func agentAcceptsAutonomy(a *models.Agent) error {
+	if models.AgentVersionAtLeast(a.Version, models.MinAgentVersionAutonomy) {
+		return nil
+	}
+	reported := a.Version
+	if strings.TrimSpace(reported) == "" {
+		reported = "unknown"
+	}
+	return fmt.Errorf("%s runs device queries and parameterised scripts only from agent %s or later; it reports %s",
+		a.Hostname, models.MinAgentVersionAutonomy, reported)
+}
+
+// usableAgent loads a job's target and refuses a revoked one.
+func (s *Service) usableAgent(ctx context.Context, agentID string) (*models.Agent, error) {
+	a, err := s.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("agent: %w", err)
+	}
+	if a.Status == models.AgentRevoked {
+		return nil, fmt.Errorf("agent is revoked")
+	}
+	return a, nil
+}
+
+// ProposeQuery creates an approval-gated device query: what the AI does when
+// the caller's role does not allow it to query on its own. Once approved it
+// runs exactly like an autonomous one.
+func (s *Service) ProposeQuery(ctx context.Context, agentID string, req protocol.DeviceQueryRequest, description, createdBy string) (*models.Job, error) {
+	a, err := s.usableAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := agentAcceptsAutonomy(a); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	j, err := s.store.CreateJob(ctx, &models.Job{
+		AgentID: agentID, Type: models.JobDeviceQuery, Description: description, Script: string(raw),
+		Status: models.JobAwaitingApproval, RequiresApproval: true, CreatedBy: createdBy,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": a.Hostname, "query": req.Query, "requires_approval": true})
+	return s.store.GetJob(ctx, j.ID)
+}
+
+// ProposeScriptWithParams creates an approval-gated run of a library script
+// with declared parameters: what the AI does with a released script when its
+// role may not run releases on its own.
+func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, sc *models.Script, params map[string]string, description, createdBy string) (*models.Job, error) {
+	a, err := s.usableAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := agentCanRunShell(a, sc.Shell); err != nil {
+		return nil, err
+	}
+	if len(params) > 0 {
+		if err := agentAcceptsAutonomy(a); err != nil {
+			return nil, err
+		}
+	}
+	scriptID := sc.ID
+	j, err := s.store.CreateJob(ctx, &models.Job{
+		AgentID: agentID, Type: models.JobRunScript, Description: description, Shell: sc.Shell, Script: sc.Body,
+		Status: models.JobAwaitingApproval, RequiresApproval: true, CreatedBy: createdBy,
+		ScriptID: &scriptID, Params: params,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": a.Hostname, "shell": sc.Shell, "script_id": sc.ID, "requires_approval": true})
+	return s.store.GetJob(ctx, j.ID)
+}
+
+// StartAutonomous creates and dispatches a job the AI runs without approval at
+// the time: a device query its creator's role allows, or a script an
+// administrator released (docs/23-ai-autonomy.md). basis is recorded as the
+// job's approver and in the audit trail, so the device history says why it ran.
+//
+// The caller has already checked the permission, the scope and, for a script,
+// the release. This re-checks the device and applies limits atomically.
+func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis string, limits store.AutonomyLimits) (*models.Job, error) {
+	as, ok := s.store.(AutonomyStore)
+	if !ok {
+		return nil, fmt.Errorf("autonomous jobs are not available")
+	}
+	a, err := s.usableAgent(ctx, j.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := agentAcceptsAutonomy(a); err != nil {
+		return nil, err
+	}
+	switch j.Autonomy {
+	case models.AutonomyQuery:
+		if j.Type != models.JobDeviceQuery {
+			return nil, fmt.Errorf("an autonomous query must be a device query")
+		}
+	case models.AutonomyPreapproved:
+		if j.Type != models.JobRunScript || j.ScriptID == nil {
+			return nil, fmt.Errorf("a pre-approved action must run a library script")
+		}
+		if err := agentCanRunShell(a, j.Shell); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unknown autonomy %q", j.Autonomy)
+	}
+	j.Status = models.JobPending
+	j.RequiresApproval = false
+	j.ApprovedBy = &basis
+	created, err := as.CreateAutonomousJob(ctx, j, limits)
+	if err != nil {
+		return nil, err
+	}
+	detail := map[string]any{"agent": created.AgentID, "host": a.Hostname, "autonomy": created.Autonomy, "basis": basis}
+	if created.ScriptID != nil {
+		detail["script_id"] = *created.ScriptID
+	}
+	if len(created.Params) > 0 {
+		detail["params"] = created.Params
+	}
+	if created.Type == models.JobDeviceQuery {
+		var req protocol.DeviceQueryRequest
+		if json.Unmarshal([]byte(created.Script), &req) == nil {
+			detail["query"] = req.Query
+			if len(req.Params) > 0 {
+				detail["params"] = req.Params
+			}
+		}
+	}
+	s.audit(ctx, created.CreatedBy, "job.autonomous", created.ID, detail)
+	// An autonomous job runs now or not at all. Left pending for a device that
+	// is offline, it would run whenever the device came back — after autonomy
+	// was paused, or the release withdrawn, perhaps hours later.
+	msg := protocol.JobMsg{JobID: created.ID, Type: created.Type, Shell: created.Shell, Script: created.Script, Params: created.Params}
+	frame, _ := encode(protocol.MsgJob, msg)
+	if !s.hub.Send(created.AgentID, frame) {
+		_ = s.store.SetJobResult(ctx, created.ID, models.JobFailed, -1, "",
+			"the device was offline: an action that runs without approval does not wait for it to come back")
+		return s.store.GetJob(ctx, created.ID)
+	}
+	_ = s.store.SetJobStatus(ctx, created.ID, models.JobSent, nil)
+	return s.store.GetJob(ctx, created.ID)
+}
+
+// AutonomousRedeliveryWindow is how long after creation an autonomous job may
+// still be re-sent to an agent that reconnects. Past it, the job is not
+// delivered: whoever allowed it at that moment may no longer allow it.
+const AutonomousRedeliveryWindow = 5 * time.Minute
 
 // Propose creates a job. If requireApproval is true the job lands in
 // awaiting_approval and is NOT dispatched until a human approves it.
@@ -429,7 +608,7 @@ func (s *Service) CompleteManual(ctx context.Context, jobID, actor string, succe
 
 // dispatch attempts to push a pending job to a connected agent.
 func (s *Service) dispatch(ctx context.Context, j *models.Job) {
-	msg := protocol.JobMsg{JobID: j.ID, Type: j.Type, Shell: j.Shell, Script: j.Script}
+	msg := protocol.JobMsg{JobID: j.ID, Type: j.Type, Shell: j.Shell, Script: j.Script, Params: j.Params}
 	frame, _ := encode(protocol.MsgJob, msg)
 	if s.hub.Send(j.AgentID, frame) {
 		_ = s.store.SetJobStatus(ctx, j.ID, models.JobSent, nil)
@@ -485,7 +664,34 @@ func (s *Service) OnResult(ctx context.Context, agentID string, res protocol.Job
 	if status == models.JobFailed && s.notifier != nil {
 		s.notifier.QueueJobFailed(ctx, j.AgentID, host, j.ID, j.Description)
 	}
+	if j.Autonomy == models.AutonomyPreapproved && j.ScriptID != nil {
+		s.recordReleaseOutcome(ctx, j, host, status == models.JobCompleted)
+	}
 	return nil
+}
+
+// recordReleaseOutcome is the circuit breaker on released scripts: enough
+// failed autonomous runs in a row withdraw the release, and the people who can
+// see the device are told.
+func (s *Service) recordReleaseOutcome(ctx context.Context, j *models.Job, host string, success bool) {
+	as, ok := s.store.(AutonomyStore)
+	if !ok {
+		return
+	}
+	revoked, err := as.RecordAIScriptOutcome(ctx, *j.ScriptID, success, ReleaseFailureLimit)
+	if err != nil || !revoked {
+		return
+	}
+	name := *j.ScriptID
+	if sc, err := as.GetScript(ctx, *j.ScriptID); err == nil {
+		name = sc.Name
+	}
+	s.audit(ctx, "system", "script.ai_release.revoked", *j.ScriptID, map[string]any{
+		"reason": "failed autonomous runs in a row", "failures": ReleaseFailureLimit, "last_job": j.ID, "host": host,
+	})
+	if rn, ok := s.notifier.(ReleaseNotifier); ok {
+		rn.QueueAIReleaseRevoked(ctx, j.AgentID, host, *j.ScriptID, name, ReleaseFailureLimit)
+	}
 }
 
 // hostname resolves an agent's hostname for audit labels (best-effort). The

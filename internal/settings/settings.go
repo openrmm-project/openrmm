@@ -33,6 +33,9 @@ const (
 	// KeyRemoteGuestAccess allows technicians holding devices.remote.share to
 	// invite guests without an account. Off unless an administrator turns it on.
 	KeyRemoteGuestAccess = "remote.guest_access"
+	// KeyAIAutonomyPaused turns off everything the AI may do without approval,
+	// for every role, at once (docs/23-ai-autonomy.md). Read on every call.
+	KeyAIAutonomyPaused = "ai.autonomy_paused"
 )
 
 var publicKeys = map[string]bool{
@@ -45,6 +48,7 @@ var publicKeys = map[string]bool{
 	KeyMeshCentralEnabled:    true,
 	KeyRustDeskEnabled:       true,
 	KeyRemoteGuestAccess:     true,
+	KeyAIAutonomyPaused:      true,
 }
 
 // Editable is the effective runtime subset that can be edited from the UI.
@@ -60,6 +64,7 @@ type Editable struct {
 	MeshCentralEnabled    bool
 	RustDeskEnabled       bool
 	RemoteGuestAccess     bool
+	AIAutonomyPaused      bool
 }
 
 // FromConfig builds the env-only baseline.
@@ -118,7 +123,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyAIAutonomyPaused} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -149,6 +154,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.RustDeskEnabled = v == "true"
 		case KeyRemoteGuestAccess:
 			out.RemoteGuestAccess = v == "true"
+		case KeyAIAutonomyPaused:
+			out.AIAutonomyPaused = v == "true"
 		}
 	}
 	return out, nil
@@ -161,6 +168,8 @@ type SaveRequest struct {
 		BaseURL  string `json:"base_url"`
 		Model    string `json:"model"`
 		APIKey   string `json:"api_key"`
+		// nil = preserve current
+		AutonomyPaused *bool `json:"autonomy_paused"`
 	} `json:"ai"`
 	Remote struct {
 		DefaultProvider    string `json:"default"`
@@ -224,6 +233,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	if in.Remote.GuestAccess != nil {
 		guestAccess = *in.Remote.GuestAccess
 	}
+	autonomyPaused := current.AIAutonomyPaused
+	if in.AI.AutonomyPaused != nil {
+		autonomyPaused = *in.AI.AutonomyPaused
+	}
 	for _, op := range []struct{ key, value string }{
 		{KeyAIProvider, in.AI.Provider},
 		{KeyAIBaseURL, in.AI.BaseURL},
@@ -234,6 +247,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyMeshCentralEnabled, strconv.FormatBool(meshEnabled)},
 		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
 		{KeyRemoteGuestAccess, strconv.FormatBool(guestAccess)},
+		{KeyAIAutonomyPaused, strconv.FormatBool(autonomyPaused)},
 	} {
 		if err := writePublic(op.key, op.value); err != nil {
 			return current, err

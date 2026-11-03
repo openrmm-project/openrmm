@@ -97,6 +97,24 @@ After a device identity is revoked, create a new enrollment token and use the
 installer's explicit identity-reset option (`--reset-identity` on Linux/macOS or
 `-ResetIdentity` on Windows); normal reinstalls preserve the existing identity.
 
+The installer records which server an enrolment belongs to
+(`/etc/rmm-agent/server`, `C:\ProgramData\rmm-agent\server`). A computer still
+enrolled with another console is refused before anything changes, with the
+removal command to run first, or `--reset-identity` to enrol it as a new device.
+When the agent does not connect, the installer prints its last log lines before
+rolling back; a computer it already enrolled keeps that enrolment, so running the
+same command again after fixing the cause does not need a new token.
+
+### Mass deployment
+
+In the console, **Clients ▸ site ▸ Enroll a new agent ▸ Many computers** mints
+one token for a whole rollout: 2 to 10,000 computers, valid for 7, 30 or 90 days.
+The same command then goes into a GPO startup script, an Intune script or any
+deployment tool. The site lists its active tokens with what each has used, and
+**Revoke** stops one at once; the computers it already enrolled stay. Treat a
+mass token like a password for the rollout's length: anyone holding it can add
+computers to that site until it is used up, expires or is revoked.
+
 ### Production installer requirements
 
 The served installers default to production mode and require HTTPS, an
@@ -170,7 +188,7 @@ installed by an older installer.
 ## Removing an agent
 
 Run [`uninstall.sh`](../deploy/public/uninstall.sh) (Linux/macOS, served at
-`/uninstall.sh`) or `C:\ProgramData\rmm-agent\uninstall.ps1` (Windows). Both stop
+`/uninstall.sh` and `/dl/uninstall.sh`) or `C:\ProgramData\rmm-agent\uninstall.ps1` (Windows). Both stop
 and remove the service, the binaries and `/etc/rmm-agent` (Windows:
 `C:\ProgramData\rmm-agent`) — which holds credentials that still authenticate to
 the server — and on macOS also the remote-desktop bundle, its LaunchAgent and the

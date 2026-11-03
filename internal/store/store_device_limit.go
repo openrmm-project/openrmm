@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/devicelimit"
 	"github.com/p1ngu/rmm/internal/models"
 )
@@ -36,11 +37,12 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollToken string, limit int, 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var tokenID string
 	var siteID, groupID *string
 	err = tx.QueryRow(ctx,
-		`SELECT site_id, group_id FROM enroll_tokens
-		 WHERE token=$1 AND uses_left > 0 AND (expires_at IS NULL OR expires_at > now())
-		 FOR UPDATE`, enrollToken).Scan(&siteID, &groupID)
+		`SELECT id, site_id, group_id FROM enroll_tokens
+		 WHERE token=$1 AND uses_left > 0 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+		 FOR UPDATE`, auth.Hash(enrollToken)).Scan(&tokenID, &siteID, &groupID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -60,7 +62,7 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollToken string, limit int, 
 			return nil, devicelimit.ErrLimitReached
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE enroll_tokens SET uses_left = uses_left - 1 WHERE token=$1`, enrollToken); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE enroll_tokens SET uses_left = uses_left - 1 WHERE id=$1`, tokenID); err != nil {
 		return nil, err
 	}
 	id := newID()

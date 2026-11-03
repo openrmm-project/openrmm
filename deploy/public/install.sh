@@ -166,6 +166,11 @@ fi
 DEST="${DEST_DIR}/rmm-agent"
 MIGRATE_FROM=""
 STATE_DIR="/etc/rmm-agent"; STATE="${STATE_DIR}/state.json"; HEALTH="${STATE_DIR}/health.json"
+# Which server the enrolment in state.json belongs to. The state itself does not
+# say, and a computer moved to another console otherwise keeps the first one's
+# credentials (see the check before the download).
+SERVER_FILE="${STATE_DIR}/server"; SERVER_FILE_BACKUP="${SERVER_FILE}.install-old"; HAD_SERVER_FILE=0
+ENROLLED_NOW=0; AGENT_STARTED=0; LOG_START=0
 BACKUP="${DEST}.install-old"; SIGNATURE_PATH="${DEST}.sig"; SIGNATURE_BACKUP="${SIGNATURE_PATH}.install-old"
 STATE_BACKUP="${STATE}.install-old"; OUTBOX_BACKUP="${STATE}.outbox.install-old"
 TMP_DIR=""; TRANSACTION_STARTED=0; SWAPPED=0; COMMITTED=0; HAD_OLD=0; HAD_STATE=0; HAD_OUTBOX=0
@@ -316,6 +321,10 @@ rollback() {
     rm -f "$SIGNATURE_PATH"
     [ ! -f "$SIGNATURE_BACKUP" ] || mv -f "$SIGNATURE_BACKUP" "$SIGNATURE_PATH"
     [ "$HAD_STATE" = "0" ] || { rm -f "$STATE"; mv -f "$STATE_BACKUP" "$STATE"; }
+    if [ "$HAD_STATE" = "1" ]; then
+      rm -f "$SERVER_FILE"
+      [ "$HAD_SERVER_FILE" = "0" ] || mv -f "$SERVER_FILE_BACKUP" "$SERVER_FILE"
+    fi
     [ "$HAD_OUTBOX" = "0" ] || { rm -f "${STATE}.outbox"; mv -f "$OUTBOX_BACKUP" "${STATE}.outbox"; }
     if [ "$SERVICE_EXISTED" = "1" ] && [ -x "$DEST" ]; then
       restore_service_config
@@ -364,6 +373,47 @@ CANDIDATE="${TMP_DIR}/${BIN}"
 MANIFEST="${TMP_DIR}/SHA256SUMS"
 SIG_TEXT="${TMP_DIR}/SHA256SUMS.sig"
 ARTIFACT_SIG_TEXT="${TMP_DIR}/${BIN}.sig"
+
+# The server an existing enrolment belongs to: what this installer recorded,
+# or, for an agent installed before it recorded one, the -server argument in
+# its service definition (systemd's ExecStart, the launchd plist's
+# ProgramArguments, an init script's command line).
+previous_server() {
+  if [ -f "$SERVER_FILE" ]; then head -n 1 "$SERVER_FILE"; return 0; fi
+  detect_service_config || return 0
+  tr '<>"\047 \t' '\n\n\n\n\n\n' < "$SERVICE_PATH" |
+    awk 'NF && $0 != "string" && $0 != "/string" { if (prev == "-server") { print; exit } prev = $0 }'
+}
+
+# What the agent said while this installer waited, so a failed install names its
+# reason: systemd keeps it in the journal, macOS in agent.log beside the binary.
+show_agent_log() {
+  lines=""
+  if [ "$OS" = "darwin" ] && [ -f "${DEST_DIR}/agent.log" ]; then
+    lines="$(tail -c +"$((LOG_START + 1))" "${DEST_DIR}/agent.log" | tail -n 20)"
+  elif command -v journalctl >/dev/null 2>&1; then
+    lines="$(journalctl -u rmm-agent --since "@${AGENT_STARTED}" --no-pager -o cat 2>/dev/null | tail -n 20)"
+  fi
+  [ -n "$lines" ] || return 0
+  echo "The agent's last messages:"
+  printf '%s\n' "$lines" | sed 's/^/  | /'
+}
+
+# A computer enrolled with another console keeps that enrolment: the token on
+# this command line is only used when there is none. The agent would come up
+# with the other console's credentials, be refused, and the install would roll
+# back without saying why. Stop before changing anything, and say what to do.
+if [ "$RESET_IDENTITY" != "1" ] && [ -f "$STATE" ]; then
+  previous="$(previous_server)"
+  if [ -n "$previous" ] && [ "$previous" != "${WS}/ws/agent" ]; then
+    echo "error: this computer already has an OpenRMM agent, enrolled with another server:"
+    echo "  ${previous}"
+    echo "Nothing was changed. Remove that agent first, then run this command again:"
+    echo "  curl -fsSL ${SERVER}/dl/uninstall.sh | sudo bash"
+    echo "Or add --reset-identity to this command to enrol the computer here as a new device."
+    exit 1
+  fi
+fi
 
 echo "Downloading and verifying ${BIN}..."
 curl -fsSL "${SERVER}/dl/${BIN}" -o "$CANDIDATE"
@@ -471,6 +521,10 @@ fi
 if [ -f "$STATE" ]; then
   cp -p "$STATE" "$STATE_BACKUP"
   HAD_STATE=1
+  if [ -f "$SERVER_FILE" ]; then
+    cp -p "$SERVER_FILE" "$SERVER_FILE_BACKUP"
+    HAD_SERVER_FILE=1
+  fi
 fi
 if [ -f "${STATE}.outbox" ]; then
   cp -p "${STATE}.outbox" "$OUTBOX_BACKUP"
@@ -487,7 +541,7 @@ mv "$CANDIDATE" "$DEST"
 SWAPPED=1
 
 if [ "$RESET_IDENTITY" = "1" ]; then
-  rm -f "$STATE" "${STATE}.outbox"
+  rm -f "$STATE" "${STATE}.outbox" "$SERVER_FILE"
 fi
 
 security_args=(-require-tls -update-verify strict -update-public-key "$UPDATE_PUBLIC_KEY")
@@ -496,7 +550,15 @@ if [ "$LAB_MODE" = "1" ]; then
   [ -z "$UPDATE_PUBLIC_KEY" ] || security_args=(-lab-mode -update-verify strict -update-public-key "$UPDATE_PUBLIC_KEY")
 fi
 if [ ! -f "$STATE" ]; then
-  "$DEST" -server "${WS}/ws/agent" -state "$STATE" -enroll-token "$TOKEN" "${security_args[@]}" -enroll-only
+  "$DEST" -server "${WS}/ws/agent" -state "$STATE" -enroll-token "$TOKEN" "${security_args[@]}" -enroll-only || {
+    echo "error: the server did not enrol this computer; its reason is on the line above."
+    echo "  An install token enrols a set number of computers and expires. If it is used up or"
+    echo "  expired, generate a new one in the console (Add device) and run the new command."
+    exit 1
+  }
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "${WS}/ws/agent" > "$SERVER_FILE"
+  ENROLLED_NOW=1
 fi
 
 rm -f "$HEALTH"
@@ -512,6 +574,8 @@ if [ -n "$MIGRATE_FROM" ] && [ "$SERVICE_EXISTED" = "1" ]; then
 fi
 install_args=(-server "${WS}/ws/agent" -state "$STATE" -health-file "$HEALTH" "${security_args[@]}")
 "$DEST" "${install_args[@]}" -action install
+AGENT_STARTED="$(date +%s)"
+[ ! -f "${DEST_DIR}/agent.log" ] || LOG_START="$(wc -c < "${DEST_DIR}/agent.log" | tr -d ' ')"
 "$DEST" -action start
 
 echo "Waiting for an authenticated agent connection..."
@@ -523,10 +587,19 @@ for _ in $(seq 1 60); do
   fi
   sleep 1
 done
-[ "$healthy" = "1" ] || { echo "error: agent did not report a healthy authenticated connection"; exit 1; }
+if [ "$healthy" != "1" ]; then
+  echo "error: agent did not report a healthy authenticated connection"
+  show_agent_log
+  if [ "$ENROLLED_NOW" = "1" ]; then
+    echo "This computer was enrolled before the connection failed, and the enrolment is kept:"
+    echo "once the cause is fixed, run this same command again (the token is not used again)."
+  fi
+  exit 1
+fi
 
 COMMITTED=1
-rm -f "$BACKUP" "$SIGNATURE_BACKUP" "$STATE_BACKUP" "$OUTBOX_BACKUP"
+rm -f "$BACKUP" "$SIGNATURE_BACKUP" "$STATE_BACKUP" "$OUTBOX_BACKUP" "$SERVER_FILE_BACKUP"
+printf '%s\n' "${WS}/ws/agent" > "$SERVER_FILE"
 if [ -n "$MIGRATE_FROM" ]; then
   rm -f "$MIGRATE_FROM" "${MIGRATE_FROM}.sig" "${MIGRATE_FROM}.update-etag"
   echo "Removed the previous agent at $MIGRATE_FROM."

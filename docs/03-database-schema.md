@@ -44,7 +44,10 @@ companies/sites; optional. An agent's `group_id` must point at a department of
 the agent's own site.
 
 ### `enroll_tokens`
-One-time / limited-use enrollment tokens (token, uses_left, expires_at).
+Enrollment tokens: one computer, or up to 10,000 for a mass deployment, for at
+most 90 days. `token` holds the hex SHA-256 of the token (migration 023 hashed the
+ones issued before); `uses_left` counts down from `uses_total`; `created_by` is
+the actor; `revoked_at`/`revoked_by` mark a revoked token, whose `uses_left` is 0.
 
 `site_id` and the optional `group_id` decide where an enrolling agent lands. A
 trigger (`enroll_token_group_matches_site`) rejects an inconsistent pair, so a

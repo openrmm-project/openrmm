@@ -30,7 +30,7 @@ func TestEnrollAgentRespectsTheDeviceLimitIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	tok, err := st.CreateEnrollToken(ctx, "devlimit-token", "limit", 10, nil, nil, nil)
+	tok, err := st.CreateEnrollToken(ctx, "devlimit-token", "limit", 10, nil, nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestEnrollAgentRespectsTheDeviceLimitIntegration(t *testing.T) {
 		t.Fatalf("an invalid token on a full console must read as an invalid token, got %v", err)
 	}
 	var uses int
-	if err := st.pool.QueryRow(ctx, `SELECT uses_left FROM enroll_tokens WHERE token=$1`, tok.Token).Scan(&uses); err != nil {
+	if err := st.pool.QueryRow(ctx, `SELECT uses_left FROM enroll_tokens WHERE id=$1`, tok.ID).Scan(&uses); err != nil {
 		t.Fatal(err)
 	}
 	if uses != 8 {
@@ -83,7 +83,7 @@ func TestEnrollAgentLastPlaceIsNotDoubleBookedIntegration(t *testing.T) {
 	st := limitStore(t, "store_devlimitrace")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	tok, err := st.CreateEnrollToken(ctx, "devlimit-race", "race", 50, nil, nil, nil)
+	tok, err := st.CreateEnrollToken(ctx, "devlimit-race", "race", 50, nil, nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

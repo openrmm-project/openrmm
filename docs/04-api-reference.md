@@ -83,11 +83,21 @@ gaps) and the alert outbox (`rmm_notifications_pending`, `_processing`,
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | POST | `/api/enroll-tokens` | `enrollment.manage` | Create an enroll token |
+| GET | `/api/enroll-tokens` | `enrollment.manage` | Tokens that can still enrol (`?site_id=` for one site) |
+| DELETE | `/api/enroll-tokens/{id}` | `enrollment.manage` | Revoke a token; what it enrolled stays |
 
 Body: `{ "description": "lab", "uses": 1, "ttl_hours": 24, "site_id": "…",
-"group_id": "…" }` (all optional; `uses` defaults to 1). Prefer one-use tokens for
-individual endpoints; a multi-use token is an intentionally broader enrollment
-capability. Returns the token object — **the token value is only shown here**.
+"group_id": "…" }` (all optional). `uses` is 1 to 10,000 and defaults to 1;
+`ttl_hours` is 1 to 2160 (90 days) and defaults to 24. A value outside those
+bounds is refused with 400, not clamped. Prefer one-use tokens for individual
+endpoints; a multi-use token is for a mass deployment (a GPO, Intune or a
+script) and an intentionally broader enrollment capability, so revoke it when
+the rollout is done. Returns the token object — **the token value is only shown
+here**: the server keeps its SHA-256, so the listing returns everything else
+(uses left and total, expiry, who created it) but never the token.
+
+Creating and revoking are audited as `enroll_token.create` and
+`enroll_token.revoke`.
 
 `site_id` and `group_id` decide where the agent lands: give `group_id` to enrol
 straight into a department. The department must belong to the given site — an
@@ -96,7 +106,7 @@ The installer's `--site` flag does not affect this; it is accepted and discarded
 because the destination is a property of the token, not of the command line.
 
 A caller restricted by access scope must bind the token to a site directly in its
-site/client scope. Unbound tokens, or tokens for a site reached only through a
+site/client scope, and lists or revokes only tokens bound to such a site. Unbound tokens, or tokens for a site reached only through a
 single agent/group scope, are rejected because they could enroll devices outside
 the caller's authority.
 

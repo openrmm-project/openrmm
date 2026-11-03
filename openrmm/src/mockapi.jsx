@@ -359,6 +359,8 @@ const api = {
   // body: { description, uses, ttl_hours, site_id, group_id? } — group_id makes
   // the agent enrol straight into a department instead of landing on the site.
   createEnrollToken(body) { return POST('/api/enroll-tokens', body); },
+  listEnrollTokens(siteId) { return GET('/api/enroll-tokens' + (siteId ? '?site_id=' + encodeURIComponent(siteId) : '')); },
+  revokeEnrollToken(id) { return DELETE('/api/enroll-tokens/' + encodeURIComponent(id)); },
 
   /* ---- API tokens (MCP connectors & integrations) ---- */
   listAPITokens() { return GET('/api/api-tokens'); },

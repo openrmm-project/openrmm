@@ -155,6 +155,45 @@ bundle_typo_refused() {
 }
 check "an unknown bundle variant is refused" bundle_typo_refused
 
+echo "== an agent enrolled with another console is refused, untouched =="
+# The token is only used when there is no enrolment, so an install for another
+# console would bring the agent up with this one's credentials and fail without
+# a reason. The installer records which server an enrolment belongs to and stops
+# before changing anything.
+check "the enrolment's server was recorded" grep -qx "ws://127.0.0.1:${PORT}/ws/agent" "${STATE_DIR}/server"
+other_console_refused() {
+  state_before="$(cat "${STATE_DIR}/state.json")"
+  actions_before="$(wc -l < "${WORK}/agent-actions")"
+  ! bash "${REPO_ROOT}/deploy/public/install.sh" \
+      --server "http://localhost:${PORT}" --token other-token --lab-mode >"${WORK}/other.log" 2>&1 &&
+    grep -q "enrolled with another server" "${WORK}/other.log" &&
+    grep -q "ws://127.0.0.1:${PORT}/ws/agent" "${WORK}/other.log" &&
+    grep -q "http://localhost:${PORT}/dl/uninstall.sh" "${WORK}/other.log" &&
+    [ "$(cat "${STATE_DIR}/state.json")" = "$state_before" ] &&
+    [ "$(wc -l < "${WORK}/agent-actions")" = "$actions_before" ]
+}
+check "an install for another console is refused before anything changes" other_console_refused
+# An agent installed before the server was recorded: its service definition
+# names the server, in the form systemd or launchd keeps it.
+older_install_read() {
+  mv "${STATE_DIR}/server" "${WORK}/server.saved"
+  cp -p "$SERVICE_PATH" "${WORK}/service.saved"
+  if [ "$OS" = "darwin" ]; then
+    printf '<array>\n  <string>%s</string>\n  <string>-server</string>\n  <string>wss://old.example.com/ws/agent</string>\n</array>\n' "$NEW_DEST" > "$SERVICE_PATH"
+  else
+    printf 'ExecStart=%s "-server" "wss://old.example.com/ws/agent" "-state" "%s/state.json"\n' "$NEW_DEST" "$STATE_DIR" > "$SERVICE_PATH"
+  fi
+  refused=1
+  if bash "${REPO_ROOT}/deploy/public/install.sh" \
+      --server "http://127.0.0.1:${PORT}" --token stub-token --lab-mode >"${WORK}/older.log" 2>&1; then
+    refused=0
+  fi
+  mv "${WORK}/server.saved" "${STATE_DIR}/server"
+  cp -p "${WORK}/service.saved" "$SERVICE_PATH"
+  [ "$refused" = 1 ] && grep -q "wss://old.example.com/ws/agent" "${WORK}/older.log"
+}
+check "an older install's service definition names its server" older_install_read
+
 echo "== a failed install must hand the endpoint back =="
 # The failure that matters in practice: the replacement is in place and the
 # previous service definition has already been removed when something goes

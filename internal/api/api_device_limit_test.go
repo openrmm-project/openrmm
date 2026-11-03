@@ -42,7 +42,7 @@ func limitInfo(t *testing.T, s *Server) map[string]any {
 // message the installer prints, and GET /api/devices/limit tells the console.
 func TestEnrolmentStopsAtTheDeviceLimitIntegration(t *testing.T) {
 	s, ctx := deviceLimitServer(t)
-	tok, err := s.store.CreateEnrollToken(ctx, "api-devlimit", "limit", 10, nil, nil, nil)
+	tok, err := s.store.CreateEnrollToken(ctx, "api-devlimit", "limit", 10, nil, nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

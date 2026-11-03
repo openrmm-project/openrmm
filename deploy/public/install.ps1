@@ -180,6 +180,12 @@ $SignaturePath = "$Exe.sig"
 $SignatureBackup = "$SignaturePath.install-old"
 $StateBackup = "$State.install-old"
 $OutboxBackup = "$State.outbox.install-old"
+# Which server the enrolment in state.json belongs to. The state itself does not
+# say, and a computer moved to another console otherwise keeps the first one's
+# credentials (see the check before the transaction).
+$ServerFile = Join-Path $Dir 'server'
+$ServerFileBackup = "$ServerFile.install-old"
+$AgentLog = Join-Path $Dir 'agent.log'
 $Arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'amd64' }
 $Bin = "rmm-agent-windows-$Arch.exe"
 $Ws = $Server -replace '^https', 'wss' -replace '^http', 'ws'
@@ -188,11 +194,40 @@ $swapped = $false
 $committed = $false
 $hadOld = $false
 $hadState = $false
+$hadServerFile = $false
+$enrolledNow = $false
+$agentLogStart = 0
 $hadOutbox = $false
 $serviceExisted = $false
 $serviceInstalledByThisRun = $false
 $oldServicePath = $null
 $TempDir = $null
+
+# The server an existing enrolment belongs to: what this installer recorded, or,
+# for an agent installed before it recorded one, the -server argument in the
+# service's command line.
+function Get-PreviousServer($Service) {
+    if (Test-Path $ServerFile) { return (Get-Content -TotalCount 1 $ServerFile).Trim() }
+    if ($Service -and $Service.PathName -match '(?:^|\s)"?-server"?\s+"?([^"\s]+)') { return $Matches[1] }
+    return $null
+}
+
+# What the agent wrote to agent.log while this installer waited, so a failed
+# install names its reason. The agent holds the file open, hence the sharing.
+function Show-AgentLog {
+    if (-not (Test-Path $AgentLog)) { return }
+    try {
+        $stream = [System.IO.File]::Open($AgentLog, 'Open', 'Read', 'ReadWrite')
+        try {
+            if ($agentLogStart -lt $stream.Length) { [void]$stream.Seek($agentLogStart, 'Begin') }
+            $text = (New-Object System.IO.StreamReader($stream)).ReadToEnd()
+        } finally { $stream.Dispose() }
+    } catch { return }
+    $lines = @($text -split "`r?`n" | Where-Object { $_ }) | Select-Object -Last 20
+    if ($lines.Count -eq 0) { return }
+    Write-Host "The agent's last messages:"
+    foreach ($line in $lines) { Write-Host "  | $line" }
+}
 
 function Invoke-Agent {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$AgentArgs)
@@ -326,6 +361,8 @@ function Restore-Install {
     if ($hadState) {
         Remove-Item -Force -ErrorAction SilentlyContinue $State
         Move-Item -Force $StateBackup $State
+        Remove-Item -Force -ErrorAction SilentlyContinue $ServerFile
+        if ($hadServerFile) { Move-Item -Force $ServerFileBackup $ServerFile }
     }
     if ($hadOutbox) {
         Remove-Item -Force -ErrorAction SilentlyContinue "$State.outbox"
@@ -457,6 +494,20 @@ try {
         }
     }
 
+    # A computer enrolled with another console keeps that enrolment: the token is
+    # only used when there is none. The agent would come up with the other
+    # console's credentials, be refused, and the install would roll back without
+    # saying why. Stop before changing anything, and say what to do.
+    if (-not $ResetIdentity -and (Test-Path $State)) {
+        $previous = Get-PreviousServer $existingService
+        if ($previous -and $previous -ne "$Ws/ws/agent") {
+            throw ("This computer already has an OpenRMM agent, enrolled with another server: $previous`n" +
+                "Nothing was changed. Remove that agent first (Settings > Apps > OpenRMM Agent, or run " +
+                "$Dir\uninstall.ps1 as Administrator), then run this command again.`n" +
+                'Or add -ResetIdentity to this command to enrol the computer here as a new device.')
+        }
+    }
+
     Write-Host 'Installing agent transactionally...'
     $transactionStarted = $true
     if ($existingService) {
@@ -472,6 +523,10 @@ try {
     if (Test-Path $State) {
         Copy-Item $State $StateBackup
         $hadState = $true
+        if (Test-Path $ServerFile) {
+            Copy-Item $ServerFile $ServerFileBackup
+            $hadServerFile = $true
+        }
     }
     if (Test-Path "$State.outbox") {
         Copy-Item "$State.outbox" $OutboxBackup
@@ -487,7 +542,7 @@ try {
     $swapped = $true
 
     if ($ResetIdentity) {
-        Remove-Item -Force -ErrorAction SilentlyContinue $State, "$State.outbox"
+        Remove-Item -Force -ErrorAction SilentlyContinue $State, "$State.outbox", $ServerFile
     }
 
     $securityArgs = @('-require-tls', '-update-verify', 'strict', '-update-public-key', $UpdatePublicKey)
@@ -497,11 +552,16 @@ try {
     }
     if (-not (Test-Path $State)) {
         if ((Invoke-Agent -server "$Ws/ws/agent" -state $State -enroll-token $Token @securityArgs -enroll-only) -ne 0) {
-            throw 'Enrollment failed'
+            throw ("The server did not enrol this computer; its reason is on the line above.`n" +
+                'An install token enrols a set number of computers and expires. If it is used up or expired, ' +
+                'generate a new one in the console (Add device) and run the new command.')
         }
+        Set-Content -Path $ServerFile -Value "$Ws/ws/agent"
+        $enrolledNow = $true
     }
 
     Remove-Item -Force -ErrorAction SilentlyContinue $Health
+    if (Test-Path $AgentLog) { $agentLogStart = (Get-Item $AgentLog).Length }
     $installArgs = @('-server', "$Ws/ws/agent", '-state', $State, '-health-file', $Health) + $securityArgs
     if ($serviceExisted) {
         $newServicePath = ConvertTo-ServiceCommand -Executable $Exe -Arguments $installArgs
@@ -528,10 +588,25 @@ try {
         }
         Start-Sleep -Seconds 1
     }
-    if (-not $healthy) { throw 'Agent did not report a healthy authenticated connection' }
+    if (-not $healthy) {
+        Show-AgentLog
+        $message = 'Agent did not report a healthy authenticated connection'
+        if ($enrolledNow) {
+            $message += ("`nThis computer was enrolled before the connection failed, and the enrolment is kept: " +
+                'once the cause is fixed, run this same command again (the token is not used again).')
+        } else {
+            # The token was not used: an existing enrolment was kept, which the
+            # console may no longer know (deleted there, or the console rebuilt).
+            $message += ("`nThis computer kept its existing enrolment, so the token was not used. If the console " +
+                'no longer knows this computer (it was deleted there, or the console was rebuilt), run this ' +
+                'command again with -ResetIdentity to enrol it as a new device.')
+        }
+        throw $message
+    }
 
     $committed = $true
-    Remove-Item -Force -ErrorAction SilentlyContinue $Backup, $SignatureBackup, $StateBackup, $OutboxBackup
+    Remove-Item -Force -ErrorAction SilentlyContinue $Backup, $SignatureBackup, $StateBackup, $OutboxBackup, $ServerFileBackup
+    Set-Content -Path $ServerFile -Value "$Ws/ws/agent"
 
     # Opt-in, never silent: the agent downloads its remote-desktop sidecar to
     # rmm-remote.exe.new and runs it once to validate it, which Defender treats

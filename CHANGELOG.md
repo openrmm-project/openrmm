@@ -42,6 +42,35 @@ tag.
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
 
+## [0.9.1] - 2026-11-03
+
+### Added
+
+- **Mass deployment tokens.** An install token can now enrol up to 10,000
+  computers and stay valid for up to 90 days, chosen in the console under
+  **Enroll a new agent ▸ Many computers**. Each site lists its active tokens,
+  with uses and expiry, and any of them can be revoked. `GET` and
+  `DELETE /api/enroll-tokens` back the list and the revocation. Each device
+  records the token that admitted it (`enroll_token_id`), and every enrolment
+  is audited as `device.enrolled`.
+
+### Changed
+
+- Install tokens are stored as SHA-256 hashes; migration 023 hashes the ones
+  already issued. The API now refuses `uses` above 10,000 and `ttl_hours` above
+  2160, and a token without `ttl_hours` lasts 24 hours instead of never
+  expiring. Existing tokens are brought within those bounds.
+- The installers refuse to install over an agent enrolled with another console
+  and say how to remove it, instead of rolling back without a reason. When the
+  agent does not connect, they print its last log lines, and a failed enrolment
+  says that the token may be used up or expired. A reinstall that kept an
+  enrolment the console no longer knows points to the identity reset.
+
+### Fixed
+
+- `/uninstall.sh`, the removal command in the docs, answered with the console's
+  web page, so `curl | sudo bash` ran HTML. It is now served like `/install.sh`.
+
 ## [0.9.0] - 2026-10-28
 
 ### Added

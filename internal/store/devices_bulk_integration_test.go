@@ -90,10 +90,10 @@ func TestDeleteSiteRefusesWhileItHasDevicesIntegration(t *testing.T) {
 func TestDeleteSiteWithDepartmentTokenIntegration(t *testing.T) {
 	f := newOrgFixture(t)
 	expires := time.Now().Add(time.Hour)
-	if _, err := f.st.CreateEnrollToken(f.ctx, "tok-"+uuid.NewString(), "dept", 1, &expires, &f.site.ID, &f.dept.ID); err != nil {
+	if _, err := f.st.CreateEnrollToken(f.ctx, "tok-"+uuid.NewString(), "dept", 1, &expires, &f.site.ID, &f.dept.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.st.CreateEnrollToken(f.ctx, "tok-"+uuid.NewString(), "site", 1, &expires, &f.site.ID, nil); err != nil {
+	if _, err := f.st.CreateEnrollToken(f.ctx, "tok-"+uuid.NewString(), "site", 1, &expires, &f.site.ID, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.st.DeleteSite(f.ctx, f.site.ID); err != nil {
@@ -122,7 +122,7 @@ func TestDeleteSiteNotFoundIntegration(t *testing.T) {
 func TestDeleteClientWithDepartmentTokenIntegration(t *testing.T) {
 	f := newOrgFixture(t)
 	expires := time.Now().Add(time.Hour)
-	if _, err := f.st.CreateEnrollToken(f.ctx, "tok-"+uuid.NewString(), "dept", 1, &expires, &f.site.ID, &f.dept.ID); err != nil {
+	if _, err := f.st.CreateEnrollToken(f.ctx, "tok-"+uuid.NewString(), "dept", 1, &expires, &f.site.ID, &f.dept.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	device := f.agent(t, &f.site.ID, nil)

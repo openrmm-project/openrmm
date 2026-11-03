@@ -772,6 +772,49 @@ function EnrollCommands({ token, site }) {
   );
 }
 
+// The install tokens that can still enrol a computer into this site. A mass
+// deployment's token stays usable for weeks, so it has to be findable and
+// revocable; the token itself cannot be shown again (only its hash is kept).
+function SiteEnrollTokens({ site, depts }) {
+  const toast = useToast();
+  const q = useQuery(['enroll-tokens', site.id], () => api.listEnrollTokens(site.id), { invalidateOn: ['enroll-tokens'] });
+  const [confirm, setConfirm] = useState(null);
+  const tokens = q.data || [];
+  if (!tokens.length) return null;
+  const deptName = (id) => depts.find((g) => g.id === id)?.name;
+  const revoke = async () => {
+    const tok = confirm; if (!tok) return;
+    try { await api.revokeEnrollToken(tok.id); toast.info(t('site.tokenRevoked'), tok.description); window.dataBus.emit('enroll-tokens'); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  return (
+    <div className="mt-3">
+      <div className="text-[11.5px] font-semibold text-muted mb-1.5">{t('site.activeTokens')}</div>
+      <div className="space-y-1.5">
+        {tokens.map((tok) => (
+          <div key={tok.id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2">
+            <Icon name="key" size={13} className="text-faint shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] text-ink truncate">
+                {tok.description || t('site.tokenUnnamed')}
+                {tok.group_id && deptName(tok.group_id) ? <span className="text-faint"> · {deptName(tok.group_id)}</span> : null}
+              </div>
+              <div className="text-[11.5px] text-faint tabular">
+                {t('site.tokenUsage', { used: tok.uses_total - tok.uses_left, total: tok.uses_total })}
+                {' · '}{t('site.tokenExpires', { date: fmtTime(tok.expires_at) })}
+                {tok.created_by_name ? <>{' · '}{t('site.tokenBy', { who: tok.created_by_name })}</> : null}
+              </div>
+            </div>
+            <Button size="sm" variant="ghost" icon="trash" onClick={() => setConfirm(tok)}>{t('tok.revoke')}</Button>
+          </div>
+        ))}
+      </div>
+      <ConfirmDialog open={!!confirm} onClose={() => setConfirm(null)} onConfirm={revoke} danger title={t('site.revokeTitle')}
+        body={t('site.revokeBody', { name: (confirm && confirm.description) || t('site.tokenUnnamed') })} confirmLabel={t('tok.revoke')} />
+    </div>
+  );
+}
+
 // siteDeviceTotal counts every device in the site; `devices` is narrowed by the
 // search box and must not decide whether the site can be deleted.
 function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, query, focusDept }) {
@@ -790,10 +833,16 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   const [confirmDelDept, setConfirmDelDept] = useState(null);
   const [renamingDept, setRenamingDept] = useState(null); // { id, value } while renaming
   const [enrollDept, setEnrollDept] = useState('');       // department the token binds to, '' = the site
+  // One computer (one use, 24 hours) or a mass deployment (many uses, for days).
+  // The token carries both bounds, so they are chosen before it is minted.
+  const [enrollMode, setEnrollMode] = useState('one');
+  const [enrollUses, setEnrollUses] = useState('100');
+  const [enrollDays, setEnrollDays] = useState('30');
+  const [enrollMinted, setEnrollMinted] = useState(null); // the minted token's record: its bounds
   const [selected, setSelected] = useState(null); // device id -> open the full detail drawer (same as the Devices tab)
   useEffect(() => { setRenaming(false); setRename(site.name); setCreatingDept(false); setNewDept(''); setRenamingDept(null); setEnrollDept(''); }, [site.id]);
   // Clear a generated enrollment command when the selected site/department changes.
-  useEffect(() => { setEnrollToken(null); }, [site.id, focusDept]);
+  useEffect(() => { setEnrollToken(null); setEnrollMinted(null); }, [site.id, focusDept]);
   // Move / delete of this site's devices, one or many: tick them, and the two
   // buttons appear. The checkboxes replace the per-device menu that did the
   // same for a single device.
@@ -838,14 +887,19 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   const delDept = async () => { const g = confirmDelDept; if (!g) return; try { await api.deleteGroup(g.id); window.dataBus.emit('groups'); window.dataBus.emit('devices'); toast.info(t('site.deptDeleted')); } catch (e) { toast.error(t('common.failed'), e.message); } };
   const delSite = async () => { try { await api.deleteSite(site.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info(t('site.deleted')); } catch (e) { toast.error(t('common.failed'), e.message); } };
   const genEnroll = async () => {
+    const many = enrollMode === 'many';
+    const uses = many ? Number(enrollUses) : 1;
+    if (many && !(Number.isInteger(uses) && uses >= 2 && uses <= 10000)) { toast.error(t('site.massUsesInvalid')); return; }
     setBusy(true);
     const dept = depts.find((g) => g.id === enrollDept);
     try {
       const minted = await api.createEnrollToken({
-        description: t('site.enrollFor', { place: site.name + (dept ? ' / ' + dept.name : '') }),
-        site_id: site.id, group_id: enrollDept || undefined, uses: 1, ttl_hours: 24,
+        description: t(many ? 'site.massFor' : 'site.enrollFor', { place: site.name + (dept ? ' / ' + dept.name : '') }),
+        site_id: site.id, group_id: enrollDept || undefined, uses, ttl_hours: many ? Number(enrollDays) * 24 : 24,
       });
       setEnrollToken(minted.token);
+      setEnrollMinted(minted);
+      window.dataBus.emit('enroll-tokens');
       toast.success(t('site.tokenCreated'), t('site.agentsLand', { place: dept ? dept.name : site.name }));
     } catch (e) { toast.error(t('common.failed'), e.message); }
     finally { setBusy(false); }
@@ -956,9 +1010,21 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
         <div>
           <div className="flex items-center justify-between mb-2">
             <div className="text-[12px] font-semibold text-muted">{t('site.enrollTitle')}</div>
-            {enrollToken && <button onClick={() => setEnrollToken(null)} className="text-[11.5px] text-faint hover:text-ink inline-flex items-center gap-1"><Icon name="close" size={12} />{t('site.hide')}</button>}
+            {enrollToken && <button onClick={() => { setEnrollToken(null); setEnrollMinted(null); }} className="text-[11.5px] text-faint hover:text-ink inline-flex items-center gap-1"><Icon name="close" size={12} />{t('site.hide')}</button>}
           </div>
-          {enrollToken ? <EnrollCommands token={enrollToken} site={site} /> : (
+          {enrollToken ? (
+            <div>
+              {enrollMinted && (
+                <div className="text-[11.5px] text-muted mb-2 flex items-start gap-1.5">
+                  <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+                  <span>{enrollMinted.uses_total > 1
+                    ? t('site.massSummary', { uses: enrollMinted.uses_total, date: fmtTime(enrollMinted.expires_at) })
+                    : t('site.oneSummary', { date: fmtTime(enrollMinted.expires_at) })}</span>
+                </div>
+              )}
+              <EnrollCommands token={enrollToken} site={site} />
+            </div>
+          ) : (
             <div className="flex items-center gap-2 flex-wrap">
               {/* The command does not describe the placement — the token does — so
                   the department has to be chosen before the token is minted. */}
@@ -968,9 +1034,24 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
                   {depts.map((g) => <option key={g.id} value={g.id}>{t('site.landIn', { place: g.name })}</option>)}
                 </Select>
               )}
+              <Select aria-label={t('site.enrollModeLabel')} value={enrollMode} onChange={(e) => setEnrollMode(e.target.value)} className="h-9 w-auto min-w-[170px]">
+                <option value="one">{t('site.enrollOne')}</option>
+                <option value="many">{t('site.enrollMany')}</option>
+              </Select>
+              {enrollMode === 'many' && (
+                <>
+                  <Input type="number" min="2" max="10000" step="1" value={enrollUses} onChange={(e) => setEnrollUses(e.target.value)}
+                    aria-label={t('site.massUsesLabel')} title={t('site.massUsesLabel')} className="h-9 w-[110px]" />
+                  <Select aria-label={t('site.massDaysLabel')} value={enrollDays} onChange={(e) => setEnrollDays(e.target.value)} className="h-9 w-auto">
+                    {['7', '30', '90'].map((d) => <option key={d} value={d}>{t('site.massDays', { days: d })}</option>)}
+                  </Select>
+                </>
+              )}
               <Button variant="secondary" icon="key" loading={busy} onClick={genEnroll}>{t('site.generate')}</Button>
             </div>
           )}
+          {enrollMode === 'many' && !enrollToken && <div className="text-[11.5px] text-faint mt-1.5">{t('site.massHint')}</div>}
+          <SiteEnrollTokens site={site} depts={depts} />
         </div>
       )}
       {/* A site with devices is refused by the server; say so here, before the

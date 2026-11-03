@@ -1004,7 +1004,18 @@ CREATE INDEX IF NOT EXISTS idx_remote_shares_agent_creator ON remote_shares(agen
 -- before its first sign-in links it (a managed service's owner account).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_required BOOLEAN NOT NULL DEFAULT false;
 
--- Migration 023: risk-based autonomy for the AI assistant. A script released
+-- Migration 023: install tokens for mass deployment. token holds the hex
+-- SHA-256 of the token; uses_total is what it was issued with; a revoked token
+-- has uses_left 0 and says who revoked it.
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS uses_total INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_by TEXT;
+-- The token that admitted each device, to find what a leaked token enrolled.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS enroll_token_id UUID REFERENCES enroll_tokens(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WHERE enroll_token_id IS NOT NULL;
+
+-- Migration 024: risk-based autonomy for the AI assistant. A script released
 -- for the AI is bound to the hash of its content; jobs record why they ran
 -- without approval at the time, and the parameters they carried.
 ALTER TABLE scripts ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '[]';

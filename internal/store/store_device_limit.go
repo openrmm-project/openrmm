@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/devicelimit"
 	"github.com/p1ngu/rmm/internal/models"
 )
@@ -36,11 +37,12 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollToken string, limit int, 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var tokenID string
 	var siteID, groupID *string
 	err = tx.QueryRow(ctx,
-		`SELECT site_id, group_id FROM enroll_tokens
-		 WHERE token=$1 AND uses_left > 0 AND (expires_at IS NULL OR expires_at > now())
-		 FOR UPDATE`, enrollToken).Scan(&siteID, &groupID)
+		`SELECT id, site_id, group_id FROM enroll_tokens
+		 WHERE token=$1 AND uses_left > 0 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+		 FOR UPDATE`, auth.Hash(enrollToken)).Scan(&tokenID, &siteID, &groupID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -60,17 +62,17 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollToken string, limit int, 
 			return nil, devicelimit.ErrLimitReached
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE enroll_tokens SET uses_left = uses_left - 1 WHERE token=$1`, enrollToken); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE enroll_tokens SET uses_left = uses_left - 1 WHERE id=$1`, tokenID); err != nil {
 		return nil, err
 	}
 	id := newID()
 	// Same department rule as CreateAgent: honoured only inside the site.
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO agents (id, hostname, os, arch, version, token_hash, site_id, group_id, status, last_seen)
+		`INSERT INTO agents (id, hostname, os, arch, version, token_hash, site_id, group_id, status, last_seen, enroll_token_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,
 		         (SELECT g.id FROM device_groups g WHERE g.id=$8 AND g.site_id=$7),
-		         'online',now())`,
-		id, hostname, os, arch, version, tokenHash, siteID, groupID); err != nil {
+		         'online',now(),$9)`,
+		id, hostname, os, arch, version, tokenHash, siteID, groupID, tokenID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -100,7 +100,7 @@ func (s *Store) SetAgentSite(ctx context.Context, id string, siteID *string) err
 func scanAgent(row pgx.Row) (*models.Agent, error) {
 	var a models.Agent
 	err := row.Scan(&a.ID, &a.Hostname, &a.Description, &a.Note, &a.OS, &a.Arch, &a.Version, &a.Status,
-		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt)
+		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -110,7 +110,7 @@ func scanAgent(row pgx.Row) (*models.Agent, error) {
 	return &a, nil
 }
 
-const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at`
+const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id`
 
 // SetAgentMeta updates the operator-editable identification fields: description
 // (shown in the device list) and note (a private observation, detail-only).
@@ -355,16 +355,73 @@ func (s *Store) SetRemoteIDs(ctx context.Context, id string, mesh *string) error
 // ---------- Enroll tokens ----------
 
 // CreateEnrollToken issues a new enrollment token, optionally bound to a site.
-func (s *Store) CreateEnrollToken(ctx context.Context, token, desc string, uses int, expires *time.Time, siteID, groupID *string) (*models.EnrollToken, error) {
+// Only its SHA-256 is stored; the token itself is returned once, here.
+func (s *Store) CreateEnrollToken(ctx context.Context, token, desc string, uses int, expires *time.Time, siteID, groupID *string, createdBy string) (*models.EnrollToken, error) {
 	id := newID()
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO enroll_tokens (id, token, description, uses_left, expires_at, site_id, group_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		id, token, desc, uses, expires, siteID, groupID)
+	var created time.Time
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO enroll_tokens (id, token, description, uses_left, uses_total, expires_at, site_id, group_id, created_by)
+		 VALUES ($1,$2,$3,$4,$4,$5,$6,$7,$8) RETURNING created_at`,
+		id, auth.Hash(token), desc, uses, expires, siteID, groupID, createdBy).Scan(&created)
 	if err != nil {
 		return nil, err
 	}
-	return &models.EnrollToken{ID: id, Token: token, Description: desc, UsesLeft: uses,
-		ExpiresAt: expires, SiteID: siteID, GroupID: groupID, CreatedAt: time.Now()}, nil
+	return &models.EnrollToken{ID: id, Token: token, Description: desc, UsesLeft: uses, UsesTotal: uses,
+		ExpiresAt: expires, SiteID: siteID, GroupID: groupID, CreatedBy: createdBy, CreatedAt: created}, nil
+}
+
+const enrollTokenCols = `id, description, uses_left, uses_total, expires_at, site_id, group_id, created_by, created_at, revoked_at, revoked_by`
+
+func scanEnrollToken(row pgx.Row) (*models.EnrollToken, error) {
+	var t models.EnrollToken
+	err := row.Scan(&t.ID, &t.Description, &t.UsesLeft, &t.UsesTotal, &t.ExpiresAt, &t.SiteID, &t.GroupID,
+		&t.CreatedBy, &t.CreatedAt, &t.RevokedAt, &t.RevokedBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &t, err
+}
+
+// ListEnrollTokens returns the tokens that can still enrol a computer — not
+// used up, expired or revoked — newest first, optionally only one site's.
+// Never the token itself: only its hash is stored.
+func (s *Store) ListEnrollTokens(ctx context.Context, siteID string) ([]models.EnrollToken, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT t.id, t.description, t.uses_left, t.uses_total, t.expires_at, t.site_id, t.group_id,
+		        t.created_by, t.created_at, t.revoked_at, t.revoked_by, COALESCE(u.username, '')
+		 FROM enroll_tokens t LEFT JOIN users u ON u.id::text = t.created_by
+		 WHERE t.uses_left > 0 AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now())
+		   AND ($1 = '' OR t.site_id::text = $1)
+		 ORDER BY t.created_at DESC LIMIT 500`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.EnrollToken{}
+	for rows.Next() {
+		var t models.EnrollToken
+		if err := rows.Scan(&t.ID, &t.Description, &t.UsesLeft, &t.UsesTotal, &t.ExpiresAt, &t.SiteID, &t.GroupID,
+			&t.CreatedBy, &t.CreatedAt, &t.RevokedAt, &t.RevokedBy, &t.CreatedByName); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// GetEnrollToken returns one token's record, whatever its state.
+func (s *Store) GetEnrollToken(ctx context.Context, id string) (*models.EnrollToken, error) {
+	return scanEnrollToken(s.pool.QueryRow(ctx, `SELECT `+enrollTokenCols+` FROM enroll_tokens WHERE id::text=$1`, id))
+}
+
+// RevokeEnrollToken stops a token enrolling anything more. The computers it
+// already enrolled stay. ErrNotFound when there is no such token or it was
+// revoked already.
+func (s *Store) RevokeEnrollToken(ctx context.Context, id, by string) (*models.EnrollToken, error) {
+	return scanEnrollToken(s.pool.QueryRow(ctx,
+		`UPDATE enroll_tokens SET uses_left = 0, revoked_at = now(), revoked_by = $2
+		 WHERE id::text=$1 AND revoked_at IS NULL
+		 RETURNING `+enrollTokenCols, id, by))
 }
 
 // ConsumeEnrollToken validates and decrements an enroll token, returning where
@@ -373,8 +430,8 @@ func (s *Store) CreateEnrollToken(ctx context.Context, token, desc string, uses 
 func (s *Store) ConsumeEnrollToken(ctx context.Context, token string) (siteID, groupID *string, err error) {
 	err = s.pool.QueryRow(ctx,
 		`UPDATE enroll_tokens SET uses_left = uses_left - 1
-		 WHERE token=$1 AND uses_left > 0 AND (expires_at IS NULL OR expires_at > now())
-		 RETURNING site_id, group_id`, token).Scan(&siteID, &groupID)
+		 WHERE token=$1 AND uses_left > 0 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+		 RETURNING site_id, group_id`, auth.Hash(token)).Scan(&siteID, &groupID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil, ErrNotFound
 	}

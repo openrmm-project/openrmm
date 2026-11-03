@@ -693,6 +693,7 @@
   'audit.action.support.key.removed': 'サポートキーを削除',
   'audit.action.enroll_token.create': "インストール トークンを作成",
   'audit.action.enroll_token.revoke': "インストール トークンを取り消し",
+  'audit.action.device.enrolled': "デバイスを登録",
   'audit.action.user.sso.login': 'SSO でサインイン',
   'verify.title': "アドレスを確認",
   'verify.working': "確認中…",

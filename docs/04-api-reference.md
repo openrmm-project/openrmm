@@ -97,7 +97,9 @@ here**: the server keeps its SHA-256, so the listing returns everything else
 (uses left and total, expiry, who created it) but never the token.
 
 Creating and revoking are audited as `enroll_token.create` and
-`enroll_token.revoke`.
+`enroll_token.revoke`. Each enrolment is audited as `device.enrolled`, and a
+device carries `enroll_token_id`, the token that admitted it: after a leaked
+token is revoked, those are the devices to review or remove.
 
 `site_id` and `group_id` decide where the agent lands: give `group_id` to enrol
 straight into a department. The department must belong to the given site — an

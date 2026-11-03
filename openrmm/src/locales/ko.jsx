@@ -668,6 +668,7 @@
   'audit.action.support.key.removed': '지원 키 제거',
   'audit.action.enroll_token.create': "설치 토큰 생성",
   'audit.action.enroll_token.revoke': "설치 토큰 취소",
+  'audit.action.device.enrolled': "장치 등록됨",
   'audit.action.user.sso.login': "SSO로 로그인됨",
   'verify.title': "이메일 주소 확인",
   'verify.working': "확인 중…",

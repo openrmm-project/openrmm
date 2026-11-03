@@ -12,7 +12,9 @@ tag.
   computers and stay valid for up to 90 days, chosen in the console under
   **Enroll a new agent ▸ Many computers**. Each site lists its active tokens,
   with uses and expiry, and any of them can be revoked. `GET` and
-  `DELETE /api/enroll-tokens` back the list and the revocation.
+  `DELETE /api/enroll-tokens` back the list and the revocation. Each device
+  records the token that admitted it (`enroll_token_id`), and every enrolment
+  is audited as `device.enrolled`.
 
 ### Changed
 

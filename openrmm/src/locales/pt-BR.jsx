@@ -699,6 +699,7 @@
   'audit.action.support.key.removed': 'Chave de suporte removida',
   'audit.action.enroll_token.create': "Token de instalação criado",
   'audit.action.enroll_token.revoke': "Token de instalação revogado",
+  'audit.action.device.enrolled': "Dispositivo cadastrado",
   'audit.action.user.sso.login': 'Login via SSO',
   'verify.title': "Confirme seu endereço",
   'verify.working': "Confirmando…",

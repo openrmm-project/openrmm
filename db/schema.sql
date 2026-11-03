@@ -1010,3 +1010,6 @@ ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS uses_total INTEGER NOT NULL D
 ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
 ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_by TEXT;
+-- The token that admitted each device, to find what a leaked token enrolled.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS enroll_token_id UUID REFERENCES enroll_tokens(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WHERE enroll_token_id IS NOT NULL;

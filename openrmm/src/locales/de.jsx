@@ -693,6 +693,7 @@
   'audit.action.support.key.removed': 'Supportschlüssel entfernt',
   'audit.action.enroll_token.create': "Installations-Token erstellt",
   'audit.action.enroll_token.revoke': "Installations-Token widerrufen",
+  'audit.action.device.enrolled': "Gerät registriert",
   'audit.action.user.sso.login': 'Anmeldung per SSO',
   'verify.title': "Adresse bestätigen",
   'verify.working': "Wird bestätigt…",

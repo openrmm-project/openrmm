@@ -68,11 +68,11 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollToken string, limit int, 
 	id := newID()
 	// Same department rule as CreateAgent: honoured only inside the site.
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO agents (id, hostname, os, arch, version, token_hash, site_id, group_id, status, last_seen)
+		`INSERT INTO agents (id, hostname, os, arch, version, token_hash, site_id, group_id, status, last_seen, enroll_token_id)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,
 		         (SELECT g.id FROM device_groups g WHERE g.id=$8 AND g.site_id=$7),
-		         'online',now())`,
-		id, hostname, os, arch, version, tokenHash, siteID, groupID); err != nil {
+		         'online',now(),$9)`,
+		id, hostname, os, arch, version, tokenHash, siteID, groupID, tokenID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

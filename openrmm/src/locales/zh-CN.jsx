@@ -693,6 +693,7 @@
   'audit.action.support.key.removed': '已移除支持密钥',
   'audit.action.enroll_token.create': "已创建安装令牌",
   'audit.action.enroll_token.revoke': "已撤销安装令牌",
+  'audit.action.device.enrolled': "设备已注册",
   'audit.action.user.sso.login': '通过 SSO 登录',
   'verify.title': "确认你的地址",
   'verify.working': "正在确认…",

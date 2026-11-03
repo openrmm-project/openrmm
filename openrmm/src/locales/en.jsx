@@ -706,6 +706,7 @@
   'audit.action.support.key.removed': 'Support key removed',
   'audit.action.enroll_token.create': "Install token created",
   'audit.action.enroll_token.revoke': "Install token revoked",
+  'audit.action.device.enrolled': "Device enrolled",
   'audit.action.user.sso.login': 'Signed in with SSO',
   'verify.title': "Confirm your address",
   'verify.working': "Confirming…",

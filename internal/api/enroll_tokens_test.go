@@ -84,8 +84,10 @@ func TestEnrollTokensForMassDeployment(t *testing.T) {
 		_ = json.Unmarshal(rr.Body.Bytes(), &tok)
 		return rr, tok
 	}
+	var lastAgent string
 	enrol := func(token, host string) error {
-		_, _, _, err := s.registerAgent(ctx, &protocol.RegisterReq{EnrollToken: token, Hostname: host, OS: "linux", Arch: "amd64", Version: "0.10.0"})
+		id, _, _, err := s.registerAgent(ctx, &protocol.RegisterReq{EnrollToken: token, Hostname: host, OS: "linux", Arch: "amd64", Version: "0.10.0"})
+		lastAgent = id
 		return err
 	}
 
@@ -110,6 +112,16 @@ func TestEnrollTokensForMassDeployment(t *testing.T) {
 			if err := enrol(tok.Token, "pc-"+suffix+"-"+string(rune('0'+i))); err != nil {
 				t.Fatalf("computer %d: %v", i, err)
 			}
+		}
+		// Each device records the token that admitted it, and the enrolment is
+		// audited, so what a leaked token enrolled can be found.
+		agent, err := st.GetAgent(ctx, lastAgent)
+		if err != nil || agent.EnrollTokenID == nil || *agent.EnrollTokenID != tok.ID {
+			t.Fatalf("enrolled agent %+v %v", agent, err)
+		}
+		entries, _, err := st.ListAudit(ctx, store.AuditFilter{Action: "device.enrolled", Target: lastAgent})
+		if err != nil || len(entries) != 1 || !strings.Contains(string(entries[0].Detail), tok.ID) {
+			t.Fatalf("enrolment audit: %+v %v", entries, err)
 		}
 		if err := enrol(tok.Token, "pc-"+suffix+"-4"); err == nil {
 			t.Fatal("a fourth computer enrolled with a three-use token")

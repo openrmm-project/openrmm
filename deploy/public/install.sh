@@ -381,8 +381,10 @@ ARTIFACT_SIG_TEXT="${TMP_DIR}/${BIN}.sig"
 previous_server() {
   if [ -f "$SERVER_FILE" ]; then head -n 1 "$SERVER_FILE"; return 0; fi
   detect_service_config || return 0
+  # awk reads to the end rather than exiting early: under pipefail, tr dying of
+  # SIGPIPE would fail the assignment that calls this, and set -e with it.
   tr '<>"\047 \t' '\n\n\n\n\n\n' < "$SERVICE_PATH" |
-    awk 'NF && $0 != "string" && $0 != "/string" { if (prev == "-server") { print; exit } prev = $0 }'
+    awk 'NF && $0 != "string" && $0 != "/string" { if (prev == "-server" && !found) { print; found = 1 } prev = $0 }'
 }
 
 # What the agent said while this installer waited, so a failed install names its
@@ -390,9 +392,11 @@ previous_server() {
 show_agent_log() {
   lines=""
   if [ "$OS" = "darwin" ] && [ -f "${DEST_DIR}/agent.log" ]; then
-    lines="$(tail -c +"$((LOG_START + 1))" "${DEST_DIR}/agent.log" | tail -n 20)"
+    lines="$(tail -c +"$((LOG_START + 1))" "${DEST_DIR}/agent.log" | tail -n 20 || true)"
   elif command -v journalctl >/dev/null 2>&1; then
-    lines="$(journalctl -u rmm-agent --since "@${AGENT_STARTED}" --no-pager -o cat 2>/dev/null | tail -n 20)"
+    # Best effort: a journal that cannot be read must not stop the explanation
+    # that follows (set -e would).
+    lines="$(journalctl -u rmm-agent --since "@${AGENT_STARTED}" --no-pager -o cat 2>/dev/null | tail -n 20 || true)"
   fi
   [ -n "$lines" ] || return 0
   echo "The agent's last messages:"

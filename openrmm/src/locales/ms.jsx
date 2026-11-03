@@ -668,6 +668,7 @@
   'audit.action.support.key.removed': 'Kunci sokongan dibuang',
   'audit.action.enroll_token.create': "Token pemasangan dicipta",
   'audit.action.enroll_token.revoke': "Token pemasangan dibatalkan",
+  'audit.action.device.enrolled': "Peranti didaftarkan",
   'audit.action.user.sso.login': "Log masuk melalui SSO",
   'verify.title': "Sahkan alamat anda",
   'verify.working': "Mengesahkan…",

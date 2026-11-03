@@ -6,6 +6,11 @@ ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFA
 ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_by TEXT;
 
+-- The token that admitted each device: after a mass-deployment token leaks and
+-- is revoked, the devices it enrolled can be found and removed.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS enroll_token_id UUID REFERENCES enroll_tokens(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WHERE enroll_token_id IS NOT NULL;
+
 -- The tokens already issued keep working: each is replaced by its hash, which
 -- is what an enrolment is now matched against.
 UPDATE enroll_tokens SET token = encode(sha256(convert_to(token, 'UTF8')), 'hex');

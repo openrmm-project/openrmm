@@ -128,6 +128,9 @@ type Agent struct {
 	LastSeen    *time.Time `json:"last_seen,omitempty"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// EnrollTokenID is the install token that admitted the device, so the
+	// devices a leaked mass-deployment token enrolled can be found and removed.
+	EnrollTokenID *string `json:"enroll_token_id,omitempty"`
 }
 
 // Job is a unit of work targeted at an agent (currently: run a script).

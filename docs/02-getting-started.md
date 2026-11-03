@@ -113,7 +113,9 @@ The same command then goes into a GPO startup script, an Intune script or any
 deployment tool. The site lists its active tokens with what each has used, and
 **Revoke** stops one at once; the computers it already enrolled stay. Treat a
 mass token like a password for the rollout's length: anyone holding it can add
-computers to that site until it is used up, expires or is revoked.
+computers to that site until it is used up, expires or is revoked. Every device
+records the token that admitted it (`enroll_token_id`, and a `device.enrolled`
+audit entry), so after revoking a leaked token you can find what it enrolled.
 
 ### Production installer requirements
 

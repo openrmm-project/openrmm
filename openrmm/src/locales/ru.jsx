@@ -668,6 +668,7 @@
   'audit.action.support.key.removed': 'Ключ поддержки удалён',
   'audit.action.enroll_token.create': "Создан токен установки",
   'audit.action.enroll_token.revoke': "Отозван токен установки",
+  'audit.action.device.enrolled': "Устройство зарегистрировано",
   'audit.action.user.sso.login': "Вход через SSO",
   'verify.title': "Подтвердите адрес",
   'verify.working': "Подтверждение…",

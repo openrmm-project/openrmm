@@ -597,6 +597,13 @@ if [ "$healthy" != "1" ]; then
   if [ "$ENROLLED_NOW" = "1" ]; then
     echo "This computer was enrolled before the connection failed, and the enrolment is kept:"
     echo "once the cause is fixed, run this same command again (the token is not used again)."
+  else
+    # The token was not used: an existing enrolment was kept. Same address or
+    # not, the console may no longer know it (the device was deleted there, or
+    # the console was rebuilt), which the agent reports as an invalid agent token.
+    echo "This computer kept its existing enrolment, so the token was not used. If the console"
+    echo "no longer knows this computer (it was deleted there, or the console was rebuilt), run"
+    echo "this command again with --reset-identity to enrol it as a new device."
   fi
   exit 1
 fi

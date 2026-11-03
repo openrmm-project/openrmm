@@ -103,7 +103,10 @@ enrolled with another console is refused before anything changes, with the
 removal command to run first, or `--reset-identity` to enrol it as a new device.
 When the agent does not connect, the installer prints its last log lines before
 rolling back; a computer it already enrolled keeps that enrolment, so running the
-same command again after fixing the cause does not need a new token.
+same command again after fixing the cause does not need a new token. An
+enrolment the console no longer knows (the device was deleted there, or the
+console was rebuilt at the same address) shows as `invalid agent token`: reinstall
+with the identity-reset option.
 
 ### Mass deployment
 

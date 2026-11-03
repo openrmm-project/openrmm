@@ -594,6 +594,12 @@ try {
         if ($enrolledNow) {
             $message += ("`nThis computer was enrolled before the connection failed, and the enrolment is kept: " +
                 'once the cause is fixed, run this same command again (the token is not used again).')
+        } else {
+            # The token was not used: an existing enrolment was kept, which the
+            # console may no longer know (deleted there, or the console rebuilt).
+            $message += ("`nThis computer kept its existing enrolment, so the token was not used. If the console " +
+                'no longer knows this computer (it was deleted there, or the console was rebuilt), run this ' +
+                'command again with -ResetIdentity to enrol it as a new device.')
         }
         throw $message
     }

@@ -128,6 +128,9 @@ type Agent struct {
 	LastSeen    *time.Time `json:"last_seen,omitempty"`
 	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// EnrollTokenID is the install token that admitted the device, so the
+	// devices a leaked mass-deployment token enrolled can be found and removed.
+	EnrollTokenID *string `json:"enroll_token_id,omitempty"`
 }
 
 // Job is a unit of work targeted at an agent (currently: run a script).
@@ -152,18 +155,37 @@ type Job struct {
 }
 
 // EnrollToken authorizes a new agent to register.
+// The bounds on an install token. One token can enrol a whole fleet (mass
+// deployment through a GPO, Intune or a script), so it may be used many times
+// and for weeks, but never without end: a token that leaked stays usable only
+// until it expires, is used up, or is revoked.
+const (
+	MaxEnrollTokenUses     = 10000
+	MaxEnrollTokenTTL      = 90 * 24 * time.Hour
+	DefaultEnrollTokenTTL  = 24 * time.Hour
+	DefaultEnrollTokenUses = 1
+)
+
 type EnrollToken struct {
-	ID          string     `json:"id"`
-	Token       string     `json:"token"`
+	ID string `json:"id"`
+	// Token is the secret itself, present only in the answer that creates it:
+	// the database keeps its SHA-256, like every other credential.
+	Token       string     `json:"token,omitempty"`
 	Description string     `json:"description"`
 	UsesLeft    int        `json:"uses_left"`
+	UsesTotal   int        `json:"uses_total"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	// Where the token places the agent. The command an operator copies does not
 	// describe the placement — the token does — so a token bound to a department
 	// is how a machine enrols straight into one.
-	SiteID    *string   `json:"site_id,omitempty"`
-	GroupID   *string   `json:"group_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	SiteID    *string `json:"site_id,omitempty"`
+	GroupID   *string `json:"group_id,omitempty"`
+	CreatedBy string  `json:"created_by"`
+	// CreatedByName is the creator's username, in a listing.
+	CreatedByName string     `json:"created_by_name,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	RevokedBy     *string    `json:"revoked_by,omitempty"`
 }
 
 // Inventory is the latest collected state of an agent.

@@ -167,6 +167,11 @@ func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (
 		if limit > 0 {
 			go s.observeDeviceLimitNow()
 		}
+		// Which token admitted the device, so a leaked one's enrolments can be
+		// found from the audit log as well as from the device itself.
+		detail, _ := json.Marshal(map[string]any{"enroll_token_id": a.EnrollTokenID, "hostname": a.Hostname,
+			"os": a.OS, "arch": a.Arch, "site_id": a.SiteID, "group_id": a.GroupID})
+		_ = s.store.AddAudit(ctx, "agent", "device.enrolled", a.ID, detail)
 		return a.ID, token, "", nil
 	}
 	if reg.AgentID == "" || reg.AgentToken == "" {

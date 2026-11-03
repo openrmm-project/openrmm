@@ -49,7 +49,7 @@ func TestEnrollTokenPlacesAgentInDepartmentIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tok, err := st.CreateEnrollToken(ctx, "tok-"+suffix, "finance", 1, nil, &site.ID, &dept.ID)
+	tok, err := st.CreateEnrollToken(ctx, "tok-"+suffix, "finance", 1, nil, &site.ID, &dept.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,14 +97,14 @@ func TestEnrollTokenRefusesDepartmentFromAnotherSiteIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := st.CreateEnrollToken(ctx, "tok-x-"+suffix, "mismatch", 1, nil, &siteA.ID, &deptOfB.ID); err == nil {
+	if _, err := st.CreateEnrollToken(ctx, "tok-x-"+suffix, "mismatch", 1, nil, &siteA.ID, &deptOfB.ID, ""); err == nil {
 		t.Fatal("a token naming a department of another site was accepted")
 	} else if !strings.Contains(err.Error(), "does not belong to site") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// And a department with no site at all is equally unplaceable.
-	if _, err := st.CreateEnrollToken(ctx, "tok-y-"+suffix, "no site", 1, nil, nil, &deptOfB.ID); err == nil {
+	if _, err := st.CreateEnrollToken(ctx, "tok-y-"+suffix, "no site", 1, nil, nil, &deptOfB.ID, ""); err == nil {
 		t.Fatal("a token naming a department without a site was accepted")
 	}
 }

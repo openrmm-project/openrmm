@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -394,6 +395,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/config/smtp/alerts", s.updateSMTPConfig(settings.ProfileAlerts))
 		r.With(s.requirePermission(models.PermSettingsManage)).Post("/config/smtp/alerts/test", s.testSMTPConfig(settings.ProfileAlerts))
 		r.With(s.requirePermission(models.PermEnrollmentManage)).Post("/enroll-tokens", s.createEnrollToken)
+		r.With(s.requirePermission(models.PermEnrollmentManage)).Get("/enroll-tokens", s.listEnrollTokens)
+		r.With(s.requirePermission(models.PermEnrollmentManage)).Delete("/enroll-tokens/{id}", s.revokeEnrollToken)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Get("/api-tokens", s.listAPITokens)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Post("/api-tokens", s.createAPIToken)
 		r.With(s.requirePermission(models.PermAPITokensManage)).Delete("/api-tokens/{id}", s.deleteAPIToken)
@@ -1106,23 +1109,35 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 		GroupID *string `json:"group_id"`
 	}
 	_ = decode(r, &in)
-	if in.Uses <= 0 {
-		in.Uses = 1
+	// One token may enrol a fleet, but within bounds (models.MaxEnrollToken*).
+	// Omitted means the single-computer default; out of bounds is refused, not
+	// clamped, so a script asking for more learns it did not get it. The hours
+	// are compared before any multiplication, which a huge value would overflow.
+	if in.Uses == 0 {
+		in.Uses = models.DefaultEnrollTokenUses
 	}
-	if uid := s.scopeUserID(r); uid != "" {
-		if in.SiteID == nil || *in.SiteID == "" {
-			writeErr(w, http.StatusForbidden, "scoped users must bind enrollment tokens to an allowed site")
-			return
-		}
-		allowed, err := s.store.SiteEnrollmentAllowedForUser(r.Context(), uid, *in.SiteID)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if !allowed {
-			writeErr(w, http.StatusForbidden, "site is outside your enrollment scope")
-			return
-		}
+	if in.Uses < 0 || in.Uses > models.MaxEnrollTokenUses {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("uses must be between 1 and %d", models.MaxEnrollTokenUses))
+		return
+	}
+	maxHours := int(models.MaxEnrollTokenTTL / time.Hour)
+	ttl := models.DefaultEnrollTokenTTL
+	if in.TTLHours < 0 || in.TTLHours > maxHours {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("ttl_hours must be between 1 and %d (%d days)", maxHours, maxHours/24))
+		return
+	}
+	if in.TTLHours > 0 {
+		ttl = time.Duration(in.TTLHours) * time.Hour
+	}
+	if len(in.Description) > 200 {
+		writeErr(w, http.StatusBadRequest, "description must be at most 200 characters")
+		return
+	}
+	if in.SiteID != nil && *in.SiteID == "" {
+		in.SiteID = nil
+	}
+	if !s.enrollTokenSiteAllowed(w, r, in.SiteID) {
+		return
 	}
 	if in.GroupID != nil && *in.GroupID != "" {
 		// A department is reachable only through its site, so binding to one
@@ -1146,17 +1161,89 @@ func (s *Server) createEnrollToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var expires *time.Time
-	if in.TTLHours > 0 {
-		t := time.Now().Add(time.Duration(in.TTLHours) * time.Hour)
-		expires = &t
-	}
-	tok, err := s.store.CreateEnrollToken(r.Context(), auth.NewToken(), in.Description, in.Uses, expires, in.SiteID, in.GroupID)
+	expires := time.Now().Add(ttl)
+	tok, err := s.store.CreateEnrollToken(r.Context(), auth.NewToken(), in.Description, in.Uses, &expires, in.SiteID, in.GroupID, actorOf(r))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	detail, _ := json.Marshal(map[string]any{"description": in.Description, "uses": in.Uses,
+		"expires_at": expires.UTC().Format(time.RFC3339), "site_id": in.SiteID, "group_id": in.GroupID})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "enroll_token.create", tok.ID, detail)
 	writeJSON(w, http.StatusCreated, tok)
+}
+
+// enrollTokenSiteAllowed is the rule for creating, listing and revoking install
+// tokens as a user limited to some clients or sites: only tokens bound to a
+// site they may enrol into. A token bound to no site places agents anywhere, so
+// only an unrestricted user handles one.
+func (s *Server) enrollTokenSiteAllowed(w http.ResponseWriter, r *http.Request, siteID *string) bool {
+	uid := s.scopeUserID(r)
+	if uid == "" {
+		return true
+	}
+	if siteID == nil || *siteID == "" {
+		writeErr(w, http.StatusForbidden, "scoped users must bind enrollment tokens to an allowed site")
+		return false
+	}
+	allowed, err := s.store.SiteEnrollmentAllowedForUser(r.Context(), uid, *siteID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if !allowed {
+		writeErr(w, http.StatusForbidden, "site is outside your enrollment scope")
+		return false
+	}
+	return true
+}
+
+// listEnrollTokens returns the tokens that can still enrol a computer, so one
+// handed out for a mass deployment can be found and revoked. ?site_id narrows
+// it to one site, and a scoped user must name one they may enrol into.
+func (s *Server) listEnrollTokens(w http.ResponseWriter, r *http.Request) {
+	siteID := r.URL.Query().Get("site_id")
+	var site *string
+	if siteID != "" {
+		site = &siteID
+	}
+	if !s.enrollTokenSiteAllowed(w, r, site) {
+		return
+	}
+	toks, err := s.store.ListEnrollTokens(r.Context(), siteID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, toks)
+}
+
+// revokeEnrollToken stops a token enrolling anything more. The computers it
+// already enrolled stay, as their own credentials do.
+func (s *Server) revokeEnrollToken(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	tok, err := s.store.GetEnrollToken(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), "install token not found")
+		return
+	}
+	if !s.enrollTokenSiteAllowed(w, r, tok.SiteID) {
+		return
+	}
+	usesLeft := tok.UsesLeft
+	tok, err = s.store.RevokeEnrollToken(r.Context(), id, actorOf(r))
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, http.StatusConflict, "this install token was already revoked")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"description": tok.Description, "uses_left": usesLeft,
+		"uses_total": tok.UsesTotal, "site_id": tok.SiteID, "group_id": tok.GroupID})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "enroll_token.revoke", tok.ID, detail)
+	writeJSON(w, http.StatusOK, tok)
 }
 
 // ---------- devices ----------

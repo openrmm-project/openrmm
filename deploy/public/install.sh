@@ -383,7 +383,7 @@ previous_server() {
   detect_service_config || return 0
   # awk reads to the end rather than exiting early: under pipefail, tr dying of
   # SIGPIPE would fail the assignment that calls this, and set -e with it.
-  tr '<>"\047 \t' '\n\n\n\n\n\n' < "$SERVICE_PATH" |
+  tr '<>"\047 \t' '\n' < "$SERVICE_PATH" |
     awk 'NF && $0 != "string" && $0 != "/string" { if (prev == "-server" && !found) { print; found = 1 } prev = $0 }'
 }
 

@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-03
+
 ### Added
 
 - **Mass deployment tokens.** An install token can now enrol up to 10,000
@@ -25,7 +27,8 @@ tag.
 - The installers refuse to install over an agent enrolled with another console
   and say how to remove it, instead of rolling back without a reason. When the
   agent does not connect, they print its last log lines, and a failed enrolment
-  says that the token may be used up or expired.
+  says that the token may be used up or expired. A reinstall that kept an
+  enrolment the console no longer knows points to the identity reset.
 
 ### Fixed
 

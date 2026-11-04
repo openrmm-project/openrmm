@@ -1242,8 +1242,8 @@ func runScriptCtxEnv(ctx context.Context, shell, script string, extraEnv []strin
 	}
 	// Cap captured output to avoid OOM / DB bloat from runaway scripts.
 	return exitCode,
-		truncateRunes(decodeOutput(stdout.Bytes()), maxJobOutput),
-		truncateRunes(decodeOutput(stderr.Bytes()), maxJobOutput)
+		truncateRunes(decodeShellOutput(shell, stdout.Bytes()), maxJobOutput),
+		truncateRunes(decodeShellOutput(shell, stderr.Bytes()), maxJobOutput)
 }
 
 // maxJobOutput bounds stdout/stderr captured per job (1 MiB each).
@@ -1467,12 +1467,12 @@ $gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Fo
 } | ConvertTo-Json -Compress -Depth 5`
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return map[string]any{}
 	}
 	var hw map[string]any
-	if json.Unmarshal(bytes.TrimSpace(out), &hw) != nil {
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &hw) != nil {
 		return map[string]any{}
 	}
 	return compactHardwareMap(hw)
@@ -1782,11 +1782,11 @@ func capSoftware(sw []map[string]string) []map[string]string {
 
 func softwareWindows(ctx context.Context) []map[string]string {
 	const ps = `Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion,Publisher | Sort-Object DisplayName -Unique | ConvertTo-Json -Compress`
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return nil
 	}
-	return parseWindowsSoftware(out)
+	return parseWindowsSoftware([]byte(out))
 }
 
 func parseWindowsSoftware(out []byte) []map[string]string {

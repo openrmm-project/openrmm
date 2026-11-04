@@ -204,11 +204,11 @@ func queryServices(ctx context.Context, req protocol.DeviceQueryRequest) (any, e
 
 func servicesWindows(ctx context.Context) ([]serviceRow, error) {
 	const ps = `Get-Service | Select-Object Name,DisplayName,@{n='Status';e={$_.Status.ToString()}},@{n='StartType';e={$_.StartType.ToString()}} | ConvertTo-Json -Compress`
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return nil, fmt.Errorf("Get-Service: %w", err)
 	}
-	return parseWindowsServices(out)
+	return parseWindowsServices([]byte(out))
 }
 
 func parseWindowsServices(out []byte) ([]serviceRow, error) {
@@ -341,11 +341,11 @@ func eventsWindows(ctx context.Context, hours int) ([]eventRow, error) {
 	// any query places on a command line.
 	ps := `$h=` + strconv.Itoa(hours) + `; Get-WinEvent -FilterHashtable @{LogName='System','Application'; Level=1,2; StartTime=(Get-Date).AddHours(-$h)} -MaxEvents 500 -ErrorAction SilentlyContinue | ` +
 		`Select-Object @{n='Time';e={$_.TimeCreated.ToUniversalTime().ToString('o')}},@{n='Log';e={$_.LogName}},@{n='Source';e={$_.ProviderName}},@{n='Id';e={$_.Id}},@{n='Level';e={$_.LevelDisplayName}},@{n='Message';e={$_.Message}} | ConvertTo-Json -Compress`
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return nil, fmt.Errorf("Get-WinEvent: %w", err)
 	}
-	return parseWindowsEvents(out)
+	return parseWindowsEvents([]byte(out))
 }
 
 func parseWindowsEvents(out []byte) ([]eventRow, error) {

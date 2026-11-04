@@ -42,6 +42,17 @@ tag.
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
 
+### Fixed
+
+- **Accented text from Windows** reached the console garbled on non-English
+  installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
+  Update titles, and the software and hardware inventory read it undecoded.
+  Running as a service, the agent read cmd and PowerShell output in the ANSI page
+  (1252) while they write in their console's OEM page (850 on a pt-BR install).
+  The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
+  Korean pages included, and its own PowerShell (inventory, patches, device
+  queries) writes UTF-8, which loses nothing in any language.
+
 ## [0.9.1] - 2026-11-03
 
 ### Added

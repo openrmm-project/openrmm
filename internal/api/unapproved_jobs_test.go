@@ -16,6 +16,7 @@ import (
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/hub"
+	"github.com/p1ngu/rmm/internal/jobs"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/remote"
 	"github.com/p1ngu/rmm/internal/store"
@@ -75,7 +76,8 @@ func newUnapprovedFixture(t *testing.T, allowFromEnv bool) *unapprovedFixture {
 	h := hub.New()
 	cfg := &config.Config{APIRateLimit: 100000, AllowUnapprovedJobs: allowFromEnv}
 	chat := ai.NewEngine(ai.NewClient("", "", ""), st, nil, nil, cfg)
-	srv := New(cfg, st, h, nil, remote.NewManager(st, h, "", "", "", false, false), remote.NewRelay(), chat, nil, nil)
+	// The device is not connected, so a job that skips approval stays pending.
+	srv := New(cfg, st, h, jobs.New(st, h), remote.NewManager(st, h, "", "", "", false, false), remote.NewRelay(), chat, nil, nil)
 	return &unapprovedFixture{
 		t: t, st: st, handler: srv.Router(), agentID: agent.ID, scriptID: sc.ID,
 		asAdmin: "Bearer " + adminToken, asApprover: "Bearer " + approverToken, ctx: ctx,

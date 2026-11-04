@@ -30,8 +30,11 @@ designed defense-first. This summarizes the posture; details live in
   under Devices ▸ Pending operations, with their own permissions and scope checked
   again at that moment, and must type the device count to approve a deletion.
   Groups, sites and companies are never deleted through the AI/MCP.
-- **Approval is mandatory by default** for every ad-hoc/AI script run (bypass
-  only via the explicit `RMM_ALLOW_UNAPPROVED_JOBS=true`).
+- **Approval is mandatory by default** for every ad-hoc/AI script run. An
+  administrator can turn on **Run without approval** (Settings ▸ Configuration ▸
+  Jobs) for people who both approve jobs and manage the configuration, on one
+  device at a time; the change is audited. Bulk deployments and the AI/MCP
+  always wait for approval.
 - **RBAC**: built-in and custom roles with granular permissions, enforced per
   route, plus **per-user access scope** (Company/Site/Department/device) filtered
   on read + write paths and on the AI/MCP surface. AI/MCP tools are advertised and
@@ -86,7 +89,8 @@ designed defense-first. This summarizes the posture; details live in
   **IP allowlist** (`RMM_MCP_ALLOWED_IPS`), and `mcp.use`. See docs/11-mcp.md.
 - Tighten `RMM_CORS_ORIGINS` from the `*` default if you wish (safe for
   bearer-token auth, which uses no cookies).
-- Keep `RMM_ALLOW_UNAPPROVED_JOBS` unset (approval stays mandatory).
+- Leave **Run without approval** off (the default), and `RMM_ALLOW_UNAPPROVED_JOBS`
+  unset: it only sets the value a new instance starts with.
 - For production agents, publish signed `/dl` artifacts. The current installers
   require HTTPS and `--update-public-key`/`-UpdatePublicKey` (on Linux and macOS,
   OpenSSL 3 or the manifest's P-256 key in `--manifest-public-key`), and

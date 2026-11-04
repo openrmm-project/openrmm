@@ -6,6 +6,23 @@ tag.
 
 ## [Unreleased]
 
+### Changed
+
+- **Running a script without approval is now a per-instance setting.** An
+  administrator turns it on under **Users & Settings ▸ Configuration ▸ Jobs ▸
+  Run without approval**. It is off by default and each change is audited as
+  `config.unapproved_jobs` with the new value. Until now only the deployer could
+  allow it, with `RMM_ALLOW_UNAPPROVED_JOBS`, so a Cloud tenant could not. That
+  variable now only sets the value a new instance starts with; once the setting
+  is saved, the saved value wins. `PUT /api/config` takes
+  `jobs.allow_unapproved`, and `GET /api/config` returns it (also still as
+  `server.allow_unapproved_jobs`).
+- Skipping approval now needs `settings.manage` as well as `jobs.manage`, the
+  people the console already offered the option to. Before, with the variable
+  on, the API accepted `require_approval:false` from anyone with `jobs.manage`.
+  Bulk deployments and everything the AI or MCP proposes still always wait for
+  approval.
+
 ### Fixed
 
 - A device's **Run script** editor opens empty, with the sample shown only as

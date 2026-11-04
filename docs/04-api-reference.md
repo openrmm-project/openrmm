@@ -167,10 +167,10 @@ acknowledges that confirmation.
 { "agent_id": "...", "shell": "bash", "script": "...",
   "description": "...", "require_approval": true }
 ```
-`require_approval` defaults to `true`. `false` is honored only when the caller
-also has `jobs.manage` **and** the server explicitly enables
-`RMM_ALLOW_UNAPPROVED_JOBS=true`; otherwise the request remains approval-gated.
-AI proposal tools never use this bypass.
+`require_approval` defaults to `true`. `false` is honored only when the instance
+allows it (`jobs.allow_unapproved` in `PUT /api/config`, off by default) **and**
+the caller holds both `jobs.manage` and `settings.manage`; otherwise the request
+remains approval-gated. AI proposal tools never use this bypass.
 
 ### Bulk deployment (`POST /jobs/bulk`)
 
@@ -336,9 +336,19 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
     "meshcentral_token_key": "hex-login-token-key",
     "meshcentral_enabled": true,
     "rustdesk_enabled": false
+  },
+  "jobs": {
+    "allow_unapproved": false
   }
 }
 ```
+
+`jobs.allow_unapproved` lets callers with both `jobs.manage` and
+`settings.manage` create a single-device job that skips approval. It is off by
+default; `RMM_ALLOW_UNAPPROVED_JOBS=true` only sets the starting value, and a
+saved value wins. Each change is audited as `config.unapproved_jobs` with
+`{"enabled": …}`. `GET /api/config` returns it as `jobs.allow_unapproved`, and
+also as `server.allow_unapproved_jobs` for older clients.
 
 Secret fields (`ai.api_key`, `remote.meshcentral_token_key`) are write-only:
 omit them or send `""` to keep the existing value. They are encrypted in
@@ -386,7 +396,7 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | POST | `/api/script-categories` | `scripts.manage` | Register a category (`{name}`) so it exists before any script is filed under it. 409 when the name is taken, compared without case. Audited as `script.category.create` |
 | PUT | `/api/script-categories/{name}` | `scripts.manage` | Rename the category and every script filed under it (`{name:"new"}`). Onto a name in use this **merges** the two. 404 when no such category. Audited as `script.category.rename` |
 | DELETE | `/api/script-categories/{name}` | `scripts.manage` | Remove the category and return its scripts to uncategorized. The scripts are kept. Audited as `script.category.delete` |
-| POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval}` → approval-gated job. `require_approval:false` is honored only when the caller also has `jobs.manage` and the server allows unapproved jobs. |
+| POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval}` → approval-gated job. `require_approval:false` is honored only when the instance allows it (`jobs.allow_unapproved`) and the caller also has `jobs.manage` and `settings.manage`. |
 
 ## Checks & results
 

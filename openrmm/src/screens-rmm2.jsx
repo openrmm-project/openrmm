@@ -2162,6 +2162,8 @@ function ConfigPanel() {
       meshcentral_enabled: c.remote.meshcentral_enabled !== false,
       rustdesk_enabled: !!c.remote.rustdesk_enabled,
       guest_access: !!c.remote.guest_access,
+      // An older server sends only server.allow_unapproved_jobs.
+      allow_unapproved: !!(c.jobs ? c.jobs.allow_unapproved : c.server?.allow_unapproved_jobs),
     });
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -2171,6 +2173,7 @@ function ConfigPanel() {
       await api.updateConfig({
         ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key },
         remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled, guest_access: form.guest_access },
+        jobs: { allow_unapproved: form.allow_unapproved },
       });
       set('ai_api_key', ''); set('meshcentral_token_key', '');
       toast.success(t('cfg.saved'), t('cfg.savedMsg'));
@@ -2201,6 +2204,11 @@ function ConfigPanel() {
           <Field label="RustDesk" hint={t('cfg.rustdeskHint')}><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
           <Field label={t('cfg.guestAccess')} hint={t('cfg.guestAccessHint')}><Select value={form.guest_access ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('guest_access', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
         </div>
+      </Card>
+      <Card className="p-4 md:col-span-2">
+        <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="play" size={15} /></div><div className="text-[13px] font-semibold text-ink">{t('cfg.jobs')}</div></div>
+        <Field label={t('cfg.unapprovedJobs')} hint={t('cfg.unapprovedJobsHint')}><Select value={form.allow_unapproved ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('allow_unapproved', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
+        {form.allow_unapproved && <div className="mt-3 flex items-start gap-2 rounded-xl border border-bad/25 bg-badsoft px-3 py-2.5 text-[12px] text-ink"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-bad" />{t('cfg.unapprovedJobsWarn')}</div>}
       </Card>
       <Card className="p-4 md:col-span-2">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="shield" size={15} /></div><div className="text-[13px] font-semibold text-ink">{t('cfg.server')}</div></div>

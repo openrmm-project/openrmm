@@ -127,7 +127,9 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
   cloud** exposure where an IP allowlist can't apply (cloud clients connect from
   the provider's shared, dynamic egress IPs).
 - [ ] Bind the token to a **scoped user** so it only sees that user's fleet.
-- [ ] `RMM_ALLOW_UNAPPROVED_JOBS=false` (default) — approval stays mandatory.
+- [ ] Leave **Run without approval** off (Settings ▸ Configuration ▸ Jobs, the
+  default). MCP and the AI never skip approval either way; the setting only
+  affects people who also manage the configuration.
 - [ ] Watch the audit log for `apitoken.create` / `job.propose` / `job.approve`.
 
 ## What the AI can and cannot do over MCP

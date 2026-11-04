@@ -1814,7 +1814,9 @@ function RunScriptForm({ device, onCreated }) {
   const [runNow, setRunNow] = useState(false);
   const scriptsQ = useQuery(['scripts-pick'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
-  const canDirect = can('jobs.manage') && can('settings.manage') && cfgQ.data?.server?.allow_unapproved_jobs;
+  // Settings ▸ Configuration ▸ Jobs; an older server sends only the server field.
+  const cfgJobs = cfgQ.data?.jobs;
+  const canDirect = can('jobs.manage') && can('settings.manage') && !!(cfgJobs ? cfgJobs.allow_unapproved : cfgQ.data?.server?.allow_unapproved_jobs);
   const direct = canDirect && runNow;
 
   if (!can('jobs.create')) return <EmptyState icon="shield" title={t('run.readOnly')} msg={t('run.needPerm')} />;

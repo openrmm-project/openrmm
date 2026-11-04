@@ -107,8 +107,11 @@ type Config struct {
 	// MCPAllowedIPs is an optional allowlist (comma-separated IPs/CIDRs) for the
 	// /mcp endpoint. Empty = no app-level IP restriction (deployer's choice).
 	MCPAllowedIPs []string
-	// AllowUnapprovedJobs lets ad-hoc job creators set require_approval=false.
-	// Default false: every human/AI-initiated script run requires approval.
+	// AllowUnapprovedJobs (RMM_ALLOW_UNAPPROVED_JOBS) is only the starting value
+	// of the jobs.allow_unapproved setting, which an administrator changes in
+	// Settings; once saved there, the stored value wins. Read it through
+	// settings.Effective, never here. Default false: every script run requires
+	// approval.
 	AllowUnapprovedJobs bool
 	// MacOSAdhocBundle offers the ad-hoc macOS remote bundle next to the signed
 	// one in the console's install command (docs/08-remote-access.md). On by

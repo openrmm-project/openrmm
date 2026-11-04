@@ -221,11 +221,12 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	// Approval mandatory unless the deployer opted into unapproved jobs and the
-	// caller can also manage jobs. jobs.create alone may only create approval-gated jobs.
+	// Approval is mandatory unless the instance allows skipping it and this
+	// caller may (mayRunUnapproved). jobs.create alone only creates
+	// approval-gated jobs.
 	require := true
-	if in.RequireApproval != nil && s.cfg.AllowUnapprovedJobs && hasPermission(r, models.PermJobsManage) {
-		require = *in.RequireApproval
+	if in.RequireApproval != nil && !*in.RequireApproval && s.mayRunUnapproved(r) {
+		require = false
 	}
 	job, err := s.jobs.Propose(r.Context(), chi.URLParam(r, "id"), sc.Shell, sc.Body, "library: "+sc.Name, actorOf(r), require)
 	if err != nil {

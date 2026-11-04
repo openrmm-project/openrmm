@@ -567,6 +567,7 @@
   'run.whatDoes': 'What does this do?',
   'run.runNowOn': 'Run now on {host}',
   'run.createGated': 'Create approval-gated job',
+  'run.clear': 'Clear',
   'dpatch.summary': '{items} · {approved} approved',
   'dpatch.scanRequested': 'Scan requested',
   'dpatch.scan': 'Scan',

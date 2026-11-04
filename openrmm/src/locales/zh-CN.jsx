@@ -554,6 +554,7 @@
   'run.whatDoes': '这个脚本做什么？',
   'run.runNowOn': '立即在 {host} 上运行',
   'run.createGated': '创建需审批的作业',
+  'run.clear': '清空',
   'dpatch.summary': '{items} · 已批准 {approved}',
   'dpatch.scanRequested': '已请求扫描',
   'dpatch.scan': '扫描',

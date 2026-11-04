@@ -560,6 +560,7 @@
   'run.whatDoes': 'O que isto faz?',
   'run.runNowOn': 'Executar agora em {host}',
   'run.createGated': 'Criar job sujeito a aprovação',
+  'run.clear': 'Limpar',
   'dpatch.summary': '{items} · {approved} aprovados',
   'dpatch.scanRequested': 'Verificação solicitada',
   'dpatch.scan': 'Verificar',

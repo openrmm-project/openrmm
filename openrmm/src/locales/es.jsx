@@ -554,6 +554,7 @@
   'run.whatDoes': '¿Qué hace esto?',
   'run.runNowOn': 'Ejecutar ahora en {host}',
   'run.createGated': 'Crear job sujeto a aprobación',
+  'run.clear': 'Limpiar',
   'dpatch.summary': '{items} · {approved} aprobados',
   'dpatch.scanRequested': 'Análisis solicitado',
   'dpatch.scan': 'Analizar',

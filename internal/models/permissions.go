@@ -10,8 +10,9 @@ const (
 
 	// Risk-based autonomy (docs/23-ai-autonomy.md). The built-in chat and
 	// external MCP clients have separate switches, so trusting one never trusts
-	// the other. No built-in role holds the query and run permissions: a custom
-	// role opts in. Nothing that changes a device is ever covered by them.
+	// the other. The built-in administrator holds all four, as it holds every
+	// permission; technician and read-only hold none, so for anyone else a
+	// custom role opts in. Nothing that changes a device is ever covered by them.
 	PermAIAutonomyQuery  = "ai.autonomy.query"
 	PermAIAutonomyRun    = "ai.autonomy.run"
 	PermMCPAutonomyQuery = "mcp.autonomy.query"
@@ -184,7 +185,9 @@ func DefaultRolePermissions(role string) []string {
 			PermAuditView,
 			PermSettingsManage, PermEnrollmentManage, PermAPITokensManage,
 			PermUsersManage, PermUsersEmailManage, PermRolesManage,
-			// Releasing scripts, but not using autonomy: that is a custom role's.
+			// Full access includes autonomy (migration 025): the four switches
+			// and releasing scripts. Pausing in Settings ▸ AI still stops it.
+			PermAIAutonomyQuery, PermAIAutonomyRun, PermMCPAutonomyQuery, PermMCPAutonomyRun,
 			PermAIAutonomyManage,
 		}
 	default:

@@ -10,8 +10,8 @@ tag.
 
 - **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
   [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
-  run without a person approving at the time, and only for roles granted them —
-  no built-in role is:
+  run without a person approving at the time, and only for roles granted them:
+  the built-in administrator holds them, technician and read-only do not:
   - **device queries** (`query_device`): the agent's built-in, read-only reports
     on processes, services, events, disk, network, the system and installed
     software. No code is sent; parameters come from closed sets;

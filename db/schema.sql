@@ -71,6 +71,7 @@ SELECT 'admin', permission FROM (VALUES
     ('clients.view'), ('clients.manage'),
     ('reports.view'), ('audit.view'),
     ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage'),
+    ('ai.autonomy.query'), ('ai.autonomy.run'), ('mcp.autonomy.query'), ('mcp.autonomy.run'),
     ('ai.autonomy.manage')
 ) AS p(permission)
 ON CONFLICT DO NOTHING;

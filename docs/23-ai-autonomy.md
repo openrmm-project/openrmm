@@ -10,7 +10,8 @@ the AI act on its own in two narrow cases, and only for the roles you choose:
   administrator **released** for the AI.
 
 Nothing that changes a device ever runs without a person approving it, either
-at the time or in advance. Autonomy is opt-in per role and off by default.
+at the time or in advance. The built-in administrator role has autonomy; every
+other role is without it until a custom role grants it.
 
 ## Risk classes
 
@@ -35,8 +36,10 @@ they create a request that waits for approval, like any proposal.
 | Query devices without approval | `ai.autonomy.query` | `mcp.autonomy.query` |
 | Run pre-approved actions without approval | `ai.autonomy.run` | `mcp.autonomy.run` |
 
-- **No built-in role holds these four.** Create a custom role in **Users &
-  Settings ▸ Roles**, tick the ones you want, and assign it.
+- **The built-in administrator role holds all four**, as it holds every
+  permission. Technician and read-only hold none: for anyone else, create a
+  custom role in **Users & Settings ▸ Roles**, tick the ones you want, and
+  assign it. **Pausing** (below) stops autonomy for administrators too.
 - The chat and MCP switches are independent: trusting the built-in chat never
   trusts an external client, and the reverse.
 - **`ai.autonomy.manage`** releases scripts for the AI. It also needs

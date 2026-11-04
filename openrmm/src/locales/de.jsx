@@ -554,6 +554,7 @@
   'run.whatDoes': 'Was macht das?',
   'run.runNowOn': 'Jetzt auf {host} ausführen',
   'run.createGated': 'Genehmigungspflichtigen Job erstellen',
+  'run.clear': 'Leeren',
   'dpatch.summary': '{items} · {approved} genehmigt',
   'dpatch.scanRequested': 'Prüfung angefordert',
   'dpatch.scan': 'Prüfen',

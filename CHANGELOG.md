@@ -6,6 +6,16 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- A device's **Run script** editor opens empty, with the sample shown only as
+  a placeholder, so a new script no longer starts with deleting the sample. A
+  **Clear** button empties the script and the description and puts the shell
+  back to the device's default, after loading a library script too.
+- Korean, Malay and Russian: the run-script form and the bulk deployment
+  subtitle were machine-translated with the wrong sense of "job" (employment),
+  "library" (a public library) and "dry run"; they now read correctly.
+
 ## [0.9.1] - 2026-11-03
 
 ### Added

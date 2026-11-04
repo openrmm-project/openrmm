@@ -554,6 +554,7 @@
   'run.whatDoes': 'これは何をしますか？',
   'run.runNowOn': '{host} で今すぐ実行',
   'run.createGated': '承認が必要なジョブを作成',
+  'run.clear': 'クリア',
   'dpatch.summary': '{items} · 承認済み {approved}',
   'dpatch.scanRequested': 'スキャンを要求しました',
   'dpatch.scan': 'スキャン',

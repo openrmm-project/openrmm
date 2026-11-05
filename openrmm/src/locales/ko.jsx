@@ -269,7 +269,6 @@
   'remote.reason.unsupported_os': "지원되지 않는 운영 체제",
   'remote.reason.unavailable': "사용할 수 없음",
   'remote.capUnknown': "기능을 알 수 없음",
-  'remote.beta': "베타",
   'remote.alreadyConnected': "이미 연결된 사용자가 있습니다",
   'remote.alreadyConnectedTo': "{who} → {host}.",
   'remote.ready': "원격 세션 준비됨",

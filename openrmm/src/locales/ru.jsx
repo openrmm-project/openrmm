@@ -269,7 +269,6 @@
   'remote.reason.unsupported_os': "ОС не поддерживается",
   'remote.reason.unavailable': "недоступно",
   'remote.capUnknown': "возможности неизвестны",
-  'remote.beta': "бета",
   'remote.alreadyConnected': "Кто-то уже подключён",
   'remote.alreadyConnectedTo': "{who} к {host}.",
   'remote.ready': "Удалённый сеанс готов",

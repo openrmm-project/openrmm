@@ -269,7 +269,6 @@
   'remote.reason.unsupported_os': "OS tidak disokong",
   'remote.reason.unavailable': "tidak tersedia",
   'remote.capUnknown': "keupayaan tidak diketahui",
-  'remote.beta': "beta",
   'remote.alreadyConnected': "Seseorang sudah bersambung",
   'remote.alreadyConnectedTo': "{who} ke {host}.",
   'remote.ready': "Sesi jauh sedia",

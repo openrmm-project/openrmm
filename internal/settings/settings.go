@@ -36,6 +36,12 @@ const (
 	// KeyAIAutonomyPaused turns off everything the AI may do without approval,
 	// for every role, at once (docs/23-ai-autonomy.md). Read on every call.
 	KeyAIAutonomyPaused = "ai.autonomy_paused"
+	// KeyJobsAllowUnapproved lets the people who both approve jobs and manage
+	// the configuration run a script on one device without the approval step.
+	// Off unless an administrator turns it on; RMM_ALLOW_UNAPPROVED_JOBS only
+	// sets the value an instance starts with. Bulk deployments and everything
+	// the AI proposes always wait for approval.
+	KeyJobsAllowUnapproved = "jobs.allow_unapproved"
 )
 
 var publicKeys = map[string]bool{
@@ -49,6 +55,7 @@ var publicKeys = map[string]bool{
 	KeyRustDeskEnabled:       true,
 	KeyRemoteGuestAccess:     true,
 	KeyAIAutonomyPaused:      true,
+	KeyJobsAllowUnapproved:   true,
 }
 
 // Editable is the effective runtime subset that can be edited from the UI.
@@ -65,6 +72,7 @@ type Editable struct {
 	RustDeskEnabled       bool
 	RemoteGuestAccess     bool
 	AIAutonomyPaused      bool
+	JobsAllowUnapproved   bool
 }
 
 // FromConfig builds the env-only baseline.
@@ -80,6 +88,9 @@ func FromConfig(cfg *config.Config) Editable {
 		MeshCentralTokenKey:   cfg.MeshCentralTokenKey,
 		MeshCentralEnabled:    cfg.MeshCentralEnabled,
 		RustDeskEnabled:       cfg.RustDeskEnabled,
+		// The environment is only the starting value: once an administrator
+		// saves the setting, the stored value wins.
+		JobsAllowUnapproved: cfg.AllowUnapprovedJobs,
 	}
 }
 
@@ -123,7 +134,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyAIAutonomyPaused} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyAIAutonomyPaused, KeyJobsAllowUnapproved} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -156,6 +167,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.RemoteGuestAccess = v == "true"
 		case KeyAIAutonomyPaused:
 			out.AIAutonomyPaused = v == "true"
+		case KeyJobsAllowUnapproved:
+			out.JobsAllowUnapproved = v == "true"
 		}
 	}
 	return out, nil
@@ -180,6 +193,9 @@ type SaveRequest struct {
 		RustDeskEnabled    *bool  `json:"rustdesk_enabled"`    // nil = preserve current
 		GuestAccess        *bool  `json:"guest_access"`        // nil = preserve current
 	} `json:"remote"`
+	Jobs struct {
+		AllowUnapproved *bool `json:"allow_unapproved"` // nil = preserve current
+	} `json:"jobs"`
 }
 
 // Save persists editable settings. Secret empty strings preserve existing values.
@@ -237,6 +253,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	if in.AI.AutonomyPaused != nil {
 		autonomyPaused = *in.AI.AutonomyPaused
 	}
+	allowUnapproved := current.JobsAllowUnapproved
+	if in.Jobs.AllowUnapproved != nil {
+		allowUnapproved = *in.Jobs.AllowUnapproved
+	}
 	for _, op := range []struct{ key, value string }{
 		{KeyAIProvider, in.AI.Provider},
 		{KeyAIBaseURL, in.AI.BaseURL},
@@ -248,6 +268,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
 		{KeyRemoteGuestAccess, strconv.FormatBool(guestAccess)},
 		{KeyAIAutonomyPaused, strconv.FormatBool(autonomyPaused)},
+		{KeyJobsAllowUnapproved, strconv.FormatBool(allowUnapproved)},
 	} {
 		if err := writePublic(op.key, op.value); err != nil {
 			return current, err

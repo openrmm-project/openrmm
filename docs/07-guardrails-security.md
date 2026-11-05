@@ -16,8 +16,15 @@ These controls are built in.
   in the console, and that act *is* the review. See
   [Configuration proposals](#configuration-proposals-the-second-gate) below.
 - **Every ad-hoc script run requires approval by default.** `POST /api/jobs` and
-  `run-script` ignore `require_approval:false` unless the deployer explicitly sets
-  `RMM_ALLOW_UNAPPROVED_JOBS=true`.
+  `run-script` ignore `require_approval:false` unless an administrator turns on
+  **Run without approval** (Settings ▸ Configuration ▸ Jobs, setting
+  `jobs.allow_unapproved`), and even then only for a caller who holds both
+  `jobs.manage` and `settings.manage`. Turning it on or off is audited as
+  `config.unapproved_jobs` with the new value, and each job records
+  `requires_approval` in `job.propose`. Bulk deployments and every AI or MCP
+  proposal always wait for approval. `RMM_ALLOW_UNAPPROVED_JOBS=true` only sets
+  the value a new instance starts with; once the setting is saved, the stored
+  value wins.
 - A job in `awaiting_approval` is **never** dispatched. Only
   `POST /api/jobs/{id}/approve` (a human + bearer token) moves it to `pending`
   and triggers dispatch.

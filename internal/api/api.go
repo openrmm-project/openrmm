@@ -681,10 +681,15 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"rustdesk_enabled":      eff.RustDeskEnabled,
 			"guest_access":          eff.RemoteGuestAccess,
 		},
+		"jobs": map[string]any{
+			"allow_unapproved": eff.JobsAllowUnapproved,
+		},
 		"server": map[string]any{
-			"version":               serverVersion(s.cfg),
-			"base_url":              s.cfg.PublicURL,
-			"allow_unapproved_jobs": s.cfg.AllowUnapprovedJobs,
+			"version":  serverVersion(s.cfg),
+			"base_url": s.cfg.PublicURL,
+			// The same value as jobs.allow_unapproved, kept for consoles and
+			// API clients that read it here.
+			"allow_unapproved_jobs": eff.JobsAllowUnapproved,
 			"macos_adhoc_bundle":    s.cfg.MacOSAdhocBundle,
 			// Public keys, not secrets: every installer that pins them was
 			// served by this same origin.
@@ -751,6 +756,12 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		// session now, not at their expiry.
 		s.closeAllGuestShares(r.Context(), actorOf(r))
 	}
+	if before.JobsAllowUnapproved != eff.JobsAllowUnapproved {
+		// Its own entry, with the new value: config.update only names what
+		// changed, and this one decides whether scripts can skip approval.
+		detail, _ := json.Marshal(map[string]any{"enabled": eff.JobsAllowUnapproved})
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "config.unapproved_jobs", "app_settings", detail)
+	}
 
 	changed := changedSettings(before, eff, in)
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.update", "app_settings", settings.AuditDetail(changed))
@@ -785,6 +796,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
 	add("remote.guest_access", before.RemoteGuestAccess != after.RemoteGuestAccess)
 	add("ai.autonomy_paused", before.AIAutonomyPaused != after.AIAutonomyPaused)
+	add("jobs.allow_unapproved", before.JobsAllowUnapproved != after.JobsAllowUnapproved)
 	return out
 }
 
@@ -1455,12 +1467,12 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgent(w, r, in.AgentID) {
 		return
 	}
-	// Approval is mandatory unless the deployer explicitly opted into unapproved
-	// jobs and the caller can also manage jobs. jobs.create alone may only create
+	// Approval is mandatory unless the instance allows skipping it and this
+	// caller may (mayRunUnapproved). jobs.create alone only creates
 	// approval-gated jobs.
 	require := true
-	if in.RequireApproval != nil && s.cfg.AllowUnapprovedJobs && hasPermission(r, models.PermJobsManage) {
-		require = *in.RequireApproval
+	if in.RequireApproval != nil && !*in.RequireApproval && s.mayRunUnapproved(r) {
+		require = false
 	}
 	if in.Shell == "" {
 		in.Shell = models.ShellBash
@@ -1471,6 +1483,19 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, job)
+}
+
+// mayRunUnapproved reports whether this caller may create a job that skips
+// approval. The instance must allow it (Settings, jobs.allow_unapproved, off
+// by default), and the caller must both approve jobs and manage the
+// configuration: the people the console offers the option to. An unreadable
+// setting counts as off. Bulk deployments and the AI's tools never ask.
+func (s *Server) mayRunUnapproved(r *http.Request) bool {
+	if !hasPermission(r, models.PermJobsManage) || !hasPermission(r, models.PermSettingsManage) {
+		return false
+	}
+	eff, err := settings.Effective(r.Context(), s.store, s.cfg)
+	return err == nil && eff.JobsAllowUnapproved
 }
 
 // createBulkJob fans a script out to many devices as ONE approval-gated batch.

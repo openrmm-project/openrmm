@@ -41,6 +41,20 @@ tag.
 
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
+- **Running a script without approval is now a per-instance setting.** An
+  administrator turns it on under **Users & Settings ▸ Configuration ▸ Jobs ▸
+  Run without approval**. It is off by default and each change is audited as
+  `config.unapproved_jobs` with the new value. Until now only the deployer could
+  allow it, with `RMM_ALLOW_UNAPPROVED_JOBS`, so a Cloud tenant could not. That
+  variable now only sets the value a new instance starts with; once the setting
+  is saved, the saved value wins. `PUT /api/config` takes
+  `jobs.allow_unapproved`, and `GET /api/config` returns it (also still as
+  `server.allow_unapproved_jobs`).
+- Skipping approval now needs `settings.manage` as well as `jobs.manage`, the
+  people the console already offered the option to. Before, with the variable
+  on, the API accepted `require_approval:false` from anyone with `jobs.manage`.
+  Bulk deployments and every script the AI or MCP proposes still always wait
+  for approval; the setting does not change what the AI may run on its own.
 
 ### Fixed
 
@@ -52,6 +66,13 @@ tag.
   The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
   Korean pages included, and its own PowerShell (inventory, patches, device
   queries) writes UTF-8, which loses nothing in any language.
+- A device's **Run script** editor opens empty, with the sample shown only as
+  a placeholder, so a new script no longer starts with deleting the sample. A
+  **Clear** button empties the script and the description and puts the shell
+  back to the device's default, after loading a library script too.
+- Korean, Malay and Russian: the run-script form and the bulk deployment
+  subtitle were machine-translated with the wrong sense of "job" (employment),
+  "library" (a public library) and "dry run"; they now read correctly.
 
 ## [0.9.1] - 2026-11-03
 

@@ -1809,12 +1809,18 @@ function RunScriptForm({ device, onCreated }) {
   const defShell = device.os.toLowerCase().includes('win') ? 'powershell' : 'bash';
   const [shell, setShell] = useState(defShell);
   const [desc, setDesc] = useState('');
-  const [script, setScript] = useState(defShell === 'powershell' ? 'Get-Service | Where-Object Status -eq "Running" | Select-Object -First 10' : 'uptime\ndf -h /'); // i18n-ignore: a sample script
+  // The editor starts empty with the sample as its placeholder. Starting it
+  // with the sample as text made every new script begin with deleting it.
+  const [script, setScript] = useState('');
+  const sample = { powershell: 'Get-Service | Where-Object Status -eq "Running" | Select-Object -First 10', cmd: 'ipconfig /all', python: 'import platform\nprint(platform.platform())' }[shell] || 'uptime\ndf -h /'; // i18n-ignore: sample scripts
+  const clear = () => { setScript(''); setDesc(''); setShell(defShell); };
   const [busy, setBusy] = useState(false);
   const [runNow, setRunNow] = useState(false);
   const scriptsQ = useQuery(['scripts-pick'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
-  const canDirect = can('jobs.manage') && can('settings.manage') && cfgQ.data?.server?.allow_unapproved_jobs;
+  // Settings ▸ Configuration ▸ Jobs; an older server sends only the server field.
+  const cfgJobs = cfgQ.data?.jobs;
+  const canDirect = can('jobs.manage') && can('settings.manage') && !!(cfgJobs ? cfgJobs.allow_unapproved : cfgQ.data?.server?.allow_unapproved_jobs);
   const direct = canDirect && runNow;
 
   if (!can('jobs.create')) return <EmptyState icon="shield" title={t('run.readOnly')} msg={t('run.needPerm')} />;
@@ -1867,8 +1873,9 @@ function RunScriptForm({ device, onCreated }) {
         </Field>
       </div>
       <Field label={t('common.description')}><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('run.whatDoes')} /></Field>
-      <Field label={t('deploy.script')}><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={220} /></Field>
+      <Field label={t('deploy.script')}><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={220} placeholder={sample} /></Field>
       <div className="flex justify-end gap-2">
+        {(script || desc) && <Button variant="ghost" icon="close" onClick={clear} disabled={busy}>{t('run.clear')}</Button>}
         <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim()}>{direct ? t('run.runNowOn', { host: device.hostname }) : t('run.createGated')}</Button>
       </div>
     </div>

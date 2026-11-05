@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-04
+
 ### Changed
 
 - **Running a script without approval is now a per-instance setting.** An
@@ -25,6 +27,8 @@ tag.
 
 ### Fixed
 
+- A device's **Remote** menu no longer labels native remote access as
+  beta.
 - A device's **Run script** editor opens empty, with the sample shown only as
   a placeholder, so a new script no longer starts with deleting the sample. A
   **Clear** button empties the script and the description and puts the shell

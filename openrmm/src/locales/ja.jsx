@@ -283,7 +283,6 @@
   'remote.reason.unsupported_os': '非対応の OS',
   'remote.reason.unavailable': '利用不可',
   'remote.capUnknown': '対応状況不明',
-  'remote.beta': 'ベータ',
   'remote.alreadyConnected': 'すでに誰かが接続しています',
   'remote.alreadyConnectedTo': '{who} ({host})。',
   'remote.ready': 'リモートセッションの準備ができました',

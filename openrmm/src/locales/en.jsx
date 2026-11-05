@@ -296,7 +296,6 @@
   'remote.reason.unsupported_os': 'OS not supported',
   'remote.reason.unavailable': 'unavailable',
   'remote.capUnknown': 'capability unknown',
-  'remote.beta': 'beta',
   'remote.alreadyConnected': 'Someone is already connected',
   'remote.alreadyConnectedTo': '{who} to {host}.',
   'remote.ready': 'Remote session ready',

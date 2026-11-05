@@ -347,7 +347,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const nativeUnavailable = nativeCaps?.capture === 'unavailable';
   // The agent reports why in a code (no_xorg, wayland_unsupported…); the menu
   // says it in words, and shows an unrecognised code as it came.
-  const nativeHint = nativeUnavailable ? tEnum('remote.reason', nativeCaps.reason_code || 'unavailable') : (nativeCaps?.capture === 'unknown' ? t('remote.capUnknown') : t('remote.beta'));
+  const nativeHint = nativeUnavailable ? tEnum('remote.reason', nativeCaps.reason_code || 'unavailable') : (nativeCaps?.capture === 'unknown' ? t('remote.capUnknown') : undefined);
 
   const [remoteBusy, setRemoteBusy] = useState(false);
   const presenceByAgent = useRemotePresence();

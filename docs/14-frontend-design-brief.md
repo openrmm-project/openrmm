@@ -235,8 +235,11 @@ tools allowed by that role's permissions, and is revocable.
   explicit **confirm dialog** (type-to-confirm for devices). These are deliberate
   human actions — never triggered by the AI. Device groups: `GET/POST
   /api/groups`, assign via `PATCH /api/devices/{id}/group`.
-- Approval is mandatory for every script run; the UI never offers a
-  "run without approval" path unless the backend reports it is enabled.
+- Approval is required for every script run by default. The UI offers "run
+  without approval" on one device only when `GET /api/config` reports
+  `jobs.allow_unapproved` on and the user holds both `jobs.manage` and
+  `settings.manage`; the server checks the same. Bulk deployments and AI
+  proposals never offer it.
 
 ## 11. Additional API & types — canonical sources
 

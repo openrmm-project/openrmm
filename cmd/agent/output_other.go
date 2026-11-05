@@ -8,3 +8,7 @@ package main
 // fallback, which is byte-preserving for the Latin-1 range rather than
 // discarding the byte outright.
 func systemCodePage() int { return 0 }
+
+// consoleCodePage is systemCodePage's twin for cmd and PowerShell output, and
+// likewise has no meaning off Windows.
+func consoleCodePage() int { return 0 }

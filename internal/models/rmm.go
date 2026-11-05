@@ -191,6 +191,29 @@ type Script struct {
 	DefaultArgs string    `json:"default_args"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// Params are the values a caller may supply, each with a closed set of
+	// accepted values. They reach the device as OPENRMM_PARAM_<NAME>
+	// environment variables, never pasted into the body.
+	Params []ScriptParam `json:"params"`
+	// The release for the AI to run this script without approval
+	// (docs/23-ai-autonomy.md). It is bound to the hash of the shell, body and
+	// parameters at release time: any edit to those revokes it.
+	AIReleasedBy   *string    `json:"ai_released_by,omitempty"`
+	AIReleasedAt   *time.Time `json:"ai_released_at,omitempty"`
+	AIReleasedHash string     `json:"ai_released_hash,omitempty"`
+	// AIReleased is computed: a release whose hash still matches the content.
+	AIReleased bool `json:"ai_released"`
+}
+
+// ScriptParam declares one parameter of a library script. Kind "enum" accepts
+// exactly one of Values; kind "pattern" accepts a value that Pattern matches in
+// full (it is anchored on both ends by the server).
+type ScriptParam struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Kind        string   `json:"kind"`
+	Values      []string `json:"values,omitempty"`
+	Pattern     string   `json:"pattern,omitempty"`
 }
 
 // ScriptCategory is a category as it actually exists: a name some scripts share.

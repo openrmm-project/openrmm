@@ -340,6 +340,39 @@ func (s *Service) QueueJobFailed(ctx context.Context, agentID, hostname, jobID, 
 	})
 }
 
+// QueueAIReleaseRevoked mails that a script released for the AI was withdrawn
+// after failing several times in a row. It satisfies jobs.ReleaseNotifier. The
+// device of the last failure decides who hears of it, through the same scope
+// rules as every other device event.
+func (s *Service) QueueAIReleaseRevoked(ctx context.Context, agentID, hostname, scriptID, scriptName string, failures int) {
+	if s == nil || agentID == "" {
+		return
+	}
+	if hostname == "" {
+		hostname = agentID
+	}
+	_, consoleURL, err := s.config(ctx)
+	if err != nil {
+		consoleURL = ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "The library script %q was released for the AI to run without approval.\n", scriptName)
+	fmt.Fprintf(&b, "It failed %d times in a row, the last time on %s, so its release was withdrawn.\n\n", failures, hostname)
+	b.WriteString("The AI can only propose it now, for a person to approve. Review the script and its\n")
+	b.WriteString("recent results before releasing it again.\n")
+	if consoleURL != "" {
+		fmt.Fprintf(&b, "\nOpen the console: %s\n", strings.TrimRight(consoleURL, "/"))
+	}
+	s.Queue(ctx, Event{
+		Type:      store.NotifyAIReleaseRevoked,
+		AgentID:   agentID,
+		Hostname:  hostname,
+		Subject:   fmt.Sprintf("[OpenRMM] %s — %s", labelFor(store.NotifyAIReleaseRevoked), scriptName),
+		Body:      b.String(),
+		DedupeKey: "ai_release_revoked:" + scriptID + ":" + time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 // SendPasswordReset delivers a reset link directly, deliberately bypassing the
 // outbox that every alert goes through.
 //
@@ -389,6 +422,8 @@ func labelFor(eventType string) string {
 		return "Agent recovered"
 	case store.NotifyJobFailed:
 		return "Job failed"
+	case store.NotifyAIReleaseRevoked:
+		return "AI release withdrawn"
 	case store.NotifyCheckRecovered:
 		return "Recovered"
 	}

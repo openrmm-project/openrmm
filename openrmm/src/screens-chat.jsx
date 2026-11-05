@@ -335,22 +335,27 @@ function ProposedJob({ jobId, navigate }) {
   if (!j) return null;
   const isAwaiting = j.status === 'awaiting_approval';
   const done = j.status === 'completed' || j.status === 'failed';
+  // Ran without approval at the time: a device query the role allows, or a
+  // script an administrator released. Said plainly, with the reason.
+  const auto = !!j.autonomy;
 
   const act = async (fn, label) => { setBusy(true); try { await fn(j.id); toast.success(label); } catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); } };
 
   return (
-    <div className="mt-3 rounded-2xl border border-warn/30 bg-warn/[0.03] overflow-hidden animate-scale-in">
+    <div className={cx('mt-3 rounded-2xl border overflow-hidden animate-scale-in', auto ? 'border-brand/30 bg-brandsoft/30' : 'border-warn/30 bg-warn/[0.03]')}>
       <div className="flex items-center justify-between px-3.5 h-11 border-b border-line/60">
         <div className="flex items-center gap-2 min-w-0">
-          <Icon name="flash" size={15} className="text-warn shrink-0" />
-          <span className="text-[12.5px] font-semibold text-ink truncate">{t('chat.proposedJob')}</span>
+          <Icon name={auto ? 'sparkle' : 'flash'} size={15} className={cx('shrink-0', auto ? 'text-brandhi' : 'text-warn')} />
+          <span className="text-[12.5px] font-semibold text-ink truncate">{auto ? t('chat.ranAutomatically') : t('chat.proposedJob')}</span>
           <StatusPill status={j.status} size="sm" pulse />
         </div>
         <button onClick={() => navigate('jobs', { focus: j.id })} className="text-[11.5px] text-muted hover:text-ink flex items-center gap-1 shrink-0">{t('chat.openInQueue')} <Icon name="external" size={12} /></button>
       </div>
       <div className="p-3.5 space-y-3">
         <div className="text-[12.5px] text-ink font-medium">{j.description}</div>
+        {auto && j.approved_by && <div className="text-[11.5px] text-brandhi">{t('chat.autonomyBasis', { basis: j.approved_by })}</div>}
         <CodeBlock code={j.script} shell={j.shell} dryRun={isAwaiting} maxHeight={200} />
+        {j.params && Object.keys(j.params).length > 0 && window.JobParams && <window.JobParams params={j.params} />}
         {done && (j.stdout || j.stderr) && <OutputBlock stdout={j.stdout} stderr={j.stderr} exitCode={j.exit_code} />}
         {isAwaiting && (
           <div className="flex items-center justify-between gap-2">

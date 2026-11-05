@@ -54,7 +54,7 @@ once on connect).
 
 | type | data | effect |
 |------|------|--------|
-| `job` | `{ job_id, type, shell, script }` | run it, reply with `job_result` |
+| `job` | `{ job_id, type, shell, script, params? }` | run it, reply with `job_result`. `type` `device_query` runs a built-in query instead of a shell; `params` are a released script's parameters (see below) |
 | `job_result_ack` | `{ job_id }` | confirm a `job_result` was durably recorded; the agent drops it from its retry outbox |
 | `check_result_ack` | `{ execution_id }` | same for a `check_result`, keyed by the execution rather than the check: a result may be re-sent until it is acknowledged |
 | `remote_start` | `{ session_id, agent_ticket, kind, allow_files }` | connect a remote module to the relay; the agent derives `/ws/remote` from its own control WebSocket origin |
@@ -146,6 +146,24 @@ The agent maps `shell` to an interpreter:
 
 An unknown shell is refused with exit 2 rather than falling back to Bash, so a
 typo never runs under an interpreter the operator did not choose.
+
+### Device queries and parameters (agent 0.10.0)
+
+A job of `type` `device_query` carries `{"query": ..., "params": {...}}` as its
+`script`. The agent runs fixed, read-only code for that query and replies with
+its result as JSON on stdout (at most 64 KB). The query and its parameters are
+checked against the catalog by the agent as well as the server
+(`internal/protocol/devicequery.go`); nothing in them reaches a command line
+except a whole number of hours, formatted by the agent. See
+[23-ai-autonomy](23-ai-autonomy.md).
+
+`params` on a `run_script` job are a library script's declared parameters. The
+agent sets each one as the environment variable `OPENRMM_PARAM_<NAME>` for the
+script's process and never splices it into the script text. It refuses a name
+that is not `[a-z][a-z0-9_]{0,31}`, a value over 200 characters or holding a
+line break, and any parameter on a `cmd` job (cmd expands variables into its own
+command line). Agents before 0.10.0 ignore `params`, which is why the server
+refuses parameterised jobs and device queries for them.
 
 Execution is bounded by a 10-minute timeout; stdout/stderr and the exit code are
 returned.

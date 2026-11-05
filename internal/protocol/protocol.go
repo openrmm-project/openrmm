@@ -142,6 +142,11 @@ type JobMsg struct {
 	Type   string `json:"type"`
 	Shell  string `json:"shell"`
 	Script string `json:"script"`
+	// Params are a released library script's declared parameters. The agent
+	// passes each one as an OPENRMM_PARAM_<NAME> environment variable and never
+	// splices it into the script text. Agents before 0.10.0 ignore them, which
+	// is why the server refuses such jobs for them.
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // JobCancelMsg asks the agent to kill a running job's process.

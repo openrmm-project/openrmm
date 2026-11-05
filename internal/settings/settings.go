@@ -33,6 +33,9 @@ const (
 	// KeyRemoteGuestAccess allows technicians holding devices.remote.share to
 	// invite guests without an account. Off unless an administrator turns it on.
 	KeyRemoteGuestAccess = "remote.guest_access"
+	// KeyAIAutonomyPaused turns off everything the AI may do without approval,
+	// for every role, at once (docs/23-ai-autonomy.md). Read on every call.
+	KeyAIAutonomyPaused = "ai.autonomy_paused"
 	// KeyJobsAllowUnapproved lets the people who both approve jobs and manage
 	// the configuration run a script on one device without the approval step.
 	// Off unless an administrator turns it on; RMM_ALLOW_UNAPPROVED_JOBS only
@@ -51,6 +54,7 @@ var publicKeys = map[string]bool{
 	KeyMeshCentralEnabled:    true,
 	KeyRustDeskEnabled:       true,
 	KeyRemoteGuestAccess:     true,
+	KeyAIAutonomyPaused:      true,
 	KeyJobsAllowUnapproved:   true,
 }
 
@@ -67,6 +71,7 @@ type Editable struct {
 	MeshCentralEnabled    bool
 	RustDeskEnabled       bool
 	RemoteGuestAccess     bool
+	AIAutonomyPaused      bool
 	JobsAllowUnapproved   bool
 }
 
@@ -129,7 +134,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyJobsAllowUnapproved} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyAIAutonomyPaused, KeyJobsAllowUnapproved} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -160,6 +165,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.RustDeskEnabled = v == "true"
 		case KeyRemoteGuestAccess:
 			out.RemoteGuestAccess = v == "true"
+		case KeyAIAutonomyPaused:
+			out.AIAutonomyPaused = v == "true"
 		case KeyJobsAllowUnapproved:
 			out.JobsAllowUnapproved = v == "true"
 		}
@@ -174,6 +181,8 @@ type SaveRequest struct {
 		BaseURL  string `json:"base_url"`
 		Model    string `json:"model"`
 		APIKey   string `json:"api_key"`
+		// nil = preserve current
+		AutonomyPaused *bool `json:"autonomy_paused"`
 	} `json:"ai"`
 	Remote struct {
 		DefaultProvider    string `json:"default"`
@@ -240,6 +249,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	if in.Remote.GuestAccess != nil {
 		guestAccess = *in.Remote.GuestAccess
 	}
+	autonomyPaused := current.AIAutonomyPaused
+	if in.AI.AutonomyPaused != nil {
+		autonomyPaused = *in.AI.AutonomyPaused
+	}
 	allowUnapproved := current.JobsAllowUnapproved
 	if in.Jobs.AllowUnapproved != nil {
 		allowUnapproved = *in.Jobs.AllowUnapproved
@@ -254,6 +267,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyMeshCentralEnabled, strconv.FormatBool(meshEnabled)},
 		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
 		{KeyRemoteGuestAccess, strconv.FormatBool(guestAccess)},
+		{KeyAIAutonomyPaused, strconv.FormatBool(autonomyPaused)},
 		{KeyJobsAllowUnapproved, strconv.FormatBool(allowUnapproved)},
 	} {
 		if err := writePublic(op.key, op.value); err != nil {

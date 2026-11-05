@@ -8,7 +8,7 @@ agent, and pluggable remote access.
 Ask the assistant in plain language — *"install 7-zip on the finance group"*,
 *"configure printer model X at IP Y on host Z"*, *"generate a report of offline
 devices"* — and it inspects the fleet, **proposes** the scripts/actions, and a
-human approves before anything runs on an endpoint.
+human approves before anything that changes an endpoint runs.
 
 ## Why this exists
 
@@ -18,8 +18,10 @@ OpenRMM is an open-source, self-hosted RMM built around three choices:
 
 - **Any model** — any OpenAI-compatible endpoint, including a local one, so
   command data can stay on your own infrastructure.
-- **A human approves every action** — the AI reads and proposes; nothing runs on
-  an endpoint until someone approves the job.
+- **Nothing changes a device without a person's approval** — given at the time,
+  or in advance. The AI reads and proposes. Read-only device queries and
+  pre-approved actions (library scripts an administrator released) are opt-in per
+  role, and off by default ([docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)).
 - **Privacy first** — your server, your database, your audit trail.
 
 ## Highlights
@@ -28,8 +30,10 @@ OpenRMM is an open-source, self-hosted RMM built around three choices:
   **self-updates** from the server (`make agent-dist` for development; signed,
   versioned release artifacts are required for production).
 - **AI chat with tool-calling** — the model reads fleet state and proposes actions.
-- **Guardrails by design** — AI never executes directly; every action is a job that
-  a human approves, with dry-run preview and an append-only audit log.
+- **Guardrails by design** — every change the AI wants is a job a human approves,
+  with dry-run preview and an append-only audit log. Autonomy is limited to
+  read-only queries and to scripts released in advance, per role, with separate
+  switches for the built-in chat and for MCP, rate limits and a global pause.
 - **Pluggable remote access** — `native` (built-in relay + media sidecar,
   tile-delta codec; Windows and Linux/Xorg including the login screen, and
   macOS; file transfer, chat with the user, clipboard both ways, display

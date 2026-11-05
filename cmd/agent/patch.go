@@ -64,19 +64,19 @@ foreach ($u in $r.Updates) {
 $out | ConvertTo-Json -Compress`
 
 func scanWindowsPatches(ctx context.Context) ([]protocol.PatchItem, error) {
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", wuaScanPS).Output()
+	out, err := agentPowerShell(ctx, wuaScanPS)
 	if err != nil {
 		return nil, fmt.Errorf("windows update scan: %w", err)
 	}
 	return parseWindowsPatchOutput(out)
 }
 
-// parseWindowsPatchOutput decodes PowerShell's redirected output before JSON
-// unmarshalling. Windows PowerShell writes in the active Windows code page, so
-// handing those bytes directly to encoding/json replaces accented characters
-// with U+FFFD and permanently corrupts titles such as "Atualização de Segurança".
-func parseWindowsPatchOutput(out []byte) ([]protocol.PatchItem, error) {
-	trimmed := strings.TrimSpace(decodeOutput(out))
+// parseWindowsPatchOutput reads the scan's JSON, already decoded to text by
+// agentPowerShell: handing PowerShell's raw bytes to encoding/json replaced
+// accented characters with U+FFFD, and decoding them in the wrong page turned
+// "Atualização de Segurança" into "Atualiza‡Æo de Seguran‡a".
+func parseWindowsPatchOutput(out string) ([]protocol.PatchItem, error) {
+	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {
 		return nil, nil
 	}
@@ -372,11 +372,11 @@ $results | ConvertTo-Json -Compress`
 
 func installWindowsPatches(ctx context.Context, ids []string) ([]protocol.PatchResultItem, bool) {
 	ps := strings.Replace(wuaInstallPS, "__IDS__", strings.Join(ids, ","), 1)
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return uniformResult(ids, false, false, "wua install failed: "+err.Error())
 	}
-	trimmed := strings.TrimSpace(string(out))
+	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {
 		return nil, false
 	}

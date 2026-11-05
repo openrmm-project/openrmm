@@ -70,7 +70,9 @@ SELECT 'admin', permission FROM (VALUES
     ('devices.view'), ('devices.manage'), ('devices.delete'), ('devices.remote'), ('devices.files'), ('devices.terminal'), ('devices.remote.share'),
     ('clients.view'), ('clients.manage'),
     ('reports.view'), ('audit.view'),
-    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage')
+    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage'),
+    ('ai.autonomy.query'), ('ai.autonomy.run'), ('mcp.autonomy.query'), ('mcp.autonomy.run'),
+    ('ai.autonomy.manage')
 ) AS p(permission)
 ON CONFLICT DO NOTHING;
 
@@ -1013,3 +1015,17 @@ ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_by TEXT;
 -- The token that admitted each device, to find what a leaked token enrolled.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS enroll_token_id UUID REFERENCES enroll_tokens(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WHERE enroll_token_id IS NOT NULL;
+
+-- Migration 024: risk-based autonomy for the AI assistant. A script released
+-- for the AI is bound to the hash of its content; jobs record why they ran
+-- without approval at the time, and the parameters they carried.
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_released_by TEXT;
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_released_at TIMESTAMPTZ;
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_released_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_failure_streak INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS autonomy TEXT NOT NULL DEFAULT ''
+    CHECK (autonomy IN ('', 'query', 'preapproved'));
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS script_id UUID REFERENCES scripts(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_jobs_autonomy ON jobs (created_at) WHERE autonomy <> '';

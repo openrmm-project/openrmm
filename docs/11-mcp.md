@@ -8,8 +8,13 @@ It reuses the **exact same permission-filtered tool catalog and implementations*
 as the built-in chat (`ai.ToolsForPermissions` / `ai.Execute`), so both surfaces
 behave identically. Write-capable tools **propose**: jobs land in
 `awaiting_approval`, and tasks, checks and policies land disabled and stamped for
-review. External AI never executes a script directly and never deletes. The single
-tool that acts, `install_patches`, is bounded by what a person already approved.
+review. External AI never executes a free-form script and never deletes. The
+tools that act are bounded: `install_patches` by what a person already approved,
+and — only for roles granted `mcp.autonomy.query` / `mcp.autonomy.run`, which are
+separate from the built-in chat's — `query_device` (read-only built-in queries)
+and `run_preapproved_action` (scripts an administrator released). Without those
+permissions they create requests for approval. See
+[23-ai-autonomy](23-ai-autonomy.md).
 
 Verified end-to-end: `initialize` → `tools/list` → `tools/call` over HTTP, with
 scoped tokens and IP allowlisting.
@@ -128,8 +133,9 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
   the provider's shared, dynamic egress IPs).
 - [ ] Bind the token to a **scoped user** so it only sees that user's fleet.
 - [ ] Leave **Run without approval** off (Settings ▸ Configuration ▸ Jobs, the
-  default). MCP and the AI never skip approval either way; the setting only
-  affects people who also manage the configuration.
+  default). It only affects people who also manage the configuration: a script
+  MCP proposes waits for approval either way, and what MCP may run on its own
+  is set by `mcp.autonomy.*` ([23-ai-autonomy](23-ai-autonomy.md)).
 - [ ] Watch the audit log for `apitoken.create` / `job.propose` / `job.approve`.
 
 ## What the AI can and cannot do over MCP

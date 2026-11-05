@@ -24,6 +24,10 @@ type ToolContext struct {
 	PublicURL   string
 	ScopeUserID string // restrict tools to this user's access scope ("" = full)
 	Permissions map[string]bool
+	// Channel is how the AI reached the tools: ChannelChat (the built-in chat,
+	// the default) or ChannelMCP (an external client). Autonomy is granted per
+	// channel (docs/23-ai-autonomy.md).
+	Channel string
 }
 
 // allows reports whether the caller's scope permits acting on an agent.
@@ -221,7 +225,7 @@ func Tools() []Tool {
 			},"additionalProperties":false}`),
 		}},
 	}
-	return append(append(base, highLevelTools()...), deviceToolDefs...)
+	return append(append(append(base, highLevelTools()...), deviceToolDefs...), autonomyToolDefs...)
 }
 
 func ToolsForPermissions(perms map[string]bool) []Tool {
@@ -244,6 +248,9 @@ func toolPermission(name string) string {
 		return models.PermJobsCreate
 	}
 	if permission, ok := deviceToolPermission(name); ok {
+		return permission
+	}
+	if permission, ok := autonomyToolPermission(name); ok {
 		return permission
 	}
 	switch name {
@@ -284,8 +291,16 @@ func toolPermission(name string) string {
 
 // Execute dispatches a single tool call and returns its JSON output.
 func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMessage) ToolResult {
+	// A tool without a risk class does not run: the class decides what it may
+	// do without approval, and an unclassified tool has not been decided.
+	if _, ok := ToolRiskClass(name); !ok {
+		return ToolResult{Output: fmt.Sprintf(`{"error":"unknown tool %q"}`, name)}
+	}
 	if permission := toolPermission(name); permission != "" && !tc.hasPermission(permission) {
 		return errResult("missing permission: " + permission)
+	}
+	if res, ok := executeAutonomyTool(ctx, tc, name, args); ok {
+		return res
 	}
 	if res, ok := executeHighLevel(ctx, tc, name, args); ok {
 		return res
@@ -651,7 +666,41 @@ func getJobStatus(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 	if !tc.allows(ctx, job.AgentID) {
 		return nil, fmt.Errorf("job is outside your access scope")
 	}
-	return job, nil
+	return jobForModel(job), nil
+}
+
+// jobForModel is a job as the model may see it: its output bounded and
+// stripped of what looks like a credential, the same as what query_device and
+// run_preapproved_action hand back, and marked as data. The job row keeps the
+// full output for the people allowed to read it.
+func jobForModel(j *models.Job) map[string]any {
+	stdout, cutOut := redactForModel(j.Stdout)
+	stderr, cutErr := redactForModel(j.Stderr)
+	out := map[string]any{
+		"id": j.ID, "agent_id": j.AgentID, "type": j.Type, "description": j.Description, "shell": j.Shell,
+		"script": j.Script, "status": j.Status, "requires_approval": j.RequiresApproval, "created_by": j.CreatedBy,
+		"created_at": j.CreatedAt, "updated_at": j.UpdatedAt,
+	}
+	if j.ApprovedBy != nil {
+		out["approved_by"] = *j.ApprovedBy
+	}
+	if j.ExitCode != nil {
+		out["exit_code"] = *j.ExitCode
+	}
+	if j.Autonomy != "" {
+		out["ran_automatically"] = true
+	}
+	if len(j.Params) > 0 {
+		out["params"] = j.Params
+	}
+	if stdout != "" || stderr != "" {
+		out["device_output"] = map[string]any{"stdout": stdout, "stderr": stderr}
+		out["note"] = untrustedNote
+	}
+	if cutOut || cutErr {
+		out["truncated"] = true
+	}
+	return out
 }
 
 func cancelJobTool(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {

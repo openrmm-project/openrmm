@@ -6,8 +6,41 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
+  [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
+  run without a person approving at the time, and only for roles granted them:
+  the built-in administrator holds them, technician and read-only do not:
+  - **device queries** (`query_device`): the agent's built-in, read-only reports
+    on processes, services, events, disk, network, the system and installed
+    software. No code is sent; parameters come from closed sets;
+  - **pre-approved actions** (`run_preapproved_action`): library scripts an
+    administrator released, bound to the hash of their content, with typed
+    parameters passed as environment variables.
+
+  The built-in chat (`ai.autonomy.query`, `ai.autonomy.run`) and MCP
+  (`mcp.autonomy.query`, `mcp.autonomy.run`) have separate permissions; without
+  them the same calls create requests for approval. Releasing needs
+  `ai.autonomy.manage` (held by the built-in administrator). A server-enforced
+  deny list keeps reboots, installs, deletions, accounts, firewall, agent removal,
+  patches, persistence, registry and security settings, downloads and dynamic
+  code from ever being released. One device at a time; per-user, per-device and
+  daily limits; a circuit breaker that withdraws a release after 3 failures in a
+  row (with an email); output bounded and secret-redacted before the model sees
+  it; a global **pause** in Settings ▸ AI. Every autonomous run is an audited job
+  labelled **Ran automatically**, whose approver line states its basis.
+- **Script parameters.** Library scripts can declare up to eight parameters, each
+  with a list of values or a pattern. They reach the script as
+  `OPENRMM_PARAM_<NAME>` environment variables, never as script text; running such
+  a script asks for the values and always waits for approval. cmd scripts take
+  none.
+- **AI release withdrawn** email notification (on by default).
+
 ### Changed
 
+- The agent runs device queries and passes script parameters from **0.10.0**;
+  the server refuses both for older agents.
 - **Running a script without approval is now a per-instance setting.** An
   administrator turns it on under **Users & Settings ▸ Configuration ▸ Jobs ▸
   Run without approval**. It is off by default and each change is audited as
@@ -20,11 +53,19 @@ tag.
 - Skipping approval now needs `settings.manage` as well as `jobs.manage`, the
   people the console already offered the option to. Before, with the variable
   on, the API accepted `require_approval:false` from anyone with `jobs.manage`.
-  Bulk deployments and everything the AI or MCP proposes still always wait for
-  approval.
+  Bulk deployments and every script the AI or MCP proposes still always wait
+  for approval; the setting does not change what the AI may run on its own.
 
 ### Fixed
 
+- **Accented text from Windows** reached the console garbled on non-English
+  installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
+  Update titles, and the software and hardware inventory read it undecoded.
+  Running as a service, the agent read cmd and PowerShell output in the ANSI page
+  (1252) while they write in their console's OEM page (850 on a pt-BR install).
+  The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
+  Korean pages included, and its own PowerShell (inventory, patches, device
+  queries) writes UTF-8, which loses nothing in any language.
 - A device's **Run script** editor opens empty, with the sample shown only as
   a placeholder, so a new script no longer starts with deleting the sample. A
   **Clear** button empties the script and the description and puts the shell

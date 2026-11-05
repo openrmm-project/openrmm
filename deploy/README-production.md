@@ -112,6 +112,10 @@ RMM_ALLOW_LEGACY_AGENT_RELAY=false
 RMM_ALLOW_UNAPPROVED_JOBS=false
 ```
 
+`RMM_ALLOW_UNAPPROVED_JOBS` only sets the value a new instance starts with for
+**Users & Settings ▸ Configuration ▸ Jobs ▸ Run without approval**. Once an
+administrator saves that setting, the saved value wins. Leave it `false`.
+
 `OPENRMM_BASE_PATH` is a URL path with leading and trailing slash, for example
 `/console/`. It cannot contain an origin, query, fragment, `.` or `..` segment.
 The frontend is built for this path, nginx serves it there, and nginx generates

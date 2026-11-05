@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-04
+
 ### Changed
 
 - **Running a script without approval is now a per-instance setting.** An

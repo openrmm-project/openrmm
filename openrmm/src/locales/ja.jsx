@@ -741,6 +741,7 @@
   'notify.ai_release_revoked.msg': "AI 向けに公開したスクリプトが連続して何度も失敗したため、公開が取り消されました。",
   'audit.action.job.autonomous': "自動で実行（AI）",
   'audit.action.script.ai_release': "スクリプトを AI 向けに公開",
+  'audit.action.script.ai_release.refused': 'AI向けスクリプトの承認を拒否',
   'audit.action.script.ai_release.revoked': "スクリプトの AI 向け公開を取り消し",
   'audit.action.enroll_token.create': "インストール トークンを作成",
   'audit.action.enroll_token.revoke': "インストール トークンを取り消し",

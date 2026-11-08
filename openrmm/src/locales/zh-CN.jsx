@@ -741,6 +741,7 @@
   'notify.ai_release_revoked.msg': "一个向 AI 发布的脚本连续多次失败，因此其发布已被撤回。",
   'audit.action.job.autonomous': "已自动运行（AI）",
   'audit.action.script.ai_release': "脚本已向 AI 发布",
+  'audit.action.script.ai_release.refused': '已拒绝向 AI 授权脚本',
   'audit.action.script.ai_release.revoked': "脚本的 AI 发布已撤回",
   'audit.action.enroll_token.create': "已创建安装令牌",
   'audit.action.enroll_token.revoke': "已撤销安装令牌",

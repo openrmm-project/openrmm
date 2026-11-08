@@ -754,6 +754,7 @@
   'notify.ai_release_revoked.msg': "A script released for the AI failed several times in a row, so its release was withdrawn.",
   'audit.action.job.autonomous': "Ran automatically (AI)",
   'audit.action.script.ai_release': "Script released for the AI",
+  'audit.action.script.ai_release.refused': 'AI script release refused',
   'audit.action.script.ai_release.revoked': "Script release for the AI withdrawn",
   'audit.action.enroll_token.create': "Install token created",
   'audit.action.enroll_token.revoke': "Install token revoked",

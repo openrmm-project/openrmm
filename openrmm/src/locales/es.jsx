@@ -741,6 +741,7 @@
   'notify.ai_release_revoked.msg': "Un script liberado para la IA falló varias veces seguidas, así que se retiró su liberación.",
   'audit.action.job.autonomous': "Se ejecutó automáticamente (IA)",
   'audit.action.script.ai_release': "Script liberado para la IA",
+  'audit.action.script.ai_release.refused': 'Publicación de script para la IA rechazada',
   'audit.action.script.ai_release.revoked': "Liberación del script para la IA retirada",
   'audit.action.enroll_token.create': "Token de instalación creado",
   'audit.action.enroll_token.revoke': "Token de instalación revocado",

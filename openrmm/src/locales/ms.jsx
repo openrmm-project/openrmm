@@ -716,6 +716,7 @@
   'notify.ai_release_revoked.msg': "Skrip yang dilepaskan untuk AI gagal beberapa kali berturut-turut, jadi pelepasannya ditarik balik.",
   'audit.action.job.autonomous': "Dijalankan secara automatik (AI)",
   'audit.action.script.ai_release': "Skrip dilepaskan untuk AI",
+  'audit.action.script.ai_release.refused': 'Pelepasan skrip untuk AI ditolak',
   'audit.action.script.ai_release.revoked': "Pelepasan skrip untuk AI ditarik balik",
   'audit.action.enroll_token.create': "Token pemasangan dicipta",
   'audit.action.enroll_token.revoke': "Token pemasangan dibatalkan",

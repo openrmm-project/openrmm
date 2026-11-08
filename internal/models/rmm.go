@@ -195,6 +195,8 @@ type Script struct {
 	// accepted values. They reach the device as OPENRMM_PARAM_<NAME>
 	// environment variables, never pasted into the body.
 	Params []ScriptParam `json:"params"`
+	// ContentHash identifies the exact script displayed for review. Computed on read.
+	ContentHash string `json:"content_hash"`
 	// The release for the AI to run this script without approval
 	// (docs/23-ai-autonomy.md). It is bound to the hash of the shell, body and
 	// parameters at release time: any edit to those revokes it.

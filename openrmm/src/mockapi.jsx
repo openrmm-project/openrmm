@@ -441,7 +441,7 @@ const api = {
   updateScript(id, body) { return PUT('/api/scripts/' + id, body); },
   // Release a library script for the AI to run without approval, or withdraw
   // it (docs/23-ai-autonomy.md). The server applies its own rules either way.
-  setScriptAIRelease(id, release) { return POST('/api/scripts/' + id + '/ai-release', { release: !!release }); },
+  setScriptAIRelease(id, release, contentHash) { return POST('/api/scripts/' + id + '/ai-release', { release: !!release, ...(release ? { content_hash: contentHash } : {}) }); },
   // A library script with declared parameters, run by a person: the values go
   // with the script id and are checked against the declaration.
   runLibraryScript(agentId, scriptId, params) { return POST('/api/devices/' + agentId + '/run-script', { script_id: scriptId, params }); },

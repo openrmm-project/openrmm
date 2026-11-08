@@ -70,8 +70,8 @@ func TestAutonomyStoreIntegration(t *testing.T) {
 			}
 			return false
 		}
-		if !has() {
-			t.Fatal("a fresh autonomous job is not dispatchable")
+		if has() {
+			t.Fatal("a fresh autonomous job would be redelivered")
 		}
 		if _, err := st.pool.Exec(ctx, `UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id=$1`, j.ID); err != nil {
 			t.Fatal(err)
@@ -79,6 +79,24 @@ func TestAutonomyStoreIntegration(t *testing.T) {
 		if has() {
 			t.Fatal("a 10-minute-old autonomous job would be sent to a reconnecting agent")
 		}
+		human, err := st.CreateJob(ctx, &models.Job{AgentID: agent.ID, Status: models.JobPending, Type: models.JobRunScript, CreatedBy: "human"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		list, err := st.ListDispatchableJobs(ctx, agent.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, x := range list {
+			if x.ID == human.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("human job control was not dispatchable")
+		}
+
 	})
 
 	t.Run("a release is bound to content, and repeated failures withdraw it", func(t *testing.T) {

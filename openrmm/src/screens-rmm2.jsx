@@ -298,7 +298,7 @@ function AIReleasePanel({ script, contentChanged }) {
   const toggle = async () => {
     setBusy(true);
     try {
-      const out = await api.setScriptAIRelease(current.id, !released);
+      const out = await api.setScriptAIRelease(current.id, !released, script.content_hash);
       setCurrent(out);
       toast.success(released ? t('script.aiWithdrawn') : t('script.aiReleased'));
     } catch (e) { toast.error(released ? t('script.aiWithdrawFailed') : t('script.aiReleaseFailed'), e.message); }

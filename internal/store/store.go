@@ -623,10 +623,7 @@ func (s *Store) ListDispatchableJobs(ctx context.Context, agentID string) ([]mod
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+jobCols+` FROM jobs WHERE agent_id=$1 AND status IN ('pending','sent')
 		 AND EXISTS (SELECT 1 FROM agents a WHERE a.id=jobs.agent_id AND a.revoked_at IS NULL)
-		 -- An autonomous job is re-sent only shortly after it was created: the
-		 -- permission, pause and release it ran under were checked then, not now
-		 -- (jobs.AutonomousRedeliveryWindow).
-		 AND (autonomy = '' OR created_at > now() - interval '5 minutes')
+		 AND autonomy = ''
 		 ORDER BY created_at`, agentID)
 	if err != nil {
 		return nil, err

@@ -53,6 +53,7 @@ type AutonomyStore interface {
 	CreateAutonomousJob(ctx context.Context, j *models.Job, limits store.AutonomyLimits) (*models.Job, error)
 	RecordAIScriptOutcome(ctx context.Context, id string, success bool, limit int) (bool, error)
 	GetScript(ctx context.Context, id string) (*models.Script, error)
+	WithAutonomousDispatch(ctx context.Context, j *models.Job, releaseHash string, send func() bool) (bool, error)
 }
 
 // ReleaseNotifier tells people when a script's release for the AI was
@@ -193,7 +194,7 @@ func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, s
 //
 // The caller has already checked the permission, the scope and, for a script,
 // the release. This re-checks the device and applies limits atomically.
-func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis string, limits store.AutonomyLimits) (*models.Job, error) {
+func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis, releaseHash string, limits store.AutonomyLimits) (*models.Job, error) {
 	as, ok := s.store.(AutonomyStore)
 	if !ok {
 		return nil, fmt.Errorf("autonomous jobs are not available")
@@ -247,9 +248,14 @@ func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis stri
 	// An autonomous job runs now or not at all. Left pending for a device that
 	// is offline, it would run whenever the device came back — after autonomy
 	// was paused, or the release withdrawn, perhaps hours later.
-	msg := protocol.JobMsg{JobID: created.ID, Type: created.Type, Shell: created.Shell, Script: created.Script, Params: created.Params}
+	msg := protocol.JobMsg{JobID: created.ID, Type: created.Type, Shell: created.Shell, Script: created.Script, Params: created.Params, ExpiresAt: time.Now().Add(AutonomousDispatchWindow)}
 	frame, _ := encode(protocol.MsgJob, msg)
-	if !s.hub.Send(created.AgentID, frame) {
+	sent, dispatchErr := as.WithAutonomousDispatch(ctx, created, releaseHash, func() bool { return s.hub.Send(created.AgentID, frame) })
+	if dispatchErr != nil {
+		_ = s.store.SetJobResult(ctx, created.ID, models.JobFailed, -1, "", "autonomous dispatch authorization was withdrawn")
+		return nil, dispatchErr
+	}
+	if !sent {
 		_ = s.store.SetJobResult(ctx, created.ID, models.JobFailed, -1, "",
 			"the device was offline: an action that runs without approval does not wait for it to come back")
 		return s.store.GetJob(ctx, created.ID)
@@ -258,10 +264,9 @@ func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis stri
 	return s.store.GetJob(ctx, created.ID)
 }
 
-// AutonomousRedeliveryWindow is how long after creation an autonomous job may
-// still be re-sent to an agent that reconnects. Past it, the job is not
-// delivered: whoever allowed it at that moment may no longer allow it.
-const AutonomousRedeliveryWindow = 5 * time.Minute
+// AutonomousDispatchWindow bounds the time between dispatch and starting on
+// the endpoint. Autonomous jobs are never redelivered on reconnect.
+const AutonomousDispatchWindow = 30 * time.Second
 
 // Propose creates a job. If requireApproval is true the job lands in
 // awaiting_approval and is NOT dispatched until a human approves it.
@@ -608,6 +613,9 @@ func (s *Service) CompleteManual(ctx context.Context, jobID, actor string, succe
 
 // dispatch attempts to push a pending job to a connected agent.
 func (s *Service) dispatch(ctx context.Context, j *models.Job) {
+	if j.Autonomy != models.AutonomyNone {
+		return
+	} // autonomous jobs run now or never
 	msg := protocol.JobMsg{JobID: j.ID, Type: j.Type, Shell: j.Shell, Script: j.Script, Params: j.Params}
 	frame, _ := encode(protocol.MsgJob, msg)
 	if s.hub.Send(j.AgentID, frame) {

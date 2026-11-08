@@ -14,8 +14,8 @@ designed defense-first. This summarizes the posture; details live in
   it, either at the time or in advance.
 - **Autonomy is opt-in, bounded and separate per channel**
   ([`docs/23-ai-autonomy.md`](docs/23-ai-autonomy.md)). Two tool classes can run
-  without an approval at the time, and only for roles granted them (no built-in
-  role is): the agent's built-in **read-only device queries** (no code is sent;
+  without an approval at the time, and only for roles granted them (the built-in
+  administrator holds them; technician and read-only do not): the agent's built-in **read-only device queries** (no code is sent;
   parameters come from closed sets), and **pre-approved actions** — library
   scripts an administrator released, bound to the hash of their content (any
   edit revokes the release), with typed parameters passed as environment

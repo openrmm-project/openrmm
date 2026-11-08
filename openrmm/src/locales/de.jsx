@@ -741,6 +741,7 @@
   'notify.ai_release_revoked.msg': "Ein für die KI freigegebenes Skript ist mehrmals hintereinander fehlgeschlagen, daher wurde seine Freigabe zurückgezogen.",
   'audit.action.job.autonomous': "Automatisch ausgeführt (KI)",
   'audit.action.script.ai_release': "Skript für die KI freigegeben",
+  'audit.action.script.ai_release.refused': 'Skriptfreigabe für die KI abgelehnt',
   'audit.action.script.ai_release.revoked': "Freigabe des Skripts für die KI zurückgezogen",
   'audit.action.enroll_token.create': "Installations-Token erstellt",
   'audit.action.enroll_token.revoke': "Installations-Token widerrufen",

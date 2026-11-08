@@ -716,6 +716,7 @@
   'notify.ai_release_revoked.msg': "AI에 공개된 스크립트가 연속으로 여러 번 실패하여 공개가 철회되었습니다.",
   'audit.action.job.autonomous': "자동으로 실행됨(AI)",
   'audit.action.script.ai_release': "스크립트를 AI에 공개",
+  'audit.action.script.ai_release.refused': 'AI 스크립트 승인 거부',
   'audit.action.script.ai_release.revoked': "스크립트의 AI 공개 철회",
   'audit.action.enroll_token.create': "설치 토큰 생성",
   'audit.action.enroll_token.revoke': "설치 토큰 취소",

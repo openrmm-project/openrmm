@@ -716,6 +716,7 @@
   'notify.ai_release_revoked.msg': "Скрипт, разрешённый для ИИ, несколько раз подряд завершился ошибкой, поэтому разрешение отозвано.",
   'audit.action.job.autonomous': "Выполнено автоматически (ИИ)",
   'audit.action.script.ai_release': "Скрипт разрешён для ИИ",
+  'audit.action.script.ai_release.refused': 'Разрешение скрипта для ИИ отклонено',
   'audit.action.script.ai_release.revoked': "Разрешение скрипта для ИИ отозвано",
   'audit.action.enroll_token.create': "Создан токен установки",
   'audit.action.enroll_token.revoke': "Отозван токен установки",

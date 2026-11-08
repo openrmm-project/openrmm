@@ -2,7 +2,10 @@
 // server over the persistent WebSocket connection.
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Message types (the "type" field of Envelope).
 const (
@@ -138,10 +141,13 @@ type CredentialRotationCancelMsg struct {
 
 // JobMsg is a job pushed to the agent for execution.
 type JobMsg struct {
-	JobID  string `json:"job_id"`
-	Type   string `json:"type"`
-	Shell  string `json:"shell"`
-	Script string `json:"script"`
+	// ExpiresAt is an absolute start deadline for an autonomous dispatch. Zero
+	// preserves the delivery semantics of jobs approved by a human.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
+	JobID     string    `json:"job_id"`
+	Type      string    `json:"type"`
+	Shell     string    `json:"shell"`
+	Script    string    `json:"script"`
 	// Params are a released library script's declared parameters. The agent
 	// passes each one as an OPENRMM_PARAM_<NAME> environment variable and never
 	// splices it into the script text. Agents before 0.10.0 ignore them, which

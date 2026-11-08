@@ -789,6 +789,7 @@ func scanScript(row pgx.Row) (*models.Script, error) {
 	if sc.Params == nil {
 		sc.Params = []models.ScriptParam{}
 	}
+	sc.ContentHash = models.ScriptContentHash(sc.Shell, sc.Body, sc.Params)
 	sc.AIReleased = sc.AIReleaseCurrent()
 	return &sc, nil
 }

@@ -509,7 +509,7 @@ func queryDevice(ctx context.Context, tc ToolContext, args json.RawMessage) Tool
 		j, err := tc.Jobs.StartAutonomous(ctx, &models.Job{
 			AgentID: in.AgentID, Type: models.JobDeviceQuery, Description: label, Script: string(raw),
 			CreatedBy: tc.principal(), Autonomy: models.AutonomyQuery,
-		}, "autonomy: "+autonomyPermission(tc.channel(), ClassDeviceQuery), queryLimits)
+		}, "autonomy: "+autonomyPermission(tc.channel(), ClassDeviceQuery), "", queryLimits)
 		switch {
 		case errors.Is(err, store.ErrRateLimited):
 			why = "the limit on automatic queries was reached"
@@ -624,7 +624,7 @@ func runPreapprovedAction(ctx context.Context, tc ToolContext, args json.RawMess
 		j, err := tc.Jobs.StartAutonomous(ctx, &models.Job{
 			AgentID: in.AgentID, Type: models.JobRunScript, Description: label, Shell: sc.Shell, Script: sc.Body,
 			CreatedBy: tc.principal(), Autonomy: models.AutonomyPreapproved, ScriptID: &scriptID, Params: params,
-		}, basis, runLimits)
+		}, basis, sc.AIReleasedHash, runLimits)
 		switch {
 		case errors.Is(err, store.ErrRateLimited):
 			why = "the limit on automatic actions was reached"

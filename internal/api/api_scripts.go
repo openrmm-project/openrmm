@@ -230,7 +230,8 @@ func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Release *bool `json:"release"`
+		Release     *bool  `json:"release"`
+		ContentHash string `json:"content_hash"`
 	}
 	if err := decode(r, &in); err != nil || in.Release == nil {
 		writeErr(w, http.StatusBadRequest, "release (true or false) required")
@@ -256,7 +257,17 @@ func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
+	if in.ContentHash == "" {
+		writeErr(w, http.StatusBadRequest, "content_hash of the reviewed script is required")
+		return
+	}
+	if in.ContentHash != models.ScriptContentHash(sc.Shell, sc.Body, sc.Params) {
+		writeErr(w, http.StatusConflict, "the script changed since you viewed it; reload and review it before releasing")
+		return
+	}
 	if err := autonomy.CheckRelease(sc); err != nil {
+		detail, _ := json.Marshal(map[string]any{"categories": autonomy.DeniedCategories(sc.Body), "reason": "release policy refused"})
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "script.ai_release.refused", id, detail)
 		writeCodedErr(w, http.StatusUnprocessableEntity, "release_refused", err.Error())
 		return
 	}

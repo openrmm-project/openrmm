@@ -188,7 +188,10 @@ its result as JSON on stdout (at most 64 KB). The query and its parameters are
 checked against the catalog by the agent as well as the server
 (`internal/protocol/devicequery.go`); nothing in them reaches a command line
 except a whole number of hours, formatted by the agent. See
-[23-ai-autonomy](23-ai-autonomy.md).
+[23-ai-autonomy](23-ai-autonomy.md). Autonomous `job` frames also carry
+`expires_at` (an absolute RFC 3339 start deadline). The agent refuses a frame
+whose deadline has passed; ordinary human-approved jobs omit this field and
+keep their reconnect delivery behavior.
 
 `params` on a `run_script` job are a library script's declared parameters. The
 agent sets each one as the environment variable `OPENRMM_PARAM_<NAME>` for the

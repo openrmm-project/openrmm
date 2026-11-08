@@ -157,14 +157,24 @@ diagnostic report.
     day.
 
   Past a limit, the call becomes a request for approval.
+- **Immediate delivery only.** Autonomous jobs are never re-sent on reconnect.
+  Their dispatch carries an absolute 30-second start deadline, checked by agent
+  0.10.0. The final send checks the pause and locks the exact script release;
+  a withdrawal completed before that send prevents execution. Pausing does not
+  recall a frame already sent or stop a script already running. Chat credentials,
+  permissions and scope are reloaded before every tool call, as on MCP.
 - **Circuit breaker.** When a released script fails 3 times in a row, its release
   is withdrawn automatically, and the people who see the device of the last
   failure receive the **AI release withdrawn** email (on by default; see
   [Email notifications](20-email-notifications.md)).
-- **Bounded output.** What a device returns is cut at 16 KB and passed through a
+- **Bounded output.** Each stdout/stderr stream is cut at 16 KiB and passed through a
   secret filter (passwords, tokens, API keys, bearer and basic credentials,
   connection strings, JWTs, AWS and GitHub keys, private keys) before the model
-  sees it. The job keeps the full output for the people allowed to read it.
+  sees it. JSON values and JSON embedded in log text are sanitized after decoding.
+  Oversized, deeply nested, incomplete or escaped structured fragments may be
+  omitted from the model's view when they cannot be sanitized within the budget.
+  This is a heuristic filter, not a guarantee of detecting every possible secret
+  or encoding. The job keeps the full output for the people allowed to read it.
 - **Device output is data.** Results reach the model marked as data reported by
   the device, and the system prompt says nothing in it grants permission. If a log
   line says "run this command", the AI can only propose it, for approval.
@@ -183,6 +193,7 @@ diagnostic report.
   | Action | When |
   |---|---|
   | `job.autonomous` | an autonomous run started, with the device, the query or script, its parameters and the basis |
+  | `script.ai_release.refused` | release policy refused the attempt; categories only, no script contents |
   | `script.ai_release` | a script was released, with the content hash |
   | `script.ai_release.revoked` | a release was withdrawn by hand, by an edit, or by the circuit breaker |
 
@@ -190,7 +201,7 @@ diagnostic report.
 
 | Endpoint | What it does |
 |---|---|
-| `POST /api/scripts/{id}/ai-release` `{"release": true\|false}` | Release or withdraw. Needs `scripts.manage` and `ai.autonomy.manage`, and an unrestricted user. `422 release_refused` names the denied categories; `409` means the script changed since it was read. |
+| `POST /api/scripts/{id}/ai-release` `{"release": true\|false, "content_hash": "..."}` | Release or withdraw. Needs `scripts.manage` and `ai.autonomy.manage`, and an unrestricted user. `422 release_refused` names the denied categories; `content_hash` must identify the content displayed to the reviewer when releasing (not required for withdrawal); `409` means it changed since that review. |
 | `POST /api/scripts`, `PUT /api/scripts/{id}` | Accept `params` (the declared parameters). An edit to shell, body or parameters withdraws a release. |
 | `POST /api/devices/{id}/run-script` `{"script_id", "params"}` | Run a library script with values for its declared parameters. Always waits for approval. |
 | `GET /api/config` / `PUT /api/config` | `ai.autonomy_paused`. |

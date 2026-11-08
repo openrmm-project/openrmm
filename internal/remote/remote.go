@@ -269,29 +269,60 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 // a login token key is configured it mints a login token so the session embeds
 // without a second login; otherwise it returns a deep link
 // that works once the technician is logged into MeshCentral.
+// StartSession builds a connect URL into MeshCentral for the agent's node. When
+// a login token key is configured it mints a login token so the session embeds
+// without a second login; otherwise it returns a deep link
+// that works once the technician is logged into MeshCentral.
 func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
 	p.m.mu.RLock()
 	meshURL, meshTokenKey, meshUser, enabled := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled
 	p.m.mu.RUnlock()
+
 	if !enabled {
 		return nil, fmt.Errorf("the MeshCentral provider is disabled")
 	}
+
 	if meshURL == "" {
 		return nil, fmt.Errorf("MeshCentral URL not configured (RMM_MESHCENTRAL_URL)")
 	}
-	if agent.MeshID == nil || *agent.MeshID == "" {
-		return nil, fmt.Errorf("agent has no MeshCentral node id (set it via PATCH /api/devices/{id}/remote-ids)")
-	}
+
 	base := strings.TrimRight(meshURL, "/")
-	// viewmode=11 = desktop; hide=31 hides the MeshCentral chrome for embedding.
-	connect := fmt.Sprintf("%s/?viewmode=11&hide=31&node=%s", base, *agent.MeshID)
+	hostname := strings.TrimSpace(agent.Hostname)
+	hasMeshID := agent.MeshID != nil && strings.TrimSpace(*agent.MeshID) != ""
+
+	if !hasMeshID && hostname == "" {
+		return nil, fmt.Errorf("agent has no MeshCentral node id and no hostname")
+	}
+
+	var targetParam string
+
+	if hasMeshID {
+		targetParam = "gotonode=" + url.QueryEscape(strings.TrimSpace(*agent.MeshID))
+	} else {
+		targetParam = "gotodevicername=" + url.QueryEscape(hostname)
+	}
+
+	connect := fmt.Sprintf(
+		"%s/?viewmode=11&hide=31&%s",
+		base,
+		targetParam,
+	)
+
+	// If configured, embed a MeshCentral login token.
 	if meshTokenKey != "" {
 		tok, err := meshLoginToken(meshTokenKey, meshUser)
 		if err != nil {
 			return nil, fmt.Errorf("mesh login token: %w", err)
 		}
-		connect = fmt.Sprintf("%s/?login=%s&viewmode=11&hide=31&node=%s", base, url.QueryEscape(tok), *agent.MeshID)
+
+		connect = fmt.Sprintf(
+			"%s/?login=%s&viewmode=11&hide=31&%s",
+			base,
+			url.QueryEscape(tok),
+			targetParam,
+		)
 	}
+
 	rs := &models.RemoteSession{
 		AgentID:    agent.ID,
 		Provider:   "meshcentral",
@@ -301,9 +332,11 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 		CreatedBy:  createdBy,
 		ExpiresAt:  time.Now().Add(sessionTTL),
 	}
+
 	if err := p.m.persist(ctx, rs); err != nil {
 		return nil, err
 	}
+
 	return rs, nil
 }
 

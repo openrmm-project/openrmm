@@ -6,6 +6,12 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- `deploy/docker-compose.images.yml` pins the 0.9.3 server, frontend and
+  artifacts images. It still pinned 0.6.2, so a self-hosted install from the
+  published images started on 0.6.2 unless `OPENRMM_*_IMAGE` was set.
+
 ## [0.9.3] - 2026-11-08
 
 ### Fixed

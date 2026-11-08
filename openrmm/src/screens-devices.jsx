@@ -442,7 +442,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 {can('devices.remote') && <MenuItem icon="external" onClick={startRemoteNewTab} disabled={nativeUnavailable} hint={nativeUnavailable ? nativeHint : t('device.newTab')}>{t('device.nativeNewTab')}</MenuItem>}
                 {can('devices.terminal') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint={t('device.elevated')}>{t('device.terminal')}</MenuItem>}
                 {can('devices.files') && <MenuItem icon="folder" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>{t('device.fileTransfer')}</MenuItem>}
-                {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : t('device.noNodeId')}>MeshCentral</MenuItem>}
+                {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')}>MeshCentral</MenuItem>}
                 {can('devices.remote') && rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
                 {can('devices.remote') && can('devices.remote.share') && guestAccess && <>
                   <div className="my-1 border-t border-line" />

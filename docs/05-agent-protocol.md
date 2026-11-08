@@ -69,6 +69,11 @@ SQLSTATE where available. Snapshot contents and database error details are not
 logged. The last valid snapshot remains available if a later write fails.
 Embedded NUL characters in text values are removed before JSONB storage, also
 for older agents; literal backslash sequences and numeric precision are kept.
+Before allocating the normalized snapshot, the server enforces an 8 MiB input
+limit, a maximum nesting depth of 32, and at most 50,000 JSON tokens (including
+keys, values and container delimiters). These bounds accommodate the reference
+agent's maximum of 600 software entries and reject excessive structure before
+building a large object graph. A rejected snapshot does not replace prior data.
 
 When diagnosing missing inventory, compare the agent's `agent.log` beside its
 binary (Windows/macOS services) or its service journal (Linux) with the server

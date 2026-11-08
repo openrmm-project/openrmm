@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/p1ngu/rmm/internal/hub"
@@ -65,7 +66,11 @@ func TestInventoryFrameToAPIIntegration(t *testing.T) {
 	get("", f.a1, http.StatusUnauthorized)
 
 	// Invalid or empty snapshots cannot erase the last good one.
-	for _, bad := range []string{"null", `[]`, `"text"`, `{"bad\u0000key":1}`} {
+	for _, bad := range []string{
+		"null", `[]`, `"text"`, `{"bad\u0000key":1}`,
+		strings.Repeat(`{"n":`, 1000) + `0` + strings.Repeat(`}`, 1000),
+		`{"values":[` + strings.Repeat(`{},`, 30000) + `{}]}`,
+	} {
 		s.handleAgentFrame(f.ctx, f.a1, lease, frame(bad))
 		if got := get(f.admin, f.a1, http.StatusOK); string(got.Data) != string(inv.Data) {
 			t.Fatalf("invalid snapshot replaced the last good one: %s", got.Data)

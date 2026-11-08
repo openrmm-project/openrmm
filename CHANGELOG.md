@@ -16,6 +16,9 @@ tag.
   storage, including snapshots sent by existing agents. Literal `\\u0000` text
   and integer precision are preserved. Inventory collection, queueing and
   persistence now have diagnostics without logging snapshot contents.
+- Inventory normalization checks byte, nesting and token budgets before
+  building its in-memory representation, limiting allocation amplification
+  from a compromised agent's deeply nested or excessively broad snapshots.
 
 ## [0.9.2] - 2026-11-04
 

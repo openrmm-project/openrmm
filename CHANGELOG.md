@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-08
+
 ### Fixed
 
 - Inventory no longer discards an entire snapshot when a disk or memory usage

@@ -107,7 +107,7 @@ type Reply struct {
 
 // Respond appends the user's message, runs the tool-calling loop, persists every
 // step, and returns the assistant's final text plus any jobs it proposed.
-func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, scopeUser string, permissions map[string]bool) (*Reply, error) {
+func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, scopeUser string, permissions map[string]bool, authorize AuthorizeFunc) (*Reply, error) {
 	if err := e.store.AddChatMessage(ctx, &models.ChatMessage{
 		SessionID: sessionID, Role: "user", Content: userContent,
 	}); err != nil {
@@ -119,7 +119,7 @@ func (e *Engine) Respond(ctx context.Context, sessionID, userContent, actor, sco
 		return nil, err
 	}
 
-	tc := ToolContext{Store: e.store, Jobs: e.jobs, Patches: e.patches, Config: e.cfg, PublicURL: e.publicURL, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions, Channel: ChannelChat}
+	tc := ToolContext{Store: e.store, Jobs: e.jobs, Patches: e.patches, Config: e.cfg, PublicURL: e.publicURL, Actor: actor, ScopeUserID: scopeUser, Permissions: permissions, Channel: ChannelChat, Authorize: authorize}
 	tools := ToolsForPermissions(permissions)
 	var createdJobs []string
 

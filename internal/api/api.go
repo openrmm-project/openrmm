@@ -1926,6 +1926,26 @@ func (s *Server) deleteChatSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+// authorizeChat uses the same credential resolution as a new request. A model
+// response can take minutes; no tool inherits the authority from before it.
+func (s *Server) authorizeChat(token string) ai.AuthorizeFunc {
+	return func(ctx context.Context) (ai.ToolIdentity, error) {
+		identity, err := s.authenticateToken(ctx, "/api/chat", token)
+		if err != nil {
+			return ai.ToolIdentity{}, err
+		}
+		perms, err := s.permissionsForRole(ctx, identity.role)
+		if err != nil {
+			return ai.ToolIdentity{}, err
+		}
+		set := permissionSet(perms)
+		if !set[models.PermAIChatUse] {
+			return ai.ToolIdentity{}, errors.New("chat permission revoked")
+		}
+		return ai.ToolIdentity{Actor: identity.actor, ScopeUserID: identity.scopeUser, Permissions: set}, nil
+	}
+}
+
 func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "id")
 	if !s.requireChatOwner(w, r, sessionID) {
@@ -1944,7 +1964,7 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 		title = string(rs[:60]) + "…"
 	}
 	_ = s.store.MaybeTitleChatSession(r.Context(), sessionID, title)
-	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r), permissionsOf(r))
+	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r), permissionsOf(r), s.authorizeChat(bearer(r)))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return

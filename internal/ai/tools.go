@@ -12,6 +12,15 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
+// ToolIdentity is reloaded at each tool boundary, after any wait for the model.
+type ToolIdentity struct {
+	Actor       string
+	ScopeUserID string
+	Permissions map[string]bool
+}
+
+type AuthorizeFunc func(context.Context) (ToolIdentity, error)
+
 // ToolContext carries the dependencies and identity a tool needs to run.
 type ToolContext struct {
 	Store   *store.Store
@@ -27,7 +36,8 @@ type ToolContext struct {
 	// Channel is how the AI reached the tools: ChannelChat (the built-in chat,
 	// the default) or ChannelMCP (an external client). Autonomy is granted per
 	// channel (docs/23-ai-autonomy.md).
-	Channel string
+	Channel   string
+	Authorize AuthorizeFunc
 }
 
 // allows reports whether the caller's scope permits acting on an agent.
@@ -295,6 +305,13 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 	// do without approval, and an unclassified tool has not been decided.
 	if _, ok := ToolRiskClass(name); !ok {
 		return ToolResult{Output: fmt.Sprintf(`{"error":"unknown tool %q"}`, name)}
+	}
+	if tc.Authorize != nil {
+		current, err := tc.Authorize(ctx)
+		if err != nil || current.Permissions == nil {
+			return errResult("authorization expired")
+		}
+		tc.Actor, tc.ScopeUserID, tc.Permissions = current.Actor, current.ScopeUserID, current.Permissions
 	}
 	if permission := toolPermission(name); permission != "" && !tc.hasPermission(permission) {
 		return errResult("missing permission: " + permission)

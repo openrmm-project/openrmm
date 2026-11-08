@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/p1ngu/rmm/internal/auth"
 	"github.com/p1ngu/rmm/internal/devicelimit"
@@ -221,8 +222,21 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, ch chan [
 		_ = s.store.TouchAgent(ctx, agentID)
 	case protocol.MsgInventory:
 		var inv protocol.InventoryMsg
-		if json.Unmarshal(env.Data, &inv) == nil && len(inv.Data) > 0 {
-			_ = s.store.UpsertInventory(ctx, agentID, inv.Data)
+		if json.Unmarshal(env.Data, &inv) != nil || len(inv.Data) == 0 || string(inv.Data) == "null" {
+			log.Printf("inventory: invalid snapshot agent=%s", agentID)
+			return
+		}
+		if err := s.store.UpsertInventory(ctx, agentID, inv.Data); err != nil {
+			// PostgreSQL error details may echo software names or other endpoint
+			// data. SQLSTATE identifies the failure without dumping the snapshot.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) {
+				log.Printf("inventory: persistence failed agent=%s sqlstate=%s", agentID, pgErr.Code)
+			} else {
+				log.Printf("inventory: persistence failed agent=%s error_type=%T", agentID, err)
+			}
+		} else {
+			log.Printf("inventory: snapshot stored agent=%s bytes=%d", agentID, len(inv.Data))
 		}
 	case protocol.MsgJobResult:
 		var res protocol.JobResultMsg

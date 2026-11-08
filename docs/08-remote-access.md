@@ -787,7 +787,7 @@ three is installed the paste is refused and logged, not silently dropped.
 - **Not yet covered**: login-window capture (needs entitlements).
 - **Status**: first implementation; validate capture, Retina coordinate scaling,
   and the keycode map on real hardware.
-- Release CI builds **both** sidecars on one macos-14 runner — arm64 natively and
+- Release CI builds **both** sidecars on one macos-15 runner — arm64 natively and
   x86_64 cross-built with `clang -arch x86_64`, since Xcode's SDK is universal —
   packages and ad-hoc signs each `.app.tar.gz`, and verifies with `file` that the
   two slices really are different architectures. A cross-build that silently

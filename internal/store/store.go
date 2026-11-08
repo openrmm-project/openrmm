@@ -592,7 +592,11 @@ func (s *Store) SetJobResult(ctx context.Context, id, status string, exitCode in
 
 // UpsertInventory stores the latest inventory snapshot for an agent.
 func (s *Store) UpsertInventory(ctx context.Context, agentID string, data []byte) error {
-	_, err := s.pool.Exec(ctx,
+	data, err := prepareInventory(data)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx,
 		`INSERT INTO inventory (agent_id, data, collected_at) VALUES ($1,$2,now())
 		 ON CONFLICT (agent_id) DO UPDATE SET data=EXCLUDED.data, collected_at=now()`,
 		agentID, data)

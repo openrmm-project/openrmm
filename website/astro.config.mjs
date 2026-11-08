@@ -22,7 +22,7 @@ export default defineConfig({
       favicon: '/favicon.png',
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/openrmm-project/openrmm' },
-        { icon: 'discord', label: 'Discord', href: 'https://discord.gg/VN2jYWuA8X' },
+        { icon: 'discord', label: 'Discord', href: 'https://discord.gg/PVRw76wqd9' },
         { icon: 'x.com', label: 'X', href: 'https://x.com/openrmm' },
       ],
       // Each guide sets its own edit link to its source file; this one covers

@@ -153,3 +153,53 @@ func TestJobForModelRedactsAndMarksDeviceOutput(t *testing.T) {
 		t.Fatal("the raw stdout field is still there")
 	}
 }
+
+func TestModelRedactionHandlesStructuredAndNestedJSON(t *testing.T) {
+	const canary = "SYNTHETIC_REDACTION_CANARY_901"
+	nested, _ := json.Marshal(map[string]any{"query": "events", "result": map[string]any{"events": []any{map[string]any{"message": `{"password":"` + canary + `"}`}}}})
+	quoted, _ := json.Marshal(map[string]string{"password": "prefix\"" + canary})
+	for _, in := range []string{string(nested), string(nested[:len(nested)-2]), `{"pass\u0077ord":"` + canary + `"}`, string(quoted), `Request body: {"pass\u0077ord":"` + canary + `"}`, `Request body: {\"password\":\"` + canary + `\"}`, `Request body: ` + string(quoted), `log: password="prefix\"` + canary + `"`} {
+		out, _ := redactForModel(in)
+		if strings.Contains(out, canary) {
+			t.Errorf("synthetic secret survived structured redaction")
+		}
+		j := jobForModel(&models.Job{Stdout: in})
+		raw, _ := json.Marshal(j)
+		if strings.Contains(string(raw), canary) {
+			t.Errorf("synthetic secret survived jobForModel")
+		}
+	}
+	control := `{"result":{"message":"service Spooler is running","count":9007199254740993}}`
+	out, cut := redactForModel(control)
+	if cut || !strings.Contains(out, "service Spooler is running") || !strings.Contains(out, "9007199254740993") {
+		t.Fatalf("legitimate control damaged: %s", out)
+	}
+}
+
+func TestModelRedactionBoundsStructuredWork(t *testing.T) {
+	encoded := `{"password":"synthetic"}`
+	for i := 0; i < 10; i++ {
+		raw, _ := json.Marshal(map[string]string{"message": encoded})
+		encoded = string(raw)
+	}
+	for _, in := range []string{
+		strings.Repeat("x", maxRedactionInput+1),
+		strings.Repeat("[", 33) + "0" + strings.Repeat("]", 33),
+		"[" + strings.Repeat("0,", 9000) + "0]",
+		encoded,
+	} {
+		out, cut := redactForModel(in)
+		if !cut || !strings.Contains(out, "omitted") || len(out) > maxModelOutput {
+			t.Fatalf("unbounded structured output len=%d cut=%v", len(out), cut)
+		}
+	}
+	for _, control := range []string{"[ERROR] disk failed", "{diagnostic} service running"} {
+		if out, cut := redactForModel(control); cut || out != control {
+			t.Fatalf("ordinary log damaged: %q cut=%v", out, cut)
+		}
+	}
+	control := `{"path":"C:\\Temp","message":"ordinary log","number":123}`
+	if out, cut := redactForModel(control); cut || !strings.Contains(out, "ordinary log") {
+		t.Fatalf("control damaged %q cut=%v", out, cut)
+	}
+}

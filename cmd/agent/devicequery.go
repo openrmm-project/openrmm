@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -422,9 +423,9 @@ func parseJournal(out []byte) []eventRow {
 }
 
 func eventsDarwin(ctx context.Context, hours int) ([]eventRow, error) {
-	out, err := exec.CommandContext(ctx, "log", "show", "--last", strconv.Itoa(hours)+"h",
-		"--style", "ndjson", "--predicate", `messageType == error OR messageType == fault`).Output()
-	if err != nil && len(out) == 0 {
+	out, err := queryCommandOutput(ctx, "log", "show", "--last", strconv.Itoa(hours)+"h",
+		"--style", "ndjson", "--predicate", `messageType == error OR messageType == fault`)
+	if err != nil {
 		return nil, fmt.Errorf("log show: %w", err)
 	}
 	var rows []eventRow
@@ -699,4 +700,42 @@ func paramEnv(shell string, params map[string]string) ([]string, error) {
 	}
 	sort.Strings(env)
 	return env, nil
+}
+
+// Bound the capture before parsing; log show can emit an entire multi-day
+// unified log. The event count and final JSON cap alone do not bound memory.
+const maxQueryCapture = 8 << 20
+
+func queryCommandOutput(ctx context.Context, program string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, program, args...)
+	out := &queryCapture{cancel: cancel}
+	cmd.Stdout = out
+	cmd.Stderr = io.Discard
+	cmd.WaitDelay = 2 * time.Second
+	err := cmd.Run()
+	if out.exceeded {
+		return nil, fmt.Errorf("device query exceeded its output budget")
+	}
+	return out.buf.Bytes(), err
+}
+
+type queryCapture struct {
+	buf      bytes.Buffer
+	exceeded bool
+	cancel   context.CancelFunc
+}
+
+func (b *queryCapture) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := maxQueryCapture - b.buf.Len()
+	if len(p) > remaining {
+		b.exceeded = true
+		b.buf.Write(p[:remaining])
+		b.cancel()
+	} else {
+		b.buf.Write(p)
+	}
+	return n, nil
 }

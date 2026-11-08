@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/p1ngu/rmm/internal/protocol"
 )
@@ -191,5 +194,56 @@ func TestRunJobRoutesQueriesAndParameters(t *testing.T) {
 	}
 	if shellRuns.Load() != 0 {
 		t.Fatal("a query or a parameterised script went through the plain shell runner")
+	}
+}
+
+func TestQueryCaptureBoundsBeforeParsing(t *testing.T) {
+	cancelled := false
+	capture := &queryCapture{cancel: func() { cancelled = true }}
+	chunk := []byte(strings.Repeat("x", 64<<10))
+	for i := 0; i < 200; i++ {
+		if n, err := capture.Write(chunk); err != nil || n != len(chunk) {
+			t.Fatalf("write=%d %v", n, err)
+		}
+	}
+	if capture.buf.Len() != maxQueryCapture || !capture.exceeded || !cancelled {
+		t.Fatalf("len=%d exceeded=%v cancelled=%v", capture.buf.Len(), capture.exceeded, cancelled)
+	}
+	cancelled = false
+	small := &queryCapture{cancel: func() { cancelled = true }}
+	_, _ = small.Write([]byte("small event"))
+	if small.buf.String() != "small event" || small.exceeded || cancelled {
+		t.Fatal("legitimate control was changed")
+	}
+}
+
+// A synthetic child has no OS-log dependency and opens no listener.
+func TestQueryCommandBudgetIntegration(t *testing.T) {
+	if os.Getenv("OPENRMM_SYNTHETIC_QUERY_CHILD") != "" {
+		if os.Getenv("OPENRMM_SYNTHETIC_QUERY_CHILD") == "small" {
+			_, _ = os.Stdout.WriteString("small event")
+			os.Exit(0)
+		}
+		chunk := []byte(strings.Repeat("x", 64<<10))
+		for i := 0; i < 200; i++ {
+			_, _ = os.Stdout.Write(chunk)
+		}
+		os.Exit(0)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Show that the old Cmd.Output path would retain more than the budget.
+	t.Setenv("OPENRMM_SYNTHETIC_QUERY_CHILD", "large")
+	old, err := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestQueryCommandBudgetIntegration$").Output()
+	if err != nil || len(old) <= maxQueryCapture {
+		t.Fatalf("old prerequisite: len=%d err=%v", len(old), err)
+	}
+	old = nil
+	if out, err := queryCommandOutput(ctx, os.Args[0], "-test.run=^TestQueryCommandBudgetIntegration$"); err == nil || len(out) != 0 {
+		t.Fatalf("excessive capture len=%d err=%v", len(out), err)
+	}
+	t.Setenv("OPENRMM_SYNTHETIC_QUERY_CHILD", "small")
+	if out, err := queryCommandOutput(ctx, os.Args[0], "-test.run=^TestQueryCommandBudgetIntegration$"); err != nil || string(out) != "small event" {
+		t.Fatalf("small control len=%d err=%v", len(out), err)
 	}
 }

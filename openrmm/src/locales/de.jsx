@@ -283,7 +283,6 @@
   'remote.reason.unsupported_os': 'Betriebssystem nicht unterstützt',
   'remote.reason.unavailable': 'nicht verfügbar',
   'remote.capUnknown': 'Fähigkeit unbekannt',
-  'remote.beta': 'Beta',
   'remote.alreadyConnected': 'Es ist bereits jemand verbunden',
   'remote.alreadyConnectedTo': '{who} mit {host}.',
   'remote.ready': 'Remotesitzung bereit',

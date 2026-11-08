@@ -289,7 +289,6 @@
   'remote.reason.unsupported_os': 'SO não suportado',
   'remote.reason.unavailable': 'indisponível',
   'remote.capUnknown': 'capacidade desconhecida',
-  'remote.beta': 'beta',
   'remote.alreadyConnected': 'Já há alguém conectado',
   'remote.alreadyConnectedTo': '{who} a {host}.',
   'remote.ready': 'Sessão remota pronta',

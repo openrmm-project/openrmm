@@ -112,6 +112,10 @@ RMM_ALLOW_LEGACY_AGENT_RELAY=false
 RMM_ALLOW_UNAPPROVED_JOBS=false
 ```
 
+`RMM_ALLOW_UNAPPROVED_JOBS` only sets the value a new instance starts with for
+**Users & Settings ▸ Configuration ▸ Jobs ▸ Run without approval**. Once an
+administrator saves that setting, the saved value wins. Leave it `false`.
+
 `OPENRMM_BASE_PATH` is a URL path with leading and trailing slash, for example
 `/console/`. It cannot contain an origin, query, fragment, `.` or `..` segment.
 The frontend is built for this path, nginx serves it there, and nginx generates
@@ -256,7 +260,7 @@ This compose file builds the server and frontend from source instead. The
 server image carries its version, shown in Settings ▸ Configuration and printed
 by `rmm-server -version`: the workflow passes the tag's version as the
 Dockerfile's `VERSION` build arg, and a build without it reports `dev` — pass
-`--build-arg VERSION=0.6.2` (or set it under `build.args` in the compose file)
+`--build-arg VERSION=0.9.3` (or set it under `build.args` in the compose file)
 when building one yourself.
 
 ## 6. Database migrations

@@ -41,6 +41,47 @@ tag.
 
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
+- Each GitHub release now carries its CHANGELOG section as its notes, and the
+  release workflow posts an announcement to the project's Discord: what
+  changed, how to upgrade, and the link. Until now the release page had no
+  notes, and Discord got only GitHub's bare notice, or nothing at all when
+  Discord rate-limited the notice.
+
+### Fixed
+
+- **Accented text from Windows** reached the console garbled on non-English
+  installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
+  Update titles, and the software and hardware inventory read it undecoded.
+  Running as a service, the agent read cmd and PowerShell output in the ANSI page
+  (1252) while they write in their console's OEM page (850 on a pt-BR install).
+  The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
+  Korean pages included, and its own PowerShell (inventory, patches, device
+  queries) writes UTF-8, which loses nothing in any language.
+
+- `deploy/docker-compose.images.yml` pins the 0.9.3 server, frontend and
+  artifacts images. It still pinned 0.6.2, so a self-hosted install from the
+  published images started on 0.6.2 unless `OPENRMM_*_IMAGE` was set.
+
+## [0.9.3] - 2026-11-08
+
+### Fixed
+
+- Inventory no longer discards an entire snapshot when a disk or memory usage
+  percentage is non-finite; that reading is reported as unknown (`null`). The
+  agent now rejects frames it cannot encode instead of silently sending an
+  empty payload.
+- The server removes embedded NUL characters from inventory text before JSONB
+  storage, including snapshots sent by existing agents. Literal `\\u0000` text
+  and integer precision are preserved. Inventory collection, queueing and
+  persistence now have diagnostics without logging snapshot contents.
+- Inventory normalization checks byte, nesting and token budgets before
+  building its in-memory representation, limiting allocation amplification
+  from a compromised agent's deeply nested or excessively broad snapshots.
+
+## [0.9.2] - 2026-11-04
+
+### Changed
+
 - **Running a script without approval is now a per-instance setting.** An
   administrator turns it on under **Users & Settings ▸ Configuration ▸ Jobs ▸
   Run without approval**. It is off by default and each change is audited as
@@ -58,14 +99,8 @@ tag.
 
 ### Fixed
 
-- **Accented text from Windows** reached the console garbled on non-English
-  installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
-  Update titles, and the software and hardware inventory read it undecoded.
-  Running as a service, the agent read cmd and PowerShell output in the ANSI page
-  (1252) while they write in their console's OEM page (850 on a pt-BR install).
-  The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
-  Korean pages included, and its own PowerShell (inventory, patches, device
-  queries) writes UTF-8, which loses nothing in any language.
+- A device's **Remote** menu no longer labels native remote access as
+  beta.
 - A device's **Run script** editor opens empty, with the sample shown only as
   a placeholder, so a new script no longer starts with deleting the sample. A
   **Clear** button empties the script and the description and puts the shell

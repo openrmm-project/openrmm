@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"net/url"
 	"os"
@@ -40,7 +41,7 @@ import (
 // release whose capabilities this source actually has: the server gates features
 // on this string, so an agent that under-reports is refused work it can do, and
 // one that over-reports is handed work it cannot.
-var agentVersion = "0.9.1"
+var agentVersion = "0.9.3"
 
 type state struct {
 	AgentID               string `json:"agent_id"`
@@ -763,7 +764,18 @@ func (a *agent) telemetryLoop(done <-chan struct{}) {
 	// Collect inventory off the loop so software/network probing (which can take
 	// seconds) never delays heartbeats.
 	sendInventory := func() {
-		go func() { a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: collectInventory()}) }()
+		go func() {
+			started := time.Now()
+			log.Print("inventory: collection started")
+			data := collectInventory()
+			if len(data) == 0 {
+				log.Print("inventory: collection failed; no snapshot queued")
+				return
+			}
+			if a.queue(protocol.MsgInventory, protocol.InventoryMsg{Data: data}) {
+				log.Printf("inventory: snapshot queued bytes=%d elapsed=%s", len(data), time.Since(started).Round(time.Millisecond))
+			}
+		}()
 	}
 	sendInventory()
 	hb := time.NewTicker(20 * time.Second)
@@ -798,8 +810,18 @@ func (a *agent) writePump(conn *websocket.Conn, done <-chan struct{}) {
 }
 
 func (a *agent) queue(typ string, payload any) bool {
-	data, _ := json.Marshal(payload)
-	frame, _ := json.Marshal(protocol.Envelope{Type: typ, Data: data})
+	data, err := json.Marshal(payload)
+	if err != nil {
+		// Marshal errors can contain endpoint data; log only the type, never the
+		// payload (which may also carry credentials or job output).
+		log.Printf("cannot encode %s payload: %T", typ, err)
+		return false
+	}
+	frame, err := json.Marshal(protocol.Envelope{Type: typ, Data: data})
+	if err != nil {
+		log.Printf("cannot encode %s frame: %T", typ, err)
+		return false
+	}
 	select {
 	case a.send <- frame:
 		return true
@@ -1414,7 +1436,7 @@ func collectInventory() json.RawMessage {
 	}
 	if m, err := mem.VirtualMemory(); err == nil {
 		data["mem_total_bytes"] = m.Total
-		data["mem_used_percent"] = m.UsedPercent
+		data["mem_used_percent"] = inventoryPercent(m.UsedPercent)
 	}
 	if parts, err := disk.Partitions(false); err == nil {
 		var disks []map[string]any
@@ -1424,7 +1446,7 @@ func collectInventory() json.RawMessage {
 					"mount":        p.Mountpoint,
 					"fstype":       p.Fstype,
 					"total_bytes":  u.Total,
-					"used_percent": u.UsedPercent,
+					"used_percent": inventoryPercent(u.UsedPercent),
 				})
 			}
 		}
@@ -1433,8 +1455,23 @@ func collectInventory() json.RawMessage {
 	data["hardware"] = collectHardware()
 	data["network_interfaces"] = collectNetwork()
 	data["software"] = collectSoftware()
-	raw, _ := json.Marshal(data)
+	raw, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("inventory: snapshot encoding failed: %T", err)
+		return nil
+	}
 	return raw
+}
+
+// Windows disk usage divides by the volume's total size. An unavailable or
+// zero-size volume can produce NaN/Inf; one unknown reading must not discard
+// the whole inventory. Null means unknown, rather than an invented 0%.
+func inventoryPercent(value float64) any {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		log.Print("inventory: non-finite usage percentage reported as unknown")
+		return nil
+	}
+	return value
 }
 
 func collectHardware() map[string]any {

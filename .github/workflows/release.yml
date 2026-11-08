@@ -48,6 +48,10 @@ jobs:
           tag_commit="$(git rev-list -n1 "$GITHUB_REF_NAME")"
           test "$(git rev-parse HEAD)" = "$tag_commit"
           git merge-base --is-ancestor "$tag_commit" origin/main
+      # The release body and the Discord announcement come from this section.
+      # A stable tag without one fails here, before anyone is asked to approve.
+      - name: The CHANGELOG has this release
+        run: python3 .github/scripts/release-announcement.py notes "${GITHUB_REF_NAME#v}" > /dev/null
       - run: go mod verify
       - run: go vet ./...
       - run: go test -race ./... -count=1
@@ -110,7 +114,7 @@ jobs:
 
   installer-macos:
     name: macOS installer gate
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -206,7 +210,7 @@ jobs:
     # x86_64 from here. CI has been doing exactly that for every PR, so the
     # release was shipping less than CI proved buildable, and Intel Macs were
     # left with no remote module at all.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       APPLE_SIGNING_P12: ${{ secrets.APPLE_SIGNING_P12 }}
@@ -253,7 +257,7 @@ jobs:
           plist=cmd/rmm-remote/macapp/Info.plist
           ldflags="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$plist"
           # The oldest macOS the sidecar supports (Go's own floor), rather than
-          # the runner's release: see the matching step in ci.yml.
+          # the runner's release: see the macos-remote job env in ci.yml.
           export MACOSX_DEPLOYMENT_TARGET=12.0
           CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags "$ldflags" -o rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # Cross-built here, not on an Intel runner: -arch x86_64 selects the
@@ -423,10 +427,15 @@ jobs:
         continue-on-error: true
         with:
           subject-path: 'release/*'
+      # The release page carries the CHANGELOG section. Without a body, GitHub's
+      # own release notice was all anyone saw, on the page and on Discord.
+      - name: Release notes from the CHANGELOG
+        run: python3 .github/scripts/release-announcement.py notes "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/release-notes.md"
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           fail_on_unmatched_files: true
           files: release/*
+          body_path: ${{ runner.temp }}/release-notes.md
       # Handed to the artifacts-image job below, which has registry access and
       # no signing key. The files are already signed; that job only packages them.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -435,6 +444,18 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 7
+      # The Discord announcement: what changed (the CHANGELOG section), how to
+      # upgrade, and the link. It replaces GitHub's repository webhook, whose
+      # release events (one "edited" per uploaded asset) exhausted Discord's
+      # rate limit before "published" arrived, so releases went unannounced.
+      # The webhook URL is a secret of the `release` environment only, and is
+      # given to this step alone. A Discord failure must not fail a release that
+      # is already published, nor keep the artifacts image from being built.
+      - name: Announce on Discord
+        continue-on-error: true
+        env:
+          DISCORD_ANNOUNCEMENTS_WEBHOOK: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK }}
+        run: python3 .github/scripts/release-announcement.py post "${GITHUB_REF_NAME#v}"
 
   # The image a Kubernetes tenant serves /dl/ from (charts/openrmm, artifacts.*).
   # Built here and not in "Container images": its content is the signed release,

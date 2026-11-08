@@ -196,7 +196,7 @@ limitations.
 
 ## Community
 
-- Discord: <https://discord.gg/VN2jYWuA8X>
+- Discord: <https://discord.gg/PVRw76wqd9>
 - X: [@openrmm](https://x.com/openrmm)
 
 Report security issues privately, as described in [SECURITY.md](SECURITY.md),

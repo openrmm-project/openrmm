@@ -283,7 +283,6 @@
   'remote.reason.unsupported_os': '不支持的操作系统',
   'remote.reason.unavailable': '不可用',
   'remote.capUnknown': '能力未知',
-  'remote.beta': '测试版',
   'remote.alreadyConnected': '已有人连接',
   'remote.alreadyConnectedTo': '{who}（{host}）。',
   'remote.ready': '远程会话已就绪',

@@ -6,6 +6,14 @@ tag.
 
 ## [Unreleased]
 
+### Changed
+
+- Each GitHub release now carries its CHANGELOG section as its notes, and the
+  release workflow posts an announcement to the project's Discord: what
+  changed, how to upgrade, and the link. Until now the release page had no
+  notes, and Discord got only GitHub's bare notice, or nothing at all when
+  Discord rate-limited the notice.
+
 ### Fixed
 
 - `deploy/docker-compose.images.yml` pins the 0.9.3 server, frontend and

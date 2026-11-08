@@ -542,7 +542,7 @@
   'run.created': '作业已创建',
   'run.queued': '已进入审批队列——尚未执行任何操作。',
   'run.directOn': '直接执行已开启：它会立即在 {host} 上运行，没有审批步骤。',
-  'run.gated': '这会创建一个需审批的作业。在拥有作业管理权限的人批准之前，它只是预览——{host} 上还不会执行任何操作。',
+  'run.gated': '此作业需等待审批：在拥有作业管理权限的人批准之前，{host} 上不会执行任何操作。',
   'run.immediately': '立即运行（跳过审批）',
   'run.immediatelyHint': '——仅限配置管理员；本实例已启用',
   'run.fromLibrary': '从脚本库',

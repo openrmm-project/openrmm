@@ -548,7 +548,7 @@
   'run.created': 'Job criado',
   'run.queued': 'Na fila de aprovação — nada foi executado ainda.',
   'run.directOn': 'A execução direta está ativada: isto roda em {host} imediatamente, sem etapa de aprovação.',
-  'run.gated': 'Isto cria um job sujeito a aprovação. Ele fica como prévia até alguém com permissão de gestão de jobs aprovar — nada é executado em {host} ainda.',
+  'run.gated': 'Este job aguarda aprovação: nada roda em {host} até alguém com permissão de gestão de jobs aprovar.',
   'run.immediately': 'Executar imediatamente (sem aprovação)',
   'run.immediatelyHint': '— só para quem gerencia a configuração; ativado nesta instância',
   'run.fromLibrary': 'Da biblioteca',

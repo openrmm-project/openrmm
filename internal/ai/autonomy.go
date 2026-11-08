@@ -153,7 +153,7 @@ var secretPatterns = []struct {
 }{
 	{regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|$)`), "[REDACTED PRIVATE KEY]"},
 	{regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`), "$1 [REDACTED]"},
-	{regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]*(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_.-]*)("?\s*[:=]\s*|\s+)("[^"]*"|'[^']*'|\S+)`), "$1$3[REDACTED]"},
+	{regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]*(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)[A-Za-z0-9_.-]*)("?\s*[:=]\s*|\s+)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)`), "$1$3[REDACTED]"},
 	{regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s@]+@`), "${1}[REDACTED]@"},
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), "[REDACTED JWT]"},
 	{regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`), "[REDACTED AWS KEY]"},
@@ -164,10 +164,8 @@ var secretPatterns = []struct {
 // credential, before the model sees it. The job row keeps the full output for
 // the people allowed to read it.
 func redactForModel(s string) (string, bool) {
-	for _, p := range secretPatterns {
-		s = p.re.ReplaceAllString(s, p.repl)
-	}
 	truncated := false
+	s = redactModelText(s, 0, &truncated)
 	if len(s) > maxModelOutput {
 		cut := maxModelOutput
 		for cut > 0 && (s[cut]&0xC0) == 0x80 { // do not split a UTF-8 sequence
@@ -176,6 +174,166 @@ func redactForModel(s string) (string, bool) {
 		s, truncated = s[:cut], true
 	}
 	return s, truncated
+}
+
+// Device queries serialize event messages as strings inside JSON. Redact after
+// decoding those strings too; regex on the wire misses escaped keys and quotes.
+// The preflight bounds allocations before unmarshalling attacker-owned JSON.
+const maxRedactionInput = 2 << 20
+const modelOutputOmitted = "[output omitted: redaction budget exceeded]"
+
+var sensitiveModelKey = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)`)
+
+func redactModelText(s string, nesting int, omitted *bool) string {
+	if len(s) > maxRedactionInput || nesting >= 8 {
+		*omitted = true
+		return modelOutputOmitted
+	}
+	if json.Valid([]byte(s)) {
+		if !withinModelJSONBudget(s) {
+			*omitted = true
+			return modelOutputOmitted
+		}
+		var v any
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.UseNumber()
+		if err := dec.Decode(&v); err == nil {
+			v = redactModelJSON(v, nesting, omitted)
+			raw, err := json.Marshal(v)
+			if err == nil {
+				return string(raw)
+			}
+			*omitted = true
+			return modelOutputOmitted
+		}
+	}
+	// Escaped structured fragments inside ordinary log text are not standalone
+	// JSON. Do not forward a representation that the structured path cannot parse.
+	if escapedModelObject.MatchString(s) {
+		*omitted = true
+		return modelOutputOmitted
+	}
+	s = redactModelJSONFragments(s, nesting, omitted)
+	for _, p := range secretPatterns {
+		s = p.re.ReplaceAllString(s, p.repl)
+	}
+	return s
+}
+
+var escapedModelObject = regexp.MustCompile(`\{\s*\\+"`)
+
+func looksLikeModelJSON(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	tail := strings.TrimSpace(s[1:])
+	if s[0] == '{' {
+		return tail == "" || tail[0] == '"' || tail[0] == '}'
+	}
+	if s[0] == '[' {
+		return tail == "" || strings.ContainsRune(`{"[-0123456789tfn]`, rune(tail[0]))
+	}
+	return false
+}
+
+// Also sanitize complete JSON objects embedded in an ordinary log line.
+// Attempts and the preflight work are bounded independently of JSON decoding.
+func redactModelJSONFragments(s string, nesting int, omitted *bool) string {
+	var out strings.Builder
+	copied, attempts := 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' && s[i] != '[' {
+			continue
+		}
+		attempts++
+		if attempts > 32 || !withinModelJSONBudget(s[i:]) {
+			*omitted = true
+			return modelOutputOmitted
+		}
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		dec.UseNumber()
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			if looksLikeModelJSON(s[i:]) {
+				*omitted = true
+				return "[output omitted: incomplete structured data]"
+			}
+			continue
+		}
+		raw, err := json.Marshal(redactModelJSON(v, nesting, omitted))
+		if err != nil {
+			*omitted = true
+			return modelOutputOmitted
+		}
+		out.WriteString(s[copied:i])
+		out.Write(raw)
+		i += int(dec.InputOffset()) - 1
+		copied = i + 1
+	}
+	if copied == 0 {
+		return s
+	}
+	out.WriteString(s[copied:])
+	return out.String()
+}
+
+func redactModelJSON(v any, nesting int, omitted *bool) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for key, value := range x {
+			if sensitiveModelKey.MatchString(key) {
+				x[key] = "[REDACTED]"
+			} else {
+				x[key] = redactModelJSON(value, nesting, omitted)
+			}
+		}
+	case []any:
+		for i, value := range x {
+			x[i] = redactModelJSON(value, nesting, omitted)
+		}
+	case string:
+		return redactModelText(x, nesting+1, omitted)
+	}
+	return v
+}
+
+// JSON validity is checked separately; this scan only budgets structure and
+// skips string contents, including escaped quotes. It allocates nothing.
+func withinModelJSONBudget(s string) bool {
+	depth, items := 0, 0
+	quoted, escaped := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				quoted = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			quoted = true
+			items++
+		case '{', '[':
+			depth++
+			items++
+			if depth > 32 {
+				return false
+			}
+		case '}', ']':
+			depth--
+		case ',', ':':
+			items++
+		}
+		if items > 8192 {
+			return false
+		}
+	}
+	return true
 }
 
 // waitForJob polls until a job is finished or the wait runs out.

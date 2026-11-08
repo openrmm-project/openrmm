@@ -253,7 +253,7 @@ jobs:
           plist=cmd/rmm-remote/macapp/Info.plist
           ldflags="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$plist"
           # The oldest macOS the sidecar supports (Go's own floor), rather than
-          # the runner's release: see the matching step in ci.yml.
+          # the runner's release: see the macos-remote job env in ci.yml.
           export MACOSX_DEPLOYMENT_TARGET=12.0
           CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -buildvcs=false -ldflags "$ldflags" -o rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # Cross-built here, not on an Intel runner: -arch x86_64 selects the

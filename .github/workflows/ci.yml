@@ -137,6 +137,12 @@ jobs:
       APPLE_SIGNING_P12: ${{ secrets.APPLE_SIGNING_P12 }}
       APPLE_SIGNING_P12_PASSWORD: ${{ secrets.APPLE_SIGNING_P12_PASSWORD }}
       RMM_MACOS_CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      # The oldest macOS the sidecar supports (Go's own floor), for every cgo
+      # step in this job, the tests included. Left to the runner, clang targets
+      # the runner's release: the binary then refuses to start on older Macs,
+      # and a macOS 15 runner fails to compile because its SDK hides
+      # CGDisplayCreateImage.
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -173,11 +179,7 @@ jobs:
           set -eux
           PLIST=cmd/rmm-remote/macapp/Info.plist
           LD="-extldflags -Wl,-sectcreate,__TEXT,__info_plist,$PLIST"
-          # The oldest macOS the sidecar supports (Go's own floor). Left to the
-          # runner, clang targets the runner's release: the binary then refuses
-          # to start on older Macs, and a macOS 15 runner fails the build
-          # because its SDK hides CGDisplayCreateImage.
-          export MACOSX_DEPLOYMENT_TARGET=12.0
+          # MACOSX_DEPLOYMENT_TARGET comes from the job env above.
           CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LD" -o dist/rmm-remote-darwin-arm64 ./cmd/rmm-remote
           # The runner is arm64; Xcode's SDK is universal, so -arch x86_64 gives
           # the Intel build that /dl/ has never carried. It cannot run here.

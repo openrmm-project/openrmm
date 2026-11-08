@@ -291,23 +291,15 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 	} else {
 		targetParam = "gotodevicername=" + url.QueryEscape(hostname)
 	}
-	connect := fmt.Sprintf(
-		"%s/?viewmode=11&hide=31&%s",
-		base,
-		targetParam,
-	)
+	// viewmode=11 = desktop; hide=31 hides the MeshCentral chrome for embedding.
+	connect := fmt.Sprintf("%s/?viewmode=11&hide=31&%s", base, targetParam)
 	// If configured, embed a MeshCentral login token.
 	if meshTokenKey != "" {
 		tok, err := meshLoginToken(meshTokenKey, meshUser)
 		if err != nil {
 			return nil, fmt.Errorf("mesh login token: %w", err)
 		}
-		connect = fmt.Sprintf(
-			"%s/?login=%s&viewmode=11&hide=31&%s",
-			base,
-			url.QueryEscape(tok),
-			targetParam,
-		)
+		connect = fmt.Sprintf("%s/?login=%s&viewmode=11&hide=31&%s", base, url.QueryEscape(tok), targetParam)
 	}
 	rs := &models.RemoteSession{
 		AgentID:    agent.ID,

@@ -50,6 +50,34 @@ available only through explicit lab mode.
 The reference agent sends a heartbeat every 20s and inventory every 5min (and
 once on connect).
 
+### Inventory diagnostics
+
+An online agent has an authenticated control connection; that does not confirm
+its inventory was stored. For a known, accessible device, a `404` from
+`GET /api/devices/{id}/inventory` means there is no stored snapshot yet.
+
+The agent logs `inventory: collection started` and, after collection and JSON
+encoding, `inventory: snapshot queued` with the byte count and elapsed time.
+Queueing is not a persistence acknowledgement. An encoding failure is logged
+and no empty frame is sent. Unknown disk or memory usage percentages are
+reported as `null`, leaving the rest of the snapshot available.
+
+The server logs `inventory: snapshot stored` only after a successful database
+write. Rejected messages produce `inventory: invalid snapshot`; database errors
+produce `inventory: persistence failed`, with the agent ID and PostgreSQL
+SQLSTATE where available. Snapshot contents and database error details are not
+logged. The last valid snapshot remains available if a later write fails.
+Embedded NUL characters in text values are removed before JSONB storage, also
+for older agents; literal backslash sequences and numeric precision are kept.
+
+When diagnosing missing inventory, compare the agent's `agent.log` beside its
+binary (Windows/macOS services) or its service journal (Linux) with the server
+logs around the same connection time. A collection-start message without a
+queued snapshot points to collection or encoding; a queued snapshot without a
+stored message requires checking delivery and server-side diagnostics. Allow
+one collection cycle after deploying a fix; reinstalling the device is not
+normally necessary.
+
 ## Server → agent messages
 
 | type | data | effect |

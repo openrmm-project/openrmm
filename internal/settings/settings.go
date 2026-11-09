@@ -32,6 +32,10 @@ const (
 	// KeyMeshCentralMatchHostname opens a device with no linked MeshCentral
 	// node by its hostname. Off unless an administrator turns it on.
 	KeyMeshCentralMatchHostname = "remote.meshcentral_match_hostname"
+	// KeyMeshCentralSharedAccount lets users with access to every device, and
+	// no MeshCentral account of their own, sign in to MeshCentral as
+	// KeyMeshCentralUser. Restricted users never use the shared account.
+	KeyMeshCentralSharedAccount = "remote.meshcentral_shared_account"
 	KeyRustDeskEnabled          = "remote.rustdesk_enabled"
 	// KeyRemoteGuestAccess allows technicians holding devices.remote.share to
 	// invite guests without an account. Off unless an administrator turns it on.
@@ -53,6 +57,7 @@ var publicKeys = map[string]bool{
 	KeyMeshCentralUser:          true,
 	KeyMeshCentralEnabled:       true,
 	KeyMeshCentralMatchHostname: true,
+	KeyMeshCentralSharedAccount: true,
 	KeyRustDeskEnabled:          true,
 	KeyRemoteGuestAccess:        true,
 	KeyJobsAllowUnapproved:      true,
@@ -70,6 +75,7 @@ type Editable struct {
 	MeshCentralTokenKey      string
 	MeshCentralEnabled       bool
 	MeshCentralMatchHostname bool
+	MeshCentralSharedAccount bool
 	RustDeskEnabled          bool
 	RemoteGuestAccess        bool
 	JobsAllowUnapproved      bool
@@ -88,6 +94,7 @@ func FromConfig(cfg *config.Config) Editable {
 		MeshCentralTokenKey:      cfg.MeshCentralTokenKey,
 		MeshCentralEnabled:       cfg.MeshCentralEnabled,
 		MeshCentralMatchHostname: cfg.MeshCentralMatchHostname,
+		MeshCentralSharedAccount: cfg.MeshCentralSharedAccount,
 		RustDeskEnabled:          cfg.RustDeskEnabled,
 		// The environment is only the starting value: once an administrator
 		// saves the setting, the stored value wins.
@@ -107,6 +114,7 @@ func (e Editable) ApplyToConfig(cfg *config.Config) {
 	cfg.MeshCentralTokenKey = e.MeshCentralTokenKey
 	cfg.MeshCentralEnabled = e.MeshCentralEnabled
 	cfg.MeshCentralMatchHostname = e.MeshCentralMatchHostname
+	cfg.MeshCentralSharedAccount = e.MeshCentralSharedAccount
 	cfg.RustDeskEnabled = e.RustDeskEnabled
 }
 
@@ -136,7 +144,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyMeshCentralMatchHostname, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyJobsAllowUnapproved} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyMeshCentralMatchHostname, KeyMeshCentralSharedAccount, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyJobsAllowUnapproved} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -165,6 +173,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.MeshCentralEnabled = v == "true"
 		case KeyMeshCentralMatchHostname:
 			out.MeshCentralMatchHostname = v == "true"
+		case KeyMeshCentralSharedAccount:
+			out.MeshCentralSharedAccount = v == "true"
 		case KeyRustDeskEnabled:
 			out.RustDeskEnabled = v == "true"
 		case KeyRemoteGuestAccess:
@@ -191,6 +201,7 @@ type SaveRequest struct {
 		MeshTokenKey       string `json:"meshcentral_token_key"`
 		MeshCentralEnabled *bool  `json:"meshcentral_enabled"`        // nil = preserve current
 		MeshMatchHostname  *bool  `json:"meshcentral_match_hostname"` // nil = preserve current
+		MeshSharedAccount  *bool  `json:"meshcentral_shared_account"` // nil = preserve current
 		RustDeskEnabled    *bool  `json:"rustdesk_enabled"`           // nil = preserve current
 		GuestAccess        *bool  `json:"guest_access"`               // nil = preserve current
 	} `json:"remote"`
@@ -250,6 +261,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	if in.Remote.MeshMatchHostname != nil {
 		meshMatchHostname = *in.Remote.MeshMatchHostname
 	}
+	meshSharedAccount := current.MeshCentralSharedAccount
+	if in.Remote.MeshSharedAccount != nil {
+		meshSharedAccount = *in.Remote.MeshSharedAccount
+	}
 	guestAccess := current.RemoteGuestAccess
 	if in.Remote.GuestAccess != nil {
 		guestAccess = *in.Remote.GuestAccess
@@ -267,6 +282,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyMeshCentralUser, in.Remote.MeshCentralUser},
 		{KeyMeshCentralEnabled, strconv.FormatBool(meshEnabled)},
 		{KeyMeshCentralMatchHostname, strconv.FormatBool(meshMatchHostname)},
+		{KeyMeshCentralSharedAccount, strconv.FormatBool(meshSharedAccount)},
 		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
 		{KeyRemoteGuestAccess, strconv.FormatBool(guestAccess)},
 		{KeyJobsAllowUnapproved, strconv.FormatBool(allowUnapproved)},

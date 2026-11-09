@@ -417,6 +417,9 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/scopes", s.setUserScopes)
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/2fa/reset", s.reset2FA)
 		r.With(s.requirePermission(models.PermUsersManage)).Put("/users/{id}/sso", s.setUserSSO)
+		// settings.manage too: whoever may name a user's MeshCentral account may
+		// as well name the shared one, and no one else.
+		r.With(s.requirePermission(models.PermUsersManage), s.requirePermission(models.PermSettingsManage)).Put("/users/{id}/meshcentral", s.setUserMeshCentral)
 		// Disable is the non-destructive counterpart to delete: the account stops
 		// working, the record of what it did stays.
 		r.With(s.requirePermission(models.PermUsersManage)).Post("/users/{id}/disable", s.setUserDisabled(true))
@@ -674,6 +677,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"meshcentral_token_set":      eff.MeshCentralTokenKey != "",
 			"meshcentral_enabled":        eff.MeshCentralEnabled,
 			"meshcentral_match_hostname": eff.MeshCentralMatchHostname,
+			"meshcentral_shared_account": eff.MeshCentralSharedAccount,
 			"rustdesk_enabled":           eff.RustDeskEnabled,
 			"guest_access":               eff.RemoteGuestAccess,
 		},
@@ -747,6 +751,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	s.chat.UpdateProvider(eff.AIBaseURL, eff.AIAPIKey, eff.AIModel)
 	s.remote.UpdateMeshConfig(eff.MeshCentralURL, eff.MeshCentralTokenKey, eff.MeshCentralUser, eff.MeshCentralEnabled)
 	s.remote.SetMeshMatchHostname(eff.MeshCentralMatchHostname)
+	s.remote.SetMeshSharedAccount(eff.MeshCentralSharedAccount)
 	s.remote.SetRustDeskEnabled(eff.RustDeskEnabled)
 	if before.RemoteGuestAccess && !eff.RemoteGuestAccess {
 		// Turning it off withdraws every invitation and ends every guest's
@@ -791,6 +796,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.meshcentral_token_key", strings.TrimSpace(in.Remote.MeshTokenKey) != "")
 	add("remote.meshcentral_enabled", before.MeshCentralEnabled != after.MeshCentralEnabled)
 	add("remote.meshcentral_match_hostname", before.MeshCentralMatchHostname != after.MeshCentralMatchHostname)
+	add("remote.meshcentral_shared_account", before.MeshCentralSharedAccount != after.MeshCentralSharedAccount)
 	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
 	add("remote.guest_access", before.RemoteGuestAccess != after.RemoteGuestAccess)
 	add("jobs.allow_unapproved", before.JobsAllowUnapproved != after.JobsAllowUnapproved)
@@ -1402,17 +1408,43 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 			s.endReplacedSession(r.Context(), v, principal)
 		}
 	}
-	sess, err := s.remote.Start(r.Context(), in.Provider, agent, principal, remote.StartOptions{
+	opts := remote.StartOptions{
 		AllowFiles: hasPermission(r, models.PermDevicesFiles),
-		// A hostname is looked up among every computer MeshCentral knows, not
-		// only this principal's: restricted principals need a linked node.
-		MeshHostname: s.scopeUserID(r) == "",
-	})
+		// OpenRMM's scopes do not reach inside MeshCentral: a restricted
+		// principal signs in there only with an account of their own.
+		Unrestricted: s.scopeUserID(r) == "",
+	}
+	if in.Provider == "meshcentral" {
+		meshUser, err := s.principalMeshCentralUser(r.Context(), principal)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		opts.MeshUser = meshUser
+	}
+	sess, err := s.remote.Start(r.Context(), in.Provider, agent, principal, opts)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, sess)
+}
+
+// principalMeshCentralUser is the MeshCentral account an administrator set
+// for the user behind a request: a signed-in user, or an API token bound to
+// one. The bootstrap admin token and unbound API tokens have none.
+func (s *Server) principalMeshCentralUser(ctx context.Context, principal string) (string, error) {
+	if principal == "admin" || strings.HasPrefix(principal, "api:") {
+		return "", nil
+	}
+	u, err := s.store.GetUserByID(ctx, principal)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return u.MeshCentralUser, nil
 }
 
 // endReplacedSession closes an operator's earlier desktop session on an

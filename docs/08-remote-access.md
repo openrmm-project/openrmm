@@ -61,6 +61,34 @@ choose a configured fallback provider.
   `internal/remote/meshtoken.go`) so the iframe opens without a second login.
   Without the key it falls back to a deep link that works once you're logged into
   MeshCentral.
+- **Whose MeshCentral account a login token signs in as.** The token is a full
+  MeshCentral sign-in, with no password asked and no tie to one device: the
+  session can go wherever that account may go in MeshCentral. OpenRMM's client
+  scopes do not reach inside MeshCentral, so the account decides what a
+  technician can reach there.
+  - **Each user's own account.** In Users, an administrator with access to
+    every device and `settings.manage` sets a user's **MeshCentral account** (the user's ⋯ menu,
+    shown while MeshCentral and a login token key are set). That user's
+    sessions then sign in as it, with whatever MeshCentral lets that account
+    do: give each restricted technician an account limited to their clients'
+    device groups, in MeshCentral. Account names are lowercase, as MeshCentral
+    keeps them; letters, digits and `. _ @ ~ : + -`, which covers e-mail-style
+    names and `~oidc:…`/`~ldap:…` accounts. Only those who may already name
+    the shared account set it: a restricted administrator, or a user manager
+    without `settings.manage`, cannot, since naming an account hands over what
+    it can do. The change is audited as `user.meshcentral_account`.
+  - **The shared account** (`RMM_MESHCENTRAL_USER`, "Shared MeshCentral
+    account" in Settings ▸ Remote access) is for users with access to every
+    device who have no account of their own. Restricted users never sign in as
+    it, nor as an own account that has the shared account's name. Turn
+    "Shared account for unrestricted users" off, or start an instance with
+    `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`, and everyone needs their own.
+  - A restricted user with no account of their own cannot open MeshCentral
+    from the console until an administrator sets one. Users created before this
+    have none: set an account for each restricted technician who uses
+    MeshCentral.
+  - The `remote.start` audit entry records `mesh_account` (`personal` or
+    `shared`) and `mesh_user`, the account the session signed in as.
 - License: MeshCentral is **Apache-2.0** — no constraints on bundling.
 - **Enable/disable toggle:** on by default; set `RMM_MESHCENTRAL_ENABLED=false`
   (or the toggle in Settings ▸ Remote access) to turn it off. When disabled the
@@ -84,16 +112,16 @@ choose a configured fallback provider.
     `&`, `#`, `<`, `>`, quotes or parentheses, so a name needing any escape can
     never match. OpenRMM refuses such a hostname instead of sending it; it is
     reported by the agent, and must not add arguments to the link.
-  - **Not for restricted users.** MeshCentral looks the name up among every
-    computer its signed-in account can see, not only the technician's clients.
-    A technician restricted to some clients could otherwise send the link to
-    another client's computer by giving a device in their scope that
-    computer's name. Restricted users therefore always need a linked node.
-    This rule only governs which computer the link names. With a login token
-    the session is `RMM_MESHCENTRAL_USER`'s, whatever device it was opened
-    from, and OpenRMM's client scopes do not apply inside MeshCentral: give
-    restricted technicians deep-link mode with their own MeshCentral accounts,
-    or keep MeshCentral off for them.
+  - **Restricted users, only through their own account.** MeshCentral looks
+    the name up among every computer its signed-in account can see, not only
+    the technician's clients. Signed in as the shared account, a technician
+    restricted to some clients could otherwise send the link to another
+    client's computer by giving a device in their scope that computer's name.
+    A restricted user therefore gets the hostname lookup only when a login
+    token signs them in as their own MeshCentral account, which MeshCentral
+    already limits; otherwise they need a linked node. In deep-link mode the
+    browser signs in to MeshCentral by itself, as anyone, so restricted users
+    always need a linked node there.
   - **Not a name that reads as a number.** MeshCentral turns such an argument
     into a number and compares loosely: `01234` would find a computer named
     `1234`, and `1e0` one named `1`. OpenRMM refuses those names.
@@ -107,8 +135,10 @@ choose a configured fallback provider.
    ```
    RMM_MESHCENTRAL_URL=https://your-mesh-server
    RMM_MESHCENTRAL_TOKEN_KEY=<loginTokenKey hex>   # omit for deep-link mode
-   RMM_MESHCENTRAL_USER=admin                       # userid becomes user//admin
+   RMM_MESHCENTRAL_USER=admin                       # the shared account: user//admin
    ```
+   Then give each restricted technician their own MeshCentral account in Users
+   (above).
 3. Install the MeshCentral agent on the endpoint and find its **node id**.
 4. Map the device to its node:
    `PATCH /api/devices/{id}/remote-ids {"mesh_id":"node//..."}`. Or turn on

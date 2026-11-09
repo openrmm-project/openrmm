@@ -1013,3 +1013,7 @@ ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_by TEXT;
 -- The token that admitted each device, to find what a leaked token enrolled.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS enroll_token_id UUID REFERENCES enroll_tokens(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WHERE enroll_token_id IS NOT NULL;
+
+-- Migration 024: the MeshCentral account a user's remote sessions sign in as
+-- when the server mints login tokens; empty means none.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS meshcentral_user TEXT NOT NULL DEFAULT '';

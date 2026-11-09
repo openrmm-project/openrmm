@@ -238,8 +238,8 @@ func (s *Store) DisableUserTOTP(ctx context.Context, id string) error {
 func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	var u models.User
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at FROM users WHERE id=$1`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt)
+		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at, meshcentral_user FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt, &u.MeshCentralUser)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -253,7 +253,7 @@ func (s *Store) GetUserByID(ctx context.Context, id string) (*models.User, error
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, username, role, COALESCE(email,''), created_at, totp_enabled, disabled_at, email_verified_at,
-		        oidc_subject <> '' OR sso_required FROM users ORDER BY username`)
+		        oidc_subject <> '' OR sso_required, meshcentral_user FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -261,12 +261,25 @@ func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	var out []models.User
 	for rows.Next() {
 		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt, &u.SSO); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Email, &u.CreatedAt, &u.TOTPEnabled, &u.DisabledAt, &u.EmailVerifiedAt, &u.SSO, &u.MeshCentralUser); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// SetUserMeshCentralUser sets the MeshCentral account a user's remote
+// sessions sign in as; "" clears it.
+func (s *Store) SetUserMeshCentralUser(ctx context.Context, userID, meshUser string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE users SET meshcentral_user=$2 WHERE id=$1`, userID, meshUser)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UpdateUserRole changes a console operator's role.

@@ -131,6 +131,7 @@ func main() {
 	jobSvc := jobs.New(st, h)
 	remoteMgr := remote.NewManager(st, h, cfg.MeshCentralURL, cfg.MeshCentralTokenKey, cfg.MeshCentralUser, cfg.MeshCentralEnabled, cfg.RustDeskEnabled)
 	remoteMgr.SetMeshMatchHostname(cfg.MeshCentralMatchHostname)
+	remoteMgr.SetMeshSharedAccount(cfg.MeshCentralSharedAccount)
 	relay := remote.NewRelay()
 	aiClient := ai.NewClient(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel)
 	patchSvc := patches.New(st, h)

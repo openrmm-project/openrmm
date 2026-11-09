@@ -199,7 +199,8 @@ func TestDestinationSuppressionDoesNotWriteFormerScopeHistoryIntegration(t *test
 					t.Fatal("destination reason leaked into history")
 				}
 			}
-			// Control: the same destination suppression can affect its own incident.
+			// Control: a fresh destination observation can use its own silence.
+			obs.ObservedAt = time.Now()
 			second, err := f.store.ObserveAlert(ctx, obs)
 			if err != nil {
 				t.Fatal(err)

@@ -37,7 +37,7 @@ const server = createServer(async (req, res) => {
       }
       apiRequests.push({ method: req.method, pathname, token, payload });
       if (!token) return json(res, 401, { error: 'missing bearer token' });
-      if (token === 'expire-token' && pathname === '/api/devices') return json(res, 401, { error: 'expired token' });
+      if (token === 'expire-token') return json(res, 401, { error: 'expired token' });
       if (pathname === '/api/me') return json(res, 200, user);
       if (pathname === '/api/checks') {
         if (req.method === 'POST') {
@@ -289,7 +289,7 @@ try {
     assert.equal(ruleDefaults.connectivity.config.after_min, 30);
     assert.deepEqual(rulePrefs, { mode: 'selected', include_defaults: false, check_ids: ['rule-e2e'] });
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');
-    assert.ok(apiRequests.some((request) => request.pathname === '/api/devices' && request.token === 'expire-token'), '401 scenario must exercise an authenticated request');
+    assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'expire-token'), '401 scenario must exercise an authenticated request');
   }
   console.log(`Smoke passed${chrome ? ` in ${chrome}` : ' (static checks; browser unavailable)'}.`);
 } finally {

@@ -167,6 +167,12 @@ type JobResultMsg struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	Success  bool   `json:"success"`
+	// NotStarted says the agent refused the job before running anything: an
+	// autonomous job past its start deadline, which an endpoint whose clock
+	// runs ahead of the server's reaches already expired. Nothing ran, so the
+	// failure says nothing about the script and does not count toward its
+	// release's failure streak.
+	NotStarted bool `json:"not_started,omitempty"`
 }
 
 // JobResultAckMsg confirms the server durably recorded a job_result, so the

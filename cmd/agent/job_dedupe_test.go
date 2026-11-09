@@ -166,11 +166,11 @@ func TestExpiredAutonomousJobNeverReachesRunner(t *testing.T) {
 	runs := stubJobScript(t, nil)
 	a := newDedupeAgent(t, filepath.Join(t.TempDir(), "state.json"))
 	a.runJob(protocol.JobMsg{JobID: "expired", Shell: "sh", Script: "inert", ExpiresAt: time.Now().Add(-time.Second)})
-	if res := queuedResult(t, a); res.Success || !strings.Contains(res.Stderr, "expired") || runs.Load() != 0 {
+	if res := queuedResult(t, a); res.Success || !res.NotStarted || !strings.Contains(res.Stderr, "expired") || runs.Load() != 0 {
 		t.Fatalf("expired job: %+v, runs=%d", res, runs.Load())
 	}
 	a.runJob(protocol.JobMsg{JobID: "fresh", Shell: "sh", Script: "inert", ExpiresAt: time.Now().Add(time.Minute)})
-	if res := queuedResult(t, a); !res.Success || runs.Load() != 1 {
+	if res := queuedResult(t, a); !res.Success || res.NotStarted || runs.Load() != 1 {
 		t.Fatalf("fresh control: %+v runs=%d", res, runs.Load())
 	}
 	a.runJob(protocol.JobMsg{JobID: "human", Shell: "sh", Script: "inert"})

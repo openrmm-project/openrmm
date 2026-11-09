@@ -515,9 +515,10 @@ func (a *agent) runJob(job protocol.JobMsg) {
 
 	var exitCode int
 	var stdout, stderr string
+	notStarted := false
 	switch {
 	case !job.ExpiresAt.IsZero() && !time.Now().Before(job.ExpiresAt):
-		exitCode, stderr = 2, "autonomous job expired before execution"
+		exitCode, stderr, notStarted = 2, "autonomous job expired before execution (is this computer's clock ahead of the server's?)", true
 	case job.Type == protocol.JobTypeDeviceQuery:
 		log.Printf("running job %s (device query)", job.JobID)
 		exitCode, stdout, stderr = runDeviceQuery(ctx, job.Script)
@@ -540,7 +541,7 @@ func (a *agent) runJob(job protocol.JobMsg) {
 		}
 	}
 	a.reportResult(protocol.JobResultMsg{
-		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0,
+		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0, NotStarted: notStarted,
 	})
 }
 

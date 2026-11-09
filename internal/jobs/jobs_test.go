@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -562,12 +563,14 @@ func TestAutonomousJobsAreNeverRedelivered(t *testing.T) {
 type autonomousFakeStore struct {
 	*fakeStore
 	denyDispatch bool
+	outcomes     []bool
 }
 
 func (f *autonomousFakeStore) CreateAutonomousJob(ctx context.Context, j *models.Job, _ store.AutonomyLimits) (*models.Job, error) {
 	return f.CreateJob(ctx, j)
 }
-func (f *autonomousFakeStore) RecordAIScriptOutcome(context.Context, string, bool, int) (bool, error) {
+func (f *autonomousFakeStore) RecordAIScriptOutcome(_ context.Context, _ string, success bool, _ int) (bool, error) {
+	f.outcomes = append(f.outcomes, success)
 	return false, nil
 }
 func (f *autonomousFakeStore) GetScript(context.Context, string) (*models.Script, error) {
@@ -611,6 +614,35 @@ func TestAutonomousDispatchRechecksAuthorization(t *testing.T) {
 		}
 		if msg.ExpiresAt.IsZero() || time.Until(msg.ExpiresAt) <= 0 || time.Until(msg.ExpiresAt) > AutonomousDispatchWindow {
 			t.Fatalf("deadline=%s", msg.ExpiresAt)
+		}
+	}
+}
+
+// A pre-approved job the agent refused before starting it (past its start
+// deadline: a clock ahead of the server's) must not count toward the release's
+// failure streak; a run that failed does.
+func TestNotStartedAutonomousRunsDoNotTripTheBreaker(t *testing.T) {
+	st := &autonomousFakeStore{fakeStore: newFakeStore()}
+	svc := New(st, &recordingAutonomySender{})
+	script := "s1"
+	for _, c := range []struct {
+		res  protocol.JobResultMsg
+		want []bool
+	}{
+		{protocol.JobResultMsg{ExitCode: 2, Stderr: "autonomous job expired before execution", NotStarted: true}, nil},
+		{protocol.JobResultMsg{ExitCode: 1, Stderr: "boom"}, []bool{false}},
+		{protocol.JobResultMsg{ExitCode: 0, Success: true}, []bool{false, true}},
+	} {
+		j, _ := st.CreateJob(context.Background(), &models.Job{AgentID: "a1", Status: models.JobSent, Autonomy: models.AutonomyPreapproved, ScriptID: &script})
+		c.res.JobID = j.ID
+		if err := svc.OnResult(context.Background(), "a1", c.res); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := st.GetJob(context.Background(), j.ID); (got.Status == models.JobCompleted) != c.res.Success {
+			t.Fatalf("job status %s for %+v", got.Status, c.res)
+		}
+		if !slices.Equal(st.outcomes, c.want) {
+			t.Fatalf("after %+v, breaker saw %v, want %v", c.res, st.outcomes, c.want)
 		}
 	}
 }

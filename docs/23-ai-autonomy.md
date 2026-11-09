@@ -159,7 +159,10 @@ diagnostic report.
   Past a limit, the call becomes a request for approval.
 - **Immediate delivery only.** Autonomous jobs are never re-sent on reconnect.
   Their dispatch carries an absolute 30-second start deadline, checked by agent
-  0.10.0. The final send checks the pause and locks the exact script release;
+  0.10.0 against its own clock, so keep endpoint clocks synchronised: on a
+  computer whose clock runs more than 30 seconds ahead of the server's, every
+  autonomous job fails with "expired before execution" without running. Such a
+  refusal does not count toward the circuit breaker below. The final send checks the pause and locks the exact script release;
   a withdrawal completed before that send prevents execution. Pausing does not
   recall a frame already sent or stop a script already running. Chat credentials,
   permissions and scope are reloaded before every tool call, as on MCP.

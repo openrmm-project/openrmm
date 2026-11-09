@@ -666,13 +666,20 @@ func (s *Service) OnResult(ctx context.Context, agentID string, res protocol.Job
 	// could not run this interpreter" on its own. Exit 127 from a python job means
 	// the device has none installed, and needing a join back to the job row to
 	// learn that weakens the point of giving it a distinct code.
-	s.audit(ctx, "agent", "job.result", res.JobID, map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success, "shell": j.Shell})
+	detail := map[string]any{"host": host, "exit_code": res.ExitCode, "success": res.Success, "shell": j.Shell}
+	if res.NotStarted {
+		detail["not_started"] = true
+	}
+	s.audit(ctx, "agent", "job.result", res.JobID, detail)
 	// The idempotency guard above means a retried result cannot mail twice: a job
 	// that is already terminal returned before reaching this point.
 	if status == models.JobFailed && s.notifier != nil {
 		s.notifier.QueueJobFailed(ctx, j.AgentID, host, j.ID, j.Description)
 	}
-	if j.Autonomy == models.AutonomyPreapproved && j.ScriptID != nil {
+	// A job the agent never started (past its start deadline, usually a clock
+	// ahead of the server's) is no evidence about the script: counted, one such
+	// computer would withdraw a release for everyone after three tries.
+	if j.Autonomy == models.AutonomyPreapproved && j.ScriptID != nil && !res.NotStarted {
 		s.recordReleaseOutcome(ctx, j, host, status == models.JobCompleted)
 	}
 	return nil

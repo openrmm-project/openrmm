@@ -328,7 +328,8 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
     "provider": "openai-compatible",
     "base_url": "https://api.openai.com/v1",
     "model": "gpt-4o-mini",
-    "api_key": "sk-..."
+    "api_key": "sk-...",
+    "autonomy_paused": false
   },
   "remote": {
     "default": "native",
@@ -366,6 +367,12 @@ restricted principal with no account of their own, or whose own account has the
 shared account's name, is refused. The response's `mesh_account` is
 `"personal"` or `"shared"`; the `remote.start` audit entry records it with
 `mesh_user`, the account's name.
+
+`ai.autonomy_paused` stops everything the AI and MCP do without approval, for
+every role at once, the administrator included; roles keep their permissions for
+when it resumes. Each change is named in the `config.update` audit entry. Jobs
+that ran autonomously carry `autonomy` (`query` or `preapproved`), and a
+pre-approved one its `script_id` and `params` ([23-ai-autonomy](23-ai-autonomy.md)).
 
 `jobs.allow_unapproved` lets callers with both `jobs.manage` and
 `settings.manage` create a single-device job that skips approval. It is off by
@@ -413,14 +420,15 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 |--------|------|------------|-------------|
 | GET | `/api/scripts` | `scripts.view` | List scripts |
 | GET | `/api/scripts/{id}` | `scripts.view` | One script |
-| POST | `/api/scripts` | `scripts.manage` | Create (`name,shell,body,category,...`) |
-| PUT | `/api/scripts/{id}` | `scripts.manage` | Update |
+| POST | `/api/scripts` | `scripts.manage` | Create (`name,shell,body,category,params,...`). `params`: up to 8 `{name, description, kind, values[] \| pattern}`; they reach the script as `OPENRMM_PARAM_<NAME>` environment variables, and cmd scripts take none |
+| PUT | `/api/scripts/{id}` | `scripts.manage` | Update. Any change to the content withdraws an AI release (audited `script.ai_release.revoked`, reason `edited`) |
+| POST | `/api/scripts/{id}/ai-release` | `scripts.manage` + `ai.autonomy.manage`, unrestricted principals only | `{release:true, content_hash}` releases the reviewed content for autonomous runs; `content_hash` is the one the script was read with, and a different current content is a **409**. `{release:false}` withdraws. A script the deny list refuses is a **422**, audited `script.ai_release.refused`. See [23-ai-autonomy](23-ai-autonomy.md) |
 | DELETE | `/api/scripts/{id}` | `scripts.manage` | Delete |
 | GET | `/api/script-categories` | `scripts.view` | Registered categories **and** those only a script carries, with script counts → `{categories:[{name,count}]}` |
 | POST | `/api/script-categories` | `scripts.manage` | Register a category (`{name}`) so it exists before any script is filed under it. 409 when the name is taken, compared without case. Audited as `script.category.create` |
 | PUT | `/api/script-categories/{name}` | `scripts.manage` | Rename the category and every script filed under it (`{name:"new"}`). Onto a name in use this **merges** the two. 404 when no such category. Audited as `script.category.rename` |
 | DELETE | `/api/script-categories/{name}` | `scripts.manage` | Remove the category and return its scripts to uncategorized. The scripts are kept. Audited as `script.category.delete` |
-| POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval}` → approval-gated job. `require_approval:false` is honored only when the instance allows it (`jobs.allow_unapproved`) and the caller also has `jobs.manage` and `settings.manage`. |
+| POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval, params}` → approval-gated job. `require_approval:false` is honored only when the instance allows it (`jobs.allow_unapproved`) and the caller also has `jobs.manage` and `settings.manage`. A script with parameters needs `params` (checked against its declaration) and always waits for approval. |
 
 ## Checks & results
 

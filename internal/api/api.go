@@ -345,6 +345,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermScriptsManage)).Post("/scripts", s.createScript)
 		r.With(s.requirePermission(models.PermScriptsManage)).Put("/scripts/{id}", s.updateScript)
 		r.With(s.requirePermission(models.PermScriptsManage)).Delete("/scripts/{id}", s.deleteScript)
+		r.With(s.requirePermission(models.PermScriptsManage), s.requirePermission(models.PermAIAutonomyManage)).
+			Post("/scripts/{id}/ai-release", s.setScriptAIRelease)
 		// Their own prefix rather than /scripts/categories: a category name is not
 		// a script id, and a sibling path would sit next to /scripts/{id} where
 		// only chi's static-before-param rule keeps them apart.
@@ -668,6 +670,9 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"model":       eff.AIModel,
 			"configured":  eff.AIAPIKey != "",
 			"api_key_set": eff.AIAPIKey != "",
+			// Everything the AI may do without approval, off at once for every
+			// role (docs/23-ai-autonomy.md).
+			"autonomy_paused": eff.AIAutonomyPaused,
 		},
 		"remote": map[string]any{
 			"providers":                  []string{"native", "terminal", "meshcentral"},
@@ -799,6 +804,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.meshcentral_shared_account", before.MeshCentralSharedAccount != after.MeshCentralSharedAccount)
 	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
 	add("remote.guest_access", before.RemoteGuestAccess != after.RemoteGuestAccess)
+	add("ai.autonomy_paused", before.AIAutonomyPaused != after.AIAutonomyPaused)
 	add("jobs.allow_unapproved", before.JobsAllowUnapproved != after.JobsAllowUnapproved)
 	return out
 }
@@ -1960,6 +1966,26 @@ func (s *Server) deleteChatSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+// authorizeChat uses the same credential resolution as a new request. A model
+// response can take minutes; no tool inherits the authority from before it.
+func (s *Server) authorizeChat(token string) ai.AuthorizeFunc {
+	return func(ctx context.Context) (ai.ToolIdentity, error) {
+		identity, err := s.authenticateToken(ctx, "/api/chat", token)
+		if err != nil {
+			return ai.ToolIdentity{}, err
+		}
+		perms, err := s.permissionsForRole(ctx, identity.role)
+		if err != nil {
+			return ai.ToolIdentity{}, err
+		}
+		set := permissionSet(perms)
+		if !set[models.PermAIChatUse] {
+			return ai.ToolIdentity{}, errors.New("chat permission revoked")
+		}
+		return ai.ToolIdentity{Actor: identity.actor, ScopeUserID: identity.scopeUser, Permissions: set}, nil
+	}
+}
+
 func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "id")
 	if !s.requireChatOwner(w, r, sessionID) {
@@ -1978,7 +2004,7 @@ func (s *Server) postChatMessage(w http.ResponseWriter, r *http.Request) {
 		title = string(rs[:60]) + "…"
 	}
 	_ = s.store.MaybeTitleChatSession(r.Context(), sessionID, title)
-	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r), permissionsOf(r))
+	reply, err := s.chat.Respond(r.Context(), sessionID, in.Content, actorOf(r), s.scopeUserID(r), permissionsOf(r), s.authorizeChat(bearer(r)))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return

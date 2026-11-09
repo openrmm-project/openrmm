@@ -505,3 +505,12 @@ test('the dashboard counts on the server instead of downloading lists', async ()
   assert.match(body, /api\.getDashboard\(\)/);
   assert.doesNotMatch(body, /api\.listDevices\(|api\.listJobs\(/);
 });
+
+test('AI release approval carries the hash of the reviewed script', async () => {
+  const { api, last } = await loadApi();
+  await api.setScriptAIRelease('script-1', true, 'reviewed-hash');
+  assert.equal(last().url, 'https://console.test/api/scripts/script-1/ai-release');
+  assert.deepEqual(JSON.parse(last().body), { release: true, content_hash: 'reviewed-hash' });
+  await api.setScriptAIRelease('script-1', false);
+  assert.deepEqual(JSON.parse(last().body), { release: false });
+});

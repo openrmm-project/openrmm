@@ -486,6 +486,10 @@ func (a *agent) handleFrame(raw []byte) {
 // runJobScript is the script runner, replaceable in tests.
 var runJobScript = runScriptCtx
 
+// runJobScriptEnv runs a released script with its parameters in the
+// environment. A variable for tests, like runJobScript.
+var runJobScriptEnv = runScriptCtxEnv
+
 func (a *agent) runJob(job protocol.JobMsg) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	// Claiming the id in running and checking it happen under one lock, so two
@@ -509,8 +513,27 @@ func (a *agent) runJob(job protocol.JobMsg) {
 		return
 	}
 
-	log.Printf("running job %s (%s)", job.JobID, job.Shell)
-	exitCode, stdout, stderr := runJobScript(ctx, job.Shell, job.Script)
+	var exitCode int
+	var stdout, stderr string
+	notStarted := false
+	switch {
+	case !job.ExpiresAt.IsZero() && !time.Now().Before(job.ExpiresAt):
+		exitCode, stderr, notStarted = 2, "autonomous job expired before execution (is this computer's clock ahead of the server's?)", true
+	case job.Type == protocol.JobTypeDeviceQuery:
+		log.Printf("running job %s (device query)", job.JobID)
+		exitCode, stdout, stderr = runDeviceQuery(ctx, job.Script)
+	case len(job.Params) > 0:
+		log.Printf("running job %s (%s, %d parameters)", job.JobID, job.Shell, len(job.Params))
+		env, err := paramEnv(job.Shell, job.Params)
+		if err != nil {
+			exitCode, stderr = 2, err.Error()
+		} else {
+			exitCode, stdout, stderr = runJobScriptEnv(ctx, job.Shell, job.Script, env)
+		}
+	default:
+		log.Printf("running job %s (%s)", job.JobID, job.Shell)
+		exitCode, stdout, stderr = runJobScript(ctx, job.Shell, job.Script)
+	}
 	if ctx.Err() == context.Canceled {
 		stderr = strings.TrimSpace(stderr + "\n[canceled by operator]")
 		if exitCode == 0 {
@@ -518,7 +541,7 @@ func (a *agent) runJob(job protocol.JobMsg) {
 		}
 	}
 	a.reportResult(protocol.JobResultMsg{
-		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0,
+		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0, NotStarted: notStarted,
 	})
 }
 
@@ -1168,6 +1191,12 @@ func writeTempScript(script, extension string) (string, func(), error) {
 // (timeout or operator cancel) kills the process — and on Windows its whole
 // child tree (taskkill /T), so a stuck downloader/installer dies too.
 func runScriptCtx(ctx context.Context, shell, script string) (int, string, string) {
+	return runScriptCtxEnv(ctx, shell, script, nil)
+}
+
+// runScriptCtxEnv is runScriptCtx with extra environment variables: a released
+// script's parameters, which reach it as data and never as script text.
+func runScriptCtxEnv(ctx context.Context, shell, script string, extraEnv []string) (int, string, string) {
 	var cmd *exec.Cmd
 	switch shell {
 	case "powershell":
@@ -1208,6 +1237,12 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 	default:
 		return 2, "", "unsupported shell: " + shell
 	}
+	if len(extraEnv) > 0 {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, extraEnv...)
+	}
 	if runtime.GOOS == "windows" {
 		// Default ctx-cancel only kills the direct child; kill the tree instead.
 		cmd.Cancel = func() error {
@@ -1232,8 +1267,8 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 	}
 	// Cap captured output to avoid OOM / DB bloat from runaway scripts.
 	return exitCode,
-		truncateRunes(decodeOutput(stdout.Bytes()), maxJobOutput),
-		truncateRunes(decodeOutput(stderr.Bytes()), maxJobOutput)
+		truncateRunes(decodeShellOutput(shell, stdout.Bytes()), maxJobOutput),
+		truncateRunes(decodeShellOutput(shell, stderr.Bytes()), maxJobOutput)
 }
 
 // maxJobOutput bounds stdout/stderr captured per job (1 MiB each).
@@ -1472,12 +1507,12 @@ $gpus = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Fo
 } | ConvertTo-Json -Compress -Depth 5`
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return map[string]any{}
 	}
 	var hw map[string]any
-	if json.Unmarshal(bytes.TrimSpace(out), &hw) != nil {
+	if json.Unmarshal([]byte(strings.TrimSpace(out)), &hw) != nil {
 		return map[string]any{}
 	}
 	return compactHardwareMap(hw)
@@ -1787,11 +1822,11 @@ func capSoftware(sw []map[string]string) []map[string]string {
 
 func softwareWindows(ctx context.Context) []map[string]string {
 	const ps = `Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion,Publisher | Sort-Object DisplayName -Unique | ConvertTo-Json -Compress`
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", ps).Output()
+	out, err := agentPowerShell(ctx, ps)
 	if err != nil {
 		return nil
 	}
-	return parseWindowsSoftware(out)
+	return parseWindowsSoftware([]byte(out))
 }
 
 func parseWindowsSoftware(out []byte) []map[string]string {

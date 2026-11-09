@@ -70,6 +70,9 @@ server (`11-mcp`).
 | `list_tasks` / `list_checks` / `list_policies` | `tasks.view` / `checks.view` / `policies.view` | read | Existing monitoring configuration, including which rows are unreviewed AI proposals |
 | `install_patches` | `patches.manage` | **write** | Install patches **a person already approved**. `ClaimApprovedPatches` filters to approved identifiers, so an unapproved one installs nothing. There is deliberately no tool to approve a patch |
 | `cancel_job` | `jobs.manage` | control | Reject a pending job or request cancel of a running one |
+| `query_device` | `devices.view` | **device query** | One of the agent's built-in read-only queries on one device (processes, services, events, disk, network, system, software). Runs at once when the role holds `ai.autonomy.query` (MCP: `mcp.autonomy.query`) and autonomy is not paused; otherwise it creates a request for approval — see [23-ai-autonomy](23-ai-autonomy.md) |
+| `list_preapproved_actions` | `scripts.view` | read | Library scripts released for the AI, their declared parameters, and whether this conversation may run them without approval |
+| `run_preapproved_action` | `jobs.create` | **pre-approved** | Run a released library script on one device with values for its declared parameters. Runs at once when the role holds `ai.autonomy.run` (MCP: `mcp.autonomy.run`); otherwise it creates a request for approval — see [23-ai-autonomy](23-ai-autonomy.md) |
 | `propose_script` | `jobs.create` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
 | `propose_bulk_deploy` | `jobs.create` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
 | `propose_task` | `tasks.manage` | **write (gated)** | Create a scheduled task **disabled** and stamped `proposed_by` — the scheduler selects `WHERE enabled`, so it never runs until a person enables it |

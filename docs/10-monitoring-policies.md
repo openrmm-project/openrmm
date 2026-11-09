@@ -26,7 +26,11 @@ on startup and custom roles can be added from **Settings → Roles**.
 
 Permissions are module/action keys such as `ai_chat.use`, `mcp.use`,
 `jobs.create`, `jobs.manage`, `alerts.manage`, `checks.view`, `devices.terminal`,
-`settings.manage`, and `roles.manage`. The
+`settings.manage`, and `roles.manage`. The AI autonomy permissions
+(`ai.autonomy.query`, `ai.autonomy.run`, `mcp.autonomy.query`,
+`mcp.autonomy.run`, and `ai.autonomy.manage` to release scripts) are held by the
+built-in `admin` only; give them to others through a custom role
+([23-ai-autonomy](23-ai-autonomy.md)). The
 backend enforces them on every route; the UI uses the same `permissions` list from
 login and `/api/me` to hide navigation/actions.
 

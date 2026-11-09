@@ -5,9 +5,20 @@ These controls are built in.
 
 ## Human-in-the-loop (enforced in code)
 
-- AI actions go through proposal tools (`propose_script`, bulk deploy, or
-  high-level action tools), which **always** set `requires_approval=true` → job
-  status `awaiting_approval`. This applies to both the built-in chat and the
+- **AI autonomy is the one exception, and it is narrow** ([23](23-ai-autonomy.md)).
+  For roles that hold `ai.autonomy.*` (built-in chat) or `mcp.autonomy.*` (MCP),
+  and while Settings ▸ AI autonomy is not paused, two kinds of call run without a
+  person approving at the time: the agent's built-in **read-only device
+  queries**, which send no code, and **pre-approved actions**, library scripts an
+  administrator released in advance, bound to the hash of their content.
+  A server-side deny list keeps reboots, installs, deletions, accounts,
+  firewall, agent removal, patches, persistence, registry and security
+  settings, downloads and dynamic code from ever being released. The built-in
+  administrator holds these permissions; technician and read-only do not.
+  Without them, the same calls create requests for approval.
+- Every other AI action goes through proposal tools (`propose_script`, bulk
+  deploy, or high-level action tools), which **always** set
+  `requires_approval=true` → job status `awaiting_approval`. This applies to both the built-in chat and the
   **MCP** surface (external AI like Claude/ChatGPT) — same permission-filtered
   tool catalog, same gate.
 - **Configuration is proposed too.** `propose_task`, `propose_check` and

@@ -6,6 +6,67 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
+  [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
+  run without a person approving at the time, and only for roles granted them:
+  the built-in administrator holds them, technician and read-only do not:
+  - **device queries** (`query_device`): the agent's built-in, read-only reports
+    on processes, services, events, disk, network, the system and installed
+    software. No code is sent; parameters come from closed sets;
+  - **pre-approved actions** (`run_preapproved_action`): library scripts an
+    administrator released, bound to the hash of their content, with typed
+    parameters passed as environment variables.
+
+  The built-in chat (`ai.autonomy.query`, `ai.autonomy.run`) and MCP
+  (`mcp.autonomy.query`, `mcp.autonomy.run`) have separate permissions; without
+  them the same calls create requests for approval. Releasing needs
+  `ai.autonomy.manage` (held by the built-in administrator). A server-enforced
+  deny list keeps reboots, installs, deletions, accounts, firewall, agent removal,
+  patches, persistence, registry and security settings, downloads and dynamic
+  code from ever being released. One device at a time; per-user, per-device and
+  daily limits; a circuit breaker that withdraws a release after 3 failures in a
+  row (with an email); output bounded and secret-redacted before the model sees
+  it; a global **pause** in Settings ▸ AI. Every autonomous run is an audited job
+  labelled **Ran automatically**, whose approver line states its basis.
+- **Script parameters.** Library scripts can declare up to eight parameters, each
+  with a list of values or a pattern. They reach the script as
+  `OPENRMM_PARAM_<NAME>` environment variables, never as script text; running such
+  a script asks for the values and always waits for approval. cmd scripts take
+  none.
+- **AI release withdrawn** email notification (on by default).
+
+### Changed
+
+- The agent runs device queries and passes script parameters from **0.10.0**;
+  the server refuses both for older agents.
+- The run-script panel no longer calls a job waiting for approval "a dry-run
+  preview": it says the job waits, and nothing runs on the device until someone
+  with job management permission approves it.
+
+### Fixed
+
+- **Accented text from Windows** reached the console garbled on non-English
+  installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
+  Update titles, and the software and hardware inventory read it undecoded.
+  Running as a service, the agent read cmd and PowerShell output in the ANSI page
+  (1252) while they write in their console's OEM page (850 on a pt-BR install).
+  The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
+  Korean pages included, and its own PowerShell (inventory, patches, device
+  queries) writes UTF-8, which loses nothing in any language.
+
+### Dependencies
+
+- `github.com/jackc/pgx/v5` 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g)
+  and `github.com/go-jose/go-jose/v4` 4.1.7 (GHSA-r39w-98wm-9pp6,
+  GHSA-27pc-rm86-68pq, GHSA-p9j4-2j95-j4rv, GHSA-v6h2-qj3f-2h6v,
+  GHSA-c67m-wr4h-2ccg). OpenRMM does not reach the pgx flaws: it sends no
+  simple-protocol batches and sets neither `require_auth` nor
+  `channel_binding`. It uses go-jose only through go-oidc, to verify the
+  single sign-on provider's ID tokens. `govulncheck` reports nothing before or
+  after.
+
 ## [0.9.5] - 2026-11-09
 
 ### Fixed
@@ -61,8 +122,9 @@ tag.
   reach there. Users with access to every device and no account of their own
   keep signing in as the shared account (`RMM_MESHCENTRAL_USER`); "Shared
   account for unrestricted users" in Settings ▸ Remote access, or
-  `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`, turns that off. Setting an account is audited as `user.meshcentral_account`,
-  and `remote.start` records `mesh_account` and `mesh_user`.
+  `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`, turns that off. Setting an account is
+  audited as `user.meshcentral_account`, and `remote.start` records
+  `mesh_account` and `mesh_user`.
 
 ### Security
 

@@ -14,3 +14,27 @@ func systemCodePage() int {
 	}
 	return int(windows.GetACP())
 }
+
+// GetOEMCP is not wrapped by x/sys/windows.
+var procGetOEMCP = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetOEMCP")
+
+// consoleCodePage reports the page cmd and Windows PowerShell write their
+// redirected output in.
+//
+// With a console of its own, the agent's children inherit it and its page.
+// Without one (the agent runs as a service), Windows gives each console child a
+// new console, which starts on the OEM page, not the ANSI one. On a pt-BR
+// Windows 11 that is 850 against 1252: PowerShell reported
+// [Console]::OutputEncoding as ibm850, and reading its bytes as 1252 turned
+// "Instalação, café" into "Instala‡Æo, caf‚".
+func consoleCodePage() int {
+	if cp, err := windows.GetConsoleOutputCP(); err == nil && cp != 0 {
+		return int(cp)
+	}
+	if procGetOEMCP.Find() == nil {
+		if cp, _, _ := procGetOEMCP.Call(); cp != 0 {
+			return int(cp)
+		}
+	}
+	return systemCodePage()
+}

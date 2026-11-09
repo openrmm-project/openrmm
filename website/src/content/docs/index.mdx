@@ -1,9 +1,9 @@
 ---
 title: OpenRMM documentation
-description: Install, run and extend OpenRMM, the open-source RMM whose AI assistant proposes and a human approves.
+description: Install, run and extend OpenRMM, the open-source RMM whose AI assistant proposes, a human approves, and only what you allowed in advance runs on its own.
 template: splash
 hero:
-  tagline: An open-source, self-hosted RMM. The AI assistant reads your fleet and proposes; nothing runs on a machine until a person approves it.
+  tagline: An open-source, self-hosted RMM. The AI assistant reads your fleet and proposes; nothing changes a machine until a person approves it, at the time or in advance.
   actions:
     - text: Self-host in minutes
       link: /quickstart/
@@ -34,7 +34,8 @@ These guides live with the code in the [OpenRMM repository](https://github.com/o
 ## Using OpenRMM
 
 <CardGrid>
-  <LinkCard title="AI assistant" href="/ai-chat/" description="How the chat reads your fleet, proposes jobs, and why it can only propose." />
+  <LinkCard title="AI assistant" href="/ai-chat/" description="How the chat reads your fleet and proposes jobs that wait for approval." />
+  <LinkCard title="AI autonomy" href="/ai-autonomy/" description="The read-only queries and pre-released scripts the AI may run on its own, and the locks around them." />
   <LinkCard title="Remote access" href="/remote-access/" description="Remote desktop, file transfer and terminal, plus MeshCentral and RustDesk." />
   <LinkCard title="Monitoring, policies and alerts" href="/monitoring-policies/" description="Companies, sites, roles, checks, tasks, policies and alerts." />
   <LinkCard title="Update management" href="/patch-management/" description="Scan, approve and install OS updates in maintenance windows." />

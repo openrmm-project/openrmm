@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/p1ngu/rmm/internal/models"
 )
 
 //go:embed testdata/legacy_schema.sql
@@ -434,3 +435,30 @@ func schemaObjectSignature(t *testing.T, st *Store) []string {
 }
 
 func stringPtr(v string) *string { return &v }
+
+func TestUpgrade093GrantsAutonomyOnlyToAdminPostgres(t *testing.T) {
+	url := os.Getenv("RMM_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	st := newMigrationTestStore(t, url)
+	ctx := context.Background()
+	if err := st.migrate(ctx, migrations[:23]); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{models.RoleAdmin, models.RoleTech, models.RoleReadOnly} {
+		perms, err := st.RolePermissions(ctx, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, perm := range []string{models.PermAIAutonomyQuery, models.PermAIAutonomyRun, models.PermMCPAutonomyQuery, models.PermMCPAutonomyRun, models.PermAIAutonomyManage} {
+			if slices.Contains(perms, perm) != (role == models.RoleAdmin) {
+				t.Errorf("role=%s permission=%s", role, perm)
+			}
+		}
+	}
+	assertCurrentMigrationState(t, st)
+}

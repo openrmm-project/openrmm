@@ -9,7 +9,10 @@ Agent enrollment, persistent WebSocket, heartbeat, job queue in Postgres,
 
 ## ✅ Phase 1 — AI chat (done)
 Tool-calling loop; permission-filtered read tools + approval-gated proposal tools;
-guardrails (approval, audit). The product's differentiator.
+guardrails (approval, audit). The product's differentiator. Since 0.10.0,
+risk-based autonomy: read-only device queries and scripts released in advance
+run without approval for the roles allowed to, behind a deny list, limits, a
+circuit breaker and a global pause ([23-ai-autonomy](23-ai-autonomy.md)).
 
 ## ✅ Phase 2 — Real RMM (done)
 - **Client → Site → Agent hierarchy** + site-bound enrollment tokens.

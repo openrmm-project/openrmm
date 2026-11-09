@@ -2,10 +2,13 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
@@ -539,5 +542,107 @@ func assertAuditMentions(t *testing.T, fs *fakeStore, action, want string) {
 	}
 	if !strings.Contains(detail, want) {
 		t.Errorf("%s detail %s should mention %q", action, detail, want)
+	}
+}
+
+func TestAutonomousJobsAreNeverRedelivered(t *testing.T) {
+	svc, st, sender := newSvc()
+	_, _ = st.CreateJob(context.Background(), &models.Job{AgentID: "a1", Status: models.JobPending, Autonomy: models.AutonomyQuery})
+	_, _ = st.CreateJob(context.Background(), &models.Job{AgentID: "a1", Status: models.JobPending, Autonomy: models.AutonomyPreapproved})
+	svc.DispatchPending(context.Background(), "a1")
+	if sender.calls != 0 {
+		t.Fatalf("autonomous redelivery: %d", sender.calls)
+	}
+	_, _ = st.CreateJob(context.Background(), &models.Job{AgentID: "a1", Status: models.JobPending})
+	svc.DispatchPending(context.Background(), "a1")
+	if sender.calls != 1 {
+		t.Fatalf("human job control: %d", sender.calls)
+	}
+}
+
+type autonomousFakeStore struct {
+	*fakeStore
+	denyDispatch bool
+	outcomes     []bool
+}
+
+func (f *autonomousFakeStore) CreateAutonomousJob(ctx context.Context, j *models.Job, _ store.AutonomyLimits) (*models.Job, error) {
+	return f.CreateJob(ctx, j)
+}
+func (f *autonomousFakeStore) RecordAIScriptOutcome(_ context.Context, _ string, success bool, _ int) (bool, error) {
+	f.outcomes = append(f.outcomes, success)
+	return false, nil
+}
+func (f *autonomousFakeStore) GetScript(context.Context, string) (*models.Script, error) {
+	return nil, store.ErrNotFound
+}
+func (f *autonomousFakeStore) WithAutonomousDispatch(_ context.Context, _ *models.Job, _ string, send func() bool) (bool, error) {
+	if f.denyDispatch {
+		return false, errors.New("release withdrawn")
+	}
+	return send(), nil
+}
+
+type recordingAutonomySender struct{ frames [][]byte }
+
+func (s *recordingAutonomySender) Send(_ string, b []byte) bool {
+	s.frames = append(s.frames, b)
+	return true
+}
+func TestAutonomousDispatchRechecksAuthorization(t *testing.T) {
+	for _, denied := range []bool{true, false} {
+		st := &autonomousFakeStore{fakeStore: newFakeStore(), denyDispatch: denied}
+		sender := &recordingAutonomySender{}
+		svc := New(st, sender)
+		j, err := svc.StartAutonomous(context.Background(), &models.Job{AgentID: "a1", Type: models.JobDeviceQuery, Autonomy: models.AutonomyQuery}, "basis", "", store.AutonomyLimits{})
+		if denied {
+			if err == nil || len(sender.frames) != 0 {
+				t.Fatalf("withdrawn authorization sent job: err=%v frames=%d", err, len(sender.frames))
+			}
+			continue
+		}
+		if err != nil || j.Status != models.JobSent || len(sender.frames) != 1 {
+			t.Fatalf("valid control: job=%+v err=%v frames=%d", j, err, len(sender.frames))
+		}
+		var env protocol.Envelope
+		var msg protocol.JobMsg
+		if err := json.Unmarshal(sender.frames[0], &env); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(env.Data, &msg); err != nil {
+			t.Fatal(err)
+		}
+		if msg.ExpiresAt.IsZero() || time.Until(msg.ExpiresAt) <= 0 || time.Until(msg.ExpiresAt) > AutonomousDispatchWindow {
+			t.Fatalf("deadline=%s", msg.ExpiresAt)
+		}
+	}
+}
+
+// A pre-approved job the agent refused before starting it (past its start
+// deadline: a clock ahead of the server's) must not count toward the release's
+// failure streak; a run that failed does.
+func TestNotStartedAutonomousRunsDoNotTripTheBreaker(t *testing.T) {
+	st := &autonomousFakeStore{fakeStore: newFakeStore()}
+	svc := New(st, &recordingAutonomySender{})
+	script := "s1"
+	for _, c := range []struct {
+		res  protocol.JobResultMsg
+		want []bool
+	}{
+		{protocol.JobResultMsg{ExitCode: 2, Stderr: "autonomous job expired before execution", NotStarted: true}, nil},
+		{protocol.JobResultMsg{ExitCode: 1, Stderr: "boom"}, []bool{false}},
+		{protocol.JobResultMsg{ExitCode: 0, Success: true}, []bool{false, true}},
+	} {
+		j, _ := st.CreateJob(context.Background(), &models.Job{AgentID: "a1", Status: models.JobSent, Autonomy: models.AutonomyPreapproved, ScriptID: &script})
+		c.res.JobID = j.ID
+		if err := svc.OnResult(context.Background(), "a1", c.res); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := st.GetJob(context.Background(), j.ID); (got.Status == models.JobCompleted) != c.res.Success {
+			t.Fatalf("job status %s for %+v", got.Status, c.res)
+		}
+		if !slices.Equal(st.outcomes, c.want) {
+			t.Fatalf("after %+v, breaker saw %v, want %v", c.res, st.outcomes, c.want)
+		}
 	}
 }

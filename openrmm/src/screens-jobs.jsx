@@ -71,7 +71,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
   const ref = useRef(null);
   useEffect(() => { if (focused && ref.current) ref.current.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, []);
 
-  const ai = job.created_by.startsWith('ai:');
+  const ai = job.created_by.startsWith('ai:') || job.created_by.startsWith('mcp:');
   const isAwaiting = job.status === 'awaiting_approval';
   const destructive = DESTRUCTIVE.test(job.script);
   const done = job.status === 'completed' || job.status === 'failed';
@@ -107,15 +107,15 @@ function JobCard({ job, device, defaultOpen, focused }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[14px] font-semibold text-ink">{job.description}</span>
-            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">{t('jobs.aiProposed')}</span>}
+            {ai && <span className="inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold">{job.autonomy ? t('jobs.ranAutomatically') : t('jobs.aiProposed')}</span>}
             {destructive && isAwaiting && <span className="inline-flex items-center gap-1 rounded-md bg-badsoft border border-bad/25 text-bad px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="alert" size={10} />{t('jobs.destructive')}</span>}
           </div>
           <div className="text-[12px] text-faint mt-1 flex items-center gap-1.5 flex-wrap">
             <OsIcon os={device?.os} size={12} /><span className="text-muted">{device?.hostname || job.agent_id}</span>
-            <span>·</span><span className="mono">{job.shell}</span>
+            <span>·</span><span className="mono">{job.type === 'device_query' ? t('jobs.deviceQuery') : job.shell}</span>
             <span>·</span><span>{ai ? <span className="text-brandhi">{t('jobs.by', { who: t('jobs.aiAssistant') })}</span> : t('jobs.by', { who: job.created_by })}</span>
             <span>·</span><span>{timeAgo(job.created_at)}</span>
-            {job.approved_by && <><span>·</span><span>{t('jobs.approvedBy', { who: job.approved_by })}</span></>}
+            {job.approved_by && <><span>·</span><span className={job.autonomy ? 'text-brandhi' : undefined}>{job.autonomy ? t('jobs.autonomyBasis', { basis: job.approved_by }) : t('jobs.approvedBy', { who: job.approved_by })}</span></>}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -127,6 +127,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
       {open && (
         <div className="px-4 pb-4 space-y-3 animate-fade-in">
           <CodeBlock code={job.script} shell={job.shell} dryRun={isAwaiting} maxHeight={280} />
+          {job.params && Object.keys(job.params).length > 0 && <JobParams params={job.params} />}
           {done && (job.stdout || job.stderr) && <OutputBlock stdout={job.stdout} stderr={job.stderr} exitCode={job.exit_code} />}
 
           {isAwaiting && (
@@ -462,3 +463,18 @@ window.JobsScreen = JobsScreen;
 window.JobCard = JobCard;
 window.AuditScreen = AuditScreen;
 window.useDeviceMap = useDeviceMap;
+
+// The declared parameters a library script runs with. They reach the device as
+// environment variables, never as script text, so they are shown beside the
+// script rather than inside it.
+function JobParams({ params }) {
+  return (
+    <div className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[12px]">
+      <div className="text-faint mb-1">{t('jobs.params')}</div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {Object.entries(params).map(([k, v]) => <span key={k} className="mono text-muted">{k}=<span className="text-ink">{v}</span></span>)}
+      </div>
+    </div>
+  );
+}
+window.JobParams = JobParams;

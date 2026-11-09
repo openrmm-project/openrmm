@@ -66,6 +66,38 @@ choose a configured fallback provider.
   (or the toggle in Settings ▸ Remote access) to turn it off. When disabled the
   provider refuses to start and the MeshCentral item is hidden from the device
   Remote menu — symmetric with the optional `rustdesk` provider.
+- **Open unlinked devices by hostname:** off by default. An administrator turns
+  it on in Settings ▸ Remote access ("Open unlinked devices by hostname"), or
+  starts an instance with `RMM_MESHCENTRAL_MATCH_HOSTNAME=true`. A device with
+  no linked node then opens with `gotodevicername=<hostname>`, and MeshCentral
+  looks for the computer whose own reported name is exactly that hostname. A
+  linked node always wins. Keep linking nodes where names are not unique.
+  - **Exact and case-sensitive.** MeshCentral compares the name it got from its
+    own agent with the hostname the OpenRMM agent reports. The two can differ,
+    for example a short name against a fully qualified one.
+  - **Two computers with the same name** (cloned images, or two clients in one
+    MeshCentral): MeshCentral opens one of them, silently. The console says when
+    a session was opened by hostname, and the `remote.start` audit entry records
+    `"matched_by": "hostname"`.
+  - **Only letters, digits, dots, hyphens and underscores.** MeshCentral reads
+    its link arguments without decoding them and drops any value with `%`, `+`,
+    `&`, `#`, `<`, `>`, quotes or parentheses, so a name needing any escape can
+    never match. OpenRMM refuses such a hostname instead of sending it; it is
+    reported by the agent, and must not add arguments to the link.
+  - **Not for restricted users.** MeshCentral looks the name up among every
+    computer its signed-in account can see, not only the technician's clients.
+    A technician restricted to some clients could otherwise send the link to
+    another client's computer by giving a device in their scope that
+    computer's name. Restricted users therefore always need a linked node.
+    This rule only governs which computer the link names. With a login token
+    the session is `RMM_MESHCENTRAL_USER`'s, whatever device it was opened
+    from, and OpenRMM's client scopes do not apply inside MeshCentral: give
+    restricted technicians deep-link mode with their own MeshCentral accounts,
+    or keep MeshCentral off for them.
+  - **Not a name that reads as a number.** MeshCentral turns such an argument
+    into a number and compares loosely: `01234` would find a computer named
+    `1234`, and `1e0` one named `1`. OpenRMM refuses those names.
+  - If no computer has that name, MeshCentral stays on its device list.
 
 #### Setup (to test MeshCentral)
 1. Run a MeshCentral server. In its `config.json`, enable:
@@ -79,7 +111,9 @@ choose a configured fallback provider.
    ```
 3. Install the MeshCentral agent on the endpoint and find its **node id**.
 4. Map the device to its node:
-   `PATCH /api/devices/{id}/remote-ids {"mesh_id":"node//..."}`.
+   `PATCH /api/devices/{id}/remote-ids {"mesh_id":"node//..."}`. Or turn on
+   opening unlinked devices by hostname (above) and skip this step for devices
+   whose names are unique in MeshCentral.
 5. Start a session: `POST /api/devices/{id}/remote {"provider":"meshcentral"}`
    → returns a `connect_url` (open it / embed it in an iframe).
 

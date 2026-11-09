@@ -667,14 +667,15 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"api_key_set": eff.AIAPIKey != "",
 		},
 		"remote": map[string]any{
-			"providers":             []string{"native", "terminal", "meshcentral"},
-			"default":               eff.RemoteDefaultProvider,
-			"meshcentral_url":       eff.MeshCentralURL,
-			"meshcentral_user":      eff.MeshCentralUser,
-			"meshcentral_token_set": eff.MeshCentralTokenKey != "",
-			"meshcentral_enabled":   eff.MeshCentralEnabled,
-			"rustdesk_enabled":      eff.RustDeskEnabled,
-			"guest_access":          eff.RemoteGuestAccess,
+			"providers":                  []string{"native", "terminal", "meshcentral"},
+			"default":                    eff.RemoteDefaultProvider,
+			"meshcentral_url":            eff.MeshCentralURL,
+			"meshcentral_user":           eff.MeshCentralUser,
+			"meshcentral_token_set":      eff.MeshCentralTokenKey != "",
+			"meshcentral_enabled":        eff.MeshCentralEnabled,
+			"meshcentral_match_hostname": eff.MeshCentralMatchHostname,
+			"rustdesk_enabled":           eff.RustDeskEnabled,
+			"guest_access":               eff.RemoteGuestAccess,
 		},
 		"jobs": map[string]any{
 			"allow_unapproved": eff.JobsAllowUnapproved,
@@ -745,6 +746,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	// already overlays DB values on top of it, so reads stay race-free.
 	s.chat.UpdateProvider(eff.AIBaseURL, eff.AIAPIKey, eff.AIModel)
 	s.remote.UpdateMeshConfig(eff.MeshCentralURL, eff.MeshCentralTokenKey, eff.MeshCentralUser, eff.MeshCentralEnabled)
+	s.remote.SetMeshMatchHostname(eff.MeshCentralMatchHostname)
 	s.remote.SetRustDeskEnabled(eff.RustDeskEnabled)
 	if before.RemoteGuestAccess && !eff.RemoteGuestAccess {
 		// Turning it off withdraws every invitation and ends every guest's
@@ -788,6 +790,7 @@ func changedSettings(before, after settings.Editable, in settings.SaveRequest) [
 	add("remote.meshcentral_user", before.MeshCentralUser != after.MeshCentralUser)
 	add("remote.meshcentral_token_key", strings.TrimSpace(in.Remote.MeshTokenKey) != "")
 	add("remote.meshcentral_enabled", before.MeshCentralEnabled != after.MeshCentralEnabled)
+	add("remote.meshcentral_match_hostname", before.MeshCentralMatchHostname != after.MeshCentralMatchHostname)
 	add("remote.rustdesk_enabled", before.RustDeskEnabled != after.RustDeskEnabled)
 	add("remote.guest_access", before.RemoteGuestAccess != after.RemoteGuestAccess)
 	add("jobs.allow_unapproved", before.JobsAllowUnapproved != after.JobsAllowUnapproved)
@@ -1399,7 +1402,12 @@ func (s *Server) startRemote(w http.ResponseWriter, r *http.Request) {
 			s.endReplacedSession(r.Context(), v, principal)
 		}
 	}
-	sess, err := s.remote.Start(r.Context(), in.Provider, agent, principal, remote.StartOptions{AllowFiles: hasPermission(r, models.PermDevicesFiles)})
+	sess, err := s.remote.Start(r.Context(), in.Provider, agent, principal, remote.StartOptions{
+		AllowFiles: hasPermission(r, models.PermDevicesFiles),
+		// A hostname is looked up among every computer MeshCentral knows, not
+		// only this principal's: restricted principals need a linked node.
+		MeshHostname: s.scopeUserID(r) == "",
+	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

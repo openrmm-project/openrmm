@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -39,19 +40,30 @@ type StartOptions struct {
 	// guest's session, whose chat the server carries to the technician's.
 	// Sidecars before 0.18 open it anyway.
 	NoChat bool
+	// MeshHostname lets a device with no linked MeshCentral node open by its
+	// hostname, when that is turned on. Only a caller with access to every
+	// device gets it: with a login token MeshCentral opens as
+	// RMM_MESHCENTRAL_USER and looks the name up among every computer it
+	// knows, so a restricted technician could reach one outside their scope by
+	// giving a device of theirs that computer's name.
+	MeshHostname bool
 }
 
 // Manager holds the configured providers and shared dependencies.
 type Manager struct {
-	mu              sync.RWMutex
-	store           *store.Store
-	hub             *hub.Hub
-	meshURL         string
-	meshTokenKey    string
-	meshUser        string
-	meshEnabled     bool
-	rustdeskEnabled bool
-	providers       map[string]Provider
+	mu           sync.RWMutex
+	store        *store.Store
+	hub          *hub.Hub
+	meshURL      string
+	meshTokenKey string
+	meshUser     string
+	meshEnabled  bool
+	// meshMatchHostname opens a device with no linked MeshCentral node by its
+	// hostname instead of refusing. Off unless an administrator turns it on:
+	// MeshCentral picks one of several computers sharing a name, silently.
+	meshMatchHostname bool
+	rustdeskEnabled   bool
+	providers         map[string]Provider
 
 	// pending correlates on-demand remote_query requests with their replies.
 	pendingMu sync.Mutex
@@ -66,6 +78,14 @@ func (m *Manager) UpdateMeshConfig(meshURL, meshTokenKey, meshUser string, enabl
 	m.meshTokenKey = meshTokenKey
 	m.meshUser = meshUser
 	m.meshEnabled = enabled
+}
+
+// SetMeshMatchHostname toggles opening unlinked devices in MeshCentral by
+// hostname at runtime.
+func (m *Manager) SetMeshMatchHostname(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meshMatchHostname = enabled
 }
 
 // SetRustDeskEnabled toggles the RustDesk provider at runtime.
@@ -177,7 +197,13 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 	if a, err := m.store.GetAgent(ctx, rs.AgentID); err == nil && a != nil {
 		host = a.Hostname
 	}
-	detail, _ := json.Marshal(map[string]string{"provider": rs.Provider, "agent": rs.AgentID, "host": host})
+	fields := map[string]string{"provider": rs.Provider, "agent": rs.AgentID, "host": host}
+	if rs.MatchedBy != "" {
+		// How an external provider found the device: a linked id, or a name
+		// that another computer could share.
+		fields["matched_by"] = rs.MatchedBy
+	}
+	detail, _ := json.Marshal(fields)
 	_ = m.store.AddAudit(ctx, rs.CreatedBy, "remote.start", rs.AgentID, detail)
 	return nil
 }
@@ -269,9 +295,13 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 // a login token key is configured it mints a login token so the session embeds
 // without a second login; otherwise it returns a deep link
 // that works once the technician is logged into MeshCentral.
-func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, _ StartOptions) (*models.RemoteSession, error) {
+//
+// A device with no linked node is refused, unless opening unlinked devices by
+// hostname is turned on: the link then asks MeshCentral for the computer whose
+// own reported name is the device's hostname (gotodevicername).
+func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error) {
 	p.m.mu.RLock()
-	meshURL, meshTokenKey, meshUser, enabled := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled
+	meshURL, meshTokenKey, meshUser, enabled, byHostname := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled, p.m.meshMatchHostname
 	p.m.mu.RUnlock()
 	if !enabled {
 		return nil, fmt.Errorf("the MeshCentral provider is disabled")
@@ -279,25 +309,36 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 	if meshURL == "" {
 		return nil, fmt.Errorf("MeshCentral URL not configured (RMM_MESHCENTRAL_URL)")
 	}
-	if agent.MeshID == nil || *agent.MeshID == "" {
-		return nil, fmt.Errorf("agent has no MeshCentral node id (set it via PATCH /api/devices/{id}/remote-ids)")
+	var nodeID, hostname, matchedBy string
+	switch {
+	case agent.MeshID != nil && *agent.MeshID != "":
+		nodeID, matchedBy = *agent.MeshID, "node"
+	case byHostname && !opts.MeshHostname:
+		return nil, fmt.Errorf("this device has no linked MeshCentral node, and opening by hostname is only for users with access to every device: ask an administrator to link its node")
+	case byHostname:
+		name, err := meshDeviceName(agent.Hostname)
+		if err != nil {
+			return nil, err
+		}
+		hostname, matchedBy = name, "hostname"
+	default:
+		return nil, fmt.Errorf("agent has no MeshCentral node id: link its node (PATCH /api/devices/{id}/remote-ids), or turn on opening unlinked devices by hostname")
 	}
-	base := strings.TrimRight(meshURL, "/")
-	// viewmode=11 = desktop; hide=31 hides the MeshCentral chrome for embedding.
-	connect := fmt.Sprintf("%s/?viewmode=11&hide=31&node=%s", base, *agent.MeshID)
+	loginToken := ""
 	if meshTokenKey != "" {
 		tok, err := meshLoginToken(meshTokenKey, meshUser)
 		if err != nil {
 			return nil, fmt.Errorf("mesh login token: %w", err)
 		}
-		connect = fmt.Sprintf("%s/?login=%s&viewmode=11&hide=31&node=%s", base, url.QueryEscape(tok), *agent.MeshID)
+		loginToken = tok
 	}
 	rs := &models.RemoteSession{
 		AgentID:    agent.ID,
 		Provider:   "meshcentral",
 		Status:     "ready",
 		Token:      auth.NewToken(),
-		ConnectURL: connect,
+		ConnectURL: meshConnectURL(strings.TrimRight(meshURL, "/"), loginToken, nodeID, hostname),
+		MatchedBy:  matchedBy,
 		CreatedBy:  createdBy,
 		ExpiresAt:  time.Now().Add(sessionTTL),
 	}
@@ -305,6 +346,59 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 		return nil, err
 	}
 	return rs, nil
+}
+
+// meshConnectURL is the link into MeshCentral's remote desktop for one device:
+// by its linked node id when there is one, otherwise by its hostname.
+// viewmode=11 opens the desktop; hide=31 hides MeshCentral's own chrome.
+func meshConnectURL(base, loginToken, nodeID, hostname string) string {
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("/?")
+	if loginToken != "" {
+		b.WriteString("login=" + url.QueryEscape(loginToken) + "&")
+	}
+	b.WriteString("viewmode=11&hide=31&")
+	if nodeID != "" {
+		b.WriteString("node=" + nodeID)
+	} else {
+		// Written as it is, not escaped: MeshCentral reads its page arguments
+		// without decoding them and drops any value holding '%' or '+', so an
+		// escaped name could never match. meshDeviceName admits only
+		// characters that need no escaping.
+		b.WriteString("gotodevicername=" + hostname)
+	}
+	return b.String()
+}
+
+// meshDeviceNamePattern is what MeshCentral can match from a link: its page
+// splits arguments on '?', '&' and '|', and drops a value containing any of
+// < > & " ' + ( ) # %. A hostname of letters, digits, dots, hyphens and
+// underscores passes through untouched; anything else could not be found, and
+// would let a device's reported hostname add arguments to the link.
+var meshDeviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
+
+// meshNumericArg is any value MeshCentral's page could turn into a number
+// (parseInt(v) == v) before comparing it loosely with each computer's name:
+// "01234" or "1234." would find a computer named "1234", "1e0" one named "1",
+// and "0x10" one named "16". Every name that reads as a JavaScript number
+// literal is refused, rather than risk opening another computer.
+var meshNumericArg = regexp.MustCompile(`^(?:0[xXbBoO][0-9A-Fa-f]+|[0-9]+\.?[0-9]*(?:[eE][+-]?[0-9]+)?)$`)
+
+// meshDeviceName is the hostname to look up in MeshCentral, or an error saying
+// why this device has to be linked to its node instead. The hostname is the
+// one the agent reports, so it is checked and never echoed back.
+func meshDeviceName(hostname string) (string, error) {
+	if hostname == "" {
+		return "", fmt.Errorf("this device reports no hostname to look up in MeshCentral: link its node instead")
+	}
+	if !meshDeviceNamePattern.MatchString(hostname) {
+		return "", fmt.Errorf("MeshCentral cannot look up this device's hostname from a link (only letters, digits, dots, hyphens and underscores): link its node instead")
+	}
+	if meshNumericArg.MatchString(hostname) {
+		return "", fmt.Errorf("MeshCentral reads a hostname that is only a number as a number and could find another computer: link its node instead")
+	}
+	return hostname, nil
 }
 
 // ---------- rustdesk (on-demand id read; client installed out-of-band) ----------

@@ -335,6 +335,7 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
     "meshcentral_user": "admin",
     "meshcentral_token_key": "hex-login-token-key",
     "meshcentral_enabled": true,
+    "meshcentral_match_hostname": false,
     "rustdesk_enabled": false
   },
   "jobs": {
@@ -342,6 +343,15 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
   }
 }
 ```
+
+`remote.meshcentral_match_hostname` opens a device with no linked MeshCentral
+node by its hostname (MeshCentral's `gotodevicername`). It is off by default;
+`RMM_MESHCENTRAL_MATCH_HOSTNAME=true` only sets the starting value. A linked
+node always wins. It is never used for a restricted (scoped) principal, who
+needs a linked node. A hostname with characters a MeshCentral link cannot
+carry, or one that reads as a number, is refused. `POST /api/devices/{id}/remote` with `"provider":"meshcentral"`
+returns `matched_by` (`"node"` or `"hostname"`), also recorded in the
+`remote.start` audit entry.
 
 `jobs.allow_unapproved` lets callers with both `jobs.manage` and
 `settings.manage` create a single-device job that skips approval. It is off by

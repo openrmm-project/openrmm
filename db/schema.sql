@@ -1020,7 +1020,12 @@ CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WH
 -- when the server mints login tokens; empty means none.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS meshcentral_user TEXT NOT NULL DEFAULT '';
 
--- Migration 025: risk-based autonomy for the AI assistant. A script released
+-- Migration 025: the IANA zone a scheduled task's and a patch window's times of
+-- day are in. Existing rows keep UTC.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+ALTER TABLE patch_policies ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+
+-- Migration 026: risk-based autonomy for the AI assistant. A script released
 -- for the AI is bound to the hash of its content; jobs record why they ran
 -- without approval at the time, and the parameters they carried.
 ALTER TABLE scripts ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '[]';
@@ -1033,8 +1038,3 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS autonomy TEXT NOT NULL DEFAULT ''
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS script_id UUID REFERENCES scripts(id) ON DELETE SET NULL;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS idx_jobs_autonomy ON jobs (created_at) WHERE autonomy <> '';
-
--- Migration 027: the IANA zone a scheduled task's and a patch window's times of
--- day are in. Existing rows keep UTC.
-ALTER TABLE tasks ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
-ALTER TABLE patch_policies ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';

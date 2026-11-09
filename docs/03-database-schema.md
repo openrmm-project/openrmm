@@ -306,7 +306,7 @@ Scheduled automation, owned by an agent or a policy (like checks).
 | run_at_minute | int | for `daily`: minutes since midnight in `timezone` |
 | days_of_week | smallint | for `weekly`: bitmask, bit N = `time.Weekday` N (0 = Sunday), in `timezone` |
 | run_at_minutes | int[] | for `weekly`: times of day, minutes since midnight in `timezone` |
-| timezone | text | IANA zone the times of day are in, daylight saving included; default `UTC` (migration 027) |
+| timezone | text | IANA zone the times of day are in, daylight saving included; default `UTC` (migration 025) |
 | enabled | bool | default true |
 | proposed_by | text | AI actor that authored it (`''` = a person). **Permanent** provenance: it survives review |
 | approved_by | text | who released it (`''` = nobody yet) |
@@ -388,7 +388,7 @@ must be recovered separately with the database backup.
 excluded state. `patch_approvals` stores the latest global/client/site/agent
 approve-or-decline decision. `patch_policies` stores auto-approval, exclusions,
 maintenance windows (with the IANA `timezone` their days and minutes are in,
-default `UTC`, migration 027) and reboot behavior;
+default `UTC`, migration 025) and reboot behavior;
 `patch_policy_assignments` attaches definitions to client/site/agent scopes.
 
 ### OAuth tables

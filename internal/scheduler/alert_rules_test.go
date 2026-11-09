@@ -1,6 +1,27 @@
 package scheduler
 
-import "testing"
+import (
+	"github.com/p1ngu/rmm/internal/models"
+	"testing"
+	"time"
+)
+
+func TestRuleLabelsMustMatchAgentScopeRevision(t *testing.T) {
+	at := time.Now()
+	a := &models.Agent{MonitoringScopeSince: at}
+	r := models.GoverningRule{CheckID: "rule", MonitoringScopeSince: at, Name: "private canary", Config: models.ServerRuleConfig{Mode: models.RuleModeAlert}}
+	if got := ruleForAgentScope(r, a); got.CheckID != r.CheckID || !got.Config.Alerts() {
+		t.Fatal("same-scope rule refused")
+	}
+	r.MonitoringScopeSince = at.Add(-time.Second)
+	if got := ruleForAgentScope(r, a); got.CheckID != "" || got.Name != "" || got.Config.Mode != "" {
+		t.Fatal("stale rule metadata survived")
+	}
+	r.CheckID = ""
+	if got := ruleForAgentScope(r, a); !got.MonitoringScopeSince.Equal(at) {
+		t.Fatal("fleet default did not use device provenance")
+	}
+}
 
 func TestAgentVersionRuleLevels(t *testing.T) {
 	for _, tc := range []struct {

@@ -59,17 +59,19 @@ func scanAlertRows(rows pgx.Rows) ([]models.Alert, error) {
 }
 
 type AlertObservation struct {
-	AgentID       *string
-	SourceType    string
-	SourceID      *string
-	ConditionKey  string
-	Severity      string
-	Message       string
-	ObservedValue *float64
-	Threshold     *float64
-	Output        string
-	Cooldown      time.Duration
-	ObservedAt    time.Time
+	// Optional scope revision captured with server-rule input, checked under lock.
+	MonitoringScopeSince *time.Time
+	AgentID              *string
+	SourceType           string
+	SourceID             *string
+	ConditionKey         string
+	Severity             string
+	Message              string
+	ObservedValue        *float64
+	Threshold            *float64
+	Output               string
+	Cooldown             time.Duration
+	ObservedAt           time.Time
 	// ObservationID identifies this observation so a delivery of it that is
 	// retried can be recognised as the same one. Callers that cannot be retried
 	// leave it empty, and every call then counts — without an identity there is
@@ -120,7 +122,24 @@ type activeSuppression struct {
 	Actor  string
 }
 
-const suppressionMatchesAlertSQL = `(
+const alertStillInLiveScopeSQL = `NOT EXISTS (
+    SELECT 1 FROM agents current_agent LEFT JOIN sites current_site ON current_site.id=current_agent.site_id
+    WHERE current_agent.id=al.agent_snapshot_id AND (
+        al.site_id IS DISTINCT FROM current_agent.site_id OR
+        al.client_id IS DISTINCT FROM current_site.client_id OR
+        al.group_id IS DISTINCT FROM current_agent.group_id
+    )
+)`
+
+// agentSQL is a fixed SQL expression supplied by this file, never request data.
+func suppressionProvenanceSQL(agentSQL string) string {
+	return `(s.scope_type NOT IN ('agent','check') OR
+        (s.scope_type='check' AND EXISTS (SELECT 1 FROM checks c WHERE c.id=s.scope_id AND c.policy_id IS NOT NULL)) OR
+        EXISTS (SELECT 1 FROM agents provenance_agent WHERE provenance_agent.id=` + agentSQL + `
+            AND provenance_agent.monitoring_scope_since=s.agent_monitoring_scope_since))`
+}
+
+var suppressionMatchesAlertSQL = alertStillInLiveScopeSQL + ` AND ` + suppressionProvenanceSQL("al.agent_snapshot_id") + ` AND (
 	(s.scope_type='agent' AND s.scope_id=al.agent_snapshot_id) OR
 	(s.scope_type='site' AND s.scope_id=al.site_id) OR
 	(s.scope_type='client' AND s.scope_id=al.client_id) OR
@@ -137,6 +156,7 @@ func findActiveSuppression(ctx context.Context, tx pgx.Tx, obs AlertObservation,
 		SELECT ends_at, reason, created_by
 		FROM alert_suppressions s
 		WHERE s.canceled_at IS NULL AND s.starts_at <= $7 AND s.ends_at > $7
+		  AND `+suppressionProvenanceSQL("$1::uuid")+`
 		  AND (
 			(s.scope_type='agent' AND s.scope_id=$1) OR
 			(s.scope_type='site' AND s.scope_id=$2) OR
@@ -197,6 +217,9 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 
 	identity := alertIdentity(obs.SourceType, obs.SourceID, obs.AgentID, obs.ConditionKey)
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, identity); err != nil {
+		return nil, err
+	}
+	if err := retireMovedAgentAlerts(ctx, tx, obs.AgentID, obs.ObservedAt, obs.MonitoringScopeSince); err != nil {
 		return nil, err
 	}
 
@@ -348,8 +371,11 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 		  AND source_id IS NOT DISTINCT FROM $2
 		  AND agent_snapshot_id IS NOT DISTINCT FROM $3
 		  AND condition_key=$4
+		  AND site_id IS NOT DISTINCT FROM $5
+		  AND client_id IS NOT DISTINCT FROM $6
+		  AND group_id IS NOT DISTINCT FROM $7
 		ORDER BY resolved_at DESC NULLS LAST, created_at DESC LIMIT 1`,
-		obs.SourceType, obs.SourceID, snapshotID, obs.ConditionKey).Scan(&priorID, &priorResolvedAt)
+		obs.SourceType, obs.SourceID, snapshotID, obs.ConditionKey, siteID, clientID, groupID).Scan(&priorID, &priorResolvedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
@@ -416,7 +442,7 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 }
 
 // ResolveAlertSource closes every active incident matching a source identity.
-func (s *Store) ResolveAlertSource(ctx context.Context, sourceType string, sourceID, agentID *string, actor, kind, note string, at time.Time) ([]models.Alert, error) {
+func (s *Store) ResolveAlertSource(ctx context.Context, sourceType string, sourceID, agentID *string, actor, kind, note string, at time.Time, scopeSince ...*time.Time) ([]models.Alert, error) {
 	if at.IsZero() {
 		at = time.Now()
 	}
@@ -431,6 +457,9 @@ func (s *Store) ResolveAlertSource(ctx context.Context, sourceType string, sourc
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := retireMovedAgentAlerts(ctx, tx, agentID, at, scopeSince...); err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(ctx, `UPDATE alerts al SET
 		status='resolved', resolved_at=$4, updated_at=$4, last_seen_at=$4,
 		resolved_by=$5, resolution_kind=$6, resolution_note=$7,
@@ -465,7 +494,7 @@ func (s *Store) ResolveAlertSource(ctx context.Context, sourceType string, sourc
 // ResolveAlertCondition is ResolveAlertSource for one condition of a source: a
 // device's server rule alerts share the source and differ by condition, and
 // resolving a reboot must not close its failed-update alert.
-func (s *Store) ResolveAlertCondition(ctx context.Context, sourceType string, sourceID, agentID *string, conditionKey, actor, kind, note string, at time.Time) ([]models.Alert, error) {
+func (s *Store) ResolveAlertCondition(ctx context.Context, sourceType string, sourceID, agentID *string, conditionKey, actor, kind, note string, at time.Time, scopeSince ...*time.Time) ([]models.Alert, error) {
 	if at.IsZero() {
 		at = time.Now()
 	}
@@ -480,6 +509,9 @@ func (s *Store) ResolveAlertCondition(ctx context.Context, sourceType string, so
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := retireMovedAgentAlerts(ctx, tx, agentID, at, scopeSince...); err != nil {
+		return nil, err
+	}
 	rows, err := tx.Query(ctx, `UPDATE alerts al SET
 		status='resolved', resolved_at=$4, updated_at=$4, last_seen_at=$4,
 		resolved_by=$5, resolution_kind=$6, resolution_note=$7,
@@ -510,6 +542,52 @@ func (s *Store) ResolveAlertCondition(ctx context.Context, sourceType string, so
 		return nil, err
 	}
 	return resolved, nil
+}
+
+// A live device can move while its historical incidents remain visible to the
+// old scope. Never append destination metadata to those incidents or move the
+// historical snapshot. Lock the live row before inspecting/updating incidents,
+// so SetAgentSite, SetAgentGroup and MoveAgents serialize with this transaction.
+// Both observation and resolution callers must cross this boundary.
+func retireMovedAgentAlerts(ctx context.Context, tx pgx.Tx, agentID *string, at time.Time, expectedScope ...*time.Time) error {
+	if agentID == nil {
+		return nil
+	}
+	var scopeSince time.Time
+	err := tx.QueryRow(ctx, `SELECT monitoring_scope_since FROM agents WHERE id=$1 FOR SHARE`, *agentID).Scan(&scopeSince)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // deleted devices retain their immutable historical scope
+	}
+	if err != nil {
+		return err
+	}
+	if len(expectedScope) > 0 && expectedScope[0] != nil && !expectedScope[0].Equal(scopeSince) {
+		return fmt.Errorf("%w: device monitoring scope changed", ErrConflict)
+	}
+	const note = "Device monitoring scope changed; this incident is no longer monitored."
+	rows, err := tx.Query(ctx, `UPDATE alerts al SET
+		status='resolved', resolved_at=$2, updated_at=$2,
+		resolved_by='system', resolution_kind='inapplicable', resolution_note=$3,
+		notification_pending=false, notification_kind='',
+		silenced_until=NULL, silenced_by='', silence_reason='', version=al.version+1
+		FROM agents a LEFT JOIN sites st ON st.id=a.site_id
+		WHERE a.id=$1 AND al.agent_snapshot_id=a.id AND al.status<>'resolved'
+		  AND (al.site_id IS DISTINCT FROM a.site_id OR al.client_id IS DISTINCT FROM st.client_id OR al.group_id IS DISTINCT FROM a.group_id)
+		RETURNING `+alertCols, *agentID, at, note)
+	if err != nil {
+		return err
+	}
+	retired, err := scanAlertRows(rows)
+	if err != nil {
+		return err
+	}
+	for _, alert := range retired {
+		if err := addAlertEvent(ctx, tx, alert.ID, models.AlertEventResolved, "system", alert.Severity,
+			note, alert.ObservedValue, map[string]any{"kind": "inapplicable"}, at); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) GetAlert(ctx context.Context, id string) (*models.Alert, error) {
@@ -787,6 +865,24 @@ func (s *Store) TransitionAlert(ctx context.Context, id string, action AlertActi
 	return updated, nil
 }
 
+// SuppressionAgentSnapshot is captured before API scope authorization, then
+// validated under lock at insertion. A move between those steps invalidates it.
+func (s *Store) SuppressionAgentSnapshot(ctx context.Context, sup *models.AlertSuppression) (*models.Agent, error) {
+	if sup.ScopeType == models.ScopeAgent {
+		return s.GetAgent(ctx, sup.ScopeID)
+	}
+	if sup.ScopeType == "check" {
+		check, err := s.GetCheck(ctx, sup.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		if check.AgentID != nil {
+			return s.GetAgent(ctx, *check.AgentID)
+		}
+	}
+	return nil, nil
+}
+
 func (s *Store) CreateAlertSuppression(ctx context.Context, sup *models.AlertSuppression) error {
 	if sup.ID == "" {
 		sup.ID = newID()
@@ -794,12 +890,32 @@ func (s *Store) CreateAlertSuppression(ctx context.Context, sup *models.AlertSup
 	if sup.StartsAt.IsZero() {
 		sup.StartsAt = time.Now()
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO alert_suppressions
-		(id, kind, scope_type, scope_id, starts_at, ends_at, reason, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		RETURNING created_at`, sup.ID, sup.Kind, sup.ScopeType, sup.ScopeID,
-		sup.StartsAt, sup.EndsAt, sup.Reason, sup.CreatedBy).Scan(&sup.CreatedAt)
+	snapshot, err := s.SuppressionAgentSnapshot(ctx, sup)
 	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if snapshot != nil {
+		if sup.MonitoringScopeSince == nil {
+			sup.MonitoringScopeSince = &snapshot.MonitoringScopeSince
+		}
+		if err := retireMovedAgentAlerts(ctx, tx, &snapshot.ID, time.Now(), sup.MonitoringScopeSince); err != nil {
+			return err
+		}
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO alert_suppressions
+		(id, kind, scope_type, scope_id, starts_at, ends_at, reason, created_by, agent_monitoring_scope_since)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		RETURNING created_at`, sup.ID, sup.Kind, sup.ScopeType, sup.ScopeID,
+		sup.StartsAt, sup.EndsAt, sup.Reason, sup.CreatedBy, sup.MonitoringScopeSince).Scan(&sup.CreatedAt)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	if !sup.StartsAt.After(time.Now()) {
@@ -836,8 +952,9 @@ func (s *Store) applySuppressionToAlerts(ctx context.Context, sup *models.AlertS
 	rows, err := tx.Query(ctx, `UPDATE alerts al SET status='suppressed',
 		silenced_until=$2, silenced_by=$3, silence_reason=$4,
 		notification_pending=false, notification_kind='', updated_at=now(), version=version+1
-		WHERE al.status IN ('new','acked') AND `+suppressionAlertPredicate(sup.ScopeType)+`
-		RETURNING `+alertCols, sup.ScopeID, sup.EndsAt, sup.CreatedBy, sup.Reason)
+		WHERE al.status IN ('new','acked') AND `+alertStillInLiveScopeSQL+` AND `+suppressionAlertPredicate(sup.ScopeType)+`
+		  AND EXISTS (SELECT 1 FROM alert_suppressions s WHERE s.id=$5 AND `+suppressionProvenanceSQL("al.agent_snapshot_id")+`)
+		RETURNING `+alertCols, sup.ScopeID, sup.EndsAt, sup.CreatedBy, sup.Reason, sup.ID)
 	if err != nil {
 		return err
 	}
@@ -862,6 +979,7 @@ func (s *Store) ListAlertSuppressions(ctx context.Context, userID string, scoped
 		s.canceled_at, s.canceled_by
 		FROM alert_suppressions s
 		WHERE (NOT $3 OR (s.canceled_at IS NULL AND s.ends_at > now()))
+        AND (NOT $2 OR `+suppressionProvenanceSQL("CASE WHEN s.scope_type='agent' THEN s.scope_id ELSE (SELECT agent_id FROM checks WHERE id=s.scope_id) END")+`)
 		AND (NOT $2 OR EXISTS (
 			SELECT 1 FROM agents a
 			LEFT JOIN sites si ON si.id=a.site_id
@@ -940,7 +1058,7 @@ func (s *Store) CancelAlertSuppression(ctx context.Context, id, actor string) er
 	if _, err := tx.Exec(ctx, `UPDATE alerts al SET silenced_until=now()
 		WHERE al.status='suppressed' AND al.silenced_until=$2
 		  AND al.silenced_by=$3 AND al.silence_reason=$4
-		  AND `+suppressionAlertPredicate(sup.ScopeType),
+		  AND `+alertStillInLiveScopeSQL+` AND `+suppressionAlertPredicate(sup.ScopeType),
 		sup.ScopeID, sup.EndsAt, sup.CreatedBy, sup.Reason); err != nil {
 		return err
 	}

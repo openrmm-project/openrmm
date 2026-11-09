@@ -77,7 +77,7 @@ defaults. They are the starting point, applied wherever no rule decides:
 | `reboot_pending` | ignore |
 | `agent_outdated` | ignore |
 
-So upgrading changes nothing until someone adds a rule or edits a default.
+Fleet defaults preserve existing behavior until someone adds a rule or edits a default. See the scope-provenance upgrade notes below for device-owned silences and historical jobs.
 
 ## Alerts from server rules
 
@@ -156,3 +156,17 @@ CREATE TABLE notification_rule_selections (
 Both channels use `propose_check` to propose any agent check or server rule for a device or policy. The five server types use the same validated config as the console. Proposals are disabled and stamped with their author. They have no effect, including `mode: ignore`, until an authorized person reviews and enables them in Checks. Existing ownership and scope checks apply, and there is no tool that changes fleet defaults or approves its own proposal.
 
 Rule ids on alerts are historical references: removing a check does not turn an existing custom-rule incident into a fleet-default incident for email filtering. The evaluator updates the reference when another rule actually takes over.
+
+## Scope provenance and upgrade notes
+
+An incident keeps its original scope snapshot. Moving a device to another client, site or department retires the previous incident with a neutral note when it is next reconciled. A destination incident has its own history and does not link to a predecessor in another scope. The server checks the device scope revision under a database lock before accepting prefetched rule metadata; stale input is retried on a later scheduler pass.
+
+Migration 028 adds a private monitoring scope timestamp to agents, advances it whenever a site or department changes (including moving away and back), and captures it when jobs are queued. Failed-job rules consider only jobs queued in the current scope, up to 30 days back. Jobs queued before this migration have no verified provenance and do not produce these new rule alerts.
+
+Agent-owned and directly owned check silences are bound to the same scope revision. They do not follow a moved device or reveal their private reasons in the destination. Device-owned silences created before this migration must be reviewed and recreated; global administrators can still see and cancel their historical entries. Client, site, department and policy maintenance retain their configured shared applicability.
+
+Migration 028 is part of this unshipped feature. Do not apply an earlier draft to a persistent environment: a database that already recorded its checksum needs a subsequent migration, not an edited applied migration.
+
+## Validation
+
+Local validation covers config bounds and malformed input, rule version handling, restricted global writes, notification selection validation, all nine locale tables and console interaction flows. PostgreSQL-backed tests exercise migration upgrades/reapplication, scope precedence, agent result rejection, proposal review, incident continuity, notification scope and moved-device isolation. The router E2E test uses real authentication and persistence without an HTTP listener. Browser smoke flows run in CI only; no services are started by the local unit suite.

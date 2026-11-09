@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 )
 
 // Server rules are check types the server evaluates from what it already knows,
@@ -150,13 +151,14 @@ func (c ServerRuleConfig) Raw() json.RawMessage {
 // GoverningRule is the server rule in force for one device and type: a check,
 // or the fleet default (CheckID empty).
 type GoverningRule struct {
-	Type       string           `json:"type"`
-	Config     ServerRuleConfig `json:"config"`
-	CheckID    string           `json:"check_id,omitempty"`
-	Name       string           `json:"name,omitempty"`
-	PolicyID   string           `json:"policy_id,omitempty"`
-	PolicyName string           `json:"policy_name,omitempty"`
-	ScopeType  string           `json:"scope_type,omitempty"` // client | site | group | agent | device (owned by the device)
+	MonitoringScopeSince time.Time        `json:"-"`
+	Type                 string           `json:"type"`
+	Config               ServerRuleConfig `json:"config"`
+	CheckID              string           `json:"check_id,omitempty"`
+	Name                 string           `json:"name,omitempty"`
+	PolicyID             string           `json:"policy_id,omitempty"`
+	PolicyName           string           `json:"policy_name,omitempty"`
+	ScopeType            string           `json:"scope_type,omitempty"` // client | site | group | agent | device (owned by the device)
 }
 
 // AlertRuleDefault is the fleet default of one server rule type.

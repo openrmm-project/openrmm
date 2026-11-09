@@ -100,7 +100,7 @@ func (s *Store) GoverningRules(ctx context.Context, ruleType string) (map[string
 		return nil, fmt.Errorf("%q is not a server rule type", ruleType)
 	}
 	rows, err := s.pool.Query(ctx, `SELECT DISTINCT ON (a.id) a.id, c.id, c.name, c.config,
-		COALESCE(p.id::text, ''), COALESCE(p.name, ''), src.scope`+governingCandidates+governingOrder, ruleType)
+		COALESCE(p.id::text, ''), COALESCE(p.name, ''), src.scope, a.monitoring_scope_since`+governingCandidates+governingOrder, ruleType)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (s *Store) GoverningRules(ctx context.Context, ruleType string) (map[string
 		var agentID string
 		var raw json.RawMessage
 		r := models.GoverningRule{Type: ruleType}
-		if err := rows.Scan(&agentID, &r.CheckID, &r.Name, &raw, &r.PolicyID, &r.PolicyName, &r.ScopeType); err != nil {
+		if err := rows.Scan(&agentID, &r.CheckID, &r.Name, &raw, &r.PolicyID, &r.PolicyName, &r.ScopeType, &r.MonitoringScopeSince); err != nil {
 			return nil, err
 		}
 		cfg, err := models.ParseServerRuleConfig(ruleType, raw)
@@ -197,13 +197,14 @@ func (s *Store) RebootPendingSince(ctx context.Context) (map[string]time.Time, e
 // JobOutcome is the latest finished run of one scheduled task or script on one
 // device.
 type JobOutcome struct {
-	AgentID     string
-	Key         string // task:<id> | script:<id> | adhoc
-	FromTask    bool
-	Failed      bool
-	JobID       string
-	Description string
-	At          time.Time
+	MonitoringScopeSince time.Time
+	AgentID              string
+	Key                  string // task:<id> | script:<id> | adhoc
+	FromTask             bool
+	Failed               bool
+	JobID                string
+	Description          string
+	At                   time.Time
 }
 
 // LatestJobOutcomes returns, per device and per scheduled task or script, the
@@ -212,13 +213,14 @@ type JobOutcome struct {
 func (s *Store) LatestJobOutcomes(ctx context.Context, since time.Time) ([]JobOutcome, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT ON (j.agent_id, k.key) j.agent_id, k.key, j.task_id IS NOT NULL,
-		       j.status = 'failed', j.id, j.description, j.updated_at
-		FROM jobs j
+		       j.status = 'failed', j.id, j.description, j.updated_at, a.monitoring_scope_since
+		FROM jobs j JOIN agents a ON a.id=j.agent_id
 		CROSS JOIN LATERAL (SELECT CASE
 		    WHEN j.task_id IS NOT NULL THEN 'task:' || j.task_id::text
 		    WHEN j.script_id IS NOT NULL THEN 'script:' || j.script_id::text
 		    ELSE 'adhoc' END AS key) k
 		WHERE j.status IN ('completed', 'failed') AND j.updated_at >= $1
+          AND j.agent_monitoring_scope_since = a.monitoring_scope_since
 		ORDER BY j.agent_id, k.key, j.updated_at DESC, j.id DESC`, since)
 	if err != nil {
 		return nil, err
@@ -227,7 +229,7 @@ func (s *Store) LatestJobOutcomes(ctx context.Context, since time.Time) ([]JobOu
 	var out []JobOutcome
 	for rows.Next() {
 		var o JobOutcome
-		if err := rows.Scan(&o.AgentID, &o.Key, &o.FromTask, &o.Failed, &o.JobID, &o.Description, &o.At); err != nil {
+		if err := rows.Scan(&o.AgentID, &o.Key, &o.FromTask, &o.Failed, &o.JobID, &o.Description, &o.At, &o.MonitoringScopeSince); err != nil {
 			return nil, err
 		}
 		out = append(out, o)

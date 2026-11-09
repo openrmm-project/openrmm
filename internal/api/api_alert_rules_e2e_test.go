@@ -86,6 +86,15 @@ func TestAlertRulesAndEmailPreferencesE2E(t *testing.T) {
 	request(http.MethodPut, "/api/alert-defaults/connectivity", `{"mode":"ignore"}`, http.StatusForbidden)
 	request(http.MethodGet, "/api/checks/"+check.ID+"/overrides", "", http.StatusForbidden)
 	request(http.MethodPut, "/api/me/notifications", `{"rules":{"mode":"selected","check_ids":["`+check.ID+`"]}}`, http.StatusBadRequest)
+	// Scoped callers cannot distinguish an unknown agent from an inaccessible
+	// one through the suppression's pre-authorization provenance read.
+	for _, target := range []string{agent.ID, uuid.NewString()} {
+		body, err := json.Marshal(map[string]any{"kind": "maintenance", "scope_type": "agent", "scope_id": target, "ends_at": time.Now().Add(time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request(http.MethodPost, "/api/alert-suppressions", string(body), http.StatusForbidden)
+	}
 	if err := json.Unmarshal(request(http.MethodGet, "/api/me/notifications", "", http.StatusOK), &prefs); err != nil {
 		t.Fatal(err)
 	}

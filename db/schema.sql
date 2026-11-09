@@ -1090,3 +1090,37 @@ CREATE TABLE IF NOT EXISTS notification_rule_selections (
     PRIMARY KEY (user_id, check_id)
 );
 CREATE INDEX IF NOT EXISTS idx_notification_rule_selections_check ON notification_rule_selections(check_id);
+
+-- Tie server-rule observations and job history to the device's current scope.
+-- A move, including a move away and back, invalidates prefetched metadata.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS monitoring_scope_since TIMESTAMPTZ NOT NULL DEFAULT now();
+CREATE OR REPLACE FUNCTION advance_agent_monitoring_scope() RETURNS trigger AS $$
+BEGIN
+    IF OLD.site_id IS DISTINCT FROM NEW.site_id OR OLD.group_id IS DISTINCT FROM NEW.group_id THEN
+        NEW.monitoring_scope_since = GREATEST(clock_timestamp(), OLD.monitoring_scope_since + interval '1 microsecond');
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS agents_monitoring_scope ON agents;
+CREATE TRIGGER agents_monitoring_scope BEFORE UPDATE OF site_id, group_id ON agents
+FOR EACH ROW EXECUTE FUNCTION advance_agent_monitoring_scope();
+
+-- Capture scope at queue time, using the database clock/revision rather than
+-- application timestamps. Pre-upgrade jobs have no proven scope and stay out.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS agent_monitoring_scope_since TIMESTAMPTZ;
+CREATE OR REPLACE FUNCTION capture_job_monitoring_scope() RETURNS trigger AS $$
+BEGIN
+    SELECT monitoring_scope_since INTO NEW.agent_monitoring_scope_since
+    FROM agents WHERE id=NEW.agent_id FOR SHARE;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS jobs_monitoring_scope ON jobs;
+CREATE TRIGGER jobs_monitoring_scope BEFORE INSERT ON jobs
+FOR EACH ROW EXECUTE FUNCTION capture_job_monitoring_scope();
+
+-- Device-owned silences carry the same scope provenance as their incidents.
+-- Legacy silences with unknown provenance remain visible to global admins but
+-- must be recreated before applying to a device in its current scope.
+ALTER TABLE alert_suppressions ADD COLUMN IF NOT EXISTS agent_monitoring_scope_since TIMESTAMPTZ;

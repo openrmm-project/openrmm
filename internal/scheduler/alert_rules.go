@@ -69,6 +69,16 @@ func ruleLabel(r models.GoverningRule) string {
 	}
 }
 
+// A governing rule and its human-readable labels must belong to the same
+// device scope revision as the other evaluator input. Defaults are global.
+func ruleForAgentScope(r models.GoverningRule, a *models.Agent) models.GoverningRule {
+	if r.CheckID != "" && !r.MonitoringScopeSince.Equal(a.MonitoringScopeSince) {
+		return models.GoverningRule{Type: r.Type}
+	}
+	r.MonitoringScopeSince = a.MonitoringScopeSince
+	return r
+}
+
 // ruleCondition is one alert a server rule wants open.
 type ruleCondition struct {
 	rule        models.GoverningRule
@@ -82,10 +92,23 @@ type conditionKey struct{ agentID, key string }
 // than connectivity (which runs every tick in evaluateOffline): failed jobs,
 // failed updates, pending reboots and outdated agents.
 func (s *Scheduler) evaluateServerRules(ctx context.Context, agents []models.Agent, now time.Time) {
-	jobRule := s.ruleResolver(ctx, models.CheckJobFailure)
-	patchRule := s.ruleResolver(ctx, models.CheckPatchFailure)
-	rebootRule := s.ruleResolver(ctx, models.CheckRebootPending)
-	outdatedRule := s.ruleResolver(ctx, models.CheckAgentOutdated)
+	byID := map[string]*models.Agent{}
+	for i := range agents {
+		byID[agents[i].ID] = &agents[i]
+	}
+	scoped := func(kind string) func(string) models.GoverningRule {
+		resolve := s.ruleResolver(ctx, kind)
+		return func(id string) models.GoverningRule {
+			if a := byID[id]; a != nil {
+				return ruleForAgentScope(resolve(id), a)
+			}
+			return models.GoverningRule{Type: kind}
+		}
+	}
+	jobRule := scoped(models.CheckJobFailure)
+	patchRule := scoped(models.CheckPatchFailure)
+	rebootRule := scoped(models.CheckRebootPending)
+	outdatedRule := scoped(models.CheckAgentOutdated)
 
 	want := map[conditionKey]ruleCondition{}
 	// Job alerts close only on a later successful run of the same task or
@@ -156,7 +179,7 @@ func (s *Scheduler) evaluateServerRules(ctx context.Context, agents []models.Age
 		for _, o := range outcomes {
 			r := jobRule(o.AgentID)
 			k := conditionKey{o.AgentID, "job:" + o.Key}
-			if !live[o.AgentID] {
+			if !live[o.AgentID] || !o.MonitoringScopeSince.Equal(byID[o.AgentID].MonitoringScopeSince) {
 				continue
 			}
 			counted := r.Config.Alerts() && (r.Config.Scope == "all" || o.FromTask)
@@ -180,7 +203,8 @@ func (s *Scheduler) evaluateServerRules(ctx context.Context, agents []models.Age
 			AgentID: &agentID, SourceType: models.AlertSourceRule, SourceID: &agentID,
 			ConditionKey: k.key, Severity: c.rule.Config.Severity, Message: c.message,
 			Cooldown: 5 * time.Minute, ObservedAt: now, RuleID: ruleID(c.rule),
-			ObservationID: k.key + ":" + c.observation,
+			ObservationID:        k.key + ":" + c.observation,
+			MonitoringScopeSince: &c.rule.MonitoringScopeSince,
 		})
 		if err != nil {
 			s.recordError("raise "+k.key+" alert for "+agentID, err)
@@ -239,7 +263,7 @@ func (s *Scheduler) evaluateServerRules(ctx context.Context, agents []models.Age
 			kind, note = "inapplicable", "No rule in force alerts on this any more: "+ruleLabel(r)+"."
 		}
 		resolved, err := s.store.ResolveAlertCondition(ctx, models.AlertSourceRule, a.AgentID, a.AgentID,
-			a.ConditionKey, "system", kind, note, now)
+			a.ConditionKey, "system", kind, note, now, &r.MonitoringScopeSince)
 		if err != nil {
 			s.recordError("resolve "+a.ConditionKey+" alert for "+k.agentID, err)
 			continue

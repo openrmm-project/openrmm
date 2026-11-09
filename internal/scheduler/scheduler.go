@@ -316,6 +316,7 @@ func containsInt(xs []int, v int) bool {
 // evaluateOffline applies the connectivity rule in force for the device: its
 // own, a policy's, or the fleet default (docs/24-alert-rules.md).
 func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now time.Time, rule models.GoverningRule) {
+	rule = ruleForAgentScope(rule, a)
 	online := s.hub.IsOnline(a.ID)
 	id := a.ID
 	if online {
@@ -327,7 +328,7 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 			kind = "inapplicable"
 		}
 		resolved, err := s.store.ResolveAlertSource(ctx, models.AlertSourceAgent, &id, &id,
-			"system", kind, "Agent reconnected.", now)
+			"system", kind, "Agent reconnected.", now, &rule.MonitoringScopeSince)
 		if err != nil {
 			s.recordError("resolve offline alert for "+id, err)
 		} else if len(resolved) > 0 {
@@ -363,7 +364,7 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 		// The rule in force says not to alert (laptops that sleep): close an
 		// offline alert still open from before, without a "recovered" mail.
 		if _, err := s.store.ResolveAlertSource(ctx, models.AlertSourceAgent, &id, &id,
-			"system", "inapplicable", "Offline alerts are off for this device: "+ruleLabel(rule)+".", now); err != nil {
+			"system", "inapplicable", "Offline alerts are off for this device: "+ruleLabel(rule)+".", now, &rule.MonitoringScopeSince); err != nil {
 			s.recordError("close offline alert turned off for "+id, err)
 		}
 		return
@@ -376,7 +377,7 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 		ConditionKey: "connectivity", Severity: rule.Config.Severity,
 		Message: fmt.Sprintf("Agent %s is offline (last seen %s)", a.Hostname, a.LastSeen.Format(time.RFC3339)),
 		Output:  a.LastSeen.Format(time.RFC3339), Cooldown: 5 * time.Minute, ObservedAt: now,
-		RuleID: ruleID(rule),
+		RuleID: ruleID(rule), MonitoringScopeSince: &rule.MonitoringScopeSince,
 	})
 	if err != nil {
 		s.recordError("raise offline alert for "+id, err)

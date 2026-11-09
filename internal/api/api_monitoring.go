@@ -263,7 +263,7 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if models.IsServerRule(existing.Type) && !models.IsServerRule(out.Type) {
-		s.auditServerRule(r, existing, "replace")
+		s.auditServerRule(r, existing, "update")
 	} else {
 		s.auditServerRule(r, out, "update")
 	}
@@ -913,8 +913,20 @@ func (s *Server) createAlertSuppression(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "kind and scope are required")
 		return
 	}
+	if _, err := uuid.Parse(sup.ScopeID); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid suppression scope")
+		return
+	}
+	snapshot, snapshotErr := s.store.SuppressionAgentSnapshot(r.Context(), &sup)
 	if !s.requireSuppressionScope(w, r, sup.ScopeType, sup.ScopeID) {
 		return
+	}
+	if snapshotErr != nil {
+		writeErr(w, httpStatusFor(snapshotErr), snapshotErr.Error())
+		return
+	}
+	if snapshot != nil {
+		sup.MonitoringScopeSince = &snapshot.MonitoringScopeSince
 	}
 	now := time.Now()
 	if sup.StartsAt.IsZero() {

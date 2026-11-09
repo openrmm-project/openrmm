@@ -443,17 +443,18 @@ type AlertEvent struct {
 }
 
 type AlertSuppression struct {
-	ID         string     `json:"id"`
-	Kind       string     `json:"kind"`
-	ScopeType  string     `json:"scope_type"`
-	ScopeID    string     `json:"scope_id"`
-	StartsAt   time.Time  `json:"starts_at"`
-	EndsAt     time.Time  `json:"ends_at"`
-	Reason     string     `json:"reason"`
-	CreatedBy  string     `json:"created_by"`
-	CreatedAt  time.Time  `json:"created_at"`
-	CanceledAt *time.Time `json:"canceled_at,omitempty"`
-	CanceledBy string     `json:"canceled_by,omitempty"`
+	MonitoringScopeSince *time.Time `json:"-"`
+	ID                   string     `json:"id"`
+	Kind                 string     `json:"kind"`
+	ScopeType            string     `json:"scope_type"`
+	ScopeID              string     `json:"scope_id"`
+	StartsAt             time.Time  `json:"starts_at"`
+	EndsAt               time.Time  `json:"ends_at"`
+	Reason               string     `json:"reason"`
+	CreatedBy            string     `json:"created_by"`
+	CreatedAt            time.Time  `json:"created_at"`
+	CanceledAt           *time.Time `json:"canceled_at,omitempty"`
+	CanceledBy           string     `json:"canceled_by,omitempty"`
 }
 
 type AlertCounts struct {

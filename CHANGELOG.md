@@ -6,6 +6,17 @@ tag.
 
 ## [Unreleased]
 
+### Dependencies
+
+- `github.com/jackc/pgx/v5` 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g)
+  and `github.com/go-jose/go-jose/v4` 4.1.7 (GHSA-r39w-98wm-9pp6,
+  GHSA-27pc-rm86-68pq, GHSA-p9j4-2j95-j4rv, GHSA-v6h2-qj3f-2h6v,
+  GHSA-c67m-wr4h-2ccg). OpenRMM does not reach the pgx flaws: it sends no
+  simple-protocol batches and sets neither `require_auth` nor
+  `channel_binding`. It uses go-jose only through go-oidc, to verify the
+  single sign-on provider's ID tokens. `govulncheck` reports nothing before or
+  after.
+
 ## [0.9.4] - 2026-11-09
 
 ### Added

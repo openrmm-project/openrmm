@@ -100,6 +100,7 @@ func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 		RunAtMinute  int    `json:"run_at_minute"`
 		DaysOfWeek   int    `json:"days_of_week"`
 		RunAtMinutes []int  `json:"run_at_minutes"`
+		Timezone     string `json:"timezone"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
@@ -122,6 +123,7 @@ func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 		Name: strings.TrimSpace(in.Name), Shell: in.Shell, Script: in.Script,
 		ScheduleKind: in.ScheduleKind, IntervalSec: in.IntervalSec,
 		RunAtMinute: in.RunAtMinute, DaysOfWeek: in.DaysOfWeek, RunAtMinutes: in.RunAtMinutes,
+		Timezone: in.Timezone,
 		// Not negotiable, and not a default the model can override: the schema
 		// itself refuses an enabled proposal that nobody has reviewed.
 		Enabled:    false,

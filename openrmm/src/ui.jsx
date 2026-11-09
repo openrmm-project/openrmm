@@ -31,6 +31,16 @@ function minuteToHHMM(m) {
   return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
 }
 
+// The zone a new schedule starts in: the one this browser runs in, since that
+// is the clock a person picks a time by. A schedule's times are read in its
+// zone on the server, never in the server's own.
+function browserTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
+}
+// "03:00 America/New_York": a schedule's time with the zone it is read in, so
+// nobody takes a UTC time for their own. Schedules from before zones are UTC.
+function scheduleZone(tz) { return tz || 'UTC'; }
+
 /* --------------------------- query / mutation ----------------------------- */
 function useQuery(deps, fn, opts = {}) {
   const [state, setState] = useState({ data: opts.initial, loading: true, error: null });
@@ -222,6 +232,18 @@ function Select({ children, ...props }) {
       <Icon name="chevdown" size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
     </div>
   );
+}
+// TimezoneSelect lists every IANA zone this browser knows, UTC first, and
+// keeps the current value even when the browser does not list it.
+function TimezoneSelect({ value, onChange, ...props }) {
+  const zones = useMemo(() => {
+    let list = [];
+    try { list = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []; } catch { list = []; }
+    const all = new Set(['UTC', ...list]);
+    if (value) all.add(value);
+    return [...all];
+  }, [value]);
+  return <Select value={value || 'UTC'} onChange={(e) => onChange(e.target.value)} {...props}>{zones.map((z) => <option key={z} value={z}>{z}</option>)}</Select>;
 }
 // Combobox is a searchable single-select. Drop-in for <Select> when the option
 // list is long: options are [{ value, label, group? }]; typing filters by label
@@ -608,7 +630,7 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t
 }
 
 Object.assign(window, {
-  cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, useQuery, useMutation, useToast, ToastProvider,
+  cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, browserTimezone, scheduleZone, TimezoneSelect, useQuery, useMutation, useToast, ToastProvider,
   Button, Spinner, StatusPill, STATUS_META, statusLabel, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
   Avatar, RoleBadge, Kbd, Skeleton, EmptyState, ErrorBoundary, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
   csvEscape, toCSV, downloadText,

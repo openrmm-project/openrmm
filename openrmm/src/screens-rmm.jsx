@@ -45,11 +45,12 @@ function checkType(type) {
 
 // A task's schedule in words: "Every 1 h", "Daily at 03:00", "Mon Wed at 08:00".
 function taskSchedule(task) {
-  if (task.schedule_kind === 'daily') return t('tasks.dailyAt', { time: minuteToHHMM(task.run_at_minute) });
+  const zone = ' ' + scheduleZone(task.timezone);
+  if (task.schedule_kind === 'daily') return t('tasks.dailyAt', { time: minuteToHHMM(task.run_at_minute) + zone });
   if (task.schedule_kind === 'weekly') {
     const days = WEEKDAY_BITS.filter((i) => (task.days_of_week & (1 << i)) !== 0).map(weekdayShort).join(' ');
     const at = (task.run_at_minutes || []).map(minuteToHHMM).join(', ');
-    return t('tasks.weeklyAt', { days: days || '—', times: at || '—' });
+    return t('tasks.weeklyAt', { days: days || '—', times: at ? at + zone : '—' });
   }
   return t('tasks.every', { interval: fmtInterval(task.interval_sec) });
 }
@@ -592,6 +593,9 @@ function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId 
   const [minute, setMinute] = useState(task?.run_at_minute || 180);
   const [daysOfWeek, setDaysOfWeek] = useState(task?.days_of_week || 0);
   const [times, setTimes] = useState(task?.run_at_minutes?.length ? task.run_at_minutes : [180]);
+  // A new task starts in this browser's zone; an existing one keeps its own,
+  // and one from before zones existed shows as the UTC it runs in.
+  const [timezone, setTimezone] = useState(task ? scheduleZone(task.timezone) : browserTimezone());
   const [enabled, setEnabled] = useState(task?.enabled ?? true);
   const [busy, setBusy] = useState(false);
   const devices = Object.values(devMap);
@@ -600,7 +604,7 @@ function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId 
     if (kind === 'weekly' && (daysOfWeek === 0 || times.length === 0)) { toast.error(t('tasks.pickWeekday')); return; }
     setBusy(true);
     const sc = scripts.find((s) => s.id === scriptId);
-    const body = { name: name || t('tasks.defaultName'), script_id: scriptId || undefined, shell: sc?.shell || 'bash', schedule_kind: kind, interval_sec: Number(intervalSec), run_at_minute: Number(minute), days_of_week: kind === 'weekly' ? daysOfWeek : 0, run_at_minutes: kind === 'weekly' ? times : [], enabled };
+    const body = { name: name || t('tasks.defaultName'), script_id: scriptId || undefined, shell: sc?.shell || 'bash', schedule_kind: kind, interval_sec: Number(intervalSec), run_at_minute: Number(minute), days_of_week: kind === 'weekly' ? daysOfWeek : 0, run_at_minutes: kind === 'weekly' ? times : [], timezone, enabled };
     if (target.startsWith('dev:')) body.agent_id = target.slice(4); else if (target.startsWith('pol:')) body.policy_id = target.slice(4);
     try { if (task) await api.updateTask(task.id, body); else await api.createTask(body); toast.success(task ? t('tasks.updated') : t('tasks.created')); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
@@ -653,6 +657,7 @@ function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId 
             </div>
           )}
         </Field>
+        {kind !== 'interval' && <Field label={t('schedule.timezone')} hint={t('schedule.timezoneHint')}><TimezoneSelect value={timezone} onChange={setTimezone} /></Field>}
         <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={setEnabled} /><span className="text-[13px] text-ink">{t('checks.enabledLabel')}</span></label>
       </div>
       <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{task && can('tasks.manage') && <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{task ? t('tasks.save') : t('tasks.create')}</Button></div>

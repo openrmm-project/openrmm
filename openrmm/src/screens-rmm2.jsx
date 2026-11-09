@@ -483,7 +483,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
             {tasks.length ? <div className="space-y-2">{tasks.map((task) => (
               <div key={task.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3">
                 <Icon name="tasks" size={15} className="text-muted" />
-                <div className="flex-1 min-w-0"><div className="text-[13px] text-ink font-medium truncate">{task.name}</div><div className="text-[11px] text-faint">{task.schedule_kind === 'daily' ? t('tasks.dailyAt', { time: minuteToHHMM(task.run_at_minute) }) : t('tasks.every', { interval: fmtInterval(task.interval_sec) })}</div></div>
+                <div className="flex-1 min-w-0"><div className="text-[13px] text-ink font-medium truncate">{task.name}</div><div className="text-[11px] text-faint">{window.taskSchedule(task)}</div></div>
                 <Toggle checked={task.enabled} onChange={() => setConfirmToggleTask(task)} disabled={!canTasks} />
                 {canTasks && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditTask(task)}>{t('action.edit')}</Button>}
               </div>))}</div>

@@ -5,7 +5,7 @@ name: Docs site
 # so a broken link or a page that no longer renders fails before it is merged.
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/v*']
     paths:
       - 'docs/**'
       - 'deploy/QUICKSTART.md'

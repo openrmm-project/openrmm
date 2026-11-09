@@ -13,7 +13,7 @@ concurrency:
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/v*']
     paths:
       # Any Go change: this job also measures coverage, with the database
       # tests in, for every package.

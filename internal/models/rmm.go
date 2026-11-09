@@ -326,8 +326,12 @@ type Task struct {
 	IntervalSec  int     `json:"interval_sec"`
 	RunAtMinute  int     `json:"run_at_minute"`
 	DaysOfWeek   int     `json:"days_of_week"`   // weekly: bitmask, bit N = time.Weekday N (0=Sun)
-	RunAtMinutes []int   `json:"run_at_minutes"` // weekly: times of day, minutes since midnight (UTC)
-	Enabled      bool    `json:"enabled"`
+	RunAtMinutes []int   `json:"run_at_minutes"` // weekly: times of day, minutes since midnight in Timezone
+	// Timezone is the IANA zone run_at_minute, run_at_minutes and the weekdays
+	// are in, daylight saving included. A task created without one is UTC;
+	// an edit that sends none keeps the zone it had.
+	Timezone string `json:"timezone"`
+	Enabled  bool   `json:"enabled"`
 	// ProposedBy names the AI actor that authored this task, empty when a person
 	// did. It is permanent provenance and survives review. ApprovedBy names the
 	// person who released it. An unreviewed proposal cannot be enabled — the
@@ -492,17 +496,20 @@ type AgentPatch struct {
 // PatchPolicy bundles auto-approval, exclusions, a maintenance window and a
 // reboot rule, assigned to a client/site/agent scope.
 type PatchPolicy struct {
-	ID                 string    `json:"id"`
-	Name               string    `json:"name"`
-	Enabled            bool      `json:"enabled"`
-	AutoApprove        []string  `json:"auto_approve"`
-	AutoApproveAgeDays int       `json:"auto_approve_age_days"`
-	Exclusions         []string  `json:"exclusions"`
-	WindowDays         []int     `json:"window_days"`
-	WindowStartMin     int       `json:"window_start_min"`
-	WindowEndMin       int       `json:"window_end_min"`
-	Reboot             string    `json:"reboot"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Enabled            bool     `json:"enabled"`
+	AutoApprove        []string `json:"auto_approve"`
+	AutoApproveAgeDays int      `json:"auto_approve_age_days"`
+	Exclusions         []string `json:"exclusions"`
+	WindowDays         []int    `json:"window_days"`
+	WindowStartMin     int      `json:"window_start_min"`
+	WindowEndMin       int      `json:"window_end_min"`
+	// Timezone is the IANA zone the window's days and minutes are in. A
+	// policy created without one is UTC; an edit that sends none keeps it.
+	Timezone  string    `json:"timezone"`
+	Reboot    string    `json:"reboot"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // PatchPolicyAssignment binds a patch policy to a scope.

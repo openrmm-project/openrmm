@@ -1017,3 +1017,8 @@ CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WH
 -- Migration 024: the MeshCentral account a user's remote sessions sign in as
 -- when the server mints login tokens; empty means none.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS meshcentral_user TEXT NOT NULL DEFAULT '';
+
+-- Migration 025: the IANA zone a scheduled task's and a patch window's times of
+-- day are in. Existing rows keep UTC.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+ALTER TABLE patch_policies ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';

@@ -143,9 +143,10 @@ func Tools() []Tool {
 				"script":{"type":"string","description":"the full script source"},
 				"schedule_kind":{"type":"string","enum":["interval","daily","weekly"],"description":"how it repeats"},
 				"interval_sec":{"type":"integer","description":"interval schedules: seconds between runs"},
-				"run_at_minute":{"type":"integer","description":"daily schedules: minutes since midnight UTC (0-1439)"},
-				"days_of_week":{"type":"integer","description":"weekly schedules: bitmask, bit 0 = Sunday"},
-				"run_at_minutes":{"type":"array","items":{"type":"integer"},"description":"weekly schedules: times of day, minutes since midnight UTC"}
+				"run_at_minute":{"type":"integer","description":"daily schedules: minutes since midnight in timezone (0-1439)"},
+				"days_of_week":{"type":"integer","description":"weekly schedules: bitmask, bit 0 = Sunday, in timezone"},
+				"run_at_minutes":{"type":"array","items":{"type":"integer"},"description":"weekly schedules: times of day, minutes since midnight in timezone"},
+				"timezone":{"type":"string","description":"IANA time zone the times of day are in, daylight saving included, such as America/New_York. Default UTC. When the user gives a local time without a zone, ask for it rather than guess"}
 			},"required":["name","shell","script","schedule_kind"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{

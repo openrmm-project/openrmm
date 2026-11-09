@@ -1430,7 +1430,7 @@ func (s *Store) ListCheckResultsForUser(ctx context.Context, checkID, agentID, u
 
 // ===================== Tasks =====================
 
-const taskCols = `id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by, created_at`
+const taskCols = `id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, timezone, enabled, proposed_by, approved_by, created_at`
 
 // int32s / ints bridge the INTEGER[] column (pgx wants []int32) and the model's
 // []int field, so callers never deal with the width mismatch.
@@ -1454,7 +1454,7 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 	var t models.Task
 	var mins []int32
 	err := row.Scan(&t.ID, &t.AgentID, &t.PolicyID, &t.Name, &t.ScriptID, &t.Shell, &t.Script,
-		&t.ScheduleKind, &t.IntervalSec, &t.RunAtMinute, &t.DaysOfWeek, &mins, &t.Enabled, &t.ProposedBy, &t.ApprovedBy, &t.CreatedAt)
+		&t.ScheduleKind, &t.IntervalSec, &t.RunAtMinute, &t.DaysOfWeek, &mins, &t.Timezone, &t.Enabled, &t.ProposedBy, &t.ApprovedBy, &t.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1469,9 +1469,9 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 func (s *Store) CreateTask(ctx context.Context, t *models.Task) (*models.Task, error) {
 	t.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ProposedBy, t.ApprovedBy)
+		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by, timezone)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE(NULLIF($16,''),'UTC'))`,
+		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ProposedBy, t.ApprovedBy, t.Timezone)
 	if err != nil {
 		return nil, err
 	}
@@ -1534,8 +1534,9 @@ func (s *Store) TasksForAgent(ctx context.Context, agentID string, siteID, clien
 // UpdateTask edits a task.
 func (s *Store) UpdateTask(ctx context.Context, t *models.Task) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE tasks SET name=$2, script_id=$3, shell=$4, script=$5, schedule_kind=$6, interval_sec=$7, run_at_minute=$8, days_of_week=$9, run_at_minutes=$10, enabled=$11, approved_by=$12 WHERE id=$1`,
-		t.ID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ApprovedBy)
+		`UPDATE tasks SET name=$2, script_id=$3, shell=$4, script=$5, schedule_kind=$6, interval_sec=$7, run_at_minute=$8, days_of_week=$9, run_at_minutes=$10, enabled=$11, approved_by=$12,
+		        timezone=COALESCE(NULLIF($13,''), timezone) WHERE id=$1`,
+		t.ID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ApprovedBy, t.Timezone)
 	return err
 }
 

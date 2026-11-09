@@ -209,7 +209,7 @@ function PoliciesTab() {
                   </div>
                   <div className="text-[12px] text-muted mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
                     <span>{t('patchpol.autoApprove', { classes: asList(p.auto_approve).length ? asList(p.auto_approve).map((c) => tEnum('patch.class', c)).join(', ') : '—' })} {asList(p.auto_approve).length && p.auto_approve_age_days ? t('patchpol.afterDays', { n: p.auto_approve_age_days }) : ''}</span>
-                    <span>{t('patchpol.window', { days: asList(p.window_days).length ? asList(p.window_days).map((d) => weekdayShort(Number(d))).join(', ') : t('patchpol.anyDay'), start: minuteToHHMM(p.window_start_min), end: minuteToHHMM(p.window_end_min) })}</span>
+                    <span>{t('patchpol.window', { days: asList(p.window_days).length ? asList(p.window_days).map((d) => weekdayShort(Number(d))).join(', ') : t('patchpol.anyDay'), start: minuteToHHMM(p.window_start_min), end: minuteToHHMM(p.window_end_min) + ' ' + scheduleZone(p.timezone) })}</span>
                     <span>{t('patchpol.reboot', { mode: p.reboot ? tEnum('patchpol.reboot', p.reboot) : '—' })}</span>
                     {asList(p.exclusions).length ? <span>{t('patchpol.excludes', { list: asList(p.exclusions).join(', ') })}</span> : null}
                   </div>
@@ -240,6 +240,9 @@ function PolicyModal({ policy, onClose }) {
   const [start, setStart] = useState(minuteToHHMM(policy.window_start_min ?? 0));
   const [end, setEnd] = useState(minuteToHHMM(policy.window_end_min ?? 1439));
   const [reboot, setReboot] = useState(policy.reboot || 'if_required');
+  // A new policy's window starts in this browser's zone; an existing one keeps
+  // its own, and one from before zones existed shows as the UTC it opens in.
+  const [timezone, setTimezone] = useState(isNew ? browserTimezone() : scheduleZone(policy.timezone));
   const [busy, setBusy] = useState(false);
   const toMin = (hhmm) => { const [h, m] = (hhmm || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); };
   const toggle = (arr, v, set) => set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
@@ -248,7 +251,7 @@ function PolicyModal({ policy, onClose }) {
     const body = {
       name, enabled, auto_approve: auto, auto_approve_age_days: Number(age),
       exclusions: excl.split(',').map((s) => s.trim()).filter(Boolean),
-      window_days: days, window_start_min: toMin(start), window_end_min: toMin(end), reboot,
+      window_days: days, window_start_min: toMin(start), window_end_min: toMin(end), timezone, reboot,
     };
     try {
       if (isNew) await api.createPatchPolicy(body); else await api.updatePatchPolicy(policy.id, body);
@@ -287,6 +290,7 @@ function PolicyModal({ policy, onClose }) {
             <option value="never">{t('patchpol.reboot.never')}</option><option value="if_required">{t('patchpol.reboot.if_required')}</option><option value="always">{t('patchpol.reboot.always')}</option>
           </Select></Field>
         </div>
+        <Field label={t('schedule.timezone')} hint={t('schedule.windowTimezoneHint')}><TimezoneSelect value={timezone} onChange={setTimezone} /></Field>
         <Field label={t('patchpol.exclusions')} hint={t('patchpol.exclusionsHint')}><Input value={excl} onChange={(e) => setExcl(e.target.value)} placeholder="KB5001234, optional" /></Field>{/* i18n-ignore: example of the values the server accepts */}
 
         {!isNew && <PolicyAssignments policyId={policy.id} />}

@@ -439,8 +439,8 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 |--------|------|------------|-------------|
 | GET | `/api/tasks?agent_id=&policy_id=` | `tasks.view` | List tasks |
 | GET | `/api/tasks/{id}/targets` | `tasks.view` | Count of agents a run would hit (in caller scope) |
-| POST | `/api/tasks` | `tasks.manage` | Create (`name, script_id` or `shell+script`, `schedule_kind` + `interval_sec` / `run_at_minute` / `days_of_week`+`run_at_minutes`, `agent_id` or `policy_id`) |
-| PUT | `/api/tasks/{id}` | `tasks.manage` | Update |
+| POST | `/api/tasks` | `tasks.manage` | Create (`name, script_id` or `shell+script`, `schedule_kind` + `interval_sec` / `run_at_minute` / `days_of_week`+`run_at_minutes`, `timezone`, `agent_id` or `policy_id`). `timezone` is the IANA zone the times of day are in (default `UTC`); anything else, `Local` included, is a **400** |
+| PUT | `/api/tasks/{id}` | `tasks.manage` | Update. Without `timezone`, the task keeps its zone |
 | POST | `/api/tasks/{id}/run` | `tasks.manage` | Run now on all target agents (returns `{queued}`) |
 | DELETE | `/api/tasks/{id}` | `tasks.manage` | Delete |
 
@@ -493,8 +493,8 @@ must be visible to the caller.
 | POST | `/api/devices/{id}/reboot` | `patches.manage` | `{force?:false}`; default rejects an active native relay session |
 | GET | `/api/patches` | `patches.view` | Scope-filtered fleet catalog |
 | POST | `/api/patches/{id}/approve` | `patches.manage` | `{scope_type,scope_id,decision}`; decision is `approve` or `decline` |
-| GET/POST | `/api/patch-policies` | `patches.policies.manage` | List/create global patch policy definitions |
-| PUT/DELETE | `/api/patch-policies/{id}` | `patches.policies.manage` | Update/delete a global definition |
+| GET/POST | `/api/patch-policies` | `patches.policies.manage` | List/create global patch policy definitions. `timezone` is the IANA zone the window's days and minutes are in (default `UTC`) |
+| PUT/DELETE | `/api/patch-policies/{id}` | `patches.policies.manage` | Update/delete a global definition. Without `timezone`, the policy keeps its zone |
 | GET/POST | `/api/patch-policies/{id}/assignments` | `patches.policies.manage` | List/add client/site/agent assignment |
 | DELETE | `/api/patch-policies/assignments/{aid}` | `patches.policies.manage` | Delete an assignment |
 

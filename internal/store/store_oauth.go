@@ -161,7 +161,8 @@ func (s *Store) CreateOAuthCode(ctx context.Context, codeHash, clientID, userID,
 // ConsumeOAuthCode atomically deletes and returns a non-expired code (single use).
 func (s *Store) ConsumeOAuthCode(ctx context.Context, codeHash string) (clientID, userID, redirectURI, codeChallenge, scope string, ok bool, err error) {
 	err = s.pool.QueryRow(ctx,
-		`DELETE FROM oauth_codes WHERE code_hash=$1 AND expires_at > now()
+		`DELETE FROM oauth_codes o WHERE code_hash=$1 AND expires_at > now()
+         AND EXISTS (SELECT 1 FROM users u WHERE u.id=o.user_id AND u.disabled_at IS NULL)
 		 RETURNING client_id, user_id::text, redirect_uri, code_challenge, scope`, codeHash).
 		Scan(&clientID, &userID, &redirectURI, &codeChallenge, &scope)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -176,10 +177,13 @@ func (s *Store) ConsumeOAuthCode(ctx context.Context, codeHash string) (clientID
 // --- access + refresh tokens ---
 
 func (s *Store) CreateOAuthToken(ctx context.Context, tokenHash string, refreshHash *string, clientID, userID, scope string, expiresAt, refreshExpiresAt time.Time) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`INSERT INTO oauth_tokens (token_hash, refresh_hash, client_id, user_id, scope, expires_at, refresh_expires_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		 SELECT $1,$2,$3,$4,$5,$6,$7 FROM users u WHERE u.id=$4 AND u.disabled_at IS NULL`,
 		tokenHash, refreshHash, clientID, userID, scope, expiresAt, refreshExpiresAt)
+	if err == nil && tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
 	return err
 }
 
@@ -189,7 +193,7 @@ func (s *Store) OAuthTokenPrincipal(ctx context.Context, tokenHash string) (user
 	err = s.pool.QueryRow(ctx,
 		`SELECT o.user_id::text, u.role FROM oauth_tokens o JOIN users u ON u.id = o.user_id
 		 JOIN oauth_clients c ON c.client_id = o.client_id AND c.status = 'approved'
-		 WHERE o.token_hash=$1 AND o.expires_at > now()`, tokenHash).
+		 WHERE o.token_hash=$1 AND o.expires_at > now() AND u.disabled_at IS NULL`, tokenHash).
 		Scan(&userID, &role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", false, nil
@@ -226,6 +230,7 @@ func (s *Store) ConsumeOAuthRefresh(ctx context.Context, refreshHash string) (cl
 		`DELETE FROM oauth_tokens t WHERE t.refresh_hash=$1
 		 AND (t.refresh_expires_at IS NULL OR t.refresh_expires_at > now())
 		 AND EXISTS (SELECT 1 FROM oauth_clients c WHERE c.client_id = t.client_id AND c.status = 'approved')
+         AND EXISTS (SELECT 1 FROM users u WHERE u.id=t.user_id AND u.disabled_at IS NULL)
 		 RETURNING t.client_id, t.user_id::text, t.scope`, refreshHash).
 		Scan(&clientID, &userID, &scope)
 	if errors.Is(err, pgx.ErrNoRows) {

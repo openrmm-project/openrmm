@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -786,6 +787,46 @@ func (s *Server) setUserSSO(w http.ResponseWriter, r *http.Request) {
 	detail, _ := json.Marshal(map[string]bool{"required": *in.Required})
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.sso_required", target, detail)
 	writeJSON(w, http.StatusOK, map[string]bool{"sso_required": *in.Required})
+}
+
+// meshCentralUserPattern is a MeshCentral account name as its user ids hold
+// it (user//<name>, lowercase): ordinary names, e-mail-style names, and the
+// "~oidc:…"/"~ldap:…" forms of accounts that sign in through a provider.
+var meshCentralUserPattern = regexp.MustCompile(`^[a-z0-9_~][a-z0-9._@~:+-]{0,127}$`)
+
+// setUserMeshCentral sets the MeshCentral account a user's remote sessions sign
+// in as when the server mints login tokens. The token is a full MeshCentral
+// sign-in, no password asked, so naming the account hands over whatever
+// MeshCentral lets it do. Only a principal with access to every device and
+// settings.manage may set it: one who may already name the shared account,
+// so this opens no account to anyone who could not reach it before.
+func (s *Server) setUserMeshCentral(w http.ResponseWriter, r *http.Request) {
+	target := chi.URLParam(r, "id")
+	if !s.requireUnrestricted(w, r, "MeshCentral accounts") {
+		return
+	}
+	if _, ok := s.requireUserManage(w, r, target); !ok {
+		return
+	}
+	var in struct {
+		User *string `json:"user"`
+	}
+	if err := decode(r, &in); err != nil || in.User == nil {
+		writeErr(w, http.StatusBadRequest, `user is needed: the MeshCentral account name, or "" for none`)
+		return
+	}
+	name := strings.ToLower(strings.TrimSpace(*in.User))
+	if name != "" && !meshCentralUserPattern.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "a MeshCentral account name holds letters, digits and . _ @ ~ : + - only, up to 128 characters")
+		return
+	}
+	if err := s.store.SetUserMeshCentralUser(r.Context(), target, name); err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]string{"meshcentral_user": name})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "user.meshcentral_account", target, detail)
+	writeJSON(w, http.StatusOK, map[string]string{"meshcentral_user": name})
 }
 
 // disable2FA turns 2FA off, requiring a current code to do so.

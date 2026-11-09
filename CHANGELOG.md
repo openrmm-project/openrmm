@@ -17,12 +17,38 @@ tag.
   - The console says when a session was opened by hostname, and the
     `remote.start` audit entry records `"matched_by": "hostname"`. MeshCentral
     opens one of several computers sharing a name without warning.
-  - Users restricted to some clients always need a linked node. With a login
-    token MeshCentral searches every computer it knows, so a name could
-    otherwise reach a computer outside their scope.
+  - Users restricted to some clients need a linked node, unless a login token
+    signs them in as their own MeshCentral account (below). Signed in as the
+    shared account, MeshCentral searches every computer it knows, so a name
+    could otherwise reach a computer outside their scope.
   - A hostname with characters a MeshCentral link cannot carry (anything other
     than letters, digits, dots, hyphens and underscores), or one that
     MeshCentral would read as a number, is refused, not sent.
+- **MeshCentral: each user's own account.** With a login token key set, an
+  administrator with access to every device and `settings.manage` can give each
+  user a MeshCentral account (Users ▸ ⋯ ▸ MeshCentral account), and that user's
+  sessions sign in as it, so MeshCentral's own permissions decide what they
+  reach there. Users
+  with access to every device and no account of their own keep signing in as
+  the shared account (`RMM_MESHCENTRAL_USER`); "Shared account for unrestricted
+  users" in Settings ▸ Remote access, or `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`,
+  turns that off. Setting an account is audited as `user.meshcentral_account`,
+  and `remote.start` records `mesh_account` and `mesh_user`.
+
+### Security
+
+- **Restricted users no longer sign in to MeshCentral as the shared account.**
+  A MeshCentral login token is a full sign-in to its account, not tied to the
+  device it was opened from, and OpenRMM's client scopes do not reach inside
+  MeshCentral. A user restricted to some clients who could open one linked
+  device in MeshCentral got the shared account's session, usually `admin`'s,
+  and could reach every computer it sees. A restricted user now needs a
+  MeshCentral account of their own, set by an administrator, and cannot open
+  MeshCentral from the console until one is set. Deep-link mode (no login
+  token key) is unchanged: there MeshCentral asks for its own sign-in.
+  - **Upgrading:** before or right after updating, set a MeshCentral account
+    for each restricted technician who uses MeshCentral, limited in MeshCentral
+    to their clients' device groups.
 
 ### Changed
 

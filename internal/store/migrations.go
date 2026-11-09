@@ -99,6 +99,9 @@ var migrationV22SQL string
 //go:embed migrations/023_mass_enrollment.sql
 var migrationV23SQL string
 
+//go:embed migrations/024_user_meshcentral_account.sql
+var migrationV24SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -123,6 +126,7 @@ var migrations = []migration{
 	{version: 21, name: "remote_share_reentry", sql: migrationV21SQL},
 	{version: 22, name: "user_sso_required", sql: migrationV22SQL},
 	{version: 23, name: "mass_enrollment", sql: migrationV23SQL},
+	{version: 24, name: "user_meshcentral_account", sql: migrationV24SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

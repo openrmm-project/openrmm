@@ -210,10 +210,16 @@ type RemoteSession struct {
 	// MatchedBy says how an external provider finds the device: "node" (a
 	// linked id) or "hostname" (a name another computer could share). It is
 	// recorded in the remote.start audit entry and not stored with the session.
-	MatchedBy string    `json:"matched_by,omitempty"`
-	CreatedBy string    `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	MatchedBy string `json:"matched_by,omitempty"`
+	// MeshAccount says which MeshCentral account a login token signs in as:
+	// "personal" (the caller's own) or "shared"; empty without a login token.
+	// Like MatchedBy, it goes to the audit entry, with the account's name, and
+	// is not stored with the session.
+	MeshAccount string    `json:"mesh_account,omitempty"`
+	MeshUser    string    `json:"-"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // AuditEntry is an immutable record of a sensitive action.

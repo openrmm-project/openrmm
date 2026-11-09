@@ -106,20 +106,23 @@ func TestMeshProviderUnlinkedDevice(t *testing.T) {
 	// No store: every case here is refused before a session is persisted.
 	m := NewManager(nil, nil, "https://mesh.example", "", "admin", true, false)
 	unlinked := &models.Agent{ID: "a1", Hostname: "x&login=attacker-token"}
+	start := func(agent *models.Agent, opts StartOptions) error {
+		t.Helper()
+		_, err := m.Start(context.Background(), "meshcentral", agent, "tech", opts)
+		return err
+	}
 
-	_, err := m.Start(context.Background(), "meshcentral", unlinked, "tech", StartOptions{})
-	if err == nil || !strings.Contains(err.Error(), "no MeshCentral node id") {
+	if err := start(unlinked, StartOptions{Unrestricted: true}); err == nil || !strings.Contains(err.Error(), "no MeshCentral node id") {
 		t.Fatalf("off by default, an unlinked device must be refused: %v", err)
 	}
 
 	m.SetMeshMatchHostname(true)
-	// A restricted caller never gets a hostname lookup: MeshCentral would
-	// search every computer it knows, not only the caller's.
-	_, err = m.Start(context.Background(), "meshcentral", &models.Agent{ID: "a3", Hostname: "DESKTOP-1"}, "tech", StartOptions{})
-	if err == nil || !strings.Contains(err.Error(), "access to every device") {
-		t.Fatalf("a restricted caller opened an unlinked device by hostname: %v", err)
+	// Without a login token the browser signs in to MeshCentral by itself, as
+	// anyone: a restricted caller never gets a hostname lookup there.
+	if err := start(&models.Agent{ID: "a3", Hostname: "DESKTOP-1"}, StartOptions{MeshUser: "tech1"}); err == nil || !strings.Contains(err.Error(), "access to every device or a MeshCentral account of your own") {
+		t.Fatalf("a restricted caller opened an unlinked device by hostname without a login token: %v", err)
 	}
-	_, err = m.Start(context.Background(), "meshcentral", unlinked, "tech", StartOptions{MeshHostname: true})
+	err := start(unlinked, StartOptions{Unrestricted: true})
 	if err == nil || !strings.Contains(err.Error(), "link its node instead") {
 		t.Fatalf("a hostname a link cannot carry must be refused: %v", err)
 	}
@@ -127,9 +130,55 @@ func TestMeshProviderUnlinkedDevice(t *testing.T) {
 		t.Fatalf("the error echoes the agent-reported hostname: %v", err)
 	}
 
+	// With a login token, a restricted caller looks a hostname up through
+	// their own account, which MeshCentral bounds: the lookup gets as far as
+	// the name check. With no account of their own they are refused first.
+	m.UpdateMeshConfig("https://mesh.example", strings.Repeat("ab", 32), "admin", true)
+	if err := start(unlinked, StartOptions{MeshUser: "tech1"}); err == nil || !strings.Contains(err.Error(), "link its node instead") {
+		t.Fatalf("a restricted caller with an account of their own did not reach the hostname check: %v", err)
+	}
+	if err := start(&models.Agent{ID: "a4", Hostname: "DESKTOP-1"}, StartOptions{}); err == nil || !strings.Contains(err.Error(), "no MeshCentral account of your own") {
+		t.Fatalf("a restricted caller with no account of their own was not refused: %v", err)
+	}
+
 	m.UpdateMeshConfig("https://mesh.example", "", "admin", false)
-	if _, err := m.Start(context.Background(), "meshcentral", &models.Agent{ID: "a2", Hostname: "DESKTOP-1"}, "tech", StartOptions{MeshHostname: true}); err == nil || !strings.Contains(err.Error(), "disabled") {
+	if err := start(&models.Agent{ID: "a2", Hostname: "DESKTOP-1"}, StartOptions{Unrestricted: true}); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("a disabled provider must refuse, by hostname too: %v", err)
+	}
+}
+
+// Which MeshCentral account a login token signs in as. A restricted caller
+// only ever signs in as their own account; the shared one is for callers with
+// access to every device, and only while it is turned on.
+func TestMeshAccount(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		opts         StartOptions
+		shared       string
+		sharedOn     bool
+		account      string
+		kind, errHas string
+	}{
+		{"own account, unrestricted", StartOptions{Unrestricted: true, MeshUser: "alice"}, "admin", true, "alice", "personal", ""},
+		{"own account, restricted", StartOptions{MeshUser: "tech1"}, "admin", true, "tech1", "personal", ""},
+		{"own account, shared turned off", StartOptions{MeshUser: "tech1"}, "admin", false, "tech1", "personal", ""},
+		{"restricted, own account is the shared one", StartOptions{MeshUser: "Admin"}, "admin", true, "", "", "is the shared one"},
+		{"unrestricted, own account is the shared one", StartOptions{Unrestricted: true, MeshUser: "admin"}, "admin", true, "admin", "personal", ""},
+		{"restricted, no account", StartOptions{}, "admin", true, "", "", "only for users with access to every device"},
+		{"unrestricted, no account", StartOptions{Unrestricted: true}, "admin", true, "admin", "shared", ""},
+		{"unrestricted, no account, shared turned off", StartOptions{Unrestricted: true}, "admin", false, "", "", "turned off"},
+		{"unrestricted, no account, no shared name", StartOptions{Unrestricted: true}, " ", true, "", "", "turned off"},
+	} {
+		account, kind, err := meshAccount(c.opts, c.shared, c.sharedOn)
+		if c.errHas != "" {
+			if err == nil || !strings.Contains(err.Error(), c.errHas) || account != "" {
+				t.Errorf("%s: got %q (%s), %v; want an error saying %q", c.name, account, kind, err, c.errHas)
+			}
+			continue
+		}
+		if err != nil || account != c.account || kind != c.kind {
+			t.Errorf("%s: got %q (%s), %v; want %q (%s)", c.name, account, kind, err, c.account, c.kind)
+		}
 	}
 }
 

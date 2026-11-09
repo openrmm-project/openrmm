@@ -262,6 +262,7 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | POST | `/api/users/{id}/enable` | `users.manage` | Restore access |
 | DELETE | `/api/users/{id}` | `users.manage` | Remove a user (cascades; prefer disable for a person who left) |
 | GET | `/api/users/{id}/scopes` | `users.manage` | List a user's access-scope assignments |
+| PUT | `/api/users/{id}/meshcentral` | `users.manage` + `settings.manage`, unrestricted principals only | `{user}` — the MeshCentral account this user's sessions sign in as when the server mints login tokens (`""` clears; stored lowercase; letters, digits and `. _ @ ~ : + -`, up to 128). Audited as `user.meshcentral_account`. `GET /api/users` lists it as `meshcentral_user` |
 | PUT | `/api/users/{id}/scopes` | `users.manage` | Replace scope assignments (`[]` = unrestricted; supports `client`/`site`/`group`/`agent`). Audited as `user.scopes.update`, flagging the `[]` case as `full_access` — it is the widest grant this endpoint makes |
 
 ### Account
@@ -336,6 +337,7 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
     "meshcentral_token_key": "hex-login-token-key",
     "meshcentral_enabled": true,
     "meshcentral_match_hostname": false,
+    "meshcentral_shared_account": true,
     "rustdesk_enabled": false
   },
   "jobs": {
@@ -347,11 +349,23 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
 `remote.meshcentral_match_hostname` opens a device with no linked MeshCentral
 node by its hostname (MeshCentral's `gotodevicername`). It is off by default;
 `RMM_MESHCENTRAL_MATCH_HOSTNAME=true` only sets the starting value. A linked
-node always wins. It is never used for a restricted (scoped) principal, who
-needs a linked node. A hostname with characters a MeshCentral link cannot
+node always wins. A restricted (scoped) principal gets it only when a login
+token signs them in as their own MeshCentral account; otherwise they need a
+linked node. A hostname with characters a MeshCentral link cannot
 carry, or one that reads as a number, is refused. `POST /api/devices/{id}/remote` with `"provider":"meshcentral"`
 returns `matched_by` (`"node"` or `"hostname"`), also recorded in the
 `remote.start` audit entry.
+
+With a login token key set, a MeshCentral session signs in as the caller's own
+MeshCentral account (`PUT /api/users/{id}/meshcentral`) when they have one.
+Otherwise `remote.meshcentral_user` is the shared account, used only by
+principals with access to every device, and only while
+`remote.meshcentral_shared_account` is on (the default;
+`RMM_MESHCENTRAL_SHARED_ACCOUNT=false` only sets the starting value). A
+restricted principal with no account of their own, or whose own account has the
+shared account's name, is refused. The response's `mesh_account` is
+`"personal"` or `"shared"`; the `remote.start` audit entry records it with
+`mesh_user`, the account's name.
 
 `jobs.allow_unapproved` lets callers with both `jobs.manage` and
 `settings.manage` create a single-device job that skips approval. It is off by

@@ -40,13 +40,15 @@ type StartOptions struct {
 	// guest's session, whose chat the server carries to the technician's.
 	// Sidecars before 0.18 open it anyway.
 	NoChat bool
-	// MeshHostname lets a device with no linked MeshCentral node open by its
-	// hostname, when that is turned on. Only a caller with access to every
-	// device gets it: with a login token MeshCentral opens as
-	// RMM_MESHCENTRAL_USER and looks the name up among every computer it
-	// knows, so a restricted technician could reach one outside their scope by
-	// giving a device of theirs that computer's name.
-	MeshHostname bool
+	// Unrestricted is whether the caller has access to every device. OpenRMM's
+	// client scopes do not reach inside MeshCentral, where what an account
+	// sees is MeshCentral's own business, so a restricted caller never signs
+	// in as the shared account, and never looks a hostname up through a
+	// session that is not their own.
+	Unrestricted bool
+	// MeshUser is the caller's own MeshCentral account, as an administrator
+	// set it for them; "" when they have none.
+	MeshUser string
 }
 
 // Manager holds the configured providers and shared dependencies.
@@ -62,6 +64,9 @@ type Manager struct {
 	// hostname instead of refusing. Off unless an administrator turns it on:
 	// MeshCentral picks one of several computers sharing a name, silently.
 	meshMatchHostname bool
+	// meshSharedAccount lets an unrestricted caller with no MeshCentral
+	// account of their own sign in as meshUser.
+	meshSharedAccount bool
 	rustdeskEnabled   bool
 	providers         map[string]Provider
 
@@ -88,6 +93,15 @@ func (m *Manager) SetMeshMatchHostname(enabled bool) {
 	m.meshMatchHostname = enabled
 }
 
+// SetMeshSharedAccount toggles, at runtime, whether callers with access to
+// every device and no MeshCentral account of their own sign in as the shared
+// account.
+func (m *Manager) SetMeshSharedAccount(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meshSharedAccount = enabled
+}
+
 // SetRustDeskEnabled toggles the RustDesk provider at runtime.
 func (m *Manager) SetRustDeskEnabled(enabled bool) {
 	m.mu.Lock()
@@ -98,7 +112,7 @@ func (m *Manager) SetRustDeskEnabled(enabled bool) {
 // NewManager wires up all providers.
 func NewManager(s *store.Store, h *hub.Hub, meshURL, meshTokenKey, meshUser string, meshEnabled, rustdeskEnabled bool) *Manager {
 	m := &Manager{store: s, hub: h, meshURL: meshURL,
-		meshTokenKey: meshTokenKey, meshUser: meshUser, meshEnabled: meshEnabled, rustdeskEnabled: rustdeskEnabled,
+		meshTokenKey: meshTokenKey, meshUser: meshUser, meshEnabled: meshEnabled, meshSharedAccount: true, rustdeskEnabled: rustdeskEnabled,
 		providers: map[string]Provider{}, pending: map[string]chan protocol.RemoteQueryResultMsg{}}
 	register := func(p Provider) { m.providers[p.Name()] = p }
 	register(&nativeProvider{m: m})
@@ -203,6 +217,10 @@ func (m *Manager) persist(ctx context.Context, rs *models.RemoteSession) error {
 		// that another computer could share.
 		fields["matched_by"] = rs.MatchedBy
 	}
+	if rs.MeshAccount != "" {
+		// Which MeshCentral account the session signed in as.
+		fields["mesh_account"], fields["mesh_user"] = rs.MeshAccount, rs.MeshUser
+	}
 	detail, _ := json.Marshal(fields)
 	_ = m.store.AddAudit(ctx, rs.CreatedBy, "remote.start", rs.AgentID, detail)
 	return nil
@@ -301,7 +319,8 @@ func (p *meshProvider) Name() string { return "meshcentral" }
 // own reported name is the device's hostname (gotodevicername).
 func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, createdBy string, opts StartOptions) (*models.RemoteSession, error) {
 	p.m.mu.RLock()
-	meshURL, meshTokenKey, meshUser, enabled, byHostname := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled, p.m.meshMatchHostname
+	meshURL, meshTokenKey, sharedUser, enabled := p.m.meshURL, p.m.meshTokenKey, p.m.meshUser, p.m.meshEnabled
+	byHostname, sharedOn := p.m.meshMatchHostname, p.m.meshSharedAccount
 	p.m.mu.RUnlock()
 	if !enabled {
 		return nil, fmt.Errorf("the MeshCentral provider is disabled")
@@ -309,12 +328,27 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 	if meshURL == "" {
 		return nil, fmt.Errorf("MeshCentral URL not configured (RMM_MESHCENTRAL_URL)")
 	}
+	// With a login token, the session is the account it names, and what that
+	// account may see is MeshCentral's own permissions, not OpenRMM's scopes.
+	// Without one, the browser signs in to MeshCentral by itself, as whoever
+	// it is signed in as there.
+	account, accountKind := "", ""
+	if meshTokenKey != "" {
+		var err error
+		if account, accountKind, err = meshAccount(opts, sharedUser, sharedOn); err != nil {
+			return nil, err
+		}
+	}
+	// A hostname is looked up among every computer the session's account sees.
+	// That bounds it for a caller's own account; the shared account, and a
+	// browser's own sign-in, could be anyone's.
+	hostnameAllowed := opts.Unrestricted || accountKind == "personal"
 	var nodeID, hostname, matchedBy string
 	switch {
 	case agent.MeshID != nil && *agent.MeshID != "":
 		nodeID, matchedBy = *agent.MeshID, "node"
-	case byHostname && !opts.MeshHostname:
-		return nil, fmt.Errorf("this device has no linked MeshCentral node, and opening by hostname is only for users with access to every device: ask an administrator to link its node")
+	case byHostname && !hostnameAllowed:
+		return nil, fmt.Errorf("this device has no linked MeshCentral node, and opening by hostname needs access to every device or a MeshCentral account of your own: ask an administrator to link its node")
 	case byHostname:
 		name, err := meshDeviceName(agent.Hostname)
 		if err != nil {
@@ -325,27 +359,52 @@ func (p *meshProvider) StartSession(ctx context.Context, agent *models.Agent, cr
 		return nil, fmt.Errorf("agent has no MeshCentral node id: link its node (PATCH /api/devices/{id}/remote-ids), or turn on opening unlinked devices by hostname")
 	}
 	loginToken := ""
-	if meshTokenKey != "" {
-		tok, err := meshLoginToken(meshTokenKey, meshUser)
+	if account != "" {
+		tok, err := meshLoginToken(meshTokenKey, account)
 		if err != nil {
 			return nil, fmt.Errorf("mesh login token: %w", err)
 		}
 		loginToken = tok
 	}
 	rs := &models.RemoteSession{
-		AgentID:    agent.ID,
-		Provider:   "meshcentral",
-		Status:     "ready",
-		Token:      auth.NewToken(),
-		ConnectURL: meshConnectURL(strings.TrimRight(meshURL, "/"), loginToken, nodeID, hostname),
-		MatchedBy:  matchedBy,
-		CreatedBy:  createdBy,
-		ExpiresAt:  time.Now().Add(sessionTTL),
+		AgentID:     agent.ID,
+		Provider:    "meshcentral",
+		Status:      "ready",
+		Token:       auth.NewToken(),
+		ConnectURL:  meshConnectURL(strings.TrimRight(meshURL, "/"), loginToken, nodeID, hostname),
+		MatchedBy:   matchedBy,
+		MeshAccount: accountKind,
+		MeshUser:    account,
+		CreatedBy:   createdBy,
+		ExpiresAt:   time.Now().Add(sessionTTL),
 	}
 	if err := p.m.persist(ctx, rs); err != nil {
 		return nil, err
 	}
 	return rs, nil
+}
+
+// meshAccount picks the MeshCentral account a login token signs in as: the
+// caller's own when an administrator set one, otherwise the shared account,
+// which only a caller with access to every device may use. kind is
+// "personal" or "shared".
+func meshAccount(opts StartOptions, sharedUser string, sharedOn bool) (account, kind string, err error) {
+	own := strings.TrimSpace(opts.MeshUser)
+	shared := strings.TrimSpace(sharedUser)
+	switch {
+	case own != "" && !opts.Unrestricted && strings.EqualFold(own, shared):
+		// Set to the shared account's name, a restricted caller's own account
+		// would be the shared account under another label.
+		return "", "", fmt.Errorf("your MeshCentral account is the shared one, which only users with access to every device may use: ask an administrator to give you an account of your own")
+	case own != "":
+		return own, "personal", nil
+	case !opts.Unrestricted:
+		return "", "", fmt.Errorf("you have no MeshCentral account of your own, and the shared one is only for users with access to every device: ask an administrator to set yours")
+	case !sharedOn || shared == "":
+		return "", "", fmt.Errorf("you have no MeshCentral account of your own, and signing in with the shared account is turned off: ask an administrator to set yours")
+	default:
+		return shared, "shared", nil
+	}
 }
 
 // meshConnectURL is the link into MeshCentral's remote desktop for one device:

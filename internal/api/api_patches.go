@@ -245,6 +245,12 @@ func (s *Server) createPatchPolicy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	tz, err := models.NormalizeTimezone(p.Timezone)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p.Timezone = tz
 	out, err := s.store.CreatePatchPolicy(r.Context(), &p)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -265,8 +271,14 @@ func (s *Server) updatePatchPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
+	tz, err := models.NormalizeTimezone(p.Timezone)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p.Timezone = tz
 	if err := s.store.UpdatePatchPolicy(r.Context(), &p); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.policy.update", p.ID, nil)

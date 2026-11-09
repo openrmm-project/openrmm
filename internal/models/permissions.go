@@ -185,7 +185,7 @@ func DefaultRolePermissions(role string) []string {
 			PermAuditView,
 			PermSettingsManage, PermEnrollmentManage, PermAPITokensManage,
 			PermUsersManage, PermUsersEmailManage, PermRolesManage,
-			// Full access includes autonomy (migration 026): the four switches
+			// Full access includes autonomy (migration 027): the four switches
 			// and releasing scripts. Pausing in Settings ▸ AI still stops it.
 			PermAIAutonomyQuery, PermAIAutonomyRun, PermMCPAutonomyQuery, PermMCPAutonomyRun,
 			PermAIAutonomyManage,

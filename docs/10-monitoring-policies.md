@@ -132,8 +132,17 @@ Rows waiting for review are badged **AI proposal** in the console. See
 | Kind | Fields | Fires |
 |------|--------|-------|
 | `interval` | `interval_sec` | every N seconds |
-| `daily` | `run_at_minute` (minutes since UTC midnight) | once per day at that time |
+| `daily` | `run_at_minute` (minutes since midnight in `timezone`) | once per day at that time |
 | `weekly` | `days_of_week` (bitmask, bit N = `time.Weekday` N, 0=Sun) + `run_at_minutes[]` | on each selected weekday, at every listed time |
+
+**Time zone.** `timezone` is the IANA zone (`America/New_York`, `Europe/Lisbon`,
+`UTC`) that `run_at_minute`, `run_at_minutes` and the weekdays are read in,
+daylight saving included, whatever zone the server or its container runs in. The
+console starts a new task in the browser's zone and shows the zone next to every
+time. A time a spring-forward day skips runs when that day's clock reaches it; a
+time a fall-back day repeats runs once. A task created without a zone, and every
+task from before zones existed, is UTC; an edit that sends no zone keeps the one
+the task has.
 
 Weekly is due-computed in `scheduler.taskDue` by finding the most recent
 `(active weekday × time)` occurrence at/before now (scanning back ≤8 days) and

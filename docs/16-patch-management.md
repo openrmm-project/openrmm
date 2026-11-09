@@ -46,7 +46,7 @@ what each update mechanism reports.
 - `patch_approvals`: latest manual/policy `approve` or `decline` decision at
   global, client, site or agent scope.
 - `patch_policies`: enabled flag, auto-approve classifications/age, exclusions,
-  server-time maintenance window and reboot mode.
+  maintenance window in the policy's time zone, and reboot mode.
 - `patch_policy_assignments`: policy to client/site/agent.
 - `agents.last_patch_scan` and `agents.reboot_pending`.
 
@@ -90,8 +90,11 @@ human API/UI or preconfigured policy automation.
 ## Policy behavior
 
 - `window_days` uses `0=Sunday` through `6=Saturday`.
-- Start/end minutes use the **server process's local time**, not each endpoint's
-  timezone.
+- The window's days and start/end minutes are read in the policy's `timezone`
+  (an IANA zone such as `America/New_York`, daylight saving included), never in
+  the server process's zone. The console starts a new policy in the browser's
+  zone. A policy created without a zone, and every policy from before zones
+  existed, is UTC; an edit that sends no zone keeps the one it has.
 - An empty day list permits any day.
 - Exclusions match identifiers/classifications as implemented by the store.
 - Within an open assigned policy window, the scheduler installs approved patches
@@ -108,8 +111,9 @@ human API/UI or preconfigured policy automation.
 - No durable dispatch queue equivalent to job-result outbox for patch requests;
   offline manual scan/install returns `503`, and policy work waits for a later
   scheduler tick.
-- Maintenance windows are server-local-time and do not model endpoint timezone,
-  holidays, blackout calendars or deadline/force-after-N-hours behavior.
+- A maintenance window has one zone for all of a policy's endpoints, not each
+  endpoint's own, and does not model holidays, blackout calendars or
+  deadline/force-after-N-hours behavior.
 - Reboot suppression detects active OpenRMM native relay sessions, not arbitrary
   local user activity or third-party remote sessions.
 - Compliance is based on the latest reported data and can be stale; platform

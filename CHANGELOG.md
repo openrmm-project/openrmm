@@ -57,6 +57,22 @@ tag.
 
 ### Fixed
 
+- **Scheduled tasks and patch windows ran at the wrong time** outside UTC. A
+  daily or weekly task ran at its time of day in UTC, and a patch maintenance
+  window opened by the server process's clock (UTC in the published images),
+  while the console showed the time with no zone: a task set for 11:40 in New
+  York ran at 06:40 there, and a window set for the evening opened in the
+  afternoon. Setting `TZ` on the containers changed nothing.
+  - Each task and patch policy now carries an IANA time zone, daylight saving
+    included. The console starts a new one in the browser's zone, offers a
+    zone picker and shows the zone next to every time. The AI's `propose_task`
+    takes a `timezone` too.
+  - **Upgrading:** existing tasks and policies are marked UTC, so nothing
+    moves by itself. Open each daily or weekly task and each patch policy, set
+    its zone and check its times.
+  - The server now carries the time zone database, so it no longer depends on
+    the image or host having one.
+
 - **Accented text from Windows** reached the console garbled on non-English
   installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
   Update titles, and the software and hardware inventory read it undecoded.

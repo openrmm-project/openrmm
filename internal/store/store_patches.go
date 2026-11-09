@@ -375,12 +375,12 @@ func scanStrings(rows interface {
 // ===================== Patch policies =====================
 
 const patchPolicyCols = `id, name, enabled, auto_approve, auto_approve_age_days, exclusions,
-	window_days, window_start_min, window_end_min, reboot, created_at`
+	window_days, window_start_min, window_end_min, timezone, reboot, created_at`
 
 func scanPatchPolicy(row interface{ Scan(...any) error }) (*models.PatchPolicy, error) {
 	var p models.PatchPolicy
 	if err := row.Scan(&p.ID, &p.Name, &p.Enabled, &p.AutoApprove, &p.AutoApproveAgeDays,
-		&p.Exclusions, &p.WindowDays, &p.WindowStartMin, &p.WindowEndMin, &p.Reboot, &p.CreatedAt); err != nil {
+		&p.Exclusions, &p.WindowDays, &p.WindowStartMin, &p.WindowEndMin, &p.Timezone, &p.Reboot, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -389,10 +389,10 @@ func scanPatchPolicy(row interface{ Scan(...any) error }) (*models.PatchPolicy, 
 func (s *Store) CreatePatchPolicy(ctx context.Context, p *models.PatchPolicy) (*models.PatchPolicy, error) {
 	p.ID = newID()
 	err := s.pool.QueryRow(ctx, `INSERT INTO patch_policies
-		(id,name,enabled,auto_approve,auto_approve_age_days,exclusions,window_days,window_start_min,window_end_min,reboot)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING created_at`,
+		(id,name,enabled,auto_approve,auto_approve_age_days,exclusions,window_days,window_start_min,window_end_min,reboot,timezone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE(NULLIF($11,''),'UTC')) RETURNING timezone, created_at`,
 		p.ID, p.Name, p.Enabled, emptyToArr(p.AutoApprove), p.AutoApproveAgeDays, emptyToArr(p.Exclusions),
-		emptyToIntArr(p.WindowDays), p.WindowStartMin, p.WindowEndMin, defReboot(p.Reboot)).Scan(&p.CreatedAt)
+		emptyToIntArr(p.WindowDays), p.WindowStartMin, p.WindowEndMin, defReboot(p.Reboot), p.Timezone).Scan(&p.Timezone, &p.CreatedAt)
 	return p, err
 }
 
@@ -405,12 +405,19 @@ func defReboot(r string) string {
 	}
 }
 
+// UpdatePatchPolicy replaces a policy's settings. An empty Timezone keeps the
+// zone it had, so a client that does not know about zones cannot move its
+// window; p.Timezone comes back as the zone in effect.
 func (s *Store) UpdatePatchPolicy(ctx context.Context, p *models.PatchPolicy) error {
-	_, err := s.pool.Exec(ctx, `UPDATE patch_policies SET name=$2, enabled=$3, auto_approve=$4,
+	err := s.pool.QueryRow(ctx, `UPDATE patch_policies SET name=$2, enabled=$3, auto_approve=$4,
 		auto_approve_age_days=$5, exclusions=$6, window_days=$7, window_start_min=$8,
-		window_end_min=$9, reboot=$10 WHERE id=$1`,
+		window_end_min=$9, reboot=$10, timezone=COALESCE(NULLIF($11,''), timezone) WHERE id=$1
+		RETURNING timezone`,
 		p.ID, p.Name, p.Enabled, emptyToArr(p.AutoApprove), p.AutoApproveAgeDays, emptyToArr(p.Exclusions),
-		emptyToIntArr(p.WindowDays), p.WindowStartMin, p.WindowEndMin, defReboot(p.Reboot))
+		emptyToIntArr(p.WindowDays), p.WindowStartMin, p.WindowEndMin, defReboot(p.Reboot), p.Timezone).Scan(&p.Timezone)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	return err
 }
 

@@ -271,12 +271,14 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 }
 
 // windowState reports whether any policy's maintenance window is open now, and
-// whether reboots are allowed by a policy whose window is open.
+// whether reboots are allowed by a policy whose window is open. Each window's
+// days and minutes are read in its policy's zone, never the server's own.
 func windowState(pols []models.PatchPolicy, now time.Time) (open, rebootAllowed bool) {
-	mins := now.Hour()*60 + now.Minute()
-	wd := int(now.Weekday()) // 0=Sun..6=Sat
 	for i := range pols {
 		p := &pols[i]
+		local := now.In(models.ScheduleLocation(p.Timezone))
+		mins := local.Hour()*60 + local.Minute()
+		wd := int(local.Weekday()) // 0=Sun..6=Sat
 		if len(p.WindowDays) > 0 && !containsInt(p.WindowDays, wd) {
 			continue
 		}
@@ -419,28 +421,39 @@ func (s *Scheduler) dispatchTasks(ctx context.Context, agentID string, siteID, c
 	}
 }
 
+// taskDue reads a daily or weekly task's times of day and weekdays in the
+// task's own zone, daylight saving included: a time a spring-forward day
+// skips runs when that day's clock reaches it, and a time a fall-back day
+// repeats runs once.
 func (s *Scheduler) taskDue(t *models.Task, last, now time.Time) bool {
 	switch t.ScheduleKind {
 	case models.ScheduleDaily:
-		minuteOfDay := now.UTC().Hour()*60 + now.UTC().Minute()
-		if minuteOfDay < t.RunAtMinute {
+		loc := models.ScheduleLocation(t.Timezone)
+		local := now.In(loc)
+		if local.Hour()*60+local.Minute() < t.RunAtMinute {
 			return false
 		}
-		// Due once per UTC day.
-		return last.IsZero() || last.UTC().YearDay() != now.UTC().YearDay() || last.UTC().Year() != now.UTC().Year()
+		// Due once per day in the task's zone.
+		if last.IsZero() {
+			return true
+		}
+		prev := last.In(loc)
+		return prev.YearDay() != local.YearDay() || prev.Year() != local.Year()
 	case models.ScheduleWeekly:
 		// Find the most recent scheduled occurrence at or before now across
 		// (active weekday × run_at_minutes), scanning back up to 8 days. Due when
 		// that occurrence is newer than the last run — so each day/time slot fires
 		// once and a missed slot still runs on the next tick.
+		loc := models.ScheduleLocation(t.Timezone)
+		local := now.In(loc)
 		var recent time.Time
 		for d := 0; d < 8; d++ {
-			day := now.UTC().AddDate(0, 0, -d)
+			day := local.AddDate(0, 0, -d)
 			if t.DaysOfWeek&(1<<uint(day.Weekday())) == 0 {
 				continue
 			}
 			for _, m := range t.RunAtMinutes {
-				occ := time.Date(day.Year(), day.Month(), day.Day(), m/60, m%60, 0, 0, time.UTC)
+				occ := time.Date(day.Year(), day.Month(), day.Day(), m/60, m%60, 0, 0, loc)
 				if occ.After(now) {
 					continue
 				}

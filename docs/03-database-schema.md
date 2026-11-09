@@ -303,9 +303,10 @@ Scheduled automation, owned by an agent or a policy (like checks).
 | shell, script | text | inline source when no `script_id` |
 | schedule_kind | text | `interval` / `daily` / `weekly` |
 | interval_sec | int | for `interval` |
-| run_at_minute | int | for `daily`: minutes since midnight (UTC) |
-| days_of_week | smallint | for `weekly`: bitmask, bit N = `time.Weekday` N (0 = Sunday) |
-| run_at_minutes | int[] | for `weekly`: times of day, minutes since midnight (UTC) |
+| run_at_minute | int | for `daily`: minutes since midnight in `timezone` |
+| days_of_week | smallint | for `weekly`: bitmask, bit N = `time.Weekday` N (0 = Sunday), in `timezone` |
+| run_at_minutes | int[] | for `weekly`: times of day, minutes since midnight in `timezone` |
+| timezone | text | IANA zone the times of day are in, daylight saving included; default `UTC` (migration 025) |
 | enabled | bool | default true |
 | proposed_by | text | AI actor that authored it (`''` = a person). **Permanent** provenance: it survives review |
 | approved_by | text | who released it (`''` = nobody yet) |
@@ -386,7 +387,8 @@ must be recovered separately with the database backup.
 `agent_patches` tracks each device's missing/approved/installing/installed/failed/
 excluded state. `patch_approvals` stores the latest global/client/site/agent
 approve-or-decline decision. `patch_policies` stores auto-approval, exclusions,
-server-local maintenance windows and reboot behavior;
+maintenance windows (with the IANA `timezone` their days and minutes are in,
+default `UTC`, migration 025) and reboot behavior;
 `patch_policy_assignments` attaches definitions to client/site/agent scopes.
 
 ### OAuth tables

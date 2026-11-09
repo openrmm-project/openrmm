@@ -104,6 +104,11 @@ func ValidateCheck(c *Check) error {
 }
 
 func ValidateSchedule(t *Task) error {
+	tz, err := NormalizeTimezone(t.Timezone)
+	if err != nil {
+		return err
+	}
+	t.Timezone = tz
 	switch t.ScheduleKind {
 	case ScheduleInterval:
 		if t.IntervalSec <= 0 {

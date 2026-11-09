@@ -76,6 +76,11 @@ password-reset lookup — that last one otherwise being a way straight back in.
 A timestamp rather than a boolean because "when was access withdrawn" is what an
 incident review asks, and re-disabling keeps the original value.
 
+`meshcentral_user` is the MeshCentral account this user's remote sessions sign
+in as when the server mints MeshCentral login tokens; empty means none
+([08-remote-access](08-remote-access.md)). Only a principal with access to every
+device and `settings.manage` sets it.
+
 `email_verified_at` (nullable) records when the owner confirmed the address; the
 operator's shared alert service delivers only to confirmed addresses, and a
 changed address needs a new confirmation. `totp_last_step` is the last accepted

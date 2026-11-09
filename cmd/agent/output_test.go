@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/charmap"
 )
 
 // The bug, reproduced: `Olá, café!` printed by a redirected Python on a
@@ -52,6 +55,55 @@ func TestDecodeOutputLeavesValidUTF8Alone(t *testing.T) {
 	} {
 		if got := decodeOutput([]byte(s)); got != s {
 			t.Errorf("decodeOutput(%q) = %q, want it unchanged", s, got)
+		}
+	}
+}
+
+// Measured on a pt-BR Windows 11 (2026-11-04): Windows PowerShell under the
+// agent service wrote "Instalação" in its console's OEM page, 850, and the agent
+// read the bytes as the ANSI page, 1252, so the console showed "Instala‡Æo".
+func TestConsoleOutputIsReadInItsOwnPage(t *testing.T) {
+	const text = "Instalação, café, não pôde"
+	raw, err := charmap.CodePage850.NewEncoder().Bytes([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeOutputCP(raw, 1252); got != "Instala‡Æo, caf‚, nÆo p“de" {
+		t.Fatalf("precondition failed: reading cp850 as 1252 should reproduce the measured text, got %q", got)
+	}
+	if got := decodeOutputCP(raw, 850); got != text {
+		t.Errorf("decodeOutputCP(_, 850) = %q, want %q", got, text)
+	}
+}
+
+// Every Windows page of the console's languages reads back, the double-byte
+// Asian pages included: before, anything but a short list of single-byte pages
+// was read as 1252.
+func TestDecodeOutputCoversTheConsoleLanguages(t *testing.T) {
+	for _, c := range []struct {
+		cp   int
+		text string
+	}{
+		{437, "Olá, café"},
+		{850, "Atualização de Segurança"},
+		{852, "Zażółć gęślą jaźń"},
+		{866, "Установка обновления"},
+		{1251, "Установка обновления"},
+		{1252, "Actualización"},
+		{932, "更新プログラムのインストール"},
+		{936, "安装更新"},
+		{949, "업데이트 설치"},
+		{950, "安裝更新"},
+	} {
+		raw, err := codePageEncoding(c.cp).NewEncoder().Bytes([]byte(c.text))
+		if err != nil {
+			t.Fatalf("cp %d: cannot encode %q: %v", c.cp, c.text, err)
+		}
+		if utf8.Valid(raw) {
+			t.Fatalf("cp %d: the sample encodes to valid UTF-8, so it tests nothing", c.cp)
+		}
+		if got := decodeOutputCP(raw, c.cp); got != c.text {
+			t.Errorf("cp %d: decodeOutputCP = %q, want %q", c.cp, got, c.text)
 		}
 	}
 }

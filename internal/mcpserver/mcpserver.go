@@ -86,7 +86,7 @@ func buildServer(st *store.Store, js *jobs.Service, ps *patches.Service, cfg *co
 					IsError: true,
 				}, nil
 			}
-			tc := ai.ToolContext{Store: st, Jobs: js, Patches: ps, Config: cfg, PublicURL: cfg.PublicURL, Actor: "mcp:" + current.Actor, ScopeUserID: current.ScopeUser, Permissions: current.Permissions}
+			tc := ai.ToolContext{Store: st, Jobs: js, Patches: ps, Config: cfg, PublicURL: cfg.PublicURL, Actor: "mcp:" + current.Actor, ScopeUserID: current.ScopeUser, Permissions: current.Permissions, Channel: ai.ChannelMCP}
 			res := ai.Execute(ctx, tc, def.Function.Name, req.Params.Arguments)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: res.Output}},

@@ -22,7 +22,9 @@ Most AI-copilot RMMs on the market (Atera, SuperOps, Acronis RMM, Neo Agent)
 are **closed SaaS**, and open-source, self-hosted ones with built-in AI are still
 few. This project's take is *a modern RMM, AI-native and privacy-first*: any
 OpenAI-compatible model, including a local one, and a human approval in front of
-every action the AI proposes.
+every action the AI proposes. On its own, and only for roles you allow, it runs
+just read-only device queries and scripts an administrator released in advance
+([23-ai-autonomy](23-ai-autonomy.md)).
 
 ## What is built (this repo)
 

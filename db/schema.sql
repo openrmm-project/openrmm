@@ -70,7 +70,9 @@ SELECT 'admin', permission FROM (VALUES
     ('devices.view'), ('devices.manage'), ('devices.delete'), ('devices.remote'), ('devices.files'), ('devices.terminal'), ('devices.remote.share'),
     ('clients.view'), ('clients.manage'),
     ('reports.view'), ('audit.view'),
-    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage')
+    ('settings.manage'), ('enrollment.manage'), ('api_tokens.manage'), ('users.manage'), ('users.email.manage'), ('roles.manage'),
+    ('ai.autonomy.query'), ('ai.autonomy.run'), ('mcp.autonomy.query'), ('mcp.autonomy.run'),
+    ('ai.autonomy.manage')
 ) AS p(permission)
 ON CONFLICT DO NOTHING;
 
@@ -1017,3 +1019,17 @@ CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WH
 -- Migration 024: the MeshCentral account a user's remote sessions sign in as
 -- when the server mints login tokens; empty means none.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS meshcentral_user TEXT NOT NULL DEFAULT '';
+
+-- Migration 025: risk-based autonomy for the AI assistant. A script released
+-- for the AI is bound to the hash of its content; jobs record why they ran
+-- without approval at the time, and the parameters they carried.
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_released_by TEXT;
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_released_at TIMESTAMPTZ;
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_released_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS ai_failure_streak INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS autonomy TEXT NOT NULL DEFAULT ''
+    CHECK (autonomy IN ('', 'query', 'preapproved'));
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS script_id UUID REFERENCES scripts(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_jobs_autonomy ON jobs (created_at) WHERE autonomy <> '';

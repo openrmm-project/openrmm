@@ -18,6 +18,7 @@ access scope the delivery query can enforce.
 | `check_recovered` | a failing check passes again, or an offline device reports back | on |
 | `agent_offline` | a device stops reporting past the offline threshold | on |
 | `job_failed` | a job returns a non-zero exit | **off** |
+| `ai_release_revoked` | a script released for the AI is withdrawn after failing 3 autonomous runs in a row ([23](23-ai-autonomy.md)); who hears of it follows the device of the last failure | on |
 
 Mail goes out on a **state transition only**, never on a routine evaluation.
 This is enforced in the store rather than the scheduler: `RaiseAlert` inserts

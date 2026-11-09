@@ -146,6 +146,7 @@
   'ui.dryRun': "모의 실행 미리 보기",
   'ui.output': "출력",
   'ui.confirm': "확인",
+  'ui.valueRequired': "값을 입력하세요.",
   'ui.typeToConfirm': "확인하려면 {word}을(를) 입력하세요",
   'bulk.devices.one': "기기 {n}대",
   'bulk.devices.other': "기기 {n}대",

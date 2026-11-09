@@ -146,6 +146,7 @@
   'ui.dryRun': "Pratonton percubaan",
   'ui.output': "Output",
   'ui.confirm': "Sahkan",
+  'ui.valueRequired': "Sila masukkan nilai.",
   'ui.typeToConfirm': "Taip {word} untuk mengesahkan",
   'bulk.devices.one': "{n} peranti",
   'bulk.devices.other': "{n} peranti",

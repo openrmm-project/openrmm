@@ -275,11 +275,22 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 			notificationSeq++
 		}
 		notify := pending && status != models.AlertSuppressed
+		// The version guards what an operator decides on: the status, the
+		// severity, the acknowledgement and the silence. One more occurrence
+		// of the same condition (its count, time, value or output) changes
+		// none of them, and bumping the version for it made every action on a
+		// still-firing alert fail with "alert version changed": an offline
+		// alert is observed every scheduler tick, faster than anyone types a
+		// resolution note.
+		decisionChanged := escalated || status != current.Status ||
+			!sameAlertTime(ackedAt, current.AckedAt) || ackedBy != current.AckedBy ||
+			!sameAlertTime(silencedUntil, current.SilencedUntil) ||
+			silencedBy != current.SilencedBy || silenceReason != current.SilenceReason
 		updated, updateErr := scanAlert(tx.QueryRow(ctx, `UPDATE alerts al SET
 			severity=CASE WHEN $2 THEN $3 ELSE severity END,
 			message=$4, status=$5, last_seen_at=$6, updated_at=$6,
 			occurrence_count=occurrence_count+1, observed_value=$7,
-			threshold_value=$8, output=$9, version=version+1,
+			threshold_value=$8, output=$9, version=version+CASE WHEN $19 THEN 1 ELSE 0 END,
 			acked_at=$10, acked_by=$11, silenced_until=$12,
 			silenced_by=$13, silence_reason=$14,
 			notification_pending=$15, notification_kind=$16, notification_seq=$17,
@@ -288,7 +299,7 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 			current.ID, escalated, obs.Severity, obs.Message, status, obs.ObservedAt,
 			obs.ObservedValue, obs.Threshold, obs.Output, ackedAt, ackedBy,
 			silencedUntil, silencedBy, silenceReason, pending, notificationKind, notificationSeq,
-			obs.ObservationID))
+			obs.ObservationID, decisionChanged))
 		if updateErr != nil {
 			return nil, updateErr
 		}
@@ -1180,4 +1191,12 @@ func (s *Store) PurgeMonitoringData(ctx context.Context, now time.Time, alertDay
 		return RetentionResult{}, err
 	}
 	return out, nil
+}
+
+// sameAlertTime reports whether two optional timestamps name the same instant.
+func sameAlertTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
 }

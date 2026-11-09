@@ -162,6 +162,7 @@
   'ui.dryRun': 'Prévia (simulação)',
   'ui.output': 'Saída',
   'ui.confirm': 'Confirmar',
+  'ui.valueRequired': "Preencha este campo.",
   'ui.typeToConfirm': 'Digite {word} para confirmar',
 
   // ---- device bulk operations (device-bulk.jsx)

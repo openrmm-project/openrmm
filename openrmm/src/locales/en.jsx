@@ -169,6 +169,7 @@
   'ui.dryRun': 'Dry-run preview',
   'ui.output': 'Output',
   'ui.confirm': 'Confirm',
+  'ui.valueRequired': "Enter a value.",
   'ui.typeToConfirm': 'Type {word} to confirm',
 
   // ---- device bulk operations (device-bulk.jsx)

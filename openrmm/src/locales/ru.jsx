@@ -146,6 +146,7 @@
   'ui.dryRun': "Предпросмотр пробного запуска",
   'ui.output': "Вывод",
   'ui.confirm': "Подтвердить",
+  'ui.valueRequired': "Введите значение.",
   'ui.typeToConfirm': "Введите {word} для подтверждения",
   'bulk.devices.one': "{n} устройство",
   'bulk.devices.other': "{n} устройства",

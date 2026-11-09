@@ -156,6 +156,7 @@
   'ui.dryRun': 'プレビュー (ドライラン)',
   'ui.output': '出力',
   'ui.confirm': '確認',
+  'ui.valueRequired': "値を入力してください。",
   'ui.typeToConfirm': '確認のため {word} と入力してください',
 
   // ---- device bulk operations (device-bulk.jsx)

@@ -156,6 +156,7 @@
   'ui.dryRun': '预览（试运行）',
   'ui.output': '输出',
   'ui.confirm': '确认',
+  'ui.valueRequired': "请输入内容。",
   'ui.typeToConfirm': '输入 {word} 以确认',
 
   // ---- device bulk operations (device-bulk.jsx)

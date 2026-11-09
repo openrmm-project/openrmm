@@ -156,6 +156,7 @@
   'ui.dryRun': 'Vorschau (Probelauf)',
   'ui.output': 'Ausgabe',
   'ui.confirm': 'Bestätigen',
+  'ui.valueRequired': "Bitte einen Wert eingeben.",
   'ui.typeToConfirm': 'Zur Bestätigung {word} eingeben',
 
   // ---- device bulk operations (device-bulk.jsx)

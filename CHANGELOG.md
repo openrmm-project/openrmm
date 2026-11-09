@@ -39,6 +39,11 @@ tag.
 
 ### Changed
 
+- The console asks in its own dialogs, never in the browser's prompt or confirm
+  over the tab: silencing an alert (minutes and reason in one dialog),
+  resolving one or many, a device's remote id, the remote file browser's new
+  folder, rename and delete (inside the viewer, full screen too), and deleting a
+  check or a scheduled task.
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
 - The run-script panel no longer calls a job waiting for approval "a dry-run
@@ -47,6 +52,14 @@ tag.
 
 ### Fixed
 
+- **An acknowledged alert that kept firing could not be silenced or
+  resolved.** Each new occurrence of the same condition, an offline device every
+  30 seconds or a check on every result, bumped the alert's version, so the
+  action the console sent with the version it had read failed with "alert
+  version changed", nearly always when a note or a duration had to be typed
+  first. The version now moves only when something an operator decides on
+  changes: the status, the severity, the acknowledgement or the silence. An
+  escalation still refuses an action based on the old state.
 - **Accented text from Windows** reached the console garbled on non-English
   installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
   Update titles, and the software and hardware inventory read it undecoded.

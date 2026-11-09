@@ -90,46 +90,65 @@ function AlertsScreen({ navigate }) {
   const allSelected = alerts.length > 0 && alerts.every((a) => checked(a.id));
 
   const actionBody = (a, extra) => ({ expected_version: a.version, ...(extra || {}) });
+  // Resolving and silencing ask for a note and a duration in a console dialog
+  // (dialog: { action, alert } for one alert, { action, bulk: true } for the
+  // selection), not in the browser's prompt over the tab.
+  const [dialog, setDialog] = useState(null);
+  const silenceUntil = (minutes) => new Date(Date.now() + Number(minutes) * 60000).toISOString();
+  const validMinutes = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? '' : t('alerts.positiveMinutes'));
   const act = async (action, a) => {
+    if (action === 'resolve' || action === 'suppress') { setDialog({ action, alert: a }); return; }
     try {
       if (action === 'ack') await api.ackAlert(a.id, actionBody(a));
-      if (action === 'resolve') {
-        const note = window.prompt(t('alerts.resolveNote'), '') ?? null;
-        if (note === null) return;
-        await api.resolveAlert(a.id, actionBody(a, { note }));
-      }
-      if (action === 'suppress') {
-        const raw = window.prompt(t('alerts.suppressMinutes'), '60');
-        if (raw === null) return;
-        const minutes = Number(raw);
-        if (!Number.isFinite(minutes) || minutes <= 0) throw new Error(t('alerts.positiveMinutes'));
-        const note = window.prompt(t('alerts.suppressReason'), '') ?? '';
-        await api.suppressAlert(a.id, actionBody(a, { note, silence_until: new Date(Date.now() + minutes * 60000).toISOString() }));
-      }
-      toast.success(action === 'ack' ? t('alerts.acknowledged') : action === 'resolve' ? t('alerts.resolved') : t('alerts.suppressed'));
+      toast.success(t('alerts.acknowledged'));
       setDetailID(null);
+    } catch (e) { toast.error(t('alerts.actionFailed'), e.message); }
+  };
+  const actOne = async (action, a, values) => {
+    try {
+      if (action === 'resolve') await api.resolveAlert(a.id, actionBody(a, { note: values.note || '' }));
+      if (action === 'suppress') await api.suppressAlert(a.id, actionBody(a, { note: values.note || '', silence_until: silenceUntil(values.minutes) }));
+      toast.success(action === 'resolve' ? t('alerts.resolved') : t('alerts.suppressed'));
+      setDialog(null); setDetailID(null);
     } catch (e) { toast.error(t('alerts.actionFailed'), e.message); }
   };
   const bulk = async (action) => {
     if (!visibleSelected.length) return;
+    if (action === 'resolve' || action === 'suppress') { setDialog({ action, bulk: true }); return; }
+    await runBulk(action, {});
+  };
+  const runBulk = async (action, values) => {
     const body = { ids: visibleSelected, action, expected_versions: {} };
     alerts.filter((a) => visibleSelected.includes(a.id)).forEach((a) => body.expected_versions[a.id] = a.version);
-    if (action === 'resolve') body.note = window.prompt(t('alerts.bulkResolveNote'), '') ?? '';
-    if (action === 'suppress') {
-      const raw = window.prompt(t('alerts.bulkSuppressMinutes'), '60');
-      if (raw === null) return;
-      const minutes = Number(raw);
-      if (!Number.isFinite(minutes) || minutes <= 0) return toast.error(t('alerts.invalidDuration'));
-      body.silence_until = new Date(Date.now() + minutes * 60000).toISOString();
-      body.note = window.prompt(t('alerts.suppressReason'), '') ?? '';
-    }
+    if (action === 'resolve') body.note = values.note || '';
+    if (action === 'suppress') { body.silence_until = silenceUntil(values.minutes); body.note = values.note || ''; }
     try {
       const out = await api.bulkAlertAction(body);
-      setSelected([]);
+      setSelected([]); setDialog(null);
       if ((out.errors || []).length) toast.info(t('alerts.bulkPartial'), t('alerts.bulkPartialMsg', { updated: out.alerts.length, conflicts: out.errors.length }));
       else toast.success(t('alerts.bulkUpdated', { n: out.alerts.length }));
     } catch (e) { toast.error(t('alerts.bulkFailed'), e.message); }
   };
+  const dialogProps = (() => {
+    if (!dialog) return null;
+    const many = !!dialog.bulk;
+    if (dialog.action === 'resolve') {
+      return {
+        title: t('alerts.resolve'), submitLabel: t('alerts.resolve'),
+        fields: [{ name: 'note', type: 'textarea', label: many ? t('alerts.bulkResolveNote') : t('alerts.resolveNote') }],
+        onSubmit: (v) => (many ? runBulk('resolve', v) : actOne('resolve', dialog.alert, v)),
+      };
+    }
+    return {
+      title: t('alerts.suppress'), submitLabel: t('alerts.suppress'),
+      fields: [
+        { name: 'minutes', type: 'number', min: 1, initial: '60', label: many ? t('alerts.bulkSuppressMinutes') : t('alerts.suppressMinutes') },
+        { name: 'note', type: 'text', label: t('alerts.suppressReason') },
+      ],
+      validate: (v) => validMinutes(v.minutes),
+      onSubmit: (v) => (many ? runBulk('suppress', v) : actOne('suppress', dialog.alert, v)),
+    };
+  })();
 
   return (
     <Page wide>
@@ -200,6 +219,7 @@ function AlertsScreen({ navigate }) {
         </div>}
       </Card>
       <AlertDetail alertID={detailID} onClose={() => setDetailID(null)} canManage={can('alerts.manage')} onAction={act} />
+      <FormDialog open={!!dialog} onClose={() => setDialog(null)} {...(dialogProps || {})} />
       {showSuppressions && <AlertSuppressionsModal onClose={() => setShowSuppressions(false)} devMap={devMap} />}
     </Page>
   );
@@ -450,9 +470,13 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
     try { if (check) await api.updateCheck(check.id, body); else await api.createCheck(body); toast.success(check ? t('checks.updated') : t('checks.created')); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
   };
-  const del = async () => { if (!window.confirm(t('checks.deletePrompt'))) return; try { await api.deleteCheck(check.id); toast.info(t('checks.deleted')); onClose(); } catch (e) { toast.error(t('common.failed'), e.message); } };
+  // Asked in a console dialog, not the browser's confirm over the tab.
+  const [confirmDel, setConfirmDel] = useState(false);
+  const del = () => setConfirmDel(true);
+  const doDelete = async () => { try { await api.deleteCheck(check.id); toast.info(t('checks.deleted')); setConfirmDel(false); onClose(); } catch (e) { toast.error(t('common.failed'), e.message); } };
 
   return (
+    <>
     <Modal open onClose={onClose} width="max-w-lg">
       <div className="px-5 py-4 border-b border-line flex items-center justify-between"><div className="text-[15px] font-semibold text-ink">{check ? t('checks.editTitle') : t('checks.new')}</div><button onClick={onClose} className="text-faint hover:text-ink"><Icon name="close" size={18} /></button></div>
       <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto scroll-area">
@@ -483,6 +507,8 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
       </div>
       <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('checks.manage') && <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? t('checks.save') : t('checks.create')}</Button></div>
     </Modal>
+    <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={doDelete} danger title={t('checks.deletePrompt')} body="" confirmLabel={t('action.delete')} />
+    </>
   );
 }
 
@@ -609,9 +635,13 @@ function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId 
     try { if (task) await api.updateTask(task.id, body); else await api.createTask(body); toast.success(task ? t('tasks.updated') : t('tasks.created')); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
   };
-  const del = async () => { if (!window.confirm(t('tasks.deletePrompt'))) return; try { await api.deleteTask(task.id); toast.info(t('tasks.deleted')); onClose(); } catch (e) { toast.error(t('common.failed'), e.message); } };
+  // Asked in a console dialog, not the browser's confirm over the tab.
+  const [confirmDel, setConfirmDel] = useState(false);
+  const del = () => setConfirmDel(true);
+  const doDelete = async () => { try { await api.deleteTask(task.id); toast.info(t('tasks.deleted')); setConfirmDel(false); onClose(); } catch (e) { toast.error(t('common.failed'), e.message); } };
 
   return (
+    <>
     <Modal open onClose={onClose} width="max-w-lg">
       <div className="px-5 py-4 border-b border-line flex items-center justify-between"><div className="text-[15px] font-semibold text-ink">{task ? t('tasks.editTitle') : t('tasks.newTitle')}</div><button onClick={onClose} className="text-faint hover:text-ink"><Icon name="close" size={18} /></button></div>
       <div className="p-5 space-y-4">
@@ -662,6 +692,8 @@ function TaskEditor({ task, onClose, devMap, policies, scripts, defaultPolicyId 
       </div>
       <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{task && can('tasks.manage') && <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{task ? t('tasks.save') : t('tasks.create')}</Button></div>
     </Modal>
+    <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={doDelete} danger title={t('tasks.deletePrompt')} body="" confirmLabel={t('action.delete')} />
+    </>
   );
 }
 

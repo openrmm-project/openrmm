@@ -598,6 +598,50 @@ function downloadText(name, text, mime) {
 }
 
 /* confirm dialog hook-ish component */
+// FormDialog asks for values inside the console, where the browser's
+// window.prompt used to: a dialog over the page rather than a popup on top of
+// the tab. fields: [{ name, label, type ('text' | 'number' | 'textarea'),
+// initial, placeholder, min }]. validate(values) returns an error message, or
+// '' when the values are good; onSubmit(values) may be async, and the dialog
+// stays open with its button busy until it settles.
+function FormDialog({ open, onClose, onSubmit, title, body, fields, submitLabel = t('ui.confirm'), validate, danger }) {
+  const initial = () => Object.fromEntries((fields || []).map((f) => [f.name, f.initial ?? '']));
+  const [values, setValues] = useState(initial);
+  const [formError, setFormError] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setValues(initial()); setFormError(''); setBusy(false); } }, [open]);
+  const label = (s) => String(s || '').replace(/[:：]\s*$/, '');
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    const problem = validate ? validate(values) : '';
+    if (problem) { setFormError(problem); return; }
+    setBusy(true);
+    try { await onSubmit(values); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open={open} onClose={() => { if (!busy) onClose(); }} width="max-w-md">
+      <form className="p-5" onSubmit={submit}>
+        <div className="text-[15px] font-semibold text-ink">{title}</div>
+        {body && <div className="text-[13px] text-muted mt-1 leading-relaxed">{body}</div>}
+        <div className="space-y-3 mt-4">
+          {(fields || []).map((f, i) => (
+            <Field key={f.name} label={label(f.label)}>
+              {f.type === 'textarea'
+                ? <Textarea rows={3} value={values[f.name] ?? ''} placeholder={f.placeholder} autoFocus={i === 0} onChange={(e) => { const v = e.target.value; setValues((s) => ({ ...s, [f.name]: v })); setFormError(''); }} />
+                : <Input type={f.type === 'number' ? 'number' : 'text'} min={f.min} value={values[f.name] ?? ''} placeholder={f.placeholder} autoFocus={i === 0} onChange={(e) => { const v = e.target.value; setValues((s) => ({ ...s, [f.name]: v })); setFormError(''); }} />}
+            </Field>
+          ))}
+        </div>
+        {formError && <div className="mt-3 text-[12px] text-bad">{formError}</div>}
+        <div className="flex justify-end gap-2 mt-5">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>{t('action.cancel')}</Button>
+          <Button type="submit" variant={danger ? 'danger' : 'primary'} loading={busy}>{submitLabel}</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t('ui.confirm'), danger, requireType, blocked }) {
   const [typed, setTyped] = useState('');
   useEffect(() => { if (open) setTyped(''); }, [open]);
@@ -632,6 +676,6 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t
 Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, browserTimezone, scheduleZone, TimezoneSelect, useQuery, useMutation, useToast, ToastProvider,
   Button, Spinner, StatusPill, STATUS_META, statusLabel, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
-  Avatar, RoleBadge, Kbd, Skeleton, EmptyState, ErrorBoundary, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
+  Avatar, RoleBadge, Kbd, Skeleton, EmptyState, ErrorBoundary, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog, FormDialog,
   csvEscape, toCSV, downloadText,
 });

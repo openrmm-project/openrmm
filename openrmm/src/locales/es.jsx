@@ -156,6 +156,7 @@
   'ui.dryRun': 'Vista previa (simulación)',
   'ui.output': 'Salida',
   'ui.confirm': 'Confirmar',
+  'ui.valueRequired': "Completa este campo.",
   'ui.typeToConfirm': 'Escribe {word} para confirmar',
 
   // ---- device bulk operations (device-bulk.jsx)

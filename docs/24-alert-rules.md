@@ -1,6 +1,6 @@
 # 24 — Alert rules
 
-Every alert a device raises comes from a rule in **Checks** (the console's
+Monitoring alerts are configured through rules in **Checks** (the console's
 *Verificações*). The Alerts screen is the inbox: acknowledge, silence and resolve
 incidents. It no longer hides rules of its own.
 
@@ -116,6 +116,8 @@ The event types are the same (`check_failed`, `check_recovered`,
 `notification_rule_selections (user_id, check_id)` hold the choice. Scope and
 the `alerts.view` permission still apply on top of it: no choice can reveal a
 device the user cannot open.
+
+The rule filter applies to incident emails carrying an alert id. Direct job-failure notices and AI-release-revocation notices keep their own event subscription and scope checks; disable those event subscriptions to stop them.
 
 ## Schema (migration 028)
 

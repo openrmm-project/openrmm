@@ -557,7 +557,7 @@
   'run.created': 'Job created',
   'run.queued': 'Queued for approval — nothing has run yet.',
   'run.directOn': 'Direct execution is on: this runs on {host} immediately, with no approval step.',
-  'run.gated': 'This creates an approval-gated job. It is a dry-run preview until someone with job management permission approves it — nothing executes on {host} yet.',
+  'run.gated': 'This job waits for approval: nothing runs on {host} until someone with job management permission approves it.',
   'run.immediately': 'Run immediately (skip approval)',
   'run.immediatelyHint': '— configuration managers only; enabled on this instance',
   'run.fromLibrary': 'From library',

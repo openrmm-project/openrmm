@@ -527,7 +527,7 @@
   'run.created': "Tugasan dicipta",
   'run.queued': "Dalam baris gilir kelulusan — belum ada apa-apa yang dijalankan.",
   'run.directOn': "Pelaksanaan terus dihidupkan: skrip ini dijalankan pada {host} serta-merta, tanpa langkah kelulusan.",
-  'run.gated': "Ini mencipta tugasan yang memerlukan kelulusan. Ia hanya pratonton sehingga seseorang yang mempunyai kebenaran mengurus tugasan meluluskannya — belum ada apa-apa yang dijalankan pada {host}.",
+  'run.gated': "Tugasan ini menunggu kelulusan: tiada apa-apa dijalankan pada {host} sehingga seseorang yang mempunyai kebenaran mengurus tugasan meluluskannya.",
   'run.immediately': "Jalankan segera (langkau kelulusan)",
   'run.immediatelyHint': "— untuk pengurus konfigurasi sahaja; didayakan pada instans ini",
   'run.fromLibrary': "Daripada pustaka",

@@ -544,7 +544,7 @@
   'run.created': 'Job erstellt',
   'run.queued': 'Zur Genehmigung eingereiht – noch wurde nichts ausgeführt.',
   'run.directOn': 'Direkte Ausführung ist an: Das läuft sofort auf {host}, ohne Genehmigungsschritt.',
-  'run.gated': 'Das erstellt einen genehmigungspflichtigen Job. Er bleibt eine Vorschau, bis jemand mit Jobverwaltungsrecht ihn genehmigt – auf {host} wird noch nichts ausgeführt.',
+  'run.gated': 'Dieser Job wartet auf Genehmigung: Auf {host} läuft nichts, bis jemand mit Jobverwaltungsrecht ihn genehmigt.',
   'run.immediately': 'Sofort ausführen (ohne Genehmigung)',
   'run.immediatelyHint': '– nur für Konfigurationsverwalter; auf dieser Instanz aktiviert',
   'run.fromLibrary': 'Aus der Bibliothek',

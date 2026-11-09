@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-09
+
 ### Added
 
 - **MeshCentral: open unlinked devices by hostname** (#226). An administrator
@@ -28,11 +30,10 @@ tag.
   administrator with access to every device and `settings.manage` can give each
   user a MeshCentral account (Users ▸ ⋯ ▸ MeshCentral account), and that user's
   sessions sign in as it, so MeshCentral's own permissions decide what they
-  reach there. Users
-  with access to every device and no account of their own keep signing in as
-  the shared account (`RMM_MESHCENTRAL_USER`); "Shared account for unrestricted
-  users" in Settings ▸ Remote access, or `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`,
-  turns that off. Setting an account is audited as `user.meshcentral_account`,
+  reach there. Users with access to every device and no account of their own
+  keep signing in as the shared account (`RMM_MESHCENTRAL_USER`); "Shared
+  account for unrestricted users" in Settings ▸ Remote access, or
+  `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`, turns that off. Setting an account is audited as `user.meshcentral_account`,
   and `remote.start` records `mesh_account` and `mesh_user`.
 
 ### Security

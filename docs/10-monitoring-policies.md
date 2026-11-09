@@ -218,3 +218,7 @@ still in flight.
 See [04-api-reference](04-api-reference.md) for the full list. New groups:
 `/api/auth/*`, `/api/users`, `/api/clients`, `/api/sites`, `/api/scripts`,
 `/api/checks`, `/api/tasks`, `/api/policies`, `/api/alerts`.
+
+## Server alert rules
+
+Checks also manages connectivity, failed jobs and patches, pending reboots and outdated agents. These rules run on the server, use the broadest assigned scope first, and fall back to configurable fleet defaults. See [Alert rules](24-alert-rules.md) for precedence, configuration, API and email selection. Alerts remains the incident inbox.

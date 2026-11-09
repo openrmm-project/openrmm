@@ -154,3 +154,7 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
 | Execute a script directly | ❌ |
 | Move or delete devices | ⚠️ propose only, with `clients.manage` / `devices.delete`; a person approves it, and a deletion needs the device count typed |
 | Delete a group, site or company | ❌ |
+
+### Proposing server alert rules
+
+The existing propose_check tool also accepts connectivity, job_failure, patch_failure, reboot_pending and agent_outdated. The [alert rules guide](24-alert-rules.md) documents their closed configuration schema. Both chat and MCP create disabled proposals within the caller’s scope; a human must review and enable them, including rules that suppress alerts. No tool edits fleet defaults or approves its own proposal.

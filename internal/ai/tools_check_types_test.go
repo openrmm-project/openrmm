@@ -39,6 +39,15 @@ func TestProposeCheckOffersOnlySupportedTypes(t *testing.T) {
 			t.Errorf("propose_check offers %q, which the server refuses", typ)
 		}
 	}
+	for _, kind := range models.ServerRuleTypes {
+		offered := false
+		for _, typ := range schema.Properties.Type.Enum {
+			offered = offered || typ == kind
+		}
+		if !offered {
+			t.Errorf("server rule %q missing from propose_check", kind)
+		}
+	}
 	for legacy, canonical := range legacyCheckTypes {
 		if !models.SupportedCheckType(canonical) {
 			t.Errorf("legacy %q maps to unsupported %q", legacy, canonical)

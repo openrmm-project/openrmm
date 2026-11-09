@@ -30,7 +30,9 @@ func (s *Store) CheckAppliesToAgent(ctx context.Context, checkID, agentID string
 			FROM checks c
 			JOIN agents a ON a.id=$2
 			LEFT JOIN sites si ON si.id=a.site_id
-			WHERE c.id=$1 AND c.enabled AND a.revoked_at IS NULL AND (
+			WHERE c.id=$1 AND c.enabled AND a.revoked_at IS NULL
+			  AND NOT (c.type=ANY($3::text[]))
+			  AND (c.proposed_by='' OR c.approved_by<>'') AND (
 				c.agent_id=a.id OR c.policy_id IN (
 					SELECT pa.policy_id
 					FROM policy_assignments pa
@@ -40,7 +42,7 @@ func (s *Store) CheckAppliesToAgent(ctx context.Context, checkID, agentID string
 					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id)
 				)
 			)
-		)`, checkID, agentID).Scan(&applies)
+		)`, checkID, agentID, models.ServerRuleTypes).Scan(&applies)
 	return applies, err
 }
 

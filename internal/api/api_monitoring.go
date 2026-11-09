@@ -222,6 +222,7 @@ func (s *Server) createCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.auditServerRule(r, out, "create")
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -253,13 +254,18 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if existing.Enabled && !c.Enabled {
+	if (existing.Enabled && !c.Enabled) || existing.Type != c.Type {
 		s.cleanupCheckTargets(r, existing, "disabled", "Check disabled by an operator.")
 	}
 	out, err := s.store.GetCheck(r.Context(), c.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if models.IsServerRule(existing.Type) && !models.IsServerRule(out.Type) {
+		s.auditServerRule(r, existing, "replace")
+	} else {
+		s.auditServerRule(r, out, "update")
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -275,10 +281,14 @@ func (s *Server) deleteCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.auditServerRule(r, check, "delete")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) cleanupCheckTargets(r *http.Request, check *models.Check, kind, note string) {
+	if models.IsServerRule(check.Type) {
+		return // the next evaluation applies the replacement rule or fleet default
+	}
 	instances, err := s.store.CheckInstances(r.Context(), check.ID, "", false)
 	if err != nil {
 		log.Printf("cleanup check %s targets: %v", check.ID, err)
@@ -609,7 +619,7 @@ func (s *Server) listAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sourceType != "" && !oneOf(sourceType, models.AlertSourceCheck, models.AlertSourceTask,
-		models.AlertSourceAgent, models.AlertSourceSystem, "job", "patch", "update", "backup", "security") {
+		models.AlertSourceAgent, models.AlertSourceSystem, models.AlertSourceRule, "job", "patch", "update", "backup", "security") {
 		writeErr(w, http.StatusBadRequest, "invalid alert source_type")
 		return
 	}

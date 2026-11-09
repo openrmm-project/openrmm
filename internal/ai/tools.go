@@ -165,11 +165,11 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "propose_check",
-			Description: "Propose a monitoring check for one device or for a policy. Created DISABLED: it monitors nothing until a person reviews and enables it in the console. Types: diskspace/memory need warn_threshold above err_threshold (percent free); cpuload needs err_threshold above warn_threshold; ping needs config {\"host\":\"...\"}; winservice needs config {\"service\":\"...\"}; script needs config {\"shell\":\"...\",\"script\":\"...\"}.",
+			Description: "Propose a monitoring check or server alert rule for one device or policy. Created DISABLED: it does nothing until a person reviews and enables it in Checks. Agent types: diskspace/memory need warn_threshold above err_threshold (percent free); cpuload needs err_threshold above warn_threshold; ping needs config.host; winservice needs config.service; script needs config.shell and config.script. Server rules: connectivity uses config.after_min (3-10080); job_failure uses config.scope (tasks or all); patch_failure needs no extra field; reboot_pending uses config.after_days (0-90); agent_outdated uses config.behind (major, minor or patch). Server rules accept config.mode (alert or ignore) and config.severity (info, warning or error). An ignore proposal cannot turn alerts off until a person accepts it. Server rules run on the server and never send code to a device.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"agent_id":{"type":"string","description":"target device id; give this OR policy_id, never both"},
 				"policy_id":{"type":"string","description":"target policy id"},
-				"type":{"type":"string","enum":["diskspace","memory","cpuload","ping","winservice","script"],"description":"what to monitor"},
+				"type":{"type":"string","enum":["diskspace","memory","cpuload","ping","winservice","script","connectivity","job_failure","patch_failure","reboot_pending","agent_outdated"],"description":"what to monitor or which server alert condition to configure"},
 				"name":{"type":"string","description":"short name for the check"},
 				"config":{"type":"object","description":"type-specific settings"},
 				"warn_threshold":{"type":"number","description":"percent threshold for the warning level"},

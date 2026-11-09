@@ -22,7 +22,7 @@ const alertCols = `al.id, al.agent_id, al.source_type, al.source_id, al.conditio
 	al.resolution_note, al.reopened_from, al.last_notified_at,
 	al.notification_pending, al.notification_kind, al.notification_seq,
 	al.silenced_until, al.silenced_by, al.silence_reason,
-	al.last_observation_id`
+	al.last_observation_id, al.rule_id`
 
 func scanAlert(row pgx.Row) (*models.Alert, error) {
 	var a models.Alert
@@ -35,7 +35,7 @@ func scanAlert(row pgx.Row) (*models.Alert, error) {
 		&a.ResolutionNote, &a.ReopenedFrom, &a.LastNotifiedAt,
 		&a.NotificationPending, &a.NotificationKind, &a.NotificationSeq,
 		&a.SilencedUntil, &a.SilencedBy, &a.SilenceReason,
-		&a.LastObservationID)
+		&a.LastObservationID, &a.RuleID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -76,6 +76,10 @@ type AlertObservation struct {
 	// nothing to deduplicate against, and guessing from timestamp and content
 	// cannot tell a retry from two distinct observations that happen to match.
 	ObservationID string
+	// RuleID is the check or server rule in force that raised this
+	// observation; nil for a fleet default. It is recorded on the alert, and
+	// follows the rule in force on every observation.
+	RuleID *string
 }
 
 type AlertTransition struct {
@@ -121,9 +125,9 @@ const suppressionMatchesAlertSQL = `(
 	(s.scope_type='site' AND s.scope_id=al.site_id) OR
 	(s.scope_type='client' AND s.scope_id=al.client_id) OR
 	(s.scope_type='group' AND s.scope_id=al.group_id) OR
-	(s.scope_type='check' AND al.source_type='check' AND s.scope_id=al.source_id) OR
-	(s.scope_type='policy' AND al.source_type='check' AND EXISTS (
-		SELECT 1 FROM checks c WHERE c.id=al.source_id AND c.policy_id=s.scope_id
+	(s.scope_type='check' AND s.scope_id=COALESCE(al.rule_id, CASE WHEN al.source_type='check' THEN al.source_id END)) OR
+	(s.scope_type='policy' AND EXISTS (
+		SELECT 1 FROM checks c WHERE c.id=COALESCE(al.rule_id, CASE WHEN al.source_type='check' THEN al.source_id END) AND c.policy_id=s.scope_id
 	))
 )`
 
@@ -138,13 +142,13 @@ func findActiveSuppression(ctx context.Context, tx pgx.Tx, obs AlertObservation,
 			(s.scope_type='site' AND s.scope_id=$2) OR
 			(s.scope_type='client' AND s.scope_id=$3) OR
 			(s.scope_type='group' AND s.scope_id=$4) OR
-			(s.scope_type='check' AND $5='check' AND s.scope_id=$6) OR
-			(s.scope_type='policy' AND $5='check' AND s.scope_id=(
-				SELECT policy_id FROM checks WHERE id=$6
+			(s.scope_type='check' AND s.scope_id=COALESCE($8::uuid, CASE WHEN $5='check' THEN $6::uuid END)) OR
+			(s.scope_type='policy' AND s.scope_id=(
+				SELECT policy_id FROM checks WHERE id=COALESCE($8::uuid, CASE WHEN $5='check' THEN $6::uuid END)
 			))
 		  )
 		ORDER BY ends_at DESC LIMIT 1`, obs.AgentID, siteID, clientID, groupID,
-		obs.SourceType, obs.SourceID, now).Scan(&sup.Until, &sup.Reason, &sup.Actor)
+		obs.SourceType, obs.SourceID, now, obs.RuleID).Scan(&sup.Until, &sup.Reason, &sup.Actor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -229,7 +233,10 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 		// microsecond, which under concurrency they do: twelve simultaneous
 		// observations of one condition recorded eleven occurrences.
 		sameObservation := obs.ObservationID != "" && obs.ObservationID == current.LastObservationID
-		if sameObservation {
+		ruleChanged := (obs.RuleID == nil) != (current.RuleID == nil) ||
+			(obs.RuleID != nil && current.RuleID != nil && *obs.RuleID != *current.RuleID)
+		configuredSeverityChanged := (obs.SourceType == models.AlertSourceRule || obs.SourceType == models.AlertSourceAgent) && obs.Severity != current.Severity
+		if sameObservation && !ruleChanged && !configuredSeverityChanged {
 			if err := tx.Commit(ctx); err != nil {
 				return nil, err
 			}
@@ -282,31 +289,33 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 		// still-firing alert fail with "alert version changed": an offline
 		// alert is observed every scheduler tick, faster than anyone types a
 		// resolution note.
-		decisionChanged := escalated || status != current.Status ||
+		decisionChanged := escalated || configuredSeverityChanged || ruleChanged || status != current.Status ||
 			!sameAlertTime(ackedAt, current.AckedAt) || ackedBy != current.AckedBy ||
 			!sameAlertTime(silencedUntil, current.SilencedUntil) ||
 			silencedBy != current.SilencedBy || silenceReason != current.SilenceReason
 		updated, updateErr := scanAlert(tx.QueryRow(ctx, `UPDATE alerts al SET
 			severity=CASE WHEN $2 THEN $3 ELSE severity END,
 			message=$4, status=$5, last_seen_at=$6, updated_at=$6,
-			occurrence_count=occurrence_count+1, observed_value=$7,
+			occurrence_count=occurrence_count+CASE WHEN $21 THEN 0 ELSE 1 END, observed_value=$7,
 			threshold_value=$8, output=$9, version=version+CASE WHEN $19 THEN 1 ELSE 0 END,
 			acked_at=$10, acked_by=$11, silenced_until=$12,
 			silenced_by=$13, silence_reason=$14,
 			notification_pending=$15, notification_kind=$16, notification_seq=$17,
-			last_observation_id=$18
+			last_observation_id=$18, rule_id=$20
 			WHERE id=$1 RETURNING `+alertCols,
-			current.ID, escalated, obs.Severity, obs.Message, status, obs.ObservedAt,
+			current.ID, escalated || configuredSeverityChanged, obs.Severity, obs.Message, status, obs.ObservedAt,
 			obs.ObservedValue, obs.Threshold, obs.Output, ackedAt, ackedBy,
 			silencedUntil, silencedBy, silenceReason, pending, notificationKind, notificationSeq,
-			obs.ObservationID, decisionChanged))
+			obs.ObservationID, decisionChanged, obs.RuleID, sameObservation))
 		if updateErr != nil {
 			return nil, updateErr
 		}
-		if err := addAlertEvent(ctx, tx, updated.ID, models.AlertEventOccurrence,
-			"system", updated.Severity, obs.Message, obs.ObservedValue,
-			map[string]any{"count": updated.OccurrenceCount}, obs.ObservedAt); err != nil {
-			return nil, err
+		if !sameObservation {
+			if err := addAlertEvent(ctx, tx, updated.ID, models.AlertEventOccurrence,
+				"system", updated.Severity, obs.Message, obs.ObservedValue,
+				map[string]any{"count": updated.OccurrenceCount}, obs.ObservedAt); err != nil {
+				return nil, err
+			}
 		}
 		if escalated {
 			if err := addAlertEvent(ctx, tx, updated.ID, models.AlertEventEscalated,
@@ -374,14 +383,14 @@ func (s *Store) ObserveAlert(ctx context.Context, obs AlertObservation) (*AlertT
 		severity, message, status, created_at, first_seen_at, last_seen_at,
 		updated_at, observed_value, threshold_value, output, reopened_from,
 		notification_pending, notification_kind, notification_seq,
-		silenced_until, silenced_by, silence_reason, last_observation_id
+		silenced_until, silenced_by, silence_reason, last_observation_id, rule_id
 	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$14,$14,
-	          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+	          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 	RETURNING `+alertCols, id, obs.AgentID, obs.SourceType, obs.SourceID,
 		obs.ConditionKey, snapshotID, hostname, siteID, clientID, groupID, obs.Severity,
 		obs.Message, status, obs.ObservedAt, obs.ObservedValue, obs.Threshold,
 		obs.Output, reopenedFrom, pending, notificationKind, notificationSeq,
-		silencedUntil, silencedBy, silenceReason, obs.ObservationID))
+		silencedUntil, silencedBy, silenceReason, obs.ObservationID, obs.RuleID))
 	if err != nil {
 		return nil, err
 	}
@@ -433,6 +442,56 @@ func (s *Store) ResolveAlertSource(ctx context.Context, sourceType string, sourc
 		  AND source_id IS NOT DISTINCT FROM $2
 		  AND agent_id IS NOT DISTINCT FROM $3
 		RETURNING `+alertCols, sourceType, sourceID, agentID, at, actor, kind, note)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := scanAlertRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	for i := range resolved {
+		if err := addAlertEvent(ctx, tx, resolved[i].ID, models.AlertEventResolved,
+			actor, resolved[i].Severity, note, resolved[i].ObservedValue,
+			map[string]any{"kind": kind}, at); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return resolved, nil
+}
+
+// ResolveAlertCondition is ResolveAlertSource for one condition of a source: a
+// device's server rule alerts share the source and differ by condition, and
+// resolving a reboot must not close its failed-update alert.
+func (s *Store) ResolveAlertCondition(ctx context.Context, sourceType string, sourceID, agentID *string, conditionKey, actor, kind, note string, at time.Time) ([]models.Alert, error) {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	if kind == "" {
+		kind = "automatic"
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	rows, err := tx.Query(ctx, `UPDATE alerts al SET
+		status='resolved', resolved_at=$4, updated_at=$4, last_seen_at=$4,
+		resolved_by=$5, resolution_kind=$6, resolution_note=$7,
+		notification_pending=CASE WHEN status<>'suppressed' AND $6='automatic' THEN true ELSE false END,
+		notification_kind=CASE WHEN status<>'suppressed' AND $6='automatic' THEN 'resolved' ELSE '' END,
+		notification_seq=notification_seq+CASE WHEN status<>'suppressed' AND $6='automatic' THEN 1 ELSE 0 END,
+		silenced_until=NULL, silenced_by='', silence_reason='', version=version+1
+		WHERE status<>'resolved' AND source_type=$1
+		  AND source_id IS NOT DISTINCT FROM $2
+		  AND agent_id IS NOT DISTINCT FROM $3
+		  AND condition_key=$8
+		RETURNING `+alertCols, sourceType, sourceID, agentID, at, actor, kind, note, conditionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -760,9 +819,9 @@ func suppressionAlertPredicate(scopeType string) string {
 	case models.ScopeGroup:
 		return "al.group_id=$1"
 	case "check":
-		return "al.source_type='check' AND al.source_id=$1"
+		return "COALESCE(al.rule_id, CASE WHEN al.source_type='check' THEN al.source_id END)=$1"
 	case "policy":
-		return "al.source_type='check' AND al.source_id IN (SELECT id FROM checks WHERE policy_id=$1)"
+		return "COALESCE(al.rule_id, CASE WHEN al.source_type='check' THEN al.source_id END) IN (SELECT id FROM checks WHERE policy_id=$1)"
 	default:
 		return "false"
 	}
@@ -998,7 +1057,7 @@ func (s *Store) ResolveInapplicableCheckAlerts(ctx context.Context, now time.Tim
 			SELECT 1 FROM checks c
 			JOIN agents a ON a.id=al.agent_id AND a.revoked_at IS NULL
 			LEFT JOIN sites si ON si.id=a.site_id
-			WHERE c.id=al.source_id AND c.enabled AND (
+			WHERE c.id=al.source_id AND c.enabled AND NOT (c.type=ANY($2::text[])) AND (
 				c.agent_id=a.id OR c.policy_id IN (
 					SELECT pa.policy_id FROM policy_assignments pa
 					WHERE (pa.scope_type='agent' AND pa.scope_id=a.id)
@@ -1008,7 +1067,7 @@ func (s *Store) ResolveInapplicableCheckAlerts(ctx context.Context, now time.Tim
 				)
 			)
 		)
-		RETURNING `+alertCols, now)
+		RETURNING `+alertCols, now, models.ServerRuleTypes)
 	if err != nil {
 		return 0, err
 	}

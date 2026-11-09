@@ -142,6 +142,14 @@ func (s *Store) RecipientsForAlertEvent(ctx context.Context, alertID, eventType 
 		            (us.scope_type='client' AND us.scope_id=al.client_id)
 		          )
 		        )
+		  )
+		  -- Which rules reach this user (docs/24-alert-rules.md): all, unless
+		  -- they chose selected rules; then the alert's rule must be one they
+		  -- picked, or a fleet default when they kept those.
+		  AND (
+		        NOT EXISTS (SELECT 1 FROM notification_rule_filters f WHERE f.user_id=u.id AND f.mode='selected')
+		     OR (al.rule_id IS NULL AND al.source_type<>'check' AND EXISTS (SELECT 1 FROM notification_rule_filters f WHERE f.user_id=u.id AND f.include_defaults))
+		     OR EXISTS (SELECT 1 FROM notification_rule_selections sel WHERE sel.user_id=u.id AND sel.check_id=al.rule_id)
 		  )`, alertID, eventType, defaultEnabled)
 	if err != nil {
 		return nil, err

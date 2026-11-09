@@ -129,7 +129,7 @@ test('the settings screen edits only the alerts SMTP profile', async () => {
       `the Email screen must not call ${call}: the account transport is env-only`);
   }
   // The preferences card saves subscriptions only.
-  assert.match(screens, /api\.updateMyNotifications\(\{ subscriptions: subs \}\)/);
+  assert.match(screens, /api\.updateMyNotifications\(\{ subscriptions: subs, rules: rulePrefs \}\)/);
 });
 
 // Updating a task is a PUT, and the API validates the complete schedule. The

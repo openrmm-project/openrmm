@@ -274,14 +274,37 @@ func (s *Server) getMyNotifications(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	rules, err := s.store.GetNotificationRuleFilter(r.Context(), u.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	choices, err := s.notificationRuleChoices(r)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	visible := map[string]bool{}
+	for _, c := range choices {
+		visible[c.ID] = true
+	}
+	ids := []string{}
+	for _, id := range rules.CheckIDs {
+		if visible[id] {
+			ids = append(ids, id)
+		}
+	}
+	rules.CheckIDs = ids
 	// The alerts transport, not the account one: whether alerts can be delivered
 	// is what this screen is about.
 	cfg, _ := settings.AlertSMTPConfig(r.Context(), s.store, s.cfg)
 	writeJSON(w, http.StatusOK, map[string]any{
 		// Read-only here: shown so the user knows where their alerts land, but
 		// changing it needs users.email.manage.
-		"email":         u.Email,
-		"subscriptions": notificationPrefs(explicit),
+		"email":           u.Email,
+		"subscriptions":   notificationPrefs(explicit),
+		"rules":           rules,
+		"available_rules": choices,
 		// Without a transport nothing is delivered whatever the preferences say,
 		// so the screen can tell the user that instead of leaving them waiting.
 		"delivery_configured": cfg.Enabled(),
@@ -305,8 +328,9 @@ func (s *Server) updateMyNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Email         *string         `json:"email"`         // rejected unless unchanged
-		Subscriptions map[string]bool `json:"subscriptions"` // event type -> enabled
+		Email         *string                       `json:"email"`         // rejected unless unchanged
+		Subscriptions map[string]bool               `json:"subscriptions"` // event type -> enabled
+		Rules         *store.NotificationRuleFilter `json:"rules"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -326,8 +350,25 @@ func (s *Server) updateMyNotifications(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.Rules != nil {
+		choices, err := s.notificationRuleChoices(r)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := validateNotificationRules(in.Rules, choices); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	for eventType, enabled := range in.Subscriptions {
 		if err := s.store.SetNotificationSubscription(r.Context(), u.ID, eventType, enabled); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if in.Rules != nil {
+		if err := s.store.SetNotificationRuleFilter(r.Context(), u.ID, *in.Rules); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}

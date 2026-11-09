@@ -8,6 +8,8 @@ tag.
 
 ### Added
 
+- **Configurable alert rules** ([guide](docs/24-alert-rules.md)): manage connectivity, failed jobs and patches, pending reboots and outdated agents in Checks, with policy inheritance, fleet defaults and per-rule email preferences. AI chat and MCP can propose rules for human review; server rules never execute on endpoints. Existing alert defaults stay unchanged on upgrade.
+
 - **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
   [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
   run without a person approving at the time, and only for roles granted them:

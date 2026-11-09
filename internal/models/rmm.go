@@ -425,6 +425,9 @@ type Alert struct {
 	SilencedUntil     *time.Time `json:"silenced_until,omitempty"`
 	SilencedBy        string     `json:"silenced_by,omitempty"`
 	SilenceReason     string     `json:"silence_reason,omitempty"`
+	// RuleID is the check or server rule that raised the alert; nil for a
+	// fleet default (docs/24-alert-rules.md).
+	RuleID *string `json:"rule_id,omitempty"`
 }
 
 type AlertEvent struct {

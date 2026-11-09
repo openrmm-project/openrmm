@@ -19,7 +19,64 @@ const CHECK_TYPES = {
   ping: { icon: 'network', unit: '', dir: 'state', cfg: 'host', cfgPh: '10.0.0.1' },
   winservice: { icon: 'settings', unit: '', dir: 'state', cfg: 'service', cfgPh: 'Spooler' }, // i18n-ignore: a Windows service name
   script: { icon: 'script', unit: '', dir: 'script', cfg: 'script', cfgPh: 'exit 0' },
+  connectivity: { icon: 'network', unit: '', dir: 'server', server: true },
+  job_failure: { icon: 'script', unit: '', dir: 'server', server: true },
+  patch_failure: { icon: 'settings', unit: '', dir: 'server', server: true },
+  reboot_pending: { icon: 'refresh', unit: '', dir: 'server', server: true },
+  agent_outdated: { icon: 'info', unit: '', dir: 'server', server: true },
 };
+
+const SERVER_RULE_TYPES = ['connectivity', 'job_failure', 'patch_failure', 'reboot_pending', 'agent_outdated'];
+
+function serverRuleConfig(type, input = {}) {
+  const cfg = { mode: input.mode || 'alert', severity: input.severity || (type === 'connectivity' ? 'error' : 'warning') };
+  if (type === 'connectivity') cfg.after_min = input.after_min ?? 3;
+  if (type === 'job_failure') cfg.scope = input.scope || 'tasks';
+  if (type === 'reboot_pending') cfg.after_days = input.after_days ?? 3;
+  if (type === 'agent_outdated') cfg.behind = input.behind || 'minor';
+  return cfg;
+}
+
+function ServerRuleFields({ type, value, onChange, disabled = false }) {
+  const cfg = serverRuleConfig(type, value);
+  const set = (key, next) => onChange({ ...cfg, [key]: next });
+  return <div className="space-y-3">
+    <Field label={t('rules.mode')}><Select value={cfg.mode} disabled={disabled} onChange={(e) => set('mode', e.target.value)}><option value="alert">{t('rules.alert')}</option><option value="ignore">{t('rules.ignore')}</option></Select></Field>
+    {cfg.mode === 'alert' && <>
+      <Field label={t('alerts.col.severity')}><Select value={cfg.severity} disabled={disabled} onChange={(e) => set('severity', e.target.value)}>{['info', 'warning', 'error'].map((level) => <option key={level} value={level}>{t('sev.' + level)}</option>)}</Select></Field>
+      {type === 'connectivity' && <Field label={t('rules.afterMin')}><Input type="number" min="3" max="10080" value={cfg.after_min} disabled={disabled} onChange={(e) => set('after_min', Number(e.target.value))} /></Field>}
+      {type === 'reboot_pending' && <Field label={t('rules.afterDays')}><Input type="number" min="0" max="90" value={cfg.after_days} disabled={disabled} onChange={(e) => set('after_days', Number(e.target.value))} /></Field>}
+      {type === 'job_failure' && <Field label={t('rules.jobScope')}><Select value={cfg.scope} disabled={disabled} onChange={(e) => set('scope', e.target.value)}><option value="tasks">{t('rules.tasks')}</option><option value="all">{t('rules.allJobs')}</option></Select></Field>}
+      {type === 'agent_outdated' && <Field label={t('rules.behind')}><Select value={cfg.behind} disabled={disabled} onChange={(e) => set('behind', e.target.value)}>{['major', 'minor', 'patch'].map((level) => <option key={level} value={level}>{t('rules.' + level)}</option>)}</Select></Field>}
+    </>}
+    <p className="text-[12px] text-muted">{t('rules.serverHelp')}</p>
+    <p className="text-[11px] text-faint">{t('rules.priority')}</p>
+  </div>;
+}
+
+function AlertDefaultsEditor({ onClose, canEdit }) {
+  const toast = useToast();
+  const q = useQuery(['alert-defaults-editor'], () => api.getAlertDefaults());
+  const [type, setType] = useState('connectivity');
+  const [drafts, setDrafts] = useState({});
+  const [busy, setBusy] = useState(false);
+  const value = drafts[type] || q.data?.defaults?.[type]?.config;
+  const save = async () => {
+    if (!canEdit || !q.data) return;
+    setBusy(true);
+    try { await api.updateAlertDefault(type, serverRuleConfig(type, value)); toast.success(t('rules.defaultSaved')); onClose(); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+    finally { setBusy(false); }
+  };
+  return <Modal open onClose={onClose} width="max-w-lg">
+    <div className="px-5 py-4 border-b border-line text-[15px] font-semibold">{t('rules.defaults')}</div>
+    <div className="p-5 space-y-4"><p className="text-[12px] text-muted">{t('rules.defaultsHint')}</p>
+      <Select value={type} onChange={(e) => setType(e.target.value)}>{SERVER_RULE_TYPES.map((kind) => <option key={kind} value={kind}>{checkType(kind).label}</option>)}</Select>
+      {q.data ? <ServerRuleFields type={type} value={value} disabled={!canEdit} onChange={(cfg) => setDrafts((prev) => ({ ...prev, [type]: cfg }))} /> : <Skeleton className="h-40" />}
+    </div>
+    <div className="px-5 py-3 border-t border-line flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>{t('action.close')}</Button>{canEdit && <Button variant="primary" loading={busy} disabled={!q.data} onClick={save}>{t('action.save')}</Button>}</div>
+  </Modal>;
+}
 
 // A check whose type this build does not recognise.
 //
@@ -167,7 +224,7 @@ function AlertsScreen({ navigate }) {
         <Input value={search} onChange={(e) => resetPage(setSearch, e.target.value)} placeholder={t('alerts.search')} className="min-w-[240px] flex-1" />
         <Select value={statusF} onChange={(e) => resetPage(setStatusF, e.target.value)} className="w-auto min-w-[140px]"><option value="all">{t('alerts.anyStatus')}</option><option value="open">{t('alerts.open')}</option><option value="new">{t('status.new')}</option><option value="acked">{t('status.acked')}</option><option value="suppressed">{t('status.suppressed')}</option><option value="resolved">{t('status.resolved')}</option></Select>
         <Select value={sevF} onChange={(e) => resetPage(setSevF, e.target.value)} className="w-auto min-w-[140px]"><option value="all">{t('alerts.anySeverity')}</option><option value="error">{t('sev.error')}</option><option value="warning">{t('sev.warning')}</option><option value="info">{t('sev.info')}</option></Select>
-        <Select value={sourceF} onChange={(e) => resetPage(setSourceF, e.target.value)} className="w-auto min-w-[140px]"><option value="all">{t('alerts.anySource')}</option><option value="check">{t('alerts.source.check')}</option><option value="agent">{t('alerts.source.agent')}</option><option value="task">{t('alerts.source.task')}</option><option value="system">{t('alerts.source.system')}</option></Select>
+        <Select value={sourceF} onChange={(e) => resetPage(setSourceF, e.target.value)} className="w-auto min-w-[140px]"><option value="all">{t('alerts.anySource')}</option><option value="check">{t('alerts.source.check')}</option><option value="agent">{t('alerts.source.agent')}</option><option value="task">{t('alerts.source.task')}</option><option value="system">{t('alerts.source.system')}</option><option value="rule">{t('alerts.source.rule')}</option></Select>
       </div></Card>
 
       {visibleSelected.length > 0 && can('alerts.manage') && <div className="mb-3 flex items-center gap-2 rounded-xl border border-brand/25 bg-brand/5 px-3 py-2">
@@ -218,14 +275,15 @@ function AlertsScreen({ navigate }) {
           <Button size="sm" variant="secondary" disabled={!alertsQ.data?.next_cursor} onClick={() => { setCursors((xs) => [...xs, alertsQ.data.next_cursor]); setSelected([]); }}>{t('audit.next')}</Button>
         </div>}
       </Card>
-      <AlertDetail alertID={detailID} onClose={() => setDetailID(null)} canManage={can('alerts.manage')} onAction={act} />
+      <AlertDetail navigate={navigate} alertID={detailID} onClose={() => setDetailID(null)} canManage={can('alerts.manage')} onAction={act} />
       <FormDialog open={!!dialog} onClose={() => setDialog(null)} {...(dialogProps || {})} />
       {showSuppressions && <AlertSuppressionsModal onClose={() => setShowSuppressions(false)} devMap={devMap} />}
     </Page>
   );
 }
 
-function AlertDetail({ alertID, onClose, canManage, onAction }) {
+function AlertDetail({ alertID, onClose, canManage, onAction, navigate }) {
+  const { can } = useAuth();
   const q = useQuery(['alert-detail', alertID], () => alertID ? api.getAlert(alertID) : Promise.resolve(null), { invalidateOn: ['alerts'], poll: alertID ? 5000 : 0 });
   const a = q.data?.alert;
   const events = q.data?.events || [];
@@ -240,6 +298,7 @@ function AlertDetail({ alertID, onClose, canManage, onAction }) {
         <Card className="p-4 space-y-3">
           <div className="text-[14px] text-ink font-medium">{a.message}</div>
           <div className="grid grid-cols-2 gap-3 text-[12px]"><div><span className="text-faint">{t('alerts.firstSeen')}</span><div className="text-muted mt-0.5">{fmtTime(a.first_seen_at)}</div></div><div><span className="text-faint">{t('alerts.lastSeen')}</span><div className="text-muted mt-0.5">{fmtTime(a.last_seen_at)}</div></div><div><span className="text-faint">{t('alerts.occurrences')}</span><div className="text-muted mt-0.5">{a.occurrence_count}</div></div><div><span className="text-faint">{t('alerts.col.source')}</span><div className="text-muted mt-0.5">{tEnum('alerts.source', a.source_type)}</div></div></div>
+          {a.rule_id && can('checks.view') && navigate && <Button size="sm" variant="ghost" icon="check" onClick={() => { onClose(); navigate('checks', { focus: a.rule_id }); }}>{t('rules.ruleLink')}</Button>}
           {(a.observed_value != null || a.threshold_value != null) && <div className="text-[12px] mono text-muted">{t('alerts.observed', { value: a.observed_value ?? '—', threshold: a.threshold_value ?? '—' })}</div>}
           {a.output && <pre className="rounded-lg border border-line bg-elevated/50 p-3 text-[11.5px] text-muted whitespace-pre-wrap break-words max-h-48 overflow-y-auto">{a.output}</pre>}
           {a.status === 'suppressed' && <div className="rounded-lg bg-runsoft border border-run/20 px-3 py-2 text-[12px] text-run">{t('alerts.suppressedUntil', { when: fmtTime(a.silenced_until) })}{a.silence_reason ? ` — ${a.silence_reason}` : ''}</div>}
@@ -311,7 +370,7 @@ function AlertSuppressionsModal({ onClose, devMap }) {
 }
 
 /* ================================ CHECKS ================================== */
-function ChecksScreen() {
+function ChecksScreen({ route } = {}) {
   const { can } = useAuth();
   const toast = useToast();
   const checksQ = useQuery(['checks'], () => api.listChecks(), { invalidateOn: ['checks'], poll: 8000 });
@@ -320,11 +379,20 @@ function ChecksScreen() {
   const [editing, setEditing] = useState(null); // check obj or 'new'
   const [detail, setDetail] = useState(null);
   const [confirmToggle, setConfirmToggle] = useState(null);
+  const [showDefaults, setShowDefaults] = useState(false);
+  const [focusOpened, setFocusOpened] = useState('');
+  const defaultsQ = useQuery(['alert-defaults'], () => api.getAlertDefaults());
+
+  useEffect(() => {
+    if (!route?.focus || focusOpened === route.focus) return;
+    const row = (checksQ.data?.checks || []).find((item) => item.id === route.focus);
+    if (row) { setDetail(row); setFocusOpened(route.focus); }
+  }, [route?.focus, checksQ.data, focusOpened]);
 
   const checks = checksQ.data?.checks || [];
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
   const summary = { passing: 0, warning: 0, failing: 0, unknown: 0 };
-  checks.forEach((c) => { if (c.enabled) { const x = c.summary || {}; summary.passing += x.passing || 0; summary.warning += x.warning || 0; summary.failing += x.failing || 0; summary.unknown += x.unknown || 0; } });
+  checks.forEach((c) => { if (c.enabled && !checkType(c.type).server) { const x = c.summary || {}; summary.passing += x.passing || 0; summary.warning += x.warning || 0; summary.failing += x.failing || 0; summary.unknown += x.unknown || 0; } });
   const toggle = async (c) => {
     try {
       await api.updateCheck(c.id, { ...c, enabled: !c.enabled });
@@ -337,7 +405,7 @@ function ChecksScreen() {
   return (
       <Page wide>
         <PageHeader title={t('title.checks')} subtitle={t('checks.subtitle')}
-        actions={can('checks.manage') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>{t('checks.new')}</Button>} />
+        actions={<div className="flex gap-2"><Button variant="secondary" icon="settings" onClick={() => setShowDefaults(true)}>{t('rules.defaults')}</Button>{can('checks.manage') && <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>{t('checks.new')}</Button>}</div>} />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 max-w-3xl">
         <div className="rounded-xl border border-ok/25 bg-oksoft px-3.5 py-3"><div className="text-[11px] text-muted">{t('status.passing')}</div><div className="text-[22px] font-semibold text-ok tabular">{summary.passing}</div></div>
@@ -358,11 +426,11 @@ function ChecksScreen() {
               const ct = checkType(c.type); const dev = devMap[c.agent_id]; const pol = polMap[c.policy_id];
               return (
                 <tr key={c.id} onClick={() => setDetail(c)} className="cursor-pointer hover:bg-elevated/40 transition">
-                  <td className="px-4 py-3"><StatusPill status={checkAggregateStatus(c)} size="sm" /></td>
+                  <td className="px-4 py-3">{ct.server ? <span className="text-[11px] text-muted">{t('rules.server')}</span> : <StatusPill status={checkAggregateStatus(c)} size="sm" />}</td>
                   <td className="px-3 py-3"><div className="flex items-center gap-2"><Icon name={ct.icon} size={15} className="text-muted" /><div><div className="flex items-center gap-2"><span className="text-[13px] text-ink font-medium">{c.name}</span>{awaitingReview(c) && <ProposalBadge />}</div><div className="text-[11px] text-faint">{ct.label}{!c.enabled && ' ' + t('checks.disabledSuffix')}</div></div></div></td>
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[11.5px] text-faint mono">{c.warn_threshold != null ? t('checks.thresholds', { warn: c.warn_threshold, err: c.err_threshold }) : '—'}</td>
-                  <td className="px-3 py-3 text-[12px] text-muted">{fmtInterval(c.interval_sec)}</td>
+                  <td className="px-3 py-3 text-[12px] text-muted">{ct.server ? t(c.config?.mode === 'ignore' ? 'rules.ignore' : 'rules.alert') : fmtInterval(c.interval_sec)}</td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><Toggle checked={c.enabled} onChange={() => setConfirmToggle(c)} disabled={!can('checks.manage')} /></td>
                   <td className="px-4 py-3 text-right text-[12px] text-muted">{c.summary?.total ? t('checks.latest', { ok: c.summary.passing || 0, warn: c.summary.warning || 0, fail: c.summary.failing || 0 }) + (c.summary.unknown ? ' ' + t('checks.latestUnknown', { n: c.summary.unknown }) : '') : t('checks.noState')}</td>
                 </tr>
@@ -374,7 +442,8 @@ function ChecksScreen() {
         {!checksQ.loading && checks.length === 0 && <EmptyState icon="check" title={t('checks.none')} msg={t('checks.noneMsg')} />}
       </Card>
 
-      <CheckDetail check={detail} onClose={() => setDetail(null)} devMap={devMap} onEdit={(c) => { setDetail(null); setEditing(c); }} />
+      <CheckDetail check={detail} onClose={() => setDetail(null)} devMap={devMap} canViewOverrides={!!defaultsQ.data?.can_manage} onEdit={(c) => { setDetail(null); setEditing(c); }} />
+      {showDefaults && <AlertDefaultsEditor canEdit={!!defaultsQ.data?.can_manage} onClose={() => { setShowDefaults(false); defaultsQ.refetch(); }} />}
       {editing && <CheckEditor check={editing === 'new' ? null : editing} onClose={() => setEditing(null)} devMap={devMap} policies={policiesQ.data?.policies || []} />}
       <ConfirmDialog open={!!confirmToggle} onClose={() => setConfirmToggle(null)} onConfirm={() => toggle(confirmToggle)}
         title={confirmToggle?.enabled ? t('checks.disableTitle') : t('checks.enableTitle')}
@@ -386,9 +455,10 @@ function ChecksScreen() {
   );
 }
 
-function CheckDetail({ check, onClose, devMap, onEdit }) {
+function CheckDetail({ check, onClose, devMap, onEdit, canViewOverrides }) {
   const { can } = useAuth();
-  const resultsQ = useQuery([check?.id, 'results'], () => check ? api.getCheckResults(check.id) : Promise.resolve({ results: [] }), { invalidateOn: ['checks'] });
+  const resultsQ = useQuery([check?.id, 'results'], () => check && !checkType(check.type).server ? api.getCheckResults(check.id) : Promise.resolve({ results: [] }), { invalidateOn: ['checks'] });
+  const overridesQ = useQuery([check?.id, 'overrides'], () => check && checkType(check.type).server && canViewOverrides ? api.getCheckOverrides(check.id) : Promise.resolve(null), { invalidateOn: ['checks'] });
   if (!check) return null;
   const ct = checkType(check.type); const dev = devMap[check.agent_id];
   const results = resultsQ.data?.results || [];
@@ -398,12 +468,16 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
         <div className="h-10 w-10 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted shrink-0"><Icon name={ct.icon} size={19} /></div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0"><h2 className="text-[16px] font-semibold text-ink truncate">{check.name}</h2><span className="shrink-0"><StatusPill status={checkAggregateStatus(check)} size="sm" /></span></div>
-          <div className="text-[12px] text-muted mt-0.5 truncate">{ct.label} · {dev?.hostname || t('checks.policyTarget')} · {t('checks.every', { interval: fmtInterval(check.interval_sec) })}</div>
+          <div className="text-[12px] text-muted mt-0.5 truncate">{ct.label} · {dev?.hostname || t('checks.policyTarget')} · {ct.server ? t('rules.server') : t('checks.every', { interval: fmtInterval(check.interval_sec) })}</div>
         </div>
         {can('checks.manage') && <Button size="sm" variant="secondary" icon="edit" onClick={() => onEdit(check)}>{t('action.edit')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
+        {ct.server ? <Card className="p-4 space-y-3">
+          <ServerRuleFields type={check.type} value={check.config} disabled onChange={() => {}} />
+          {overridesQ.data && <div className="space-y-2 text-[12px] text-muted"><p>{t('rules.coverage', { n: overridesQ.data.covered })}</p>{(overridesQ.data.overrides || []).map((item) => <p key={item.check_id || 'fleet'}>{t('rules.overridden', { n: item.devices, name: item.name || t('rules.defaults') })}</p>)}{!(overridesQ.data.overrides || []).length && <p>{t('rules.noOverrides')}</p>}</div>}
+        </Card> : <>
         <Card className="overflow-hidden"><div className="px-4 py-3 border-b border-line text-[12.5px] font-semibold text-ink">{t('checks.instances')}</div><div className="divide-y divide-line">
           {(check.instances || []).map((x) => <div key={x.agent_id} className="px-4 py-2.5 flex items-center gap-3"><StatusPill status={x.status || 'unknown'} size="sm" /><span className="text-[12.5px] text-ink flex-1 truncate">{x.hostname}</span><span className="text-[11.5px] text-muted mono truncate max-w-[240px]">{x.value != null ? `${x.value}${ct.unit}` : x.output || t('checks.noResult')}</span><span className="text-[10.5px] text-faint">{timeAgo(x.last_result_at)}</span></div>)}
           {!(check.instances || []).length && <div className="px-4 py-5 text-center text-[12px] text-faint">{t('checks.noTargets')}</div>}
@@ -433,6 +507,7 @@ function CheckDetail({ check, onClose, devMap, onEdit }) {
             ))}
           </div>
         </div>
+        </>}
       </div>
     </Drawer>
   );
@@ -445,6 +520,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
   const [name, setName] = useState(check?.name || '');
   const [target, setTarget] = useState(check?.policy_id ? 'pol:' + check.policy_id : check?.agent_id ? 'dev:' + check.agent_id : defaultPolicyId ? 'pol:' + defaultPolicyId : '');
   const initialType = check?.type || 'diskspace';
+  const [ruleCfg, setRuleCfg] = useState(() => serverRuleConfig(initialType, check?.config));
   const [cfgVal, setCfgVal] = useState(check?.config?.[checkType(initialType).cfg] || '');
   const [shell, setShell] = useState(check?.config?.shell || 'powershell');
   const [warn, setWarn] = useState(check?.warn_threshold ?? 20);
@@ -462,10 +538,10 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
 
   const save = async () => {
     setBusy(true);
-    const config = {}; if (ct.cfg) config[ct.cfg] = cfgVal; if (type === 'script') config.shell = shell;
+    const config = ct.server ? serverRuleConfig(type, ruleCfg) : {}; if (ct.cfg) config[ct.cfg] = cfgVal; if (type === 'script') config.shell = shell;
     const body = { type, name: name || ct.label, config, interval_sec: Number(interval), enabled,
       failure_count: Number(failureCount), recovery_count: Number(recoveryCount), hysteresis: Number(hysteresis), cooldown_sec: Number(cooldown), timeout_sec: Number(timeout) };
-    if (ct.dir !== 'state' && ct.dir !== 'script') { body.warn_threshold = Number(warn); body.err_threshold = Number(err); }
+    if (!ct.server && ct.dir !== 'state' && ct.dir !== 'script') { body.warn_threshold = Number(warn); body.err_threshold = Number(err); }
     if (target.startsWith('dev:')) body.agent_id = target.slice(4); else if (target.startsWith('pol:')) body.policy_id = target.slice(4);
     try { if (check) await api.updateCheck(check.id, body); else await api.createCheck(body); toast.success(check ? t('checks.updated') : t('checks.created')); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
@@ -481,7 +557,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
       <div className="px-5 py-4 border-b border-line flex items-center justify-between"><div className="text-[15px] font-semibold text-ink">{check ? t('checks.editTitle') : t('checks.new')}</div><button onClick={onClose} className="text-faint hover:text-ink"><Icon name="close" size={18} /></button></div>
       <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto scroll-area">
         <div className="grid grid-cols-2 gap-3">
-          <Field label={t('checks.type')}><Select value={type} onChange={(e) => { const next = e.target.value; setType(next); setCfgVal(check?.type === next ? check?.config?.[checkType(next).cfg] || '' : ''); if (next === 'cpuload' && Number(err) <= Number(warn)) { setWarn(80); setErr(90); } if ((next === 'diskspace' || next === 'memory') && Number(err) >= Number(warn)) { setWarn(20); setErr(10); } }}>{Object.keys(CHECK_TYPES).map((k) => <option key={k} value={k}>{checkType(k).label}</option>)}</Select></Field>
+          <Field label={t('checks.type')}><Select value={type} onChange={(e) => { const next = e.target.value; setType(next); setRuleCfg(serverRuleConfig(next, check?.type === next ? check.config : undefined)); setCfgVal(check?.type === next ? check?.config?.[checkType(next).cfg] || '' : ''); if (next === 'cpuload' && Number(err) <= Number(warn)) { setWarn(80); setErr(90); } if ((next === 'diskspace' || next === 'memory') && Number(err) >= Number(warn)) { setWarn(20); setErr(10); } }}>{Object.keys(CHECK_TYPES).map((k) => <option key={k} value={k}>{checkType(k).label}</option>)}</Select></Field>
           <Field label={t('checks.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={ct.label} /></Field>
         </div>
         <Field label={t('checks.applyTo')}><Combobox value={target} onChange={setTarget} placeholder={t('checks.selectTarget')}
@@ -489,9 +565,10 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
             ...devices.map((d) => ({ value: 'dev:' + d.id, label: d.hostname, group: t('sup.group.agent') })),
             ...policies.map((p) => ({ value: 'pol:' + p.id, label: t('checks.policySuffix', { name: p.name }), group: t('sup.group.policy') })),
           ]} /></Field>
+        {ct.server && <ServerRuleFields type={type} value={ruleCfg} onChange={setRuleCfg} />}
         {type === 'script' && <Field label={t('deploy.shell')}><Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>}
         {ct.cfg && <Field label={ct.cfgLabel}>{ct.cfg === 'script' ? <CodeEditor value={cfgVal} onChange={setCfgVal} shell={shell} minHeight={120} /> : <Input value={cfgVal} onChange={(e) => setCfgVal(e.target.value)} placeholder={ct.cfgPh} className="mono" />}</Field>}
-        {ct.dir !== 'state' && ct.dir !== 'script' && (
+        {!ct.server && ct.dir !== 'state' && ct.dir !== 'script' && (
           <div className="grid grid-cols-3 gap-3">
             <Field label={t('checks.warn', { unit: ct.unit })}><Input type="number" value={warn} onChange={(e) => setWarn(e.target.value)} /></Field>
             <Field label={t('checks.error', { unit: ct.unit })}><Input type="number" value={err} onChange={(e) => setErr(e.target.value)} /></Field>
@@ -499,11 +576,11 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
           </div>
         )}
         {(ct.dir === 'state' || ct.dir === 'script') && <Field label={t('checks.intervalSec')} className="w-40"><Input type="number" value={interval} onChange={(e) => setInterval(e.target.value)} /></Field>}
-        <div className="rounded-xl border border-line bg-elevated/30 p-3 space-y-3"><div className="text-[12px] font-semibold text-ink">{t('checks.reliability')}</div>
+        {!ct.server && <div className="rounded-xl border border-line bg-elevated/30 p-3 space-y-3"><div className="text-[12px] font-semibold text-ink">{t('checks.reliability')}</div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><Field label={t('checks.failuresToAlert')}><Input type="number" min="1" max="100" value={failureCount} onChange={(e) => setFailureCount(e.target.value)} /></Field><Field label={t('checks.successesToRecover')}><Input type="number" min="1" max="100" value={recoveryCount} onChange={(e) => setRecoveryCount(e.target.value)} /></Field><Field label={t('checks.timeout')}><Input type="number" min="5" value={timeout} onChange={(e) => setTimeoutSec(e.target.value)} /></Field><Field label={t('checks.cooldown')}><Input type="number" min="0" value={cooldown} onChange={(e) => setCooldown(e.target.value)} /></Field>{(ct.dir === 'low' || ct.dir === 'high') && <Field label={t('checks.hysteresis')}><Input type="number" min="0" max="100" step="0.1" value={hysteresis} onChange={(e) => setHysteresis(e.target.value)} /></Field>}</div>
-        </div>
+        </div>}
         <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={(next) => { setEnabled(next); toast.info(next ? t('checks.willEnable') : t('checks.willDisable')); }} /><span className="text-[13px] text-ink">{t('checks.enabledLabel')}</span></label>
-        <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{ct.dir === 'low' ? t('checks.help.low') : ct.dir === 'high' ? t('checks.help.high') : type === 'ping' ? t('checks.help.ping') : ct.dir === 'state' ? t('checks.help.state') : t('checks.help.script')}</div>
+        <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{ct.server ? t('rules.serverHelp') : ct.dir === 'low' ? t('checks.help.low') : ct.dir === 'high' ? t('checks.help.high') : type === 'ping' ? t('checks.help.ping') : ct.dir === 'state' ? t('checks.help.state') : t('checks.help.script')}</div>
       </div>
       <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('checks.manage') && <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? t('checks.save') : t('checks.create')}</Button></div>
     </Modal>

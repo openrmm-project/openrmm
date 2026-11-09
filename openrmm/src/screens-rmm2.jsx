@@ -1592,6 +1592,7 @@ function notifyLabel(eventType) {
 function NotificationsCard() {
   const toast = useToast();
   const prefsQ = useQuery(['my-notifications'], () => api.getMyNotifications(), { invalidateOn: ['my-notifications'] });
+  const [rulePrefs, setRulePrefs] = useState(null);
   const [subs, setSubs] = useState(null);   // null until loaded: event_type -> enabled
   const [busy, setBusy] = useState(false);
   const data = prefsQ.data;
@@ -1611,19 +1612,20 @@ function NotificationsCard() {
     const next = {};
     (data.subscriptions || []).forEach((s) => { next[s.event_type] = s.enabled; });
     setSubs(next);
+    setRulePrefs(data.rules || { mode: 'all', include_defaults: true, check_ids: [] });
   }, [data]);
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.updateMyNotifications({ subscriptions: subs });
+      await api.updateMyNotifications({ subscriptions: subs, rules: rulePrefs });
       prefsQ.refetch();
       toast.success(t('notify.saved'), email ? t('notify.goesTo', { email }) : t('notify.noAddress'));
     } catch (e) { toast.error(t('notify.saveFailed'), e.message); }
     finally { setBusy(false); }
   };
 
-  if (!data || subs === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
+  if (!data || subs === null || rulePrefs === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
   return (
     <Card className="p-5 mb-5 max-w-2xl">
       <div className="flex items-center gap-2.5 mb-1">
@@ -1658,6 +1660,16 @@ function NotificationsCard() {
         </Field>
       </div>
 
+      <div className="mt-4 rounded-xl border border-line p-3 space-y-3">
+        <div className="text-[13px] font-semibold text-ink">{t('notify.rulesTitle')}</div>
+        <Select value={rulePrefs.mode} onChange={(e) => setRulePrefs((prev) => ({ ...prev, mode: e.target.value }))}><option value="all">{t('notify.rulesAll')}</option><option value="selected">{t('notify.rulesSelected')}</option></Select>
+        <p className="text-[11.5px] text-muted">{t('notify.rulesHint')}</p>
+        {rulePrefs.mode === 'selected' && <div className="max-h-64 overflow-y-auto space-y-2">
+          <label className="flex items-center gap-2 text-[12px]"><Toggle checked={rulePrefs.include_defaults} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, include_defaults: value }))} />{t('notify.rulesDefaults')}</label>
+          {(data.available_rules || []).map((item) => <label key={item.id} className="flex items-center gap-2 text-[12px]"><Toggle checked={(rulePrefs.check_ids || []).includes(item.id)} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, check_ids: value ? [...new Set([...(prev.check_ids || []), item.id])] : (prev.check_ids || []).filter((id) => id !== item.id) }))} /><span>{item.name} · {window.checkType(item.type).label}</span></label>)}
+          {!(data.available_rules || []).length && <p className="text-[11.5px] text-faint">{t('notify.rulesNone')}</p>}
+        </div>}
+      </div>
       <div className="mt-4 space-y-1.5">
         {(data.subscriptions || []).map((s) => (
           <div key={s.event_type} className="flex items-start gap-3 rounded-lg border border-line bg-app px-3 py-2.5">

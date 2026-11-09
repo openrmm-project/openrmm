@@ -1787,15 +1787,15 @@ function DeviceChecks({ id, navigate, onClose }) {
             <div className="min-w-0 flex-1">
               <div className="text-[13px] text-ink font-medium truncate">{c.name}</div>
               <div className="text-[11.5px] text-faint mt-0.5 flex flex-wrap items-center gap-x-1.5">
-                <span>{ct.label}</span><span>·</span><span>{fmtInterval(c.interval_sec)}</span><span>·</span><MonitoringSource row={c} />
+                <span>{ct.label}</span><span>·</span><span>{ct.server ? t('rules.server') : fmtInterval(c.interval_sec)}</span><span>·</span><MonitoringSource row={c} />
               </div>
               {c.output && <div className="text-[11.5px] text-muted mono mt-1 truncate" title={c.output}>{c.output}</div>}
               <div className="text-[11px] text-faint mt-0.5">
-                {c.last_result_at ? t('dchecks.lastResult', { when: timeAgo(c.last_result_at) }) : t('dchecks.noResult')}
+                {ct.server ? t('rules.priority') : c.last_result_at ? t('dchecks.lastResult', { when: timeAgo(c.last_result_at) }) : t('dchecks.noResult')}
                 {value != null && <span className="mono"> · {value}</span>}
               </div>
             </div>
-            <StatusPill status={c.status} size="sm" />
+            <StatusPill status={ct.server ? 'info' : c.status} label={ct.server ? t('rules.server') : undefined} size="sm" />
           </div>
         );
       })}

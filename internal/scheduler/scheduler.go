@@ -59,6 +59,8 @@ type Scheduler struct {
 	checkResultRetentionDays  int
 	notificationRetentionDays int
 	auditRetentionDays        int
+	// serverVersion is what agent_outdated compares agents with.
+	serverVersion string
 }
 
 type Stats struct {
@@ -112,6 +114,13 @@ func (s *Scheduler) WithNotifier(n *notify.Service, consoleURL string) *Schedule
 	return s
 }
 
+// WithServerVersion sets the release agents are compared with by the
+// agent_outdated rule. Without one (a dev build), that rule never fires.
+func (s *Scheduler) WithServerVersion(v string) *Scheduler {
+	s.serverVersion = v
+	return s
+}
+
 // Run ticks until the context is cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
@@ -134,12 +143,13 @@ func (s *Scheduler) tick(ctx context.Context) {
 	}
 	now := time.Now()
 	s.evaluateTimedOutChecks(ctx, now)
+	connectivity := s.ruleResolver(ctx, models.CheckConnectivity)
 	for i := range agents {
 		a := &agents[i]
 		if a.Status == models.AgentRevoked {
 			continue
 		}
-		s.evaluateOffline(ctx, a, now)
+		s.evaluateOffline(ctx, a, now, connectivity(a.ID))
 		if !s.hub.IsOnline(a.ID) {
 			continue // only dispatch to live agents
 		}
@@ -152,6 +162,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 	}
 	if now.Sub(s.lastAlertMaintenance) >= alertMaintenanceEvery {
 		s.lastAlertMaintenance = now
+		s.evaluateServerRules(ctx, agents, now)
 		s.reconcileCheckStates(ctx)
 		if n, err := s.store.ResolveInapplicableCheckAlerts(ctx, now); err != nil {
 			s.recordError("resolve inapplicable alerts", err)
@@ -302,12 +313,21 @@ func containsInt(xs []int, v int) bool {
 	return false
 }
 
-func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now time.Time) {
+// evaluateOffline applies the connectivity rule in force for the device: its
+// own, a policy's, or the fleet default (docs/24-alert-rules.md).
+func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now time.Time, rule models.GoverningRule) {
 	online := s.hub.IsOnline(a.ID)
 	id := a.ID
 	if online {
+		if rule.Config.Mode == "" {
+			return
+		}
+		kind := "automatic"
+		if !rule.Config.Alerts() {
+			kind = "inapplicable"
+		}
 		resolved, err := s.store.ResolveAlertSource(ctx, models.AlertSourceAgent, &id, &id,
-			"system", "automatic", "Agent reconnected.", now)
+			"system", kind, "Agent reconnected.", now)
 		if err != nil {
 			s.recordError("resolve offline alert for "+id, err)
 		} else if len(resolved) > 0 {
@@ -325,28 +345,48 @@ func (s *Scheduler) evaluateOffline(ctx context.Context, a *models.Agent, now ti
 			s.recordError("mark agent offline "+id, err)
 		}
 	}
-	if a.LastSeen != nil && now.Sub(*a.LastSeen) > offlineAfter {
-		transition, err := s.store.ObserveAlert(ctx, store.AlertObservation{
-			AgentID: &id, SourceType: models.AlertSourceAgent, SourceID: &id,
-			ConditionKey: "connectivity", Severity: models.SeverityError,
-			Message: fmt.Sprintf("Agent %s is offline (last seen %s)", a.Hostname, a.LastSeen.Format(time.RFC3339)),
-			Output:  a.LastSeen.Format(time.RFC3339), Cooldown: 5 * time.Minute, ObservedAt: now,
-		})
-		if err != nil {
-			s.recordError("raise offline alert for "+id, err)
-			return
-		}
-		// Keep dependency alerts closed for the whole outage, including after a
-		// server restart where the connectivity incident was already open.
+	if a.LastSeen == nil {
+		return
+	}
+	down := now.Sub(*a.LastSeen)
+	// Checks on an offline device stay quiet for the whole outage, whatever its
+	// connectivity rule says about the offline alert itself.
+	if down > offlineAfter {
 		if _, err := s.store.ResolveCheckAlertsForOfflineAgent(ctx, id, now); err != nil {
 			s.recordError("suppress dependent checks for "+id, err)
 		}
-		if transition.Notify {
-			if err := s.queueAlertNotification(ctx, &transition.Alert,
-				fmt.Sprintf("Agent %s stopped reporting (last seen %s).",
-					a.Hostname, a.LastSeen.Format(time.RFC3339))); err != nil {
-				s.recordError("enqueue offline alert "+id, err)
-			}
+	}
+	if rule.Config.Mode == "" {
+		return // leave incidents unchanged when their rules could not be read
+	}
+	if !rule.Config.Alerts() {
+		// The rule in force says not to alert (laptops that sleep): close an
+		// offline alert still open from before, without a "recovered" mail.
+		if _, err := s.store.ResolveAlertSource(ctx, models.AlertSourceAgent, &id, &id,
+			"system", "inapplicable", "Offline alerts are off for this device: "+ruleLabel(rule)+".", now); err != nil {
+			s.recordError("close offline alert turned off for "+id, err)
+		}
+		return
+	}
+	if down <= time.Duration(rule.Config.AfterMin)*time.Minute {
+		return
+	}
+	transition, err := s.store.ObserveAlert(ctx, store.AlertObservation{
+		AgentID: &id, SourceType: models.AlertSourceAgent, SourceID: &id,
+		ConditionKey: "connectivity", Severity: rule.Config.Severity,
+		Message: fmt.Sprintf("Agent %s is offline (last seen %s)", a.Hostname, a.LastSeen.Format(time.RFC3339)),
+		Output:  a.LastSeen.Format(time.RFC3339), Cooldown: 5 * time.Minute, ObservedAt: now,
+		RuleID: ruleID(rule),
+	})
+	if err != nil {
+		s.recordError("raise offline alert for "+id, err)
+		return
+	}
+	if transition.Notify {
+		if err := s.queueAlertNotification(ctx, &transition.Alert,
+			fmt.Sprintf("Agent %s stopped reporting (last seen %s).",
+				a.Hostname, a.LastSeen.Format(time.RFC3339))); err != nil {
+			s.recordError("enqueue offline alert "+id, err)
 		}
 	}
 }
@@ -359,6 +399,9 @@ func (s *Scheduler) dispatchChecks(ctx context.Context, agentID string, siteID, 
 	}
 	for i := range checks {
 		c := &checks[i]
+		if models.IsServerRule(c.Type) {
+			continue // evaluated by the server, never sent to the agent
+		}
 		last, err := s.store.LastCheckActivity(ctx, c.ID, agentID)
 		if err != nil {
 			s.recordError("read last check result "+c.ID, err)
@@ -562,7 +605,7 @@ func (s *Scheduler) applyCheckState(ctx context.Context, check *models.Check, ag
 		transition, err := s.store.ObserveAlert(ctx, store.AlertObservation{
 			AgentID: &aid, SourceType: models.AlertSourceCheck, SourceID: &cid,
 			ConditionKey: "health", Severity: severity, Message: message,
-			ObservedValue: value, Threshold: threshold, Output: output,
+			ObservedValue: value, Threshold: threshold, Output: output, RuleID: &cid,
 			Cooldown: time.Duration(check.CooldownSec) * time.Second, ObservedAt: now,
 			// Applying a check state can be retried when marking it reconciled
 			// fails, and the retry must not add an occurrence. The state's own

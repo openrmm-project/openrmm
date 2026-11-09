@@ -342,6 +342,9 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const rustdeskEnabled = !!cfgQ.data?.remote?.rustdesk_enabled;
   const guestAccess = !!cfgQ.data?.remote?.guest_access;
   const meshEnabled = cfgQ.data?.remote?.meshcentral_enabled !== false;
+  // An unlinked device opens in MeshCentral by its hostname only when an
+  // administrator turned that on (issue #226).
+  const meshByHostname = meshEnabled && !!cfgQ.data?.remote?.meshcentral_match_hostname;
   const capsQ = useQuery([id, 'remote-capabilities'], () => id ? api.getRemoteCapabilities(id) : Promise.resolve(null), { invalidateOn: ['devices'] });
   const nativeCaps = capsQ.data;
   const nativeUnavailable = nativeCaps?.capture === 'unavailable';
@@ -364,7 +367,10 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     setRemoteBusy(true);
     try {
       const s = await api.startRemote(id, provider);
-      window.open(s.connect_url, '_blank', 'noopener,noreferrer'); toast.success(t('remote.ready'), t('remote.openedTab', { provider }));
+      window.open(s.connect_url, '_blank', 'noopener,noreferrer');
+      // Found by a name another computer could share: say so, and how to fix it.
+      if (s.matched_by === 'hostname') toast.info(t('remote.ready'), t('remote.openedByHostname', { host: d.hostname }));
+      else toast.success(t('remote.ready'), t('remote.openedTab', { provider }));
     } catch (e) { toast.error(t('remote.failed'), e.message); } finally { setRemoteBusy(false); }
   };
   // Native remote in a standalone browser tab (auth is shared via sessionStorage).
@@ -442,7 +448,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                 {can('devices.remote') && <MenuItem icon="external" onClick={startRemoteNewTab} disabled={nativeUnavailable} hint={nativeUnavailable ? nativeHint : t('device.newTab')}>{t('device.nativeNewTab')}</MenuItem>}
                 {can('devices.terminal') && <MenuItem icon="terminal" onClick={() => setTerm({ deviceId: id, hostname: d.hostname })} hint={t('device.elevated')}>{t('device.terminal')}</MenuItem>}
                 {can('devices.files') && <MenuItem icon="folder" onClick={() => setRemote({ deviceId: id, hostname: d.hostname, os: d.os, filesOnly: true })}>{t('device.fileTransfer')}</MenuItem>}
-                {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id} hint={d.mesh_id ? '' : t('device.noNodeId')}>MeshCentral</MenuItem>}
+                {can('devices.remote') && meshEnabled && <MenuItem icon="external" onClick={() => startRemote('meshcentral')} disabled={!d.mesh_id && !meshByHostname} hint={d.mesh_id ? '' : (meshByHostname ? t('device.meshByHostname') : t('device.noNodeId'))}>MeshCentral</MenuItem>}
                 {can('devices.remote') && rustdeskEnabled && <MenuItem icon="external" onClick={() => startRemote('rustdesk')} hint="rustdesk://">RustDesk</MenuItem>}
                 {can('devices.remote') && can('devices.remote.share') && guestAccess && <>
                   <div className="my-1 border-t border-line" />

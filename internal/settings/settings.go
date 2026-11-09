@@ -29,7 +29,10 @@ const (
 	KeyMeshCentralUser       = "remote.meshcentral_user"
 	KeyMeshCentralTokenKey   = "remote.meshcentral_token_key"
 	KeyMeshCentralEnabled    = "remote.meshcentral_enabled"
-	KeyRustDeskEnabled       = "remote.rustdesk_enabled"
+	// KeyMeshCentralMatchHostname opens a device with no linked MeshCentral
+	// node by its hostname. Off unless an administrator turns it on.
+	KeyMeshCentralMatchHostname = "remote.meshcentral_match_hostname"
+	KeyRustDeskEnabled          = "remote.rustdesk_enabled"
 	// KeyRemoteGuestAccess allows technicians holding devices.remote.share to
 	// invite guests without an account. Off unless an administrator turns it on.
 	KeyRemoteGuestAccess = "remote.guest_access"
@@ -42,47 +45,50 @@ const (
 )
 
 var publicKeys = map[string]bool{
-	KeyAIProvider:            true,
-	KeyAIBaseURL:             true,
-	KeyAIModel:               true,
-	KeyRemoteDefaultProvider: true,
-	KeyMeshCentralURL:        true,
-	KeyMeshCentralUser:       true,
-	KeyMeshCentralEnabled:    true,
-	KeyRustDeskEnabled:       true,
-	KeyRemoteGuestAccess:     true,
-	KeyJobsAllowUnapproved:   true,
+	KeyAIProvider:               true,
+	KeyAIBaseURL:                true,
+	KeyAIModel:                  true,
+	KeyRemoteDefaultProvider:    true,
+	KeyMeshCentralURL:           true,
+	KeyMeshCentralUser:          true,
+	KeyMeshCentralEnabled:       true,
+	KeyMeshCentralMatchHostname: true,
+	KeyRustDeskEnabled:          true,
+	KeyRemoteGuestAccess:        true,
+	KeyJobsAllowUnapproved:      true,
 }
 
 // Editable is the effective runtime subset that can be edited from the UI.
 type Editable struct {
-	AIProvider            string
-	AIBaseURL             string
-	AIModel               string
-	AIAPIKey              string
-	RemoteDefaultProvider string
-	MeshCentralURL        string
-	MeshCentralUser       string
-	MeshCentralTokenKey   string
-	MeshCentralEnabled    bool
-	RustDeskEnabled       bool
-	RemoteGuestAccess     bool
-	JobsAllowUnapproved   bool
+	AIProvider               string
+	AIBaseURL                string
+	AIModel                  string
+	AIAPIKey                 string
+	RemoteDefaultProvider    string
+	MeshCentralURL           string
+	MeshCentralUser          string
+	MeshCentralTokenKey      string
+	MeshCentralEnabled       bool
+	MeshCentralMatchHostname bool
+	RustDeskEnabled          bool
+	RemoteGuestAccess        bool
+	JobsAllowUnapproved      bool
 }
 
 // FromConfig builds the env-only baseline.
 func FromConfig(cfg *config.Config) Editable {
 	return Editable{
-		AIProvider:            cfg.AIProvider,
-		AIBaseURL:             cfg.AIBaseURL,
-		AIModel:               cfg.AIModel,
-		AIAPIKey:              cfg.AIAPIKey,
-		RemoteDefaultProvider: cfg.DefaultRemoteProvider,
-		MeshCentralURL:        cfg.MeshCentralURL,
-		MeshCentralUser:       cfg.MeshCentralUser,
-		MeshCentralTokenKey:   cfg.MeshCentralTokenKey,
-		MeshCentralEnabled:    cfg.MeshCentralEnabled,
-		RustDeskEnabled:       cfg.RustDeskEnabled,
+		AIProvider:               cfg.AIProvider,
+		AIBaseURL:                cfg.AIBaseURL,
+		AIModel:                  cfg.AIModel,
+		AIAPIKey:                 cfg.AIAPIKey,
+		RemoteDefaultProvider:    cfg.DefaultRemoteProvider,
+		MeshCentralURL:           cfg.MeshCentralURL,
+		MeshCentralUser:          cfg.MeshCentralUser,
+		MeshCentralTokenKey:      cfg.MeshCentralTokenKey,
+		MeshCentralEnabled:       cfg.MeshCentralEnabled,
+		MeshCentralMatchHostname: cfg.MeshCentralMatchHostname,
+		RustDeskEnabled:          cfg.RustDeskEnabled,
 		// The environment is only the starting value: once an administrator
 		// saves the setting, the stored value wins.
 		JobsAllowUnapproved: cfg.AllowUnapprovedJobs,
@@ -100,6 +106,7 @@ func (e Editable) ApplyToConfig(cfg *config.Config) {
 	cfg.MeshCentralUser = e.MeshCentralUser
 	cfg.MeshCentralTokenKey = e.MeshCentralTokenKey
 	cfg.MeshCentralEnabled = e.MeshCentralEnabled
+	cfg.MeshCentralMatchHostname = e.MeshCentralMatchHostname
 	cfg.RustDeskEnabled = e.RustDeskEnabled
 }
 
@@ -129,7 +136,7 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 		}
 		return row.Value, true, nil
 	}
-	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyJobsAllowUnapproved} {
+	for _, key := range []string{KeyAIProvider, KeyAIBaseURL, KeyAIModel, KeyAIAPIKey, KeyRemoteDefaultProvider, KeyMeshCentralURL, KeyMeshCentralUser, KeyMeshCentralTokenKey, KeyMeshCentralEnabled, KeyMeshCentralMatchHostname, KeyRustDeskEnabled, KeyRemoteGuestAccess, KeyJobsAllowUnapproved} {
 		v, ok, err := get(key)
 		if err != nil {
 			return out, fmt.Errorf("load %s: %w", key, err)
@@ -156,6 +163,8 @@ func Effective(ctx context.Context, st *store.Store, cfg *config.Config) (Editab
 			out.MeshCentralTokenKey = v
 		case KeyMeshCentralEnabled:
 			out.MeshCentralEnabled = v == "true"
+		case KeyMeshCentralMatchHostname:
+			out.MeshCentralMatchHostname = v == "true"
 		case KeyRustDeskEnabled:
 			out.RustDeskEnabled = v == "true"
 		case KeyRemoteGuestAccess:
@@ -180,9 +189,10 @@ type SaveRequest struct {
 		MeshCentralURL     string `json:"meshcentral_url"`
 		MeshCentralUser    string `json:"meshcentral_user"`
 		MeshTokenKey       string `json:"meshcentral_token_key"`
-		MeshCentralEnabled *bool  `json:"meshcentral_enabled"` // nil = preserve current
-		RustDeskEnabled    *bool  `json:"rustdesk_enabled"`    // nil = preserve current
-		GuestAccess        *bool  `json:"guest_access"`        // nil = preserve current
+		MeshCentralEnabled *bool  `json:"meshcentral_enabled"`        // nil = preserve current
+		MeshMatchHostname  *bool  `json:"meshcentral_match_hostname"` // nil = preserve current
+		RustDeskEnabled    *bool  `json:"rustdesk_enabled"`           // nil = preserve current
+		GuestAccess        *bool  `json:"guest_access"`               // nil = preserve current
 	} `json:"remote"`
 	Jobs struct {
 		AllowUnapproved *bool `json:"allow_unapproved"` // nil = preserve current
@@ -236,6 +246,10 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	if in.Remote.MeshCentralEnabled != nil {
 		meshEnabled = *in.Remote.MeshCentralEnabled
 	}
+	meshMatchHostname := current.MeshCentralMatchHostname
+	if in.Remote.MeshMatchHostname != nil {
+		meshMatchHostname = *in.Remote.MeshMatchHostname
+	}
 	guestAccess := current.RemoteGuestAccess
 	if in.Remote.GuestAccess != nil {
 		guestAccess = *in.Remote.GuestAccess
@@ -252,6 +266,7 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 		{KeyMeshCentralURL, in.Remote.MeshCentralURL},
 		{KeyMeshCentralUser, in.Remote.MeshCentralUser},
 		{KeyMeshCentralEnabled, strconv.FormatBool(meshEnabled)},
+		{KeyMeshCentralMatchHostname, strconv.FormatBool(meshMatchHostname)},
 		{KeyRustDeskEnabled, strconv.FormatBool(rustdesk)},
 		{KeyRemoteGuestAccess, strconv.FormatBool(guestAccess)},
 		{KeyJobsAllowUnapproved, strconv.FormatBool(allowUnapproved)},

@@ -203,13 +203,17 @@ type RemoteSession struct {
 	Status   string `json:"status"`
 	// Tickets are returned only once when a native session is brokered. Their
 	// hashes, not raw values, are persisted by the server.
-	ViewerTicket string    `json:"viewer_ticket,omitempty"`
-	AgentTicket  string    `json:"-"`
-	Token        string    `json:"-"` // retained for external-provider internals
-	ConnectURL   string    `json:"connect_url"`
-	CreatedBy    string    `json:"created_by"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	ViewerTicket string `json:"viewer_ticket,omitempty"`
+	AgentTicket  string `json:"-"`
+	Token        string `json:"-"` // retained for external-provider internals
+	ConnectURL   string `json:"connect_url"`
+	// MatchedBy says how an external provider finds the device: "node" (a
+	// linked id) or "hostname" (a name another computer could share). It is
+	// recorded in the remote.start audit entry and not stored with the session.
+	MatchedBy string    `json:"matched_by,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // AuditEntry is an immutable record of a sensitive action.

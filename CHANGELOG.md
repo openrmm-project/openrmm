@@ -6,6 +6,24 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **MeshCentral: open unlinked devices by hostname** (#226). An administrator
+  can turn it on under Settings ▸ Remote access, or start an instance with
+  `RMM_MESHCENTRAL_MATCH_HOSTNAME=true`. It is off by default. A device with no
+  linked MeshCentral node then opens with `gotodevicername=<hostname>`, so
+  devices whose names are unique in MeshCentral no longer need their node
+  linked by hand. A linked node always wins.
+  - The console says when a session was opened by hostname, and the
+    `remote.start` audit entry records `"matched_by": "hostname"`. MeshCentral
+    opens one of several computers sharing a name without warning.
+  - Users restricted to some clients always need a linked node. With a login
+    token MeshCentral searches every computer it knows, so a name could
+    otherwise reach a computer outside their scope.
+  - A hostname with characters a MeshCentral link cannot carry (anything other
+    than letters, digits, dots, hyphens and underscores), or one that
+    MeshCentral would read as a number, is refused, not sent.
+
 ### Changed
 
 - Each GitHub release now carries its CHANGELOG section as its notes, and the

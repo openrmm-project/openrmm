@@ -228,7 +228,7 @@ The `artifacts` build target packages a published `deploy/public` into an image
 that copies itself into a volume:
 
 ```bash
-docker build --target artifacts -t openrmm-artifacts:v0.9.4 .
+docker build --target artifacts -t openrmm-artifacts:v0.9.5 .
 ```
 
 Run it as an initContainer writing to a volume the web container mounts at

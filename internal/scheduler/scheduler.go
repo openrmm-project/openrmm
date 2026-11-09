@@ -453,7 +453,7 @@ func (s *Scheduler) taskDue(t *models.Task, last, now time.Time) bool {
 				continue
 			}
 			for _, m := range t.RunAtMinutes {
-				occ := time.Date(day.Year(), day.Month(), day.Day(), m/60, m%60, 0, 0, loc)
+				occ := scheduledOccurrence(day, m, loc)
 				if occ.After(now) {
 					continue
 				}

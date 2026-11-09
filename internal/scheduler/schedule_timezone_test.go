@@ -111,3 +111,55 @@ func TestPatchWindowUsesItsPolicysZone(t *testing.T) {
 		t.Error("a policy without a zone is no longer read in UTC")
 	}
 }
+
+// Weekly schedules must handle the missing spring-forward hour the same way
+// as daily schedules, without running an hour early or duplicating fall-back.
+func TestWeeklyTaskAcrossDaylightSaving(t *testing.T) {
+	s := &Scheduler{}
+	task := &models.Task{ScheduleKind: models.ScheduleWeekly, DaysOfWeek: 1 << uint(time.Sunday), RunAtMinutes: []int{150}, Timezone: "America/New_York"}
+	previous := utc(2027, 3, 7, 7, 30)
+	for _, c := range []struct {
+		name      string
+		last, now time.Time
+		want      bool
+	}{
+		{"before missing 02:30", previous, utc(2027, 3, 14, 6, 30), false},
+		{"still before the jump", previous, utc(2027, 3, 14, 6, 59), false},
+		{"03:00 passes the missing slot", previous, utc(2027, 3, 14, 7, 0), true},
+		{"missing slot runs once", utc(2027, 3, 14, 7, 0), utc(2027, 3, 14, 7, 30), false},
+	} {
+		if got := s.taskDue(task, c.last, c.now); got != c.want {
+			t.Errorf("%s: due=%v want=%v", c.name, got, c.want)
+		}
+	}
+	repeated := &models.Task{ScheduleKind: models.ScheduleWeekly, DaysOfWeek: 1 << uint(time.Sunday), RunAtMinutes: []int{90}, Timezone: "America/New_York"}
+	if !s.taskDue(repeated, utc(2026, 10, 25, 5, 30), utc(2026, 11, 1, 5, 30)) {
+		t.Error("first 01:30 did not run")
+	}
+	if s.taskDue(repeated, utc(2026, 11, 1, 5, 30), utc(2026, 11, 1, 6, 30)) {
+		t.Error("second 01:30 ran the same slot again")
+	}
+}
+
+func TestWeeklyRepeatedSlotUsesFirstOccurrence(t *testing.T) {
+	task := &models.Task{ScheduleKind: models.ScheduleWeekly, DaysOfWeek: 1 << uint(time.Sunday), RunAtMinutes: []int{150}, Timezone: "Europe/Berlin"}
+	s := &Scheduler{}
+	if !s.taskDue(task, utc(2026, 10, 18, 0, 30), utc(2026, 10, 25, 0, 30)) {
+		t.Error("first 02:30 CEST did not run")
+	}
+	if s.taskDue(task, utc(2026, 10, 25, 0, 30), utc(2026, 10, 25, 1, 30)) {
+		t.Error("repeated 02:30 CET ran again")
+	}
+}
+
+func TestWeeklyHalfHourDaylightSavingGap(t *testing.T) {
+	task := &models.Task{ScheduleKind: models.ScheduleWeekly, DaysOfWeek: 1 << uint(time.Sunday), RunAtMinutes: []int{135}, Timezone: "Australia/Lord_Howe"}
+	s := &Scheduler{}
+	previous := utc(2026, 9, 26, 15, 45)
+	if s.taskDue(task, previous, utc(2026, 10, 3, 15, 15)) {
+		t.Error("missing 02:15 ran at 01:45")
+	}
+	if !s.taskDue(task, previous, utc(2026, 10, 3, 15, 30)) {
+		t.Error("missing 02:15 did not run at the jump to 02:30")
+	}
+}

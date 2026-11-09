@@ -22,6 +22,17 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
+// meshAuditDetail reads an audit entry's detail. PostgreSQL keeps it as jsonb
+// and hands it back reformatted ("key": "value"), so compare fields, not text.
+func meshAuditDetail(t *testing.T, raw []byte) map[string]string {
+	t.Helper()
+	var detail map[string]string
+	if err := json.Unmarshal(raw, &detail); err != nil {
+		t.Fatalf("audit detail %s: %v", raw, err)
+	}
+	return detail
+}
+
 // Opening an unlinked device in MeshCentral by its hostname (issue #226): off
 // until an administrator turns it on, a linked node always wins, and a
 // hostname a MeshCentral link cannot carry is refused rather than sent.
@@ -165,7 +176,7 @@ func TestMeshCentralOpensUnlinkedDevicesByHostnameOnlyWhenTurnedOn(t *testing.T)
 	// The audit trail says how each device was found, and that the setting moved.
 	entries, _, err := st.ListAudit(ctx, store.AuditFilter{Action: "remote.start", Target: unlinked.ID, Limit: 10})
 	must(err)
-	if len(entries) != 1 || !strings.Contains(string(entries[0].Detail), `"matched_by":"hostname"`) {
+	if len(entries) != 1 || meshAuditDetail(t, entries[0].Detail)["matched_by"] != "hostname" {
 		t.Fatalf("remote.start by hostname is not recorded as such: %+v", entries)
 	}
 	entries, _, err = st.ListAudit(ctx, store.AuditFilter{Action: "config.update", Limit: 50})

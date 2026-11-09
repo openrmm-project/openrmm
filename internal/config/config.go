@@ -62,6 +62,17 @@ type Config struct {
 	// MeshCentralEnabled toggles the MeshCentral remote provider. On by default;
 	// set RMM_MESHCENTRAL_ENABLED=false (or the Settings toggle) to hide it.
 	MeshCentralEnabled bool
+	// MeshCentralMatchHostname opens a device with no linked MeshCentral node
+	// by its hostname (MeshCentral's gotodevicername). Off by default:
+	// RMM_MESHCENTRAL_MATCH_HOSTNAME=true only sets the starting value, and the
+	// Settings toggle wins once saved.
+	MeshCentralMatchHostname bool
+	// MeshCentralSharedAccount lets users with access to every device, and no
+	// MeshCentral account of their own, sign in as MeshCentralUser through the
+	// login token. On by default; RMM_MESHCENTRAL_SHARED_ACCOUNT=false only
+	// sets the starting value, and the Settings toggle wins once saved.
+	// Restricted users always need their own account.
+	MeshCentralSharedAccount bool
 	// RustDeskEnabled turns on the RustDesk remote provider. The RustDesk client
 	// is installed out-of-band; the agent only reads its id on demand and the UI
 	// opens rustdesk://<id>. Off by default.
@@ -320,6 +331,8 @@ func Load() (*Config, error) {
 		MeshCentralTokenKey:        meshTokenKey,
 		MeshCentralUser:            env("RMM_MESHCENTRAL_USER", "admin"),
 		MeshCentralEnabled:         os.Getenv("RMM_MESHCENTRAL_ENABLED") != "false",
+		MeshCentralMatchHostname:   os.Getenv("RMM_MESHCENTRAL_MATCH_HOSTNAME") == "true",
+		MeshCentralSharedAccount:   os.Getenv("RMM_MESHCENTRAL_SHARED_ACCOUNT") != "false",
 		RustDeskEnabled:            os.Getenv("RMM_RUSTDESK_ENABLED") == "true",
 		SMTPHost:                   strings.TrimSpace(os.Getenv("RMM_SMTP_HOST")),
 		SMTPPort:                   envInt("RMM_SMTP_PORT", 587),

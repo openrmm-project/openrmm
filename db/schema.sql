@@ -1016,7 +1016,11 @@ ALTER TABLE enroll_tokens ADD COLUMN IF NOT EXISTS revoked_by TEXT;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS enroll_token_id UUID REFERENCES enroll_tokens(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_agents_enroll_token ON agents(enroll_token_id) WHERE enroll_token_id IS NOT NULL;
 
--- Migration 024: risk-based autonomy for the AI assistant. A script released
+-- Migration 024: the MeshCentral account a user's remote sessions sign in as
+-- when the server mints login tokens; empty means none.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS meshcentral_user TEXT NOT NULL DEFAULT '';
+
+-- Migration 025: risk-based autonomy for the AI assistant. A script released
 -- for the AI is bound to the hash of its content; jobs record why they ran
 -- without approval at the time, and the parameters they carried.
 ALTER TABLE scripts ADD COLUMN IF NOT EXISTS params JSONB NOT NULL DEFAULT '[]';

@@ -37,15 +37,20 @@ tag.
   none.
 - **AI release withdrawn** email notification (on by default).
 
+### Security
+
+- **A disabled account no longer keeps MCP access through OAuth.** Disabling a
+  user ended their console sessions, but an OAuth access token already issued
+  to their MCP client kept working until it expired, its refresh token could
+  renew it, and a pending authorization code could still be exchanged. Using an
+  access token, refreshing, exchanging a code and issuing a token now all
+  require an enabled account, and an MCP session already open is refused at its
+  next call.
+
 ### Changed
 
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
-- Each GitHub release now carries its CHANGELOG section as its notes, and the
-  release workflow posts an announcement to the project's Discord: what
-  changed, how to upgrade, and the link. Until now the release page had no
-  notes, and Discord got only GitHub's bare notice, or nothing at all when
-  Discord rate-limited the notice.
 
 ### Fixed
 
@@ -57,6 +62,62 @@ tag.
   The agent now reads it in the OEM page, the Russian, Japanese, Chinese and
   Korean pages included, and its own PowerShell (inventory, patches, device
   queries) writes UTF-8, which loses nothing in any language.
+
+## [0.9.4] - 2026-11-09
+
+### Added
+
+- **MeshCentral: open unlinked devices by hostname** (#226). An administrator
+  can turn it on under Settings ▸ Remote access, or start an instance with
+  `RMM_MESHCENTRAL_MATCH_HOSTNAME=true`. It is off by default. A device with no
+  linked MeshCentral node then opens with `gotodevicername=<hostname>`, so
+  devices whose names are unique in MeshCentral no longer need their node
+  linked by hand. A linked node always wins.
+  - The console says when a session was opened by hostname, and the
+    `remote.start` audit entry records `"matched_by": "hostname"`. MeshCentral
+    opens one of several computers sharing a name without warning.
+  - Users restricted to some clients need a linked node, unless a login token
+    signs them in as their own MeshCentral account (below). Signed in as the
+    shared account, MeshCentral searches every computer it knows, so a name
+    could otherwise reach a computer outside their scope.
+  - A hostname with characters a MeshCentral link cannot carry (anything other
+    than letters, digits, dots, hyphens and underscores), or one that
+    MeshCentral would read as a number, is refused, not sent.
+- **MeshCentral: each user's own account.** With a login token key set, an
+  administrator with access to every device and `settings.manage` can give each
+  user a MeshCentral account (Users ▸ ⋯ ▸ MeshCentral account), and that user's
+  sessions sign in as it, so MeshCentral's own permissions decide what they
+  reach there. Users with access to every device and no account of their own
+  keep signing in as the shared account (`RMM_MESHCENTRAL_USER`); "Shared
+  account for unrestricted users" in Settings ▸ Remote access, or
+  `RMM_MESHCENTRAL_SHARED_ACCOUNT=false`, turns that off. Setting an account is
+  audited as `user.meshcentral_account`, and `remote.start` records
+  `mesh_account` and `mesh_user`.
+
+### Security
+
+- **Restricted users no longer sign in to MeshCentral as the shared account.**
+  A MeshCentral login token is a full sign-in to its account, not tied to the
+  device it was opened from, and OpenRMM's client scopes do not reach inside
+  MeshCentral. A user restricted to some clients who could open one linked
+  device in MeshCentral got the shared account's session, usually `admin`'s,
+  and could reach every computer it sees. A restricted user now needs a
+  MeshCentral account of their own, set by an administrator, and cannot open
+  MeshCentral from the console until one is set. Deep-link mode (no login
+  token key) is unchanged: there MeshCentral asks for its own sign-in.
+  - **Upgrading:** before or right after updating, set a MeshCentral account
+    for each restricted technician who uses MeshCentral, limited in MeshCentral
+    to their clients' device groups.
+
+### Changed
+
+- Each GitHub release now carries its CHANGELOG section as its notes, and the
+  release workflow posts an announcement to the project's Discord: what
+  changed, how to upgrade, and the link. Until now the release page had no
+  notes, and Discord got only GitHub's bare notice, or nothing at all when
+  Discord rate-limited the notice.
+
+### Fixed
 
 - `deploy/docker-compose.images.yml` pins the 0.9.3 server, frontend and
   artifacts images. It still pinned 0.6.2, so a self-hosted install from the
@@ -94,8 +155,8 @@ tag.
 - Skipping approval now needs `settings.manage` as well as `jobs.manage`, the
   people the console already offered the option to. Before, with the variable
   on, the API accepted `require_approval:false` from anyone with `jobs.manage`.
-  Bulk deployments and every script the AI or MCP proposes still always wait
-  for approval; the setting does not change what the AI may run on its own.
+  Bulk deployments and everything the AI or MCP proposes still always wait for
+  approval.
 
 ### Fixed
 

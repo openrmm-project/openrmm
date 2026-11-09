@@ -392,6 +392,9 @@ const api = {
   // Needs users.email.manage on top of users.manage: the address is where a
   // password reset lands, not just a contact detail.
   setUserEmail(id, email) { return PUT('/api/users/' + id + '/email', { email }); },
+  // The MeshCentral account a user's sessions sign in as through a login
+  // token; "" clears it. Only a principal with access to every device may set it.
+  setUserMeshCentral(id, user) { return PUT('/api/users/' + id + '/meshcentral', { user }); },
 
   /* ---- password reset (unauthenticated) ---- */
   // The request endpoint always resolves, whatever the address: the server

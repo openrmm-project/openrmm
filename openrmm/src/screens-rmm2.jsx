@@ -1729,6 +1729,25 @@ function UsersPanel({ canAdmin }) {
   };
   const [emailBusy, setEmailBusy] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(null);
+  // A user's own MeshCentral account matters only when the server signs them
+  // in with a login token; without one, MeshCentral asks for its own sign-in.
+  const cfgQ = useQuery(['config'], () => api.getConfig(), {});
+  // Naming one takes settings.manage as well, as naming the shared one does.
+  const meshTokens = !!(cfgQ.data?.remote?.meshcentral_enabled && cfgQ.data?.remote?.meshcentral_token_set);
+  const canMesh = meshTokens && can('settings.manage');
+  const [editMesh, setEditMesh] = useState(null); // { user, value } while editing a MeshCentral account
+  const [meshBusy, setMeshBusy] = useState(false);
+  const saveMesh = async () => {
+    if (!editMesh) return;
+    setMeshBusy(true);
+    try {
+      const r = await api.setUserMeshCentral(editMesh.user.id, editMesh.value.trim());
+      const account = r?.meshcentral_user || '';
+      setEditMesh(null); usersQ.refetch();
+      toast.success(t('users.meshAccountSaved'), account ? t('users.meshAccountNow', { user: editMesh.user.username, account }) : t('users.meshAccountNone', { user: editMesh.user.username }));
+    } catch (e) { toast.error(t('common.failed'), e.message); }
+    finally { setMeshBusy(false); }
+  };
   const users = usersQ.data?.users || [];
   const roles = rolesQ.data?.roles || [{ key: 'readonly', name: t('users.roleReadonly') }, { key: 'tech', name: t('tok.technician') }, { key: 'admin', name: t('tok.administrator') }];
   const roleLabel = (r) => r.name ? `${r.key} — ${r.name}` : r.key;
@@ -1823,6 +1842,7 @@ function UsersPanel({ canAdmin }) {
                 <Avatar name={u.username} size={28} />
                 <span className={cx('text-[13px] font-medium', u.disabled_at ? 'text-faint line-through' : 'text-ink')}>{u.username}</span>
                 {u.disabled_at && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-elevated text-faint" title={t('users.disabledAt', { when: fmtTime(u.disabled_at) })}>{t('users.disabledBadge')}</span>}
+                {meshTokens && u.meshcentral_user && <span className="text-[10.5px] mono px-1.5 py-0.5 rounded bg-elevated text-muted" title={t('users.meshAccount')}>{u.meshcentral_user}</span>}
               </div></td>
               <td className="px-3 py-3 text-[12px] mono">
                 {u.email ? <span className="text-muted">{u.email}</span> : <span className="text-faint">{t('users.noAlerts')}</span>}
@@ -1842,7 +1862,7 @@ function UsersPanel({ canAdmin }) {
                     from Disable. Same Dropdown/MenuItem the device and site rows
                     use. The built-in admin keeps only the actions it may have,
                     so the menu is omitted entirely when nothing is left. */}
-                {canAdmin && (canEmail || u.role !== 'admin' || u.totp_enabled || u.username !== 'admin') && (
+                {canAdmin && (canEmail || canMesh || u.role !== 'admin' || u.totp_enabled || u.username !== 'admin') && (
                   <div className="flex items-center justify-end">
                     <Dropdown align="right" width="w-56" trigger={
                       <button className="text-faint hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-elevated" title={t('users.actionsFor', { user: u.username })} aria-label={t('users.actionsFor', { user: u.username })}>
@@ -1851,6 +1871,7 @@ function UsersPanel({ canAdmin }) {
                       {canEmail && <MenuItem icon="send" onClick={() => setEditEmail({ user: u, value: u.email || '' })} hint={u.email ? undefined : t('users.unset')}>{t('users.emailAddress')}</MenuItem>}
                       {canEmail && u.email && !u.email_verified_at && <MenuItem icon="send" onClick={() => resendConfirmation(u)}>{t('users.resendConfirmation')}</MenuItem>}
                       {u.role !== 'admin' && <MenuItem icon="shield" onClick={() => openEdit(u)}>{t('users.accessScope')}</MenuItem>}
+                      {canMesh && <MenuItem icon="external" onClick={() => setEditMesh({ user: u, value: u.meshcentral_user || '' })} hint={u.meshcentral_user ? undefined : t('users.unset')}>{t('users.meshAccount')}</MenuItem>}
                       {u.totp_enabled && <MenuItem icon="key" onClick={() => setConfirmReset(u)}>{t('users.reset2fa')}</MenuItem>}
                       {/* Withdrawing and deleting access are separated from the
                           rest: they are the two that are painful to undo. */}
@@ -1909,6 +1930,18 @@ function UsersPanel({ canAdmin }) {
             </div>
           )}
           <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditEmail(null)} disabled={emailBusy}>{t('action.cancel')}</Button><Button variant="primary" loading={emailBusy} onClick={saveEmail}>{t('users.saveAddress')}</Button></div>
+        </div>
+      </Modal>
+      <Modal open={!!editMesh} onClose={() => { if (!meshBusy) setEditMesh(null); }} width="max-w-md">
+        <div className="p-5">
+          <div className="text-[15px] font-semibold text-ink mb-1">{t('users.meshAccount')}</div>
+          <div className="text-[12px] text-muted mb-4">{t('users.meshAccountFor', { user: editMesh?.user?.username || '' })}</div>
+          <Field label={t('users.meshAccount')} hint={t('users.meshAccountHint')}>
+            <Input className="mono" value={editMesh?.value || ''} autoFocus autoComplete="off" placeholder="tech1" /* i18n-ignore: an example account name */
+              onChange={(e) => setEditMesh((s) => ({ ...s, value: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveMesh(); }} />
+          </Field>
+          <div className="flex justify-end gap-2 mt-5"><Button variant="ghost" onClick={() => setEditMesh(null)} disabled={meshBusy}>{t('action.cancel')}</Button><Button variant="primary" loading={meshBusy} onClick={saveMesh}>{t('users.saveMeshAccount')}</Button></div>
         </div>
       </Modal>
       <Modal open={!!editUser} onClose={() => { if (!editSaving) { setConfirmScopeSave(false); setEditUser(null); } }} width="max-w-lg">
@@ -2262,6 +2295,9 @@ function ConfigPanel() {
       meshcentral_user: c.remote.meshcentral_user || 'admin',
       meshcentral_token_key: '',
       meshcentral_enabled: c.remote.meshcentral_enabled !== false,
+      meshcentral_match_hostname: !!c.remote.meshcentral_match_hostname,
+      // An older server has no switch, and always uses the shared account.
+      meshcentral_shared_account: c.remote.meshcentral_shared_account !== false,
       rustdesk_enabled: !!c.remote.rustdesk_enabled,
       guest_access: !!c.remote.guest_access,
       autonomy_paused: !!c.ai.autonomy_paused,
@@ -2275,7 +2311,7 @@ function ConfigPanel() {
     try {
       await api.updateConfig({
         ai: { provider: form.ai_provider, base_url: form.ai_base_url, model: form.ai_model, api_key: form.ai_api_key, autonomy_paused: form.autonomy_paused },
-        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, rustdesk_enabled: form.rustdesk_enabled, guest_access: form.guest_access },
+        remote: { default: form.remote_default, meshcentral_url: form.meshcentral_url, meshcentral_user: form.meshcentral_user, meshcentral_token_key: form.meshcentral_token_key, meshcentral_enabled: form.meshcentral_enabled, meshcentral_match_hostname: form.meshcentral_match_hostname, meshcentral_shared_account: form.meshcentral_shared_account, rustdesk_enabled: form.rustdesk_enabled, guest_access: form.guest_access },
         jobs: { allow_unapproved: form.allow_unapproved },
       });
       set('ai_api_key', ''); set('meshcentral_token_key', '');
@@ -2305,8 +2341,10 @@ function ConfigPanel() {
           <Field label={t('cfg.defaultProvider')}><Select value={form.remote_default} disabled={!can('settings.manage')} onChange={(e) => set('remote_default', e.target.value)}>{c.remote.providers.map((p) => <option key={p} value={p}>{p}</option>)}</Select></Field>
           <Field label="MeshCentral" hint={t('cfg.meshHint')}><Select value={form.meshcentral_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_enabled', e.target.value === 'on')}><option value="on">{t('cfg.enabled')}</option><option value="off">{t('cfg.disabled')}</option></Select></Field>
           <Field label={t('cfg.meshUrl')}><Input className="mono" value={form.meshcentral_url} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
-          <Field label={t('cfg.meshUser')}><Input value={form.meshcentral_user} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>{/* i18n-ignore: an account name */}
+          <Field label={t('cfg.meshUser')} hint={t('cfg.meshUserHint')}><Input value={form.meshcentral_user} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>{/* i18n-ignore: an account name */}
           <Field label={t('cfg.meshToken')} hint={c.remote.meshcentral_token_set ? t('cfg.meshTokenSet') : t('cfg.meshTokenHint')}><Input type="password" value={form.meshcentral_token_key} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>{/* i18n-ignore: MeshCentral's own field name */}
+          <Field label={t('cfg.meshSharedAccount')} hint={t('cfg.meshSharedAccountHint')}><Select value={form.meshcentral_shared_account ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_shared_account', e.target.value === 'on')}><option value="on">{t('cfg.enabled')}</option><option value="off">{t('cfg.disabled')}</option></Select></Field>
+          <Field label={t('cfg.meshMatchHostname')} hint={t('cfg.meshMatchHostnameHint')}><Select value={form.meshcentral_match_hostname ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_match_hostname', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
           <Field label="RustDesk" hint={t('cfg.rustdeskHint')}><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
           <Field label={t('cfg.guestAccess')} hint={t('cfg.guestAccessHint')}><Select value={form.guest_access ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('guest_access', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
         </div>

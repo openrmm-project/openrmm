@@ -1,5 +1,5 @@
 -- The built-in administrator role has full access, AI autonomy included.
--- Migration 024 gave it only ai.autonomy.manage (releasing scripts); this grants
+-- Migration 025 gave it only ai.autonomy.manage (releasing scripts); this grants
 -- the four switches as well, for the built-in chat and for MCP. Technician and
 -- read-only still hold none of them, so for anyone else a custom role opts in.
 -- Settings ▸ AI ▸ pause still stops autonomy for every role at once.

@@ -112,6 +112,11 @@ type User struct {
 	// managed service's owner). Listed for the users screen; it has no effect
 	// while single sign-on is off.
 	SSO bool `json:"sso"`
+	// MeshCentralUser is the MeshCentral account this user's remote sessions
+	// sign in as when the server mints login tokens; "" for none. Only an
+	// administrator with access to every device sets it: the account carries
+	// MeshCentral's own permissions, which OpenRMM's scopes do not reach.
+	MeshCentralUser string `json:"meshcentral_user"`
 }
 
 // Disabled reports whether this account may still authenticate.

@@ -53,6 +53,10 @@ func newAlertReliabilityFixture(t *testing.T, prefix string) alertReliabilityFix
 	if err := st.SetAgentGroup(ctx, agent.ID, &group.ID); err != nil {
 		t.Fatal(err)
 	}
+	agent, err = st.GetAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	check, err := st.CreateCheck(ctx, &models.Check{
 		AgentID: &agent.ID, Type: models.CheckScript, Name: prefix + " check",
 		Config:      json.RawMessage(`{"shell":"bash","script":"exit 1"}`),

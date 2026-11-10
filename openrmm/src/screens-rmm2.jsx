@@ -1592,8 +1592,10 @@ function notifyLabel(eventType) {
 function NotificationsCard() {
   const toast = useToast();
   const prefsQ = useQuery(['my-notifications'], () => api.getMyNotifications(), { invalidateOn: ['my-notifications'] });
+  const [rulePrefs, setRulePrefs] = useState(null);
   const [subs, setSubs] = useState(null);   // null until loaded: event_type -> enabled
   const [busy, setBusy] = useState(false);
+  const [ruleSearch, setRuleSearch] = useState('');
   const data = prefsQ.data;
   const email = data?.email || '';
   const [sending, setSending] = useState(false);
@@ -1611,19 +1613,24 @@ function NotificationsCard() {
     const next = {};
     (data.subscriptions || []).forEach((s) => { next[s.event_type] = s.enabled; });
     setSubs(next);
+    setRulePrefs(data.rules || { mode: 'all', include_defaults: true, check_ids: [] });
   }, [data]);
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.updateMyNotifications({ subscriptions: subs });
+      await api.updateMyNotifications({ subscriptions: subs, rules: rulePrefs });
       prefsQ.refetch();
       toast.success(t('notify.saved'), email ? t('notify.goesTo', { email }) : t('notify.noAddress'));
     } catch (e) { toast.error(t('notify.saveFailed'), e.message); }
     finally { setBusy(false); }
   };
 
-  if (!data || subs === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
+  const availableRules = data?.available_rules || [];
+  const query = ruleSearch.trim().toLocaleLowerCase();
+  const matchingRules = availableRules.filter((item) => !query || (item.name + ' ' + window.checkType(item.type).label).toLocaleLowerCase().includes(query));
+
+  if (!data || subs === null || rulePrefs === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
   return (
     <Card className="p-5 mb-5 max-w-2xl">
       <div className="flex items-center gap-2.5 mb-1">
@@ -1658,6 +1665,23 @@ function NotificationsCard() {
         </Field>
       </div>
 
+      <div className="mt-4 rounded-xl border border-line p-3 space-y-3">
+        <div className="text-[13px] font-semibold text-ink">{t('notify.rulesTitle')}</div>
+        <Select value={rulePrefs.mode} onChange={(e) => setRulePrefs((prev) => ({ ...prev, mode: e.target.value }))}><option value="all">{t('notify.rulesAll')}</option><option value="selected">{t('notify.rulesSelected')}</option></Select>
+        <p className="text-[11.5px] text-muted">{t('notify.rulesHint')}</p>
+        {rulePrefs.mode === 'selected' && <div className="space-y-3">
+          <label className="flex items-center gap-2 text-[12px]"><Toggle checked={rulePrefs.include_defaults} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, include_defaults: value }))} />{t('notify.rulesDefaults')}</label>
+          {availableRules.length > 0 && <>
+            <div className="relative"><Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" /><Input value={ruleSearch} onChange={(e) => setRuleSearch(e.target.value)} placeholder={t('notify.rulesSearch')} aria-label={t('notify.rulesSearch')} aria-controls="notification-custom-rules" className="pl-9" /></div>
+            <div className="text-[11.5px] text-faint" aria-live="polite">{t('notify.rulesCount', { shown: matchingRules.length, total: availableRules.length })}</div>
+            <div id="notification-custom-rules" role="region" aria-label={t('notify.rulesTitle')} tabIndex={0} className="max-h-60 overflow-y-auto overscroll-contain scroll-area rounded-lg border border-line">
+              {matchingRules.map((item) => <label key={item.id} className="h-12 px-3 flex items-center gap-3 text-[12px] border-b border-line last:border-0"><Toggle checked={(rulePrefs.check_ids || []).includes(item.id)} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, check_ids: value ? [...new Set([...(prev.check_ids || []), item.id])] : (prev.check_ids || []).filter((id) => id !== item.id) }))} /><span className="min-w-0 flex-1"><span className="block truncate text-ink" title={item.name}>{item.name}</span><span className="block truncate text-[11px] text-muted">{window.checkType(item.type).label}</span></span></label>)}
+              {!matchingRules.length && <p className="p-3 text-[11.5px] text-faint">{t('notify.rulesNoMatches')}</p>}
+            </div>
+          </>}
+          {!availableRules.length && <p className="text-[11.5px] text-faint">{t('notify.rulesNone')}</p>}
+        </div>}
+      </div>
       <div className="mt-4 space-y-1.5">
         {(data.subscriptions || []).map((s) => (
           <div key={s.event_type} className="flex items-start gap-3 rounded-lg border border-line bg-app px-3 py-2.5">
@@ -2276,6 +2300,64 @@ function ScopePicker({ scopes, setScopes, mode, setMode }) {
 function ConfigItem({ label, value, mono }) {
   return <div className="flex items-center justify-between py-2.5 border-b border-line/60 last:border-0"><span className="text-[12.5px] text-muted">{label}</span><span className={cx('text-[12.5px] text-ink font-medium', mono && 'mono')}>{value}</span></div>;
 }
+// RustDesk can be the default only while it is on: the server refuses the
+// combination, since every session started without a provider would fail.
+const rustdeskDefaultDisabled = (form) => form.remote_default === 'rustdesk' && !form.rustdesk_enabled;
+// Form values belong to ConfigPanel so changing the visible provider never
+// discards unsaved settings (including the write-only token).
+function RemoteProviderSettings({ form, onChange, remote, canManage }) {
+  const [tab, setTab] = useState('native');
+  const tabs = [
+    { key: 'native', label: t('cfg.remoteNative') },
+    { key: 'meshcentral', label: 'MeshCentral' },
+    { key: 'rustdesk', label: 'RustDesk' },
+    { key: 'default', label: t('cfg.defaultProvider') },
+  ];
+  const providerLabel = (key) => tabs.find((item) => item.key === key)?.label || key;
+  const navigate = (event) => {
+    const index = tabs.findIndex((item) => item.key === tab);
+    let next;
+    if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    setTab(tabs[next].key);
+    event.currentTarget.parentElement.querySelectorAll('[role="tab"]')[next]?.focus();
+  };
+  return (
+    <Card className="p-4 md:col-span-2">
+      <div className="flex items-center gap-2 mb-4"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="remote" size={15} /></div><div className="text-[13px] font-semibold text-ink">{t('cfg.remote')}</div></div>
+      <div role="tablist" aria-label={t('cfg.remote')} className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl border border-line bg-elevated/50 p-1 mb-4">
+        {tabs.map((item) => <button key={item.key} type="button" role="tab" id={'remote-config-tab-' + item.key} aria-controls={'remote-config-panel-' + item.key} aria-selected={tab === item.key} tabIndex={tab === item.key ? 0 : -1} onClick={() => setTab(item.key)} onKeyDown={navigate} className={cx('rounded-lg px-3 py-2 text-[12.5px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand', tab === item.key ? 'bg-card text-brandhi shadow-sm' : 'text-muted hover:text-ink hover:bg-card/50')}>{item.label}</button>)}
+      </div>
+      {tabs.map((item) => <div key={item.key} role="tabpanel" id={'remote-config-panel-' + item.key} aria-labelledby={'remote-config-tab-' + item.key} hidden={tab !== item.key} tabIndex={0} className="space-y-3">
+        {item.key === 'native' && <>
+          <p className="text-[12px] text-muted">{t('cfg.nativeHint')}</p>
+          <Field label={t('cfg.guestAccess')} hint={t('cfg.guestAccessHint')}><Select value={form.guest_access ? 'on' : 'off'} disabled={!canManage} onChange={(e) => onChange('guest_access', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
+        </>}
+        {item.key === 'meshcentral' && <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="MeshCentral" hint={t('cfg.meshHint')}><Select value={form.meshcentral_enabled ? 'on' : 'off'} disabled={!canManage} onChange={(e) => onChange('meshcentral_enabled', e.target.value === 'on')}><option value="on">{t('cfg.enabled')}</option><option value="off">{t('cfg.disabled')}</option></Select></Field>
+          <Field label={t('cfg.meshUrl')}><Input className="mono" value={form.meshcentral_url} disabled={!canManage} onChange={(e) => onChange('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
+          <Field label={t('cfg.meshUser')} hint={t('cfg.meshUserHint')}><Input value={form.meshcentral_user} disabled={!canManage} onChange={(e) => onChange('meshcentral_user', e.target.value)} placeholder="admin" /></Field>{/* i18n-ignore: an account name */}
+          <Field label={t('cfg.meshToken')} hint={remote.meshcentral_token_set ? t('cfg.meshTokenSet') : t('cfg.meshTokenHint')}><Input type="password" value={form.meshcentral_token_key} disabled={!canManage} onChange={(e) => onChange('meshcentral_token_key', e.target.value)} placeholder={remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>{/* i18n-ignore: MeshCentral's own field name */}
+          <Field label={t('cfg.meshSharedAccount')} hint={t('cfg.meshSharedAccountHint')}><Select value={form.meshcentral_shared_account ? 'on' : 'off'} disabled={!canManage} onChange={(e) => onChange('meshcentral_shared_account', e.target.value === 'on')}><option value="on">{t('cfg.enabled')}</option><option value="off">{t('cfg.disabled')}</option></Select></Field>
+          <Field label={t('cfg.meshMatchHostname')} hint={t('cfg.meshMatchHostnameHint')}><Select value={form.meshcentral_match_hostname ? 'on' : 'off'} disabled={!canManage} onChange={(e) => onChange('meshcentral_match_hostname', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
+        </div>}
+        {item.key === 'rustdesk' && <>
+          <Field label="RustDesk" hint={t('cfg.rustdeskHint')}><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!canManage} onChange={(e) => onChange('rustdesk_enabled', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
+        </>}
+        {item.key === 'default' && <>
+          <Field label={t('cfg.defaultProvider')}><Select value={form.remote_default} disabled={!canManage} onChange={(e) => onChange('remote_default', e.target.value)}>{(remote.providers || []).map((p) => <option key={p} value={p}>{providerLabel(p)}</option>)}</Select></Field>
+          {rustdeskDefaultDisabled(form) && <p role="alert" className="text-[12px] text-bad">{t('cfg.rustdeskDefaultNeedsEnabled')}</p>}
+        </>}
+      </div>)}
+      <p className="mt-4 pt-3 border-t border-line text-[11.5px] text-faint">{t('cfg.remoteSaveHint', { action: t('cfg.save') })}</p>
+    </Card>
+  );
+}
+
 function ConfigPanel() {
   const { can } = useAuth();
   const toast = useToast();
@@ -2307,6 +2389,7 @@ function ConfigPanel() {
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const save = async () => {
+    if (rustdeskDefaultDisabled(form)) { toast.error(t('cfg.saveFailed'), t('cfg.rustdeskDefaultNeedsEnabled')); return; }
     setSaving(true);
     try {
       await api.updateConfig({
@@ -2336,24 +2419,11 @@ function ConfigPanel() {
         </div>
       </Card>
       <Card className="p-4">
-        <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="remote" size={15} /></div><div className="text-[13px] font-semibold text-ink">{t('cfg.remote')}</div></div>
-        <div className="space-y-3">
-          <Field label={t('cfg.defaultProvider')}><Select value={form.remote_default} disabled={!can('settings.manage')} onChange={(e) => set('remote_default', e.target.value)}>{c.remote.providers.map((p) => <option key={p} value={p}>{p}</option>)}</Select></Field>
-          <Field label="MeshCentral" hint={t('cfg.meshHint')}><Select value={form.meshcentral_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_enabled', e.target.value === 'on')}><option value="on">{t('cfg.enabled')}</option><option value="off">{t('cfg.disabled')}</option></Select></Field>
-          <Field label={t('cfg.meshUrl')}><Input className="mono" value={form.meshcentral_url} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_url', e.target.value)} placeholder="https://mesh.example.com" /></Field>
-          <Field label={t('cfg.meshUser')} hint={t('cfg.meshUserHint')}><Input value={form.meshcentral_user} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_user', e.target.value)} placeholder="admin" /></Field>{/* i18n-ignore: an account name */}
-          <Field label={t('cfg.meshToken')} hint={c.remote.meshcentral_token_set ? t('cfg.meshTokenSet') : t('cfg.meshTokenHint')}><Input type="password" value={form.meshcentral_token_key} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_token_key', e.target.value)} placeholder={c.remote.meshcentral_token_set ? '••••••••••••••••' : 'hex loginTokenKey'} autoComplete="new-password" /></Field>{/* i18n-ignore: MeshCentral's own field name */}
-          <Field label={t('cfg.meshSharedAccount')} hint={t('cfg.meshSharedAccountHint')}><Select value={form.meshcentral_shared_account ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_shared_account', e.target.value === 'on')}><option value="on">{t('cfg.enabled')}</option><option value="off">{t('cfg.disabled')}</option></Select></Field>
-          <Field label={t('cfg.meshMatchHostname')} hint={t('cfg.meshMatchHostnameHint')}><Select value={form.meshcentral_match_hostname ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('meshcentral_match_hostname', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
-          <Field label="RustDesk" hint={t('cfg.rustdeskHint')}><Select value={form.rustdesk_enabled ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('rustdesk_enabled', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
-          <Field label={t('cfg.guestAccess')} hint={t('cfg.guestAccessHint')}><Select value={form.guest_access ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('guest_access', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
-        </div>
-      </Card>
-      <Card className="p-4 md:col-span-2">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="play" size={15} /></div><div className="text-[13px] font-semibold text-ink">{t('cfg.jobs')}</div></div>
         <Field label={t('cfg.unapprovedJobs')} hint={t('cfg.unapprovedJobsHint')}><Select value={form.allow_unapproved ? 'on' : 'off'} disabled={!can('settings.manage')} onChange={(e) => set('allow_unapproved', e.target.value === 'on')}><option value="off">{t('cfg.disabled')}</option><option value="on">{t('cfg.enabled')}</option></Select></Field>
         {form.allow_unapproved && <div className="mt-3 flex items-start gap-2 rounded-xl border border-bad/25 bg-badsoft px-3 py-2.5 text-[12px] text-ink"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-bad" />{t('cfg.unapprovedJobsWarn')}</div>}
       </Card>
+      <RemoteProviderSettings form={form} onChange={set} remote={c.remote} canManage={can('settings.manage')} />
       <Card className="p-4 md:col-span-2">
         <div className="flex items-center gap-2 mb-3"><div className="h-8 w-8 rounded-lg bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="shield" size={15} /></div><div className="text-[13px] font-semibold text-ink">{t('cfg.server')}</div></div>
         <ConfigItem label={t('cfg.version')} value={c.server.version} mono /><ConfigItem label={t('cfg.agentsUrl')} value={c.server.base_url} mono />

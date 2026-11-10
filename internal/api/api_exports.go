@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/p1ngu/rmm/internal/exports"
 	"github.com/p1ngu/rmm/internal/models"
@@ -88,11 +90,56 @@ func (c *spreadsheetSafeCSV) Write(record []string) error {
 	return c.Writer.Write(safe)
 }
 
+// formulaPrefixes start a formula in common spreadsheets, including the
+// full-width forms some locales convert.
+const formulaPrefixes = "=+-@＝＋－＠"
+
+// isCellBreak reports characters where a spreadsheet may start a new cell.
+// A comma is this file's separator, but Excel opens a .csv with the regional
+// list separator — ';' in pt-BR, de-DE, es-ES — and then splits a value such as
+// "x;=1+1" into a second cell that begins with the formula. Line breaks start
+// a new row for a reader that splits there.
+func isCellBreak(r rune) bool {
+	return r == ',' || r == ';' || r == '\t' || r == '\r' || r == '\n'
+}
+
+// spreadsheetSafeCell prefixes an apostrophe wherever a cell could begin with a
+// formula: at the start of the value and after every cell break, looking past
+// whitespace, control and format characters (BOM, zero-width space). It never
+// changes the stored source value, only the exported text; ordinary text is
+// returned unchanged. The console's csvEscape applies the same policy.
 func spreadsheetSafeCell(cell string) string {
-	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
-		return "'" + cell
+	var at []int
+	pending, insertAt := true, 0
+	for i, r := range cell {
+		switch {
+		case isCellBreak(r):
+			pending, insertAt = true, i+utf8.RuneLen(r)
+		case !pending:
+		case unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+		case strings.ContainsRune(formulaPrefixes, r):
+			at, pending = append(at, insertAt), false
+		default:
+			pending = false
+		}
 	}
-	return cell
+	// A value that starts with a tab or line break is guarded as a whole too,
+	// as before: some readers trim it and then see what follows.
+	if cell != "" && strings.ContainsRune("\t\r\n", rune(cell[0])) && (len(at) == 0 || at[0] != 0) {
+		at = append([]int{0}, at...)
+	}
+	if len(at) == 0 {
+		return cell
+	}
+	var b strings.Builder
+	prev := 0
+	for _, i := range at {
+		b.WriteString(cell[prev:i])
+		b.WriteByte('\'')
+		prev = i
+	}
+	b.WriteString(cell[prev:])
+	return b.String()
 }
 
 func (s *Server) streamAuditCSV(w http.ResponseWriter, r *http.Request, claims *exports.Claims) {

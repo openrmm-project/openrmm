@@ -1,5 +1,15 @@
 # 08 — Remote Access
 
+In **Users & Settings → Configuration → Remote access**, provider settings are
+organized into four tabs: **Native**, **MeshCentral**, **RustDesk**, and
+**Default provider**. Native contains the guest-access switch; MeshCentral
+contains its connection and account options; RustDesk contains its integration
+switch. The default-provider selector is separate from each integration's
+settings. Switching tabs preserves unsaved edits. Use **Save configuration**
+to save all four tabs together. Stored tokens remain write-only; leaving the
+token field empty preserves its current value.
+
+
 Remote access is **pluggable**: a single `Provider` interface
 (`internal/remote`) with five implementations: `native` (remote desktop),
 `files` (file transfer only — the media sidecar with **no** screen capture),
@@ -953,8 +963,18 @@ If the native tool underperforms, remove the provider — MeshCentral remains.
 
 ## Choosing a default
 
-`RMM_REMOTE_PROVIDER` sets the default (`native` or `meshcentral`). The
+`RMM_REMOTE_PROVIDER` sets the default (`native`, `meshcentral` or `rustdesk`). The
 production compose file defaults to `native`, which needs nothing outside
 OpenRMM; the development compose file defaults to `meshcentral`. MeshCentral
 remains the choice where you already run it, or for what the native engine does
 not cover yet (Wayland sessions, the macOS login window).
+
+The default applies to a session started without naming a provider: an API,
+MCP or AI Chat request. The device's Remote menu always names the one you pick.
+
+RustDesk can be the default only while it is enabled
+(`RMM_RUSTDESK_ENABLED=true`, or the switch in the RustDesk tab): otherwise
+every such session would fail. Saving the configuration refuses both choosing
+RustDesk as the default while it is off and turning it off while it is the
+default; pick another default in the same save. RustDesk also needs its client
+installed on each device, which OpenRMM does not do.

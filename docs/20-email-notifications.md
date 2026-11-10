@@ -370,3 +370,7 @@ so a fleet-wide incident sends one message per affected device to each in-scope
 recipient. The `notifications` outbox has no retention policy — sent rows
 accumulate, which is survivable because the partial index keeps the worker's
 claim query small, but it will want pruning eventually.
+
+## Selecting rules
+
+Settings → Email notifications lets each user receive all rules (the default), or selected checks and server rules, optionally including built-in and fleet-default incidents. Event subscriptions still apply. A selection never grants access: delivery rechecks alerts.view, account status and the incident’s scope. See [Alert rules](24-alert-rules.md).

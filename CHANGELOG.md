@@ -8,6 +8,14 @@ tag.
 
 ### Added
 
+- **Linux and macOS service checks:** monitor systemd units and launchd jobs
+  from Checks, with platform-specific policy coverage. Requires agent 0.10.0
+  or later. macOS can require a job to be running or merely loaded for
+  on-demand services. Status queries use fixed arguments and return summaries
+  without exposing launchd environment variables.
+
+- **Configurable alert rules** ([guide](docs/24-alert-rules.md)): manage connectivity, failed jobs and patches, pending reboots and outdated agents in Checks, with policy inheritance, fleet defaults and per-rule email preferences. AI chat and MCP can propose rules for human review; server rules never execute on endpoints. Existing alert defaults stay unchanged on upgrade.
+
 - **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
   [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
   run without a person approving at the time, and only for roles granted them:
@@ -39,6 +47,18 @@ tag.
 
 ### Changed
 
+- Notification rule selection now has name/type search and a scroll area for
+  five visible rules. Filtering preserves selections outside the visible list.
+
+- Remote-access settings now have separate Native, MeshCentral, RustDesk and
+  Default provider tabs. Unsaved edits are preserved across tabs and saved
+  together; stored credentials remain write-only.
+
+- The console asks in its own dialogs, never in the browser's prompt or confirm
+  over the tab: silencing an alert (minutes and reason in one dialog),
+  resolving one or many, a device's remote id, the remote file browser's new
+  folder, rename and delete (inside the viewer, full screen too), and deleting a
+  check or a scheduled task.
 - The agent runs device queries and passes script parameters from **0.10.0**;
   the server refuses both for older agents.
 - The run-script panel no longer calls a job waiting for approval "a dry-run
@@ -47,6 +67,33 @@ tag.
 
 ### Fixed
 
+- CSV exports neutralize formula-like text, including hidden and full-width
+  prefixes, before serialization, at the start of a value and after every
+  separator or line break, so a `;` list separator (Excel in pt-BR, de-DE,
+  es-ES) cannot split a value into a cell that starts with a formula. Audit
+  exports use the shared console encoder; stored values, alert UUIDs and
+  immutable audit records are preserved.
+- The default remote provider list no longer offers Terminal, which the
+  server always refused as a default (saving failed with "invalid remote
+  provider"), and offers RustDesk, which can be the default again while it is
+  enabled. GET and PUT `/api/config` share one list; a save that would leave
+  RustDesk as the default while it is off is refused.
+- Remote-provider test fixtures now enforce the configuration API's accepted
+  defaults and write-only token behavior, with real-router contract coverage.
+
+- Alert acknowledgement, resolution and silencing now snapshot a readable
+  target in the audit trail. Older alert actions resolve their target label
+  when the alert still exists, without rewriting immutable audit records.
+  The original target UUID remains available on hover and in CSV exports.
+
+- **An acknowledged alert that kept firing could not be silenced or
+  resolved.** Each new occurrence of the same condition, an offline device every
+  30 seconds or a check on every result, bumped the alert's version, so the
+  action the console sent with the version it had read failed with "alert
+  version changed", nearly always when a note or a duration had to be typed
+  first. The version now moves only when something an operator decides on
+  changes: the status, the severity, the acknowledgement or the silence. An
+  escalation still refuses an action based on the old state.
 - **Accented text from Windows** reached the console garbled on non-English
   installs: "Instalação" showed as "Instala‡Æo" in script output and Windows
   Update titles, and the software and hardware inventory read it undecoded.

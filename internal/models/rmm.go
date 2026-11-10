@@ -3,6 +3,8 @@ package models
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/p1ngu/rmm/internal/protocol"
 )
 
 // Roles.
@@ -14,12 +16,14 @@ const (
 
 // Check types.
 const (
-	CheckDiskSpace  = "diskspace"
-	CheckMemory     = "memory"
-	CheckCPULoad    = "cpuload"
-	CheckPing       = "ping"
-	CheckWinService = "winservice"
-	CheckScript     = "script"
+	CheckDiskSpace    = "diskspace"
+	CheckMemory       = "memory"
+	CheckCPULoad      = "cpuload"
+	CheckPing         = "ping"
+	CheckWinService   = "winservice"
+	CheckLinuxService = protocol.CheckLinuxService
+	CheckMacService   = protocol.CheckMacService
+	CheckScript       = "script"
 )
 
 // Check / result statuses.
@@ -425,6 +429,9 @@ type Alert struct {
 	SilencedUntil     *time.Time `json:"silenced_until,omitempty"`
 	SilencedBy        string     `json:"silenced_by,omitempty"`
 	SilenceReason     string     `json:"silence_reason,omitempty"`
+	// RuleID is the check or server rule that raised the alert; nil for a
+	// fleet default (docs/24-alert-rules.md).
+	RuleID *string `json:"rule_id,omitempty"`
 }
 
 type AlertEvent struct {
@@ -440,17 +447,18 @@ type AlertEvent struct {
 }
 
 type AlertSuppression struct {
-	ID         string     `json:"id"`
-	Kind       string     `json:"kind"`
-	ScopeType  string     `json:"scope_type"`
-	ScopeID    string     `json:"scope_id"`
-	StartsAt   time.Time  `json:"starts_at"`
-	EndsAt     time.Time  `json:"ends_at"`
-	Reason     string     `json:"reason"`
-	CreatedBy  string     `json:"created_by"`
-	CreatedAt  time.Time  `json:"created_at"`
-	CanceledAt *time.Time `json:"canceled_at,omitempty"`
-	CanceledBy string     `json:"canceled_by,omitempty"`
+	MonitoringScopeSince *time.Time `json:"-"`
+	ID                   string     `json:"id"`
+	Kind                 string     `json:"kind"`
+	ScopeType            string     `json:"scope_type"`
+	ScopeID              string     `json:"scope_id"`
+	StartsAt             time.Time  `json:"starts_at"`
+	EndsAt               time.Time  `json:"ends_at"`
+	Reason               string     `json:"reason"`
+	CreatedBy            string     `json:"created_by"`
+	CreatedAt            time.Time  `json:"created_at"`
+	CanceledAt           *time.Time `json:"canceled_at,omitempty"`
+	CanceledBy           string     `json:"canceled_by,omitempty"`
 }
 
 type AlertCounts struct {

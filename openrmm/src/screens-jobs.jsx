@@ -337,7 +337,7 @@ function AuditScreen() {
     const snap = d.hostname || d.host || d.name;
     const live2 = target && (devMap[target]?.hostname || userMap[target]);
     const byAgent = d.agent && devMap[d.agent]?.hostname;
-    return snap || live2 || byAgent || target;
+    return snap || e.target_label || live2 || byAgent || target;
   };
 
   const resetFilters = () => {
@@ -362,12 +362,11 @@ function AuditScreen() {
         collected.push(...rows);
         if (rows.length < 500 || collected.length >= (batch.total ?? 0)) break;
       }
-      const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
       const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
       // English on purpose: scripts read these columns, whatever the console's language.
       const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
       const rows = collected.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e), e.target, detailStr(e.detail)]);
-      const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n');
+      const csv = toCSV(header, rows, true);
       downloadText('audit-' + new Date().toISOString().slice(0, 10) + '.csv', csv, 'text/csv');
       if (total > collected.length) {
         toast.info(t('audit.truncated'), t('audit.truncatedMsg', { count: collected.length, total }));

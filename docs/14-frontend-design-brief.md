@@ -189,7 +189,7 @@ approval-gated job. CRUD requires `scripts.manage`.
 ### 10.3 Monitoring (Checks) ⭐
 - Per device **and** per policy: list checks with their **live status pill**
   (passing/warning/failing) from the latest result.
-- Create/edit check: type (diskspace/memory/cpuload/ping/winservice/script),
+- Create/edit check: type (diskspace/memory/cpuload/ping/winservice/linuxservice/macservice/script),
   type-specific config (path / host / service / inline script), warn/err
   thresholds, interval. Note the threshold direction per type (disk/mem = alert
   when low; cpu = alert when high).

@@ -584,10 +584,42 @@ function Sparkline({ data, width = 160, height = 36, colorFn }) {
 }
 
 /* ------------------------------ csv / download ---------------------------- */
-// csvEscape quotes a value when it contains a comma, quote or newline.
-function csvEscape(v) { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
-// toCSV builds a CRLF-joined CSV string from a header row + data rows.
-function toCSV(headers, rows) { return [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n'); }
+// CSV is for spreadsheet viewing, so formula-like text gets a leading
+// apostrophe wherever a cell could begin: at the start of the value and after
+// every cell break. A comma is this file's separator, but Excel opens a .csv
+// with the regional list separator (';' in pt-BR, de-DE, es-ES) and honours
+// quotes only at the start of its own cells, so "x;=1+1" would otherwise give a
+// second cell starting with the formula. Leading whitespace, control and
+// format characters are looked past. Same policy as the server's
+// spreadsheetSafeCell. Typed numbers stay numeric; only the exported
+// representation changes, never the source value.
+const CSV_FORMULA_PREFIX = /[=+\-@＝＋－＠]/u;
+const CSV_CELL_BREAK = /[,;\t\r\n]/;
+const CSV_INVISIBLE = /[\p{White_Space}\p{Cc}\p{Cf}]/u;
+function csvGuardFormulas(text) {
+  const at = [];
+  let pending = true, insertAt = 0, i = 0;
+  for (const ch of text) {
+    if (CSV_CELL_BREAK.test(ch)) { pending = true; insertAt = i + ch.length; }
+    else if (pending && !CSV_INVISIBLE.test(ch)) { if (CSV_FORMULA_PREFIX.test(ch)) at.push(insertAt); pending = false; }
+    i += ch.length;
+  }
+  // A value that starts with a tab or line break is guarded as a whole too.
+  if (/^[\t\r\n]/.test(text) && at[0] !== 0) at.unshift(0);
+  if (!at.length) return text;
+  let out = '', prev = 0;
+  for (const p of at) { out += text.slice(prev, p) + "'"; prev = p; }
+  return out + text.slice(prev);
+}
+function csvEscape(v, alwaysQuote = false) {
+  const text = v == null ? '' : String(v);
+  const cell = typeof v === 'number' ? text : csvGuardFormulas(text);
+  return alwaysQuote || cell !== text || /[",;\r\n]/.test(cell) ? '"' + cell.replace(/"/g, '""') + '"' : cell;
+}
+// Audit exports retain their historical all-fields-quoted representation.
+function toCSV(headers, rows, alwaysQuote = false) {
+  return [headers, ...rows].map((row) => row.map((value) => csvEscape(value, alwaysQuote)).join(',')).join('\r\n');
+}
 // downloadText saves text as a file from the browser — no server/endpoint write.
 function downloadText(name, text, mime) {
   const url = URL.createObjectURL(new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' }));
@@ -598,6 +630,50 @@ function downloadText(name, text, mime) {
 }
 
 /* confirm dialog hook-ish component */
+// FormDialog asks for values inside the console, where the browser's
+// window.prompt used to: a dialog over the page rather than a popup on top of
+// the tab. fields: [{ name, label, type ('text' | 'number' | 'textarea'),
+// initial, placeholder, min }]. validate(values) returns an error message, or
+// '' when the values are good; onSubmit(values) may be async, and the dialog
+// stays open with its button busy until it settles.
+function FormDialog({ open, onClose, onSubmit, title, body, fields, submitLabel = t('ui.confirm'), validate, danger }) {
+  const initial = () => Object.fromEntries((fields || []).map((f) => [f.name, f.initial ?? '']));
+  const [values, setValues] = useState(initial);
+  const [formError, setFormError] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setValues(initial()); setFormError(''); setBusy(false); } }, [open]);
+  const label = (s) => String(s || '').replace(/[:：]\s*$/, '');
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    const problem = validate ? validate(values) : '';
+    if (problem) { setFormError(problem); return; }
+    setBusy(true);
+    try { await onSubmit(values); } finally { setBusy(false); }
+  };
+  return (
+    <Modal open={open} onClose={() => { if (!busy) onClose(); }} width="max-w-md">
+      <form className="p-5" onSubmit={submit}>
+        <div className="text-[15px] font-semibold text-ink">{title}</div>
+        {body && <div className="text-[13px] text-muted mt-1 leading-relaxed">{body}</div>}
+        <div className="space-y-3 mt-4">
+          {(fields || []).map((f, i) => (
+            <Field key={f.name} label={label(f.label)}>
+              {f.type === 'textarea'
+                ? <Textarea rows={3} value={values[f.name] ?? ''} placeholder={f.placeholder} autoFocus={i === 0} onChange={(e) => { const v = e.target.value; setValues((s) => ({ ...s, [f.name]: v })); setFormError(''); }} />
+                : <Input type={f.type === 'number' ? 'number' : 'text'} min={f.min} value={values[f.name] ?? ''} placeholder={f.placeholder} autoFocus={i === 0} onChange={(e) => { const v = e.target.value; setValues((s) => ({ ...s, [f.name]: v })); setFormError(''); }} />}
+            </Field>
+          ))}
+        </div>
+        {formError && <div className="mt-3 text-[12px] text-bad">{formError}</div>}
+        <div className="flex justify-end gap-2 mt-5">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>{t('action.cancel')}</Button>
+          <Button type="submit" variant={danger ? 'danger' : 'primary'} loading={busy}>{submitLabel}</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t('ui.confirm'), danger, requireType, blocked }) {
   const [typed, setTyped] = useState('');
   useEffect(() => { if (open) setTyped(''); }, [open]);
@@ -632,6 +708,6 @@ function ConfirmDialog({ open, onClose, onConfirm, title, body, confirmLabel = t
 Object.assign(window, {
   cx, timeAgo, fmtTime, fmtClock, minuteToHHMM, browserTimezone, scheduleZone, TimezoneSelect, useQuery, useMutation, useToast, ToastProvider,
   Button, Spinner, StatusPill, STATUS_META, statusLabel, Card, Drawer, Modal, Tabs, Field, Input, Textarea, Select, Combobox, Toggle, inputCls,
-  Avatar, RoleBadge, Kbd, Skeleton, EmptyState, ErrorBoundary, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog,
+  Avatar, RoleBadge, Kbd, Skeleton, EmptyState, ErrorBoundary, Tip, CopyButton, CodeBlock, CodeEditor, OutputBlock, Sparkline, ConfirmDialog, FormDialog,
   csvEscape, toCSV, downloadText,
 });

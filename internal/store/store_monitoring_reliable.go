@@ -19,6 +19,12 @@ const (
 	CheckResultStale     CheckResultDisposition = "stale"
 )
 
+// Aliases c/a are shared by dispatch, coverage, and inbound result checks.
+// Keep in sync with models.ServiceCheckMatchesOS; integration tests cover both.
+const serviceCheckPlatformSQL = `(c.type NOT IN ('linuxservice','macservice')
+ OR (c.type='linuxservice' AND lower(a.os)='linux')
+ OR (c.type='macservice' AND lower(a.os) IN ('darwin','macos')))`
+
 // CheckAppliesToAgent is the server-side trust boundary for inbound results.
 // A device may only report a currently enabled direct check or one inherited
 // through a policy assigned to that device, its site, or its client.
@@ -30,7 +36,10 @@ func (s *Store) CheckAppliesToAgent(ctx context.Context, checkID, agentID string
 			FROM checks c
 			JOIN agents a ON a.id=$2
 			LEFT JOIN sites si ON si.id=a.site_id
-			WHERE c.id=$1 AND c.enabled AND a.revoked_at IS NULL AND (
+			WHERE c.id=$1 AND c.enabled AND a.revoked_at IS NULL
+			  AND NOT (c.type=ANY($3::text[]))
+ AND `+serviceCheckPlatformSQL+`
+			  AND (c.proposed_by='' OR c.approved_by<>'') AND (
 				c.agent_id=a.id OR c.policy_id IN (
 					SELECT pa.policy_id
 					FROM policy_assignments pa
@@ -40,7 +49,7 @@ func (s *Store) CheckAppliesToAgent(ctx context.Context, checkID, agentID string
 					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id)
 				)
 			)
-		)`, checkID, agentID).Scan(&applies)
+		)`, checkID, agentID, models.ServerRuleTypes).Scan(&applies)
 	return applies, err
 }
 
@@ -483,7 +492,7 @@ func (s *Store) CheckInstances(ctx context.Context, checkID, userID string, scop
 			)
 		)
 		LEFT JOIN check_states cs ON cs.check_id=c.id AND cs.agent_id=a.id
-		WHERE c.id=$1 AND a.revoked_at IS NULL AND (
+		WHERE c.id=$1 AND a.revoked_at IS NULL AND `+serviceCheckPlatformSQL+` AND (
 			NOT $3 OR NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=NULLIF($2,'')::uuid)
 			OR EXISTS (
 				SELECT 1 FROM user_scopes us

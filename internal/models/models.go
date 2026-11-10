@@ -131,21 +131,23 @@ func parseVersion(v string) ([3]int, bool) {
 
 // Agent is a managed endpoint.
 type Agent struct {
-	ID          string     `json:"id"`
-	Hostname    string     `json:"hostname"`
-	Description string     `json:"description"`
-	Note        string     `json:"note"`
-	OS          string     `json:"os"`
-	Arch        string     `json:"arch"`
-	Version     string     `json:"version"`
-	Status      string     `json:"status"`
-	SiteID      *string    `json:"site_id,omitempty"`
-	GroupID     *string    `json:"group_id,omitempty"`
-	Tags        []string   `json:"tags"`
-	MeshID      *string    `json:"mesh_id,omitempty"`
-	LastSeen    *time.Time `json:"last_seen,omitempty"`
-	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	// MonitoringScopeSince is a server-side provenance marker, never client input.
+	MonitoringScopeSince time.Time  `json:"-"`
+	ID                   string     `json:"id"`
+	Hostname             string     `json:"hostname"`
+	Description          string     `json:"description"`
+	Note                 string     `json:"note"`
+	OS                   string     `json:"os"`
+	Arch                 string     `json:"arch"`
+	Version              string     `json:"version"`
+	Status               string     `json:"status"`
+	SiteID               *string    `json:"site_id,omitempty"`
+	GroupID              *string    `json:"group_id,omitempty"`
+	Tags                 []string   `json:"tags"`
+	MeshID               *string    `json:"mesh_id,omitempty"`
+	LastSeen             *time.Time `json:"last_seen,omitempty"`
+	RevokedAt            *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
 	// EnrollTokenID is the install token that admitted the device, so the
 	// devices a leaked mass-deployment token enrolled can be found and removed.
 	EnrollTokenID *string `json:"enroll_token_id,omitempty"`

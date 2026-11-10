@@ -12,15 +12,17 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/p1ngu/rmm/internal/protocol"
 )
 
 func SupportedCheckType(checkType string) bool {
 	switch checkType {
 	case CheckDiskSpace, CheckMemory, CheckCPULoad,
-		CheckPing, CheckWinService, CheckScript:
+		CheckPing, CheckWinService, CheckLinuxService, CheckMacService, CheckScript:
 		return true
 	default:
-		return false
+		return IsServerRule(checkType)
 	}
 }
 
@@ -38,6 +40,20 @@ func ValidateCheck(c *Check) error {
 	}
 	if c.Name == "" || len(c.Name) > 200 {
 		return fmt.Errorf("name is required and must be at most 200 characters")
+	}
+	if IsServerRule(c.Type) {
+		// The server evaluates these from what it knows: no interval, timeout,
+		// thresholds or failure counts of the agent's kind apply. They are
+		// pinned so the row still meets the table's constraints.
+		cfg, err := ParseServerRuleConfig(c.Type, c.Config)
+		if err != nil {
+			return err
+		}
+		c.Config = cfg.Raw()
+		c.WarnThreshold, c.ErrThreshold = nil, nil
+		c.IntervalSec, c.TimeoutSec, c.FailureCount, c.RecoveryCount = 300, 180, 1, 1
+		c.Hysteresis, c.CooldownSec = 0, 300
+		return nil
 	}
 	if c.IntervalSec < 30 || c.IntervalSec > 86400 {
 		return fmt.Errorf("interval_sec must be between 30 and 86400")
@@ -86,6 +102,13 @@ func ValidateCheck(c *Check) error {
 		if err := json.Unmarshal(c.Config, &cfg); err != nil || strings.TrimSpace(cfg.Service) == "" {
 			return fmt.Errorf("winservice config.service is required")
 		}
+		c.WarnThreshold, c.ErrThreshold = nil, nil
+	case CheckLinuxService, CheckMacService:
+		cfg, err := protocol.NormalizeServiceCheck(c.Type, c.Config)
+		if err != nil {
+			return err
+		}
+		c.Config, _ = json.Marshal(cfg)
 		c.WarnThreshold, c.ErrThreshold = nil, nil
 	case CheckScript:
 		var cfg struct {

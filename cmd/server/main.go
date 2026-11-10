@@ -147,6 +147,7 @@ func main() {
 	jobSvc.WithNotifier(notifier)
 	sched := scheduler.New(st, h, jobSvc, patchSvc).
 		WithNotifier(notifier, cfg.PublicURL).
+		WithServerVersion(version).
 		WithRetention(cfg.AlertRetentionDays, cfg.CheckResultRetentionDays, cfg.NotificationRetentionDays).
 		WithAuditRetention(cfg.AuditRetentionDays)
 

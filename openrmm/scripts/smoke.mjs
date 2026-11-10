@@ -12,6 +12,16 @@ const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascrip
 const permissions = ['ai_chat.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'];
 const user = { id: 'user-1', username: 'smoke-admin', role: 'admin', permissions, created_at: '2026-01-01T00:00:00Z' };
 const apiRequests = [];
+const ruleChecks = [];
+const extraChecks = Array.from({ length: 60 }, (_, i) => ({ id: 'sample-rule-' + (i + 1), name: 'Monitor ' + String(i + 1).padStart(2, '0'), type: 'ping', agent_id: 'dev-1', config: { host: '127.0.0.1' }, enabled: true, interval_sec: 300 }));
+const ruleDefaults = Object.fromEntries(['connectivity', 'job_failure', 'patch_failure', 'reboot_pending', 'agent_outdated'].map((type) => [type, { type, config: type === 'connectivity' ? { mode: 'alert', severity: 'error', after_min: 3 } : { mode: 'ignore', severity: 'warning' } }]));
+let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
+
+const remoteConfig = {
+  ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
+  remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
+  jobs: { allow_unapproved: false }, server: { version: 'e2e', base_url: 'https://agents.example.invalid' },
+};
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -26,13 +36,54 @@ const server = createServer(async (req, res) => {
 
     if (pathname.startsWith('/api/')) {
       const token = (req.headers.authorization || '').replace(/^Bearer\s+/, '');
-      apiRequests.push({ method: req.method, pathname, token });
+      let payload;
+      if (req.method === 'POST' || req.method === 'PUT') {
+        let raw = '';
+        for await (const chunk of req) raw += chunk;
+        if (raw) payload = JSON.parse(raw);
+      }
+      apiRequests.push({ method: req.method, pathname, token, payload });
       if (!token) return json(res, 401, { error: 'missing bearer token' });
-      if (token === 'expire-token' && pathname === '/api/devices') return json(res, 401, { error: 'expired token' });
+      if (token === 'expire-token') return json(res, 401, { error: 'expired token' });
       if (pathname === '/api/me') return json(res, 200, user);
+      if (pathname === '/api/checks') {
+        if (req.method === 'POST') {
+          const check = { id: ruleChecks.length ? 'service-e2e-' + ruleChecks.length : 'rule-e2e', ...payload };
+          ruleChecks.push(check);
+          return json(res, 201, check);
+        }
+        return json(res, 200, { checks: [...ruleChecks, ...extraChecks] });
+      }
+      if (pathname === '/api/policies') return json(res, 200, { policies: [] });
+      if (pathname === '/api/alert-defaults') return json(res, 200, { defaults: ruleDefaults, can_manage: true });
+      if (pathname.startsWith('/api/alert-defaults/') && req.method === 'PUT') {
+        const type = pathname.split('/').at(-1);
+        ruleDefaults[type] = { type, config: payload };
+        return json(res, 200, ruleDefaults[type]);
+      }
+      if (pathname === '/api/me/notifications') {
+        if (req.method === 'PUT') rulePrefs = payload.rules;
+        return json(res, 200, { email: 'e2e@example.invalid', delivery_configured: true, subscriptions: [{ event_type: 'agent_offline', enabled: true }], rules: rulePrefs, available_rules: [...ruleChecks, ...extraChecks].map(({ id, name, type }) => ({ id, name, type })) });
+      }
+      if (pathname === '/api/config') {
+        if (req.method === 'PUT') {
+          if (payload?.remote?.default && !['native', 'meshcentral', 'rustdesk'].includes(payload.remote.default)) return json(res, 400, { error: 'invalid remote provider' });
+          if (payload?.remote?.default === 'rustdesk' && !(payload.remote.rustdesk_enabled ?? remoteConfig.remote.rustdesk_enabled)) return json(res, 400, { error: 'RustDesk must be enabled to be the default remote provider' });
+          const { meshcentral_token_key, ...remote } = payload.remote || {};
+          Object.assign(remoteConfig.remote, remote);
+          if (meshcentral_token_key?.trim()) remoteConfig.remote.meshcentral_token_set = true;
+        }
+        return json(res, 200, remoteConfig);
+      }
       if (pathname === '/api/devices') return json(res, 200, { devices: [{ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z' }] });
       if (pathname === '/api/jobs') return json(res, 200, { jobs: [] });
-      if (pathname === '/api/audit') return json(res, 200, { entries: [] });
+      if (pathname === '/api/audit') {
+        const entries = Number(url.searchParams.get('limit')) >= 50 ? [
+          { id: 'audit-snapshot', actor: user.id, action: 'alert.ack', target: 'alert-target-1', detail: { hostname: '=1+1' }, created_at: '2026-11-10T12:00:00Z' },
+          { id: 'audit-legacy', actor: user.id, action: 'alert.resolve', target: 'alert-target-2', detail: { version: 2 }, target_label: 'ORDINARY-HOST', created_at: '2026-11-10T12:00:00Z' },
+        ] : [];
+        return json(res, 200, { entries, total: entries.length });
+      }
       if (pathname === '/api/alerts') return json(res, 200, { alerts: [] });
       if (pathname === '/api/sites') return json(res, 200, { sites: [] });
       if (pathname === '/api/clients') return json(res, 200, { clients: [] });
@@ -100,7 +151,7 @@ async function freePort() {
   return port;
 }
 
-async function runMobileChrome(chrome, url) {
+async function runMobileChrome(chrome, url, { width = 375, flow } = {}) {
   const port = await freePort();
   const profile = await mkdtemp(path.join(os.tmpdir(), 'openrmm-smoke-'));
   const child = spawn(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--lang=en-US', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'], env: chromeEnv });
@@ -138,14 +189,19 @@ async function runMobileChrome(chrome, url) {
     });
     await command('Page.enable');
     await command('Runtime.enable');
-    await command('Emulation.setDeviceMetricsOverride', { width: 375, height: 812, deviceScaleFactor: 1, mobile: true });
+    await command('Emulation.setDeviceMetricsOverride', { width, height: 812, deviceScaleFactor: 1, mobile: width === 375 });
     await command('Page.navigate', { url });
     await delay(250);
     const initialWidth = await command('Runtime.evaluate', { expression: 'innerWidth', returnByValue: true });
-    if (initialWidth.result.value !== 375) {
-      await command('Emulation.setDeviceMetricsOverride', { width: 750 - initialWidth.result.value, height: 812, deviceScaleFactor: 1, mobile: true });
+    if (initialWidth.result.value !== width) {
+      await command('Emulation.setDeviceMetricsOverride', { width: 2 * width - initialWidth.result.value, height: 812, deviceScaleFactor: 1, mobile: width === 375 });
     }
     await delay(1750);
+    if (flow) {
+      const result = await command('Runtime.evaluate', { expression: `(${flow.toString()})()`, returnByValue: true, awaitPromise: true });
+      assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
+      assert.equal(result.result.value, true, 'browser rule flow did not finish');
+    }
     const evaluated = await command('Runtime.evaluate', { expression: 'document.documentElement.outerHTML', returnByValue: true });
     return { code: 0, stdout: evaluated.result.value, stderr: exceptions.join('\n') };
   } finally {
@@ -154,6 +210,154 @@ async function runMobileChrome(chrome, url) {
     await new Promise((resolve) => child.once('close', resolve));
     await rm(profile, { recursive: true, force: true });
   }
+}
+
+// Actual browser interactions against the bundled console and HTTP fixture.
+// This script starts listeners and is run only by the CI smoke step.
+async function alertRulesBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) {
+      const result = fn();
+      if (result) return result;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error('Alert rule E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const choose = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  (await wait(() => button('Checks'))).click();
+  (await wait(() => button('New check'))).click();
+  const type = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'connectivity')));
+  choose(type, 'connectivity');
+  (await wait(() => button('Select target…'))).click();
+  (await wait(() => button('SMOKE-PC'))).click();
+  const mode = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'ignore')));
+  choose(mode, 'ignore');
+  (await wait(() => button('Create check') && !button('Create check').disabled && button('Create check'))).click();
+  await wait(() => !button('Create check'));
+  (await wait(() => button('Fleet defaults'))).click();
+  const delayInput = await wait(() => document.querySelector('input[max="10080"]'));
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(delayInput, '30');
+  delayInput.dispatchEvent(new Event('input', { bubbles: true }));
+  delayInput.dispatchEvent(new Event('change', { bubbles: true }));
+  (await wait(() => button('Save'))).click();
+  await wait(() => !document.querySelector('input[max="10080"]'));
+  (await wait(() => button('Users & Settings'))).click();
+  const card = await wait(() => [...document.querySelectorAll('div')].find((el) => el.textContent.trim() === 'Email notifications')?.closest('.max-w-2xl'));
+  const ruleMode = await wait(() => card.querySelector('select'));
+  choose(ruleMode, 'selected');
+  const labels = await wait(() => card.querySelectorAll('label').length > 1 && card.querySelectorAll('label'));
+  const defaults = [...labels].find((el) => el.textContent.includes('Include built-in alerts'));
+  defaults.querySelector('button').click();
+  const rule = [...labels].find((el) => el.textContent.includes('Device connectivity'));
+  if (!rule) throw new Error('Created rule missing from email preferences');
+  rule.querySelector('button').click();
+  const list = await wait(() => document.getElementById('notification-custom-rules'));
+  const rows = list.querySelectorAll('label');
+  if (rows.length < 60 || list.scrollHeight <= list.clientHeight) throw new Error('Large rule list must scroll');
+  if (list.clientHeight > rows[0].getBoundingClientRect().height * 5 + 2) throw new Error('More than five rule rows visible');
+  const search = card.querySelector('input[aria-controls="notification-custom-rules"]');
+  const filter = (value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, value);
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    search.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  filter('MONITOR 60');
+  await wait(() => list.querySelectorAll('label').length === 1);
+  list.querySelector('label button').click();
+  filter('no matching monitor');
+  await wait(() => list.querySelectorAll('label').length === 0);
+  filter('');
+  await wait(() => list.querySelectorAll('label').length > 60);
+  (await wait(() => button('Save', card))).click();
+  await wait(() => document.body.textContent.includes('Notification settings saved'));
+  document.documentElement.dataset.alertRulesE2e = 'passed';
+  return true;
+}
+
+async function servicesAndRemoteSettingsBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Services/settings E2E timed out: ' + fn.toString());
+  };
+  const button = (text) => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const change = (element, value) => {
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  (await wait(() => button('Checks'))).click();
+  for (const [kind, service] of [['linuxservice', 'sshd.service'], ['macservice', 'system/com.apple.notifyd']]) {
+    (await wait(() => button('New check'))).click();
+    const type = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === kind)));
+    change(type, kind);
+    const input = await wait(() => document.querySelector('input[placeholder="' + service + '"]'));
+    change(input, service);
+    if (kind === 'macservice') {
+      const state = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'loaded')));
+      change(state, 'loaded');
+    }
+    (await wait(() => button('Select target…'))).click();
+    (await wait(() => button('SMOKE-PC'))).click();
+    (await wait(() => button('Create check') && !button('Create check').disabled && button('Create check'))).click();
+    await wait(() => !button('Create check'));
+  }
+  (await wait(() => button('Users & Settings'))).click();
+  (await wait(() => button('Configuration'))).click();
+  const tab = (key) => document.getElementById('remote-config-tab-' + key);
+  const panel = () => document.querySelector('[role="tabpanel"]:not([hidden])');
+  await wait(() => tab('native'));
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  assert(panel().id === 'remote-config-panel-native', 'Native is the initial provider tab');
+  assert(!panel().querySelector('input[type="password"]'), 'Native does not show MeshCentral credentials');
+  tab('meshcentral').click();
+  await wait(() => panel().id === 'remote-config-panel-meshcentral');
+  change(panel().querySelector('input[placeholder="https://mesh.example.com"]'), 'https://updated-mesh.example.invalid');
+  change(panel().querySelector('input[type="password"]'), 'e2e-token-placeholder');
+  tab('rustdesk').click();
+  await wait(() => panel().id === 'remote-config-panel-rustdesk');
+  change(panel().querySelector('select'), 'on');
+  tab('default').click();
+  await wait(() => panel().id === 'remote-config-panel-default');
+  change(panel().querySelector('select'), 'rustdesk');
+  tab('native').click();
+  await wait(() => panel().id === 'remote-config-panel-native');
+  change(panel().querySelector('select'), 'on');
+  tab('meshcentral').click();
+  await wait(() => panel().id === 'remote-config-panel-meshcentral');
+  assert(panel().querySelector('input[type="password"]').value === 'e2e-token-placeholder', 'Unsaved token survives tab navigation');
+  tab('meshcentral').focus();
+  tab('meshcentral').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  await wait(() => panel().id === 'remote-config-panel-default');
+  assert(document.activeElement === tab('default'), 'Keyboard moves focus to selected provider');
+  (await wait(() => button('Save configuration'))).click();
+  await wait(() => document.body.textContent.includes('Configuration saved'));
+  document.documentElement.dataset.servicesSettingsE2e = 'passed';
+  return true;
+}
+
+async function auditCsvBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Audit CSV flow timed out');
+  };
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Audit log'))).click();
+  const exportButton = await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Export CSV') && !el.disabled));
+  const original = URL.createObjectURL;
+  let download;
+  URL.createObjectURL = (blob) => { download = blob.text(); return original.call(URL, blob); };
+  try {
+    exportButton.click();
+    await wait(() => download);
+    const csv = await download;
+    if (!csv.includes('"\'=1+1","alert-target-1"') || !csv.includes('"ORDINARY-HOST","alert-target-2"')) throw new Error('CSV guard or legitimate target missing');
+    document.documentElement.dataset.auditCsvE2e = 'passed';
+    return true;
+  } finally { URL.createObjectURL = original; }
 }
 
 function assertBrowser(result, pattern) {
@@ -184,6 +388,7 @@ try {
 
   const candidates = [process.env.CHROME_BIN, 'google-chrome', 'chromium', 'chromium-browser'].filter(Boolean);
   const chrome = candidates.find((candidate) => spawnSync(candidate, ['--version'], { stdio: 'ignore' }).status === 0);
+  if (process.env.OPENRMM_REQUIRE_BROWSER === '1') assert.ok(chrome, 'CI browser E2E requires Chrome');
   if (chrome) {
     assertBrowser(await runChrome(chrome, baseURL + '/'), /Sign in to your instance/);
     assertBrowser(await runChrome(chrome, baseURL + '/authenticated/'), /Fleet health at a glance/);
@@ -197,8 +402,37 @@ try {
     assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=AI%20Chat'), /Start a conversation/);
 
     assertBrowser(await runChrome(chrome, baseURL + '/expired/'), /Sign in to your instance/);
+    const rules = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: alertRulesBrowserFlow });
+    assertBrowser(rules, /data-alert-rules-e2e="passed"/);
+    const created = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/checks');
+    assert.equal(created?.payload.type, 'connectivity');
+    assert.equal(created?.payload.config.mode, 'ignore');
+    assert.equal(created?.payload.enabled, true);
+    assert.equal(ruleDefaults.connectivity.config.after_min, 30);
+    assert.deepEqual(rulePrefs, { mode: 'selected', include_defaults: false, check_ids: ['rule-e2e', 'sample-rule-60'] });
+    const settingsFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: servicesAndRemoteSettingsBrowserFlow });
+    assertBrowser(settingsFlow, /data-services-settings-e2e="passed"/);
+    for (const [type, service, state] of [['linuxservice', 'sshd.service', undefined], ['macservice', 'system/com.apple.notifyd', 'loaded']]) {
+      const body = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/checks' && r.payload?.type === type)?.payload;
+      assert.ok(body, type + ' was submitted');
+      assert.equal(body.config.service, service);
+      assert.equal(body.config.state, state);
+      assert.equal('warn_threshold' in body, false);
+    }
+    const saved = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/config')?.payload;
+    assert.equal(saved?.remote.default, 'rustdesk');
+    assert.equal(saved?.remote.meshcentral_url, 'https://updated-mesh.example.invalid');
+    assert.equal(saved?.remote.meshcentral_token_key, 'e2e-token-placeholder');
+    assert.equal(saved?.remote.rustdesk_enabled, true);
+    assert.equal(saved?.remote.guest_access, true);
+    assert.equal(saved?.jobs.allow_unapproved, false);
+    assert.equal(remoteConfig.remote.default, 'rustdesk');
+    assert.equal(remoteConfig.remote.rustdesk_enabled, true);
+    assert.equal('meshcentral_token_key' in remoteConfig.remote, false, 'GET config stays write-only');
+    const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });
+    assertBrowser(csvFlow, /data-audit-csv-e2e="passed"/);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');
-    assert.ok(apiRequests.some((request) => request.pathname === '/api/devices' && request.token === 'expire-token'), '401 scenario must exercise an authenticated request');
+    assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'expire-token'), '401 scenario must exercise an authenticated request');
   }
   console.log(`Smoke passed${chrome ? ` in ${chrome}` : ' (static checks; browser unavailable)'}.`);
 } finally {

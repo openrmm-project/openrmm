@@ -381,10 +381,12 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
     url.searchParams.set('os', d.os || '');
     window.open(url.toString(), '_blank');
   };
-  const linkRemote = async (field, label) => {
-    const v = window.prompt(t('remote.enterId', { label }));
-    if (!v || !v.trim()) return;
-    try { await api.setRemoteIds(id, { [field]: v.trim() }); toast.success(t('remote.linked', { label })); }
+  // The remote id is asked in a console dialog, not the browser's prompt.
+  const [remoteIdAsk, setRemoteIdAsk] = useState(null); // { field, label }
+  const linkRemote = (field, label) => setRemoteIdAsk({ field, label });
+  const saveRemoteId = async (values) => {
+    const { field, label } = remoteIdAsk;
+    try { await api.setRemoteIds(id, { [field]: values.value.trim() }); toast.success(t('remote.linked', { label })); setRemoteIdAsk(null); }
     catch (e) { toast.error(t('common.failed'), e.message); }
   };
 
@@ -409,6 +411,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   };
 
   return (
+    <>
     <Drawer open={!!id} onClose={onClose} width="max-w-[860px]">
       {d && (
         <>
@@ -486,6 +489,10 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
       {d && <DeviceOrgModal open={orgOpen} onClose={() => setOrgOpen(false)} device={d} clients={clients} sites={sites} groups={groups} onSave={saveOrg} />}
       {d && <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={deleteDevice} danger title={t('device.delete.title')} body={t('device.delete.body', { host: d.hostname })} confirmLabel={t('device.delete.confirm')} />}
     </Drawer>
+    <FormDialog open={!!remoteIdAsk} onClose={() => setRemoteIdAsk(null)} title={remoteIdAsk?.label || ''}
+      fields={[{ name: 'value', type: 'text', label: t('remote.enterId', { label: remoteIdAsk?.label || '' }) }]}
+      validate={(v) => ((v.value || '').trim() ? '' : t('ui.valueRequired'))} submitLabel={t('action.save')} onSubmit={saveRemoteId} />
+    </>
   );
 }
 
@@ -1209,9 +1216,20 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest, theme
   const browse = (path) => { if (!allowFiles) return; const p = path == null ? rootPath : path; setFb({ path: p, entries: null }); setFbSel([]); sendJSON({ t: 'fls', id: nextId(), path: p }); };
   const downloadEntry = (name) => { if (allowFiles) sendJSON({ t: 'fget', id: nextId(), path: joinPath(fb.path, name) }); };
   const toggleSel = (name) => setFbSel((s) => s.includes(name) ? s.filter((x) => x !== name) : [...s, name]);
-  const doMkdir = () => { const n = window.prompt(t('viewer.newFolderPrompt')); if (n) sendJSON({ t: 'fmkdir', id: nextId(), path: joinPath(fb.path, n) }); };
-  const doDelete = () => { if (fbSel.length && window.confirm(t('viewer.deletePrompt', { items: tn('viewer.items', fbSel.length), host: hostname }))) { fbSel.forEach((n) => sendJSON({ t: 'fdel', id: nextId(), path: joinPath(fb.path, n) })); setFbSel([]); } };
-  const doRename = () => { if (fbSel.length !== 1) return; const old = fbSel[0]; const n = window.prompt(t('viewer.renamePrompt'), old); if (n && n !== old) { sendJSON({ t: 'frename', id: nextId(), src: joinPath(fb.path, old), dst: joinPath(fb.path, n) }); setFbSel([]); } };
+  // New folder, rename and delete ask in console dialogs inside the viewer
+  // (which can be full screen), not in the browser's prompt and confirm.
+  const [fbAsk, setFbAsk] = useState(null); // { kind: 'mkdir' } | { kind: 'rename', old }
+  const [fbConfirmDel, setFbConfirmDel] = useState(false);
+  const doMkdir = () => setFbAsk({ kind: 'mkdir' });
+  const doDelete = () => { if (fbSel.length) setFbConfirmDel(true); };
+  const doRename = () => { if (fbSel.length === 1) setFbAsk({ kind: 'rename', old: fbSel[0] }); };
+  const submitFbAsk = (values) => {
+    const n = (values.name || '').trim();
+    if (fbAsk.kind === 'mkdir') sendJSON({ t: 'fmkdir', id: nextId(), path: joinPath(fb.path, n) });
+    if (fbAsk.kind === 'rename' && n !== fbAsk.old) { sendJSON({ t: 'frename', id: nextId(), src: joinPath(fb.path, fbAsk.old), dst: joinPath(fb.path, n) }); setFbSel([]); }
+    setFbAsk(null);
+  };
+  const confirmFbDelete = () => { fbSel.forEach((n) => sendJSON({ t: 'fdel', id: nextId(), path: joinPath(fb.path, n) })); setFbSel([]); };
   const doClip = (op) => { if (fbSel.length) setFbClip({ op, base: fb.path, names: [...fbSel] }); };
   const doPaste = () => { if (!fbClip) return; fbClip.names.forEach((n) => sendJSON({ t: fbClip.op === 'cut' ? 'fmove' : 'fcopy', id: nextId(), src: joinPath(fbClip.base, n), dst: joinPath(fb.path, n) })); if (fbClip.op === 'cut') setFbClip(null); };
   const doDownloadSel = () => fbSel.forEach((n) => { const en = (fb.entries || []).find((e) => e.name === n); if (en && !en.dir) downloadEntry(n); });
@@ -1375,6 +1393,12 @@ function RemoteViewer({ deviceId, hostname, os, filesOnly, onClose, guest, theme
         </div>}
         </>)}
       </div>
+      <FormDialog open={!!fbAsk} onClose={() => setFbAsk(null)}
+        title={fbAsk?.kind === 'rename' ? t('viewer.rename') : t('viewer.newFolder')}
+        fields={[{ name: 'name', type: 'text', initial: fbAsk?.kind === 'rename' ? fbAsk.old : '', label: fbAsk?.kind === 'rename' ? t('viewer.renamePrompt') : t('viewer.newFolderPrompt') }]}
+        validate={(v) => ((v.name || '').trim() ? '' : t('ui.valueRequired'))} submitLabel={t('action.save')} onSubmit={submitFbAsk} />
+      <ConfirmDialog open={fbConfirmDel} onClose={() => setFbConfirmDel(false)} onConfirm={confirmFbDelete} danger
+        title={t('viewer.deletePrompt', { items: tn('viewer.items', fbSel.length), host: hostname })} body="" confirmLabel={t('action.delete')} />
     </div>
   );
 }
@@ -1763,15 +1787,15 @@ function DeviceChecks({ id, navigate, onClose }) {
             <div className="min-w-0 flex-1">
               <div className="text-[13px] text-ink font-medium truncate">{c.name}</div>
               <div className="text-[11.5px] text-faint mt-0.5 flex flex-wrap items-center gap-x-1.5">
-                <span>{ct.label}</span><span>·</span><span>{fmtInterval(c.interval_sec)}</span><span>·</span><MonitoringSource row={c} />
+                <span>{ct.label}</span><span>·</span><span>{ct.server ? t('rules.server') : fmtInterval(c.interval_sec)}</span><span>·</span><MonitoringSource row={c} />
               </div>
               {c.output && <div className="text-[11.5px] text-muted mono mt-1 truncate" title={c.output}>{c.output}</div>}
               <div className="text-[11px] text-faint mt-0.5">
-                {c.last_result_at ? t('dchecks.lastResult', { when: timeAgo(c.last_result_at) }) : t('dchecks.noResult')}
+                {ct.server ? t('rules.priority') : c.last_result_at ? t('dchecks.lastResult', { when: timeAgo(c.last_result_at) }) : t('dchecks.noResult')}
                 {value != null && <span className="mono"> · {value}</span>}
               </div>
             </div>
-            <StatusPill status={c.status} size="sm" />
+            <StatusPill status={ct.server ? 'info' : c.status} label={ct.server ? t('rules.server') : undefined} size="sm" />
           </div>
         );
       })}

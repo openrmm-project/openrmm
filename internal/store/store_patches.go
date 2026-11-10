@@ -305,7 +305,8 @@ func (s *Store) ApplyPatchResult(ctx context.Context, agentID string, res *proto
 		}
 	}
 	if res.RebootRequired {
-		if _, err := tx.Exec(ctx, `UPDATE agents SET reboot_pending=TRUE WHERE id=$1`, agentID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE agents SET reboot_pending=TRUE,
+			reboot_pending_since=COALESCE(reboot_pending_since, now()) WHERE id=$1`, agentID); err != nil {
 			return err
 		}
 	}
@@ -314,7 +315,10 @@ func (s *Store) ApplyPatchResult(ctx context.Context, agentID string, res *proto
 
 // SetRebootPending toggles the reboot flag (cleared after a reboot is dispatched).
 func (s *Store) SetRebootPending(ctx context.Context, agentID string, v bool) error {
-	_, err := s.pool.Exec(ctx, `UPDATE agents SET reboot_pending=$2 WHERE id=$1`, agentID, v)
+	// reboot_pending_since dates the start of a pending reboot, for the
+	// reboot_pending rule's delay: kept while it stays pending, cleared after.
+	_, err := s.pool.Exec(ctx, `UPDATE agents SET reboot_pending=$2,
+		reboot_pending_since=CASE WHEN $2 THEN COALESCE(reboot_pending_since, now()) END WHERE id=$1`, agentID, v)
 	return err
 }
 

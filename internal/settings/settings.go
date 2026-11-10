@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -219,6 +220,11 @@ type SaveRequest struct {
 	} `json:"jobs"`
 }
 
+// ErrRustDeskDefaultDisabled refuses a save that would leave RustDesk as the
+// default remote provider while RustDesk is off: every session started without
+// an explicit provider would then fail.
+var ErrRustDeskDefaultDisabled = errors.New("RustDesk must be enabled to be the default remote provider")
+
 // Save persists editable settings. Secret empty strings preserve existing values.
 func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveRequest) (Editable, error) {
 	current, err := Effective(ctx, st, cfg)
@@ -261,6 +267,11 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 	rustdesk := current.RustDeskEnabled
 	if in.Remote.RustDeskEnabled != nil {
 		rustdesk = *in.Remote.RustDeskEnabled
+	}
+	// Checked on the result of this save, before anything is written: choosing
+	// RustDesk while turning it off, and turning it off while it is the default.
+	if in.Remote.DefaultProvider == "rustdesk" && !rustdesk {
+		return current, ErrRustDeskDefaultDisabled
 	}
 	meshEnabled := current.MeshCentralEnabled
 	if in.Remote.MeshCentralEnabled != nil {

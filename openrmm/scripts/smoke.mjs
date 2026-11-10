@@ -19,7 +19,7 @@ let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
 
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
-  remote: { default: 'native', providers: ['native', 'meshcentral'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
+  remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
   jobs: { allow_unapproved: false }, server: { version: 'e2e', base_url: 'https://agents.example.invalid' },
 };
 
@@ -67,7 +67,8 @@ const server = createServer(async (req, res) => {
       }
       if (pathname === '/api/config') {
         if (req.method === 'PUT') {
-          if (payload?.remote?.default && !['native', 'meshcentral'].includes(payload.remote.default)) return json(res, 400, { error: 'invalid remote provider' });
+          if (payload?.remote?.default && !['native', 'meshcentral', 'rustdesk'].includes(payload.remote.default)) return json(res, 400, { error: 'invalid remote provider' });
+          if (payload?.remote?.default === 'rustdesk' && !(payload.remote.rustdesk_enabled ?? remoteConfig.remote.rustdesk_enabled)) return json(res, 400, { error: 'RustDesk must be enabled to be the default remote provider' });
           const { meshcentral_token_key, ...remote } = payload.remote || {};
           Object.assign(remoteConfig.remote, remote);
           if (meshcentral_token_key?.trim()) remoteConfig.remote.meshcentral_token_set = true;
@@ -322,7 +323,7 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   change(panel().querySelector('select'), 'on');
   tab('default').click();
   await wait(() => panel().id === 'remote-config-panel-default');
-  change(panel().querySelector('select'), 'meshcentral');
+  change(panel().querySelector('select'), 'rustdesk');
   tab('native').click();
   await wait(() => panel().id === 'remote-config-panel-native');
   change(panel().querySelector('select'), 'on');
@@ -419,13 +420,13 @@ try {
       assert.equal('warn_threshold' in body, false);
     }
     const saved = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/config')?.payload;
-    assert.equal(saved?.remote.default, 'meshcentral');
+    assert.equal(saved?.remote.default, 'rustdesk');
     assert.equal(saved?.remote.meshcentral_url, 'https://updated-mesh.example.invalid');
     assert.equal(saved?.remote.meshcentral_token_key, 'e2e-token-placeholder');
     assert.equal(saved?.remote.rustdesk_enabled, true);
     assert.equal(saved?.remote.guest_access, true);
     assert.equal(saved?.jobs.allow_unapproved, false);
-    assert.equal(remoteConfig.remote.default, 'meshcentral');
+    assert.equal(remoteConfig.remote.default, 'rustdesk');
     assert.equal(remoteConfig.remote.rustdesk_enabled, true);
     assert.equal('meshcentral_token_key' in remoteConfig.remote, false, 'GET config stays write-only');
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });

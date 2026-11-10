@@ -750,6 +750,10 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	before, _ := settings.Effective(r.Context(), s.store, s.cfg)
 	eff, err := settings.Save(r.Context(), s.store, s.cfg, in)
+	if errors.Is(err, settings.ErrRustDeskDefaultDisabled) {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -782,8 +786,9 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 // defaultRemoteProviders is what PUT /api/config accepts as the default remote
 // provider, and what GET offers for it: the console must never offer a choice
 // the server refuses. The terminal is a separate device sub-permission, never
-// the default remote session.
-var defaultRemoteProviders = []string{"native", "meshcentral"}
+// the default remote session. RustDesk is accepted only while it is enabled
+// (settings.ErrRustDeskDefaultDisabled).
+var defaultRemoteProviders = []string{"native", "meshcentral", "rustdesk"}
 
 func oneOf(v string, allowed ...string) bool {
 	for _, a := range allowed {

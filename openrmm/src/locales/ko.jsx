@@ -1809,6 +1809,7 @@
   "cfg.meshSharedAccount": "제한 없는 사용자용 공유 계정",
   "cfg.meshSharedAccountHint": "로그인 토큰 키가 설정되어 있으면, 모든 장치에 액세스할 수 있고 자신의 MeshCentral 계정이 없는 사용자는 공유 계정으로 로그인합니다. 끄면 모든 사용자가 [사용자]에서 설정한 자신의 계정이 필요합니다.",
   'cfg.rustdeskHint': "장치 원격 메뉴에서 RustDesk 옵션을 표시; 요청에 따라 장치 ID를 읽고 rustdesk://<id>을 열립니다.",
+  'cfg.rustdeskDefaultNeedsEnabled': "RustDesk를 기본 공급자로 지정하기 전에 RustDesk 탭에서 활성화하세요.",
   'cfg.guestAccess': "손님 접근",
   'cfg.guestAccessHint': "원격 액세스 허가를 공유하는 기술자는 장치의 화면에 계정이없는 손님을 초대합니다.",
   'cfg.jobs': "작업",

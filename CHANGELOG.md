@@ -68,11 +68,16 @@ tag.
 ### Fixed
 
 - CSV exports neutralize formula-like text, including hidden and full-width
-  prefixes, before serialization. Audit exports use the shared console encoder;
-  stored values, alert UUIDs and immutable audit records are preserved.
+  prefixes, before serialization, at the start of a value and after every
+  separator or line break, so a `;` list separator (Excel in pt-BR, de-DE,
+  es-ES) cannot split a value into a cell that starts with a formula. Audit
+  exports use the shared console encoder; stored values, alert UUIDs and
+  immutable audit records are preserved.
 - The default remote provider list no longer offers Terminal, which the
   server always refused as a default (saving failed with "invalid remote
-  provider"). GET and PUT `/api/config` now share one list.
+  provider"), and offers RustDesk, which can be the default again while it is
+  enabled. GET and PUT `/api/config` share one list; a save that would leave
+  RustDesk as the default while it is off is refused.
 - Remote-provider test fixtures now enforce the configuration API's accepted
   defaults and write-only token behavior, with real-router contract coverage.
 

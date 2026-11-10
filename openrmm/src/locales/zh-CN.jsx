@@ -1860,6 +1860,7 @@
   "cfg.meshSharedAccount": "不受限用户的共享账户",
   "cfg.meshSharedAccountHint": "设置了登录令牌密钥时，可访问所有设备且没有自己 MeshCentral 账户的用户将以共享账户登录。关闭后，每个人都需要在“用户”中设置自己的账户。",
   'cfg.rustdeskHint': '在设备“远程”菜单中显示 RustDesk 选项；按需读取设备 ID 并打开 rustdesk://<id>。RustDesk 客户端需另行安装。',
+  'cfg.rustdeskDefaultNeedsEnabled': '请先在 RustDesk 选项卡中启用 RustDesk，再将其设为默认提供程序。',
   'cfg.guestAccess': '访客访问',
   'cfg.guestAccessHint': '允许拥有“共享远程访问”权限的技术人员邀请没有账户的访客查看设备屏幕。关闭后所有邀请和访客会话都会结束。',
   'cfg.jobs': '作业',

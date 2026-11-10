@@ -6,7 +6,7 @@ import { transformSync } from 'esbuild';
 
 const src = (name) => readFile(new URL('../src/' + name, import.meta.url), 'utf8');
 const ui = await src('ui.jsx');
-const csvCode = ui.slice(ui.indexOf('function csvEscape('), ui.indexOf('// downloadText saves'));
+const csvCode = ui.slice(ui.indexOf('const CSV_FORMULA_PREFIX'), ui.indexOf('// downloadText saves'));
 const { code } = transformSync(await src('screens-reports.jsx'), { loader: 'jsx' });
 
 // Renders the Reports screen on the software tab with the given rows, presses
@@ -51,6 +51,8 @@ test('Reports CSV export guards endpoint-controlled inventory text', () => {
   const rows = [
     { name: '=HYPERLINK("https://example.invalid","x")', manufacturer: '@SUM(A1)', version: '1.0', hostname: '=1+1', client: 'São Paulo, Ltd', site: '', department: '' },
     { name: '7-Zip', manufacturer: 'Igor "7z" Pavlov', version: '24.08', hostname: 'WINDOWS-TEST', client: 'Acme', site: 'HQ', department: 'IT' },
+    // A ';' list separator (pt-BR, de-DE, es-ES Excel) would split these into cells starting with a formula.
+    { name: 'x;=1+1;y', manufacturer: 'Acme', version: '2.0', hostname: 'WIN;=2+2', client: 'Acme', site: '', department: '' },
   ];
   const before = JSON.stringify(rows);
   const downloads = exportReport(rows);
@@ -61,5 +63,6 @@ test('Reports CSV export guards endpoint-controlled inventory text', () => {
   assert.equal(lines[0], 'rep.col.name,rep.col.manufacturer,rep.col.version,rep.col.hostname,rep.col.client,rep.col.site,rep.col.department');
   assert.equal(lines[1], '"\'=HYPERLINK(""https://example.invalid"",""x"")","\'@SUM(A1)",1.0,"\'=1+1","São Paulo, Ltd",,');
   assert.equal(lines[2], '7-Zip,"Igor ""7z"" Pavlov",24.08,WINDOWS-TEST,Acme,HQ,IT');
+  assert.equal(lines[3], '"x;\'=1+1;y",Acme,2.0,"WIN;\'=2+2",Acme,,');
   assert.equal(JSON.stringify(rows), before, 'only the exported representation changes');
 });

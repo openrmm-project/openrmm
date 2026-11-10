@@ -15,16 +15,16 @@ import (
 // rejected before any setting is read or written: this server has no store,
 // and reaching it would panic.
 func TestDefaultRemoteProviderRejectedBeforePersistence(t *testing.T) {
-	if slices.Contains(defaultRemoteProviders, "terminal") || slices.Contains(defaultRemoteProviders, "rustdesk") {
+	if slices.Contains(defaultRemoteProviders, "terminal") || slices.Contains(defaultRemoteProviders, "files") {
 		t.Fatalf("offered defaults include a provider that is not a remote session default: %v", defaultRemoteProviders)
 	}
-	for _, accepted := range []string{"native", "meshcentral"} {
+	for _, accepted := range []string{"native", "meshcentral", "rustdesk"} {
 		if !slices.Contains(defaultRemoteProviders, accepted) {
 			t.Fatalf("default %q is no longer offered: %v", accepted, defaultRemoteProviders)
 		}
 	}
 	s := &Server{cfg: &config.Config{}}
-	for _, provider := range []string{"terminal", "rustdesk", "files", "NATIVE", "native "} {
+	for _, provider := range []string{"terminal", "files", "NATIVE", "native ", "RustDesk"} {
 		req := httptest.NewRequest(http.MethodPut, "/api/config", strings.NewReader(`{"remote":{"default":"`+provider+`","meshcentral_token_key":"must-not-save-test-token"}}`))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()

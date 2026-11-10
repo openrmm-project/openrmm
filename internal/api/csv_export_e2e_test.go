@@ -23,8 +23,9 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 	f.handler = (&Server{cfg: cfg, store: f.store}).Router()
 	ctx := context.Background()
 
-	hostile, control := "=1+1", "WINDOWS-TEST"
-	for _, host := range []string{hostile, control} {
+	// split: a ';' list separator (pt-BR, de-DE, es-ES Excel) would make a cell of "=2+2".
+	hostile, split, control := "=1+1", "SPLIT;=2+2", "WINDOWS-TEST"
+	for _, host := range []string{hostile, split, control} {
 		if _, err := f.store.CreateAgent(ctx, host, "windows", "amd64", "0.10.0", "hash-"+uuid.NewString(), nil, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -68,12 +69,15 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 	}
 
 	code, machines := get(exports.Claims{Kind: "inventory", Params: map[string]string{"report_type": "machines"}, User: f.admin.ID})
-	if code != http.StatusOK || len(machines) < 3 || machines[0][0] != "hostname" {
+	if code != http.StatusOK || len(machines) < 4 || machines[0][0] != "hostname" {
 		t.Fatalf("machines export=%d rows=%v", code, machines)
 	}
 	hosts := column(machines, 0)
 	if !hosts["'"+hostile] || hosts[hostile] {
 		t.Fatalf("hostile hostname reached the CSV unguarded: %v", hosts)
+	}
+	if !hosts["SPLIT;'=2+2"] || hosts[split] {
+		t.Fatalf("a formula after a separator reached the CSV unguarded: %v", hosts)
 	}
 	if !hosts[control] {
 		t.Fatalf("ordinary hostname changed: %v", hosts)

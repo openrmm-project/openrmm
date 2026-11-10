@@ -114,10 +114,15 @@ currently visible columns.
 Console report/audit exports and streamed exports guard formula-like text at
 serialization time with a leading apostrophe. Formula prefixes (`=`, `+`, `-`,
 `@` and full-width variants) are detected even after leading whitespace,
-control or format characters. The guard is part of the exported value; stored
-hostnames, alert snapshots and audit hashes are unchanged. UUID columns and
-ordinary text retain their values. Typed numbers in console reports remain
-numbers. CSV quoting also preserves delimiters, quotation marks and line breaks.
+control or format characters, and not only at the start of a value: also after
+every `,`, `;`, tab or line break. Excel opens a `.csv` with the regional list
+separator — `;` in pt-BR, de-DE or es-ES — and honours quotes only at the start
+of its own cells, so a device reporting `x;=1+1` would otherwise produce a cell
+`=1+1`. The export reads `x;'=1+1` instead. The guard is part of the exported
+value; stored hostnames, alert snapshots and audit hashes are unchanged. UUID
+columns and ordinary text retain their values. Typed numbers in console reports
+remain numbers. CSV quoting also preserves delimiters, quotation marks and line
+breaks.
 
 These files are intended for viewing as data. Import text columns as text in
 spreadsheet tools. If a consumer removes the protective apostrophe, evaluates

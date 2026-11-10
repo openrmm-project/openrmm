@@ -1873,6 +1873,7 @@
   "cfg.meshSharedAccount": "Shared account for unrestricted users",
   "cfg.meshSharedAccountHint": "With a login token key set, users with access to every device and no MeshCentral account of their own sign in as the shared account. Turned off, everyone needs an account of their own, set under Users.",
   'cfg.rustdeskHint': 'Shows a RustDesk option in the device Remote menu; reads the device id on demand and opens rustdesk://<id>. The RustDesk client is installed out-of-band.',
+  'cfg.rustdeskDefaultNeedsEnabled': 'Turn RustDesk on in its tab before making it the default provider.',
   'cfg.guestAccess': 'Guest access',
   'cfg.guestAccessHint': "Lets technicians with the Share remote access permission invite a guest without an account to a device's screen. Turning it off ends every invitation and guest session.",
   'cfg.jobs': "Jobs",

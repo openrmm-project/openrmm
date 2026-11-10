@@ -42,10 +42,10 @@ func TestRemoteConfigurationProviderContractE2E(t *testing.T) {
 		return out.Remote
 	}
 	providers := get()["providers"]
-	if !reflect.DeepEqual(providers, []any{"native", "meshcentral"}) {
+	if !reflect.DeepEqual(providers, []any{"native", "meshcentral", "rustdesk"}) {
 		t.Fatalf("unexpected GET provider contract: %v", providers)
 	}
-	for _, provider := range []string{"native", "meshcentral"} {
+	for _, provider := range []string{"native", "meshcentral", "rustdesk"} {
 		body := `{"remote":{"default":"` + provider + `","meshcentral_url":"https://mesh.example.invalid","meshcentral_enabled":true,"rustdesk_enabled":true,"meshcentral_token_key":"synthetic-mesh-token"}}`
 		r := f.do(http.MethodPut, "/api/config", body)
 		if r.Code != http.StatusOK {
@@ -56,7 +56,37 @@ func TestRemoteConfigurationProviderContractE2E(t *testing.T) {
 			t.Fatalf("valid configuration did not persist: provider=%s", provider)
 		}
 	}
-	for _, provider := range []string{"terminal", "rustdesk"} {
+	// refused applies a request that must be rejected with want, and checks
+	// that nothing of it was written: not the visible settings, not the token.
+	refused := func(name, body string, want string) {
+		t.Helper()
+		before := get()
+		secretBefore, err := settings.Effective(context.Background(), f.store, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := f.do(http.MethodPut, "/api/config", body)
+		if r.Code != http.StatusBadRequest || !strings.Contains(r.Body.String(), want) {
+			t.Fatalf("%s=%d %s", name, r.Code, r.Body.String())
+		}
+		secretAfter, err := settings.Effective(context.Background(), f.store, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if secretBefore.MeshCentralTokenKey != secretAfter.MeshCentralTokenKey || !reflect.DeepEqual(before, get()) {
+			t.Fatalf("%s partially applied the request", name)
+		}
+	}
+	// RustDesk is the default now (the loop above ended on it), and it may stay
+	// so only while it is on: turning it off alone is refused, as is choosing it
+	// while turning it off.
+	refused("disable RustDesk while default", `{"remote":{"rustdesk_enabled":false,"meshcentral_url":"https://must-not-persist.example.invalid"}}`, "RustDesk must be enabled")
+	refused("RustDesk default while disabled", `{"remote":{"default":"rustdesk","rustdesk_enabled":false,"meshcentral_token_key":"must-not-save-test-token"}}`, "RustDesk must be enabled")
+	if r := f.do(http.MethodPut, "/api/config", `{"remote":{"default":"native","rustdesk_enabled":false}}`); r.Code != http.StatusOK || get()["default"] != "native" || get()["rustdesk_enabled"] != false {
+		t.Fatalf("moving the default off RustDesk and disabling it=%d", r.Code)
+	}
+	refused("RustDesk default while it stays disabled", `{"remote":{"default":"rustdesk"}}`, "RustDesk must be enabled")
+	for _, provider := range []string{"terminal", "files"} {
 		before := get()
 		secretBefore, err := settings.Effective(context.Background(), f.store, cfg)
 		if err != nil {

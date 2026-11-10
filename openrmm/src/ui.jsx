@@ -584,16 +584,37 @@ function Sparkline({ data, width = 160, height = 36, colorFn }) {
 }
 
 /* ------------------------------ csv / download ---------------------------- */
-// CSV is for spreadsheet viewing: prefix formula-like text with an apostrophe
-// before quoting, matching the server export policy. Inspect through leading
-// whitespace/control/format characters without changing the original value.
-// Typed numbers stay numeric. Only the exported representation is guarded.
+// CSV is for spreadsheet viewing, so formula-like text gets a leading
+// apostrophe wherever a cell could begin: at the start of the value and after
+// every cell break. A comma is this file's separator, but Excel opens a .csv
+// with the regional list separator (';' in pt-BR, de-DE, es-ES) and honours
+// quotes only at the start of its own cells, so "x;=1+1" would otherwise give a
+// second cell starting with the formula. Leading whitespace, control and
+// format characters are looked past. Same policy as the server's
+// spreadsheetSafeCell. Typed numbers stay numeric; only the exported
+// representation changes, never the source value.
+const CSV_FORMULA_PREFIX = /[=+\-@＝＋－＠]/u;
+const CSV_CELL_BREAK = /[,;\t\r\n]/;
+const CSV_INVISIBLE = /[\p{White_Space}\p{Cc}\p{Cf}]/u;
+function csvGuardFormulas(text) {
+  const at = [];
+  let pending = true, insertAt = 0, i = 0;
+  for (const ch of text) {
+    if (CSV_CELL_BREAK.test(ch)) { pending = true; insertAt = i + ch.length; }
+    else if (pending && !CSV_INVISIBLE.test(ch)) { if (CSV_FORMULA_PREFIX.test(ch)) at.push(insertAt); pending = false; }
+    i += ch.length;
+  }
+  // A value that starts with a tab or line break is guarded as a whole too.
+  if (/^[\t\r\n]/.test(text) && at[0] !== 0) at.unshift(0);
+  if (!at.length) return text;
+  let out = '', prev = 0;
+  for (const p of at) { out += text.slice(prev, p) + "'"; prev = p; }
+  return out + text.slice(prev);
+}
 function csvEscape(v, alwaysQuote = false) {
   const text = v == null ? '' : String(v);
-  const probe = text.replace(/^[\p{White_Space}\p{Cc}\p{Cf}]*/u, '');
-  const guarded = typeof v !== 'number' && (/^[=+\-@＝＋－＠]/u.test(probe) || /^[\t\r\n]/.test(text));
-  const cell = guarded ? "'" + text : text;
-  return alwaysQuote || guarded || /[",;\r\n]/.test(cell) ? '"' + cell.replace(/"/g, '""') + '"' : cell;
+  const cell = typeof v === 'number' ? text : csvGuardFormulas(text);
+  return alwaysQuote || cell !== text || /[",;\r\n]/.test(cell) ? '"' + cell.replace(/"/g, '""') + '"' : cell;
 }
 // Audit exports retain their historical all-fields-quoted representation.
 function toCSV(headers, rows, alwaysQuote = false) {

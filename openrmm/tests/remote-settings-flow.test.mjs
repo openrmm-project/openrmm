@@ -8,7 +8,7 @@ const source = await readFile(new URL('../src/screens-rmm2.jsx', import.meta.url
 const code = source.slice(source.indexOf('function ConfigItem('), source.indexOf('// SMTPPanel configures'));
 const config = {
   ai: { provider: 'openai-compatible', base_url: 'https://ai.example.invalid/v1', model: 'test', configured: true, api_key_set: true },
-  remote: { default: 'native', providers: ['native', 'meshcentral'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'shared-admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
+  remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'shared-admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
   jobs: { allow_unapproved: false }, server: { version: 'test', base_url: 'https://agents.example.invalid' },
 };
 
@@ -35,7 +35,8 @@ function harness(canManage = true, failSave = false) {
     api: { async updateConfig(body) {
       calls.push(JSON.parse(JSON.stringify(body)));
       if (failSave) throw new Error('save failed');
-      if (body.remote.default && !['native', 'meshcentral'].includes(body.remote.default)) throw new Error('invalid remote provider');
+      if (body.remote.default && !['native', 'meshcentral', 'rustdesk'].includes(body.remote.default)) throw new Error('invalid remote provider');
+      if (body.remote.default === 'rustdesk' && !body.remote.rustdesk_enabled) throw new Error('RustDesk must be enabled to be the default remote provider');
       const { meshcentral_token_key, ...remote } = body.remote;
       if (meshcentral_token_key.trim()) meshToken = meshcentral_token_key;
       currentConfig = { ...currentConfig, remote: { ...currentConfig.remote, ...remote, meshcentral_token_set: !!meshToken } };
@@ -90,7 +91,7 @@ test('remote settings separate provider fields and preserve unsaved values when 
   ui.selectTab('default');
   assert.deepEqual(labels(), ['cfg.defaultProvider']);
   // Only the defaults the server accepts are offered: never Terminal.
-  assert.deepEqual(ui.find(ui.panel(), (n) => n.type === 'option').map((n) => n.props.value), ['native', 'meshcentral']);
+  assert.deepEqual(ui.find(ui.panel(), (n) => n.type === 'option').map((n) => n.props.value), ['native', 'meshcentral', 'rustdesk']);
   ui.change('cfg.defaultProvider', 'meshcentral');
   ui.selectTab('meshcentral');
   assert.equal(ui.find(ui.panel(), (n) => n.type === 'Input' && n.props.type === 'password')[0].props.value, 'test-token-not-a-real-secret');
@@ -150,7 +151,7 @@ test('provider tabs support keyboard navigation and expose consistent accessible
 
 
 test('configuration fixtures reject unsupported defaults without applying other pending edits', async () => {
-  for (const provider of ['terminal', 'rustdesk']) {
+  for (const provider of ['terminal', 'files']) {
     const ui = harness();
     ui.selectTab('meshcentral');
     ui.change('cfg.meshUrl', 'https://must-not-persist.example.invalid');
@@ -165,4 +166,27 @@ test('configuration fixtures reject unsupported defaults without applying other 
     ui.selectTab('meshcentral');
     assert.equal(ui.find(ui.panel(), (n) => n.type === 'Input' && n.props.type === 'password')[0].props.value, 'pending-test-token');
   }
+});
+
+
+// RustDesk can be the default only while it is on: the console says so next to
+// the choice and does not send a save the server would refuse.
+test('RustDesk as default requires RustDesk enabled, and saves once it is', async () => {
+  const ui = harness();
+  ui.selectTab('default');
+  ui.change('cfg.defaultProvider', 'rustdesk');
+  const alert = () => ui.find(ui.panel(), (n) => n.props.role === 'alert');
+  assert.deepEqual(alert().map((n) => n.children[0]), ['cfg.rustdeskDefaultNeedsEnabled']);
+  await ui.save();
+  assert.equal(ui.calls.length, 0, 'no request while RustDesk is off');
+  assert.deepEqual(ui.errors, [['cfg.saveFailed', 'cfg.rustdeskDefaultNeedsEnabled']]);
+  ui.selectTab('rustdesk');
+  ui.change('RustDesk', 'on');
+  ui.selectTab('default');
+  assert.equal(alert().length, 0);
+  await ui.save();
+  assert.equal(ui.calls.length, 1);
+  assert.equal(ui.calls[0].remote.default, 'rustdesk');
+  assert.equal(ui.calls[0].remote.rustdesk_enabled, true);
+  assert.equal(ui.stored().remote.default, 'rustdesk');
 });

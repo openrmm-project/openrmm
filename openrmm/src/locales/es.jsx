@@ -1860,6 +1860,7 @@
   "cfg.meshSharedAccount": "Cuenta compartida para usuarios sin restricción",
   "cfg.meshSharedAccountHint": "Con la clave de token de inicio de sesión configurada, los usuarios con acceso a todos los dispositivos y sin cuenta propia en MeshCentral entran con la cuenta compartida. Desactivada, cada uno necesita una cuenta propia, configurada en Usuarios.",
   'cfg.rustdeskHint': 'Muestra la opción RustDesk en el menú Remoto del dispositivo; lee el id del dispositivo bajo demanda y abre rustdesk://<id>. El cliente de RustDesk se instala por separado.',
+  'cfg.rustdeskDefaultNeedsEnabled': 'Activa RustDesk en su pestaña antes de definirlo como proveedor predeterminado.',
   'cfg.guestAccess': 'Acceso de invitados',
   'cfg.guestAccessHint': 'Permite que los técnicos con el permiso Compartir acceso remoto inviten a alguien sin cuenta a la pantalla de un dispositivo. Al desactivarlo terminan todas las invitaciones y sesiones de invitados.',
   'cfg.jobs': 'Jobs',

@@ -347,6 +347,12 @@ Present only when SSO is configured (`RMM_OIDC_*`); see
 }
 ```
 
+`remote.default` accepts `native`, `meshcentral` or `rustdesk`, the list GET
+`/api/config` returns as `remote.providers`. `rustdesk` is accepted only while
+RustDesk is enabled: a save that would leave it the default with
+`rustdesk_enabled` off (choosing it while turning RustDesk off, or turning
+RustDesk off while it is the default) is refused with **400** and writes nothing.
+
 `remote.meshcentral_match_hostname` opens a device with no linked MeshCentral
 node by its hostname (MeshCentral's `gotodevicername`). It is off by default;
 `RMM_MESHCENTRAL_MATCH_HOSTNAME=true` only sets the starting value. A linked

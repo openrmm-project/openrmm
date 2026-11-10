@@ -7,7 +7,7 @@ import { transformSync } from 'esbuild';
 const source = await readFile(new URL('../src/screens-jobs.jsx', import.meta.url), 'utf8');
 const code = source.slice(source.indexOf('function AuditScreen('), source.indexOf('window.JobsScreen ='));
 const uiSource = await readFile(new URL('../src/ui.jsx', import.meta.url), 'utf8');
-const csvCode = uiSource.slice(uiSource.indexOf('function csvEscape('), uiSource.indexOf('// downloadText saves'));
+const csvCode = uiSource.slice(uiSource.indexOf('const CSV_FORMULA_PREFIX'), uiSource.indexOf('// downloadText saves'));
 const id = '47e4ba8d-56e9-41cf-91bb-daa70e9371eb';
 function render(entries) {
   const downloads = [];

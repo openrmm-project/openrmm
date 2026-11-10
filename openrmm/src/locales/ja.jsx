@@ -1860,6 +1860,7 @@
   "cfg.meshSharedAccount": "制限のないユーザー向けの共有アカウント",
   "cfg.meshSharedAccountHint": "ログイントークンキーが設定されている場合、すべてのデバイスにアクセスでき、自分の MeshCentral アカウントを持たないユーザーは共有アカウントでサインインします。オフにすると、全員が［ユーザー］で設定する自分のアカウントを必要とします。",
   'cfg.rustdeskHint': 'デバイスのリモートメニューに RustDesk を表示します。必要時にデバイス ID を読み取り rustdesk://<id> を開きます。RustDesk クライアントは別途インストールします。',
+  'cfg.rustdeskDefaultNeedsEnabled': '既定のプロバイダーにする前に、RustDesk タブで RustDesk を有効にしてください。',
   'cfg.guestAccess': 'ゲストアクセス',
   'cfg.guestAccessHint': '「リモートアクセスを共有」権限を持つ技術者が、アカウントのないゲストをデバイスの画面に招待できるようにします。オフにすると、すべての招待とゲストセッションが終了します。',
   'cfg.jobs': 'ジョブ',

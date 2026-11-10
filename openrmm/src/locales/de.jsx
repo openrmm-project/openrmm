@@ -1860,6 +1860,7 @@
   "cfg.meshSharedAccount": "Gemeinsames Konto für uneingeschränkte Benutzer",
   "cfg.meshSharedAccountHint": "Ist ein Login-Token-Schlüssel gesetzt, melden sich Benutzer mit Zugriff auf alle Geräte und ohne eigenes MeshCentral-Konto mit dem gemeinsamen Konto an. Ausgeschaltet braucht jeder ein eigenes Konto, festgelegt unter Benutzer.",
   'cfg.rustdeskHint': 'Zeigt eine RustDesk-Option im Fernzugriffsmenü des Geräts; liest die Geräte-ID bei Bedarf und öffnet rustdesk://<id>. Der RustDesk-Client wird separat installiert.',
+  'cfg.rustdeskDefaultNeedsEnabled': 'Aktiviere RustDesk in seinem Tab, bevor du es zum Standardanbieter machst.',
   'cfg.guestAccess': 'Gastzugang',
   'cfg.guestAccessHint': 'Erlaubt Technikern mit der Berechtigung Fernzugriff teilen, einen Gast ohne Konto auf den Bildschirm eines Geräts einzuladen. Beim Ausschalten enden alle Einladungen und Gastsitzungen.',
   'cfg.jobs': 'Jobs',

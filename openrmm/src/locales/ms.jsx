@@ -1809,6 +1809,7 @@
   "cfg.meshSharedAccount": "Akaun kongsi untuk pengguna tanpa sekatan",
   "cfg.meshSharedAccountHint": "Apabila kunci token log masuk ditetapkan, pengguna yang boleh mengakses semua peranti dan tiada akaun MeshCentral sendiri log masuk dengan akaun kongsi. Jika dimatikan, setiap orang memerlukan akaun sendiri, yang ditetapkan di bawah Pengguna.",
   'cfg.rustdeskHint': "Menunjukkan opsyen RustDesk dalam menu Remote peranti; membaca ID peranti pada permintaan dan membuka rustdesk://<id>.",
+  'cfg.rustdeskDefaultNeedsEnabled': "Hidupkan RustDesk dalam tabnya sebelum menjadikannya penyedia lalai.",
   'cfg.guestAccess': "Akses tetamu",
   'cfg.guestAccessHint': "Biarkan jurutera dengan keizinan akses jarak jauh berkongsi menjemput tetamu tanpa akaun ke skrin peranti.",
   'cfg.jobs': "Tugasan",

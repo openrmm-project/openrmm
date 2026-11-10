@@ -2300,6 +2300,9 @@ function ScopePicker({ scopes, setScopes, mode, setMode }) {
 function ConfigItem({ label, value, mono }) {
   return <div className="flex items-center justify-between py-2.5 border-b border-line/60 last:border-0"><span className="text-[12.5px] text-muted">{label}</span><span className={cx('text-[12.5px] text-ink font-medium', mono && 'mono')}>{value}</span></div>;
 }
+// RustDesk can be the default only while it is on: the server refuses the
+// combination, since every session started without a provider would fail.
+const rustdeskDefaultDisabled = (form) => form.remote_default === 'rustdesk' && !form.rustdesk_enabled;
 // Form values belong to ConfigPanel so changing the visible provider never
 // discards unsaved settings (including the write-only token).
 function RemoteProviderSettings({ form, onChange, remote, canManage }) {
@@ -2347,6 +2350,7 @@ function RemoteProviderSettings({ form, onChange, remote, canManage }) {
         </>}
         {item.key === 'default' && <>
           <Field label={t('cfg.defaultProvider')}><Select value={form.remote_default} disabled={!canManage} onChange={(e) => onChange('remote_default', e.target.value)}>{(remote.providers || []).map((p) => <option key={p} value={p}>{providerLabel(p)}</option>)}</Select></Field>
+          {rustdeskDefaultDisabled(form) && <p role="alert" className="text-[12px] text-bad">{t('cfg.rustdeskDefaultNeedsEnabled')}</p>}
         </>}
       </div>)}
       <p className="mt-4 pt-3 border-t border-line text-[11.5px] text-faint">{t('cfg.remoteSaveHint', { action: t('cfg.save') })}</p>
@@ -2385,6 +2389,7 @@ function ConfigPanel() {
   }, [c]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const save = async () => {
+    if (rustdeskDefaultDisabled(form)) { toast.error(t('cfg.saveFailed'), t('cfg.rustdeskDefaultNeedsEnabled')); return; }
     setSaving(true);
     try {
       await api.updateConfig({

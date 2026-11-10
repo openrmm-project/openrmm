@@ -270,8 +270,8 @@ endpoint) — see [06-ai-chat](06-ai-chat.md).
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | POST | `/api/me/password` | any | `{current_password, new_password}` — change your own password (verifies current; min 12 chars and rejects a small common-password set; revokes your other sessions; audited `user.password.change`) |
-| GET | `/api/me/notifications` | a user session | Your alert subscriptions, your address (read-only here), whether alert delivery is configured, and whether your address must be / is confirmed |
-| PUT | `/api/me/notifications` | a user session | `{subscriptions: {event: bool}}`. Changing the address here is refused (**403**): that needs `users.email.manage` |
+| GET | `/api/me/notifications` | a user session | Your alert subscriptions, your address (read-only here), whether alert delivery is configured, and whether your address must be / is confirmed. Also your rule filter, `rules: {mode: "all"\|"selected", include_defaults, check_ids}`, and the rules you can pick from, `available_rules: [{id, name, type}]` (empty without `alerts.view`). See [24-alert-rules](24-alert-rules.md#email) |
+| PUT | `/api/me/notifications` | a user session | `{subscriptions: {event: bool}, rules?: {mode, include_defaults, check_ids}}`. `check_ids` keeps only rules you can see. Changing the address here is refused (**403**): that needs `users.email.manage` |
 | POST | `/api/me/email/verify` | a user session | Send yourself a new confirmation link |
 
 ### Two-factor (TOTP)
@@ -441,11 +441,14 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | GET | `/api/checks?agent_id=&policy_id=` | `checks.view` | List checks |
-| POST | `/api/checks` | `checks.manage` | Create (`type,name,config,warn_threshold,err_threshold,interval_sec`, `agent_id` or `policy_id`). Flap policy is optional: `failure_count` (1–100, default 2), `recovery_count` (1–100, default 2), `hysteresis` (0–100, default 2), `cooldown_sec` (0–604800, default 300), `timeout_sec` (5–86400, default 180) |
+| POST | `/api/checks` | `checks.manage` | Create (`type,name,config,warn_threshold,err_threshold,interval_sec`, `agent_id` or `policy_id`). Flap policy is optional: `failure_count` (1–100, default 2), `recovery_count` (1–100, default 2), `hysteresis` (0–100, default 2), `cooldown_sec` (0–604800, default 300), `timeout_sec` (5–86400, default 180). `type` also takes the Linux and macOS service checks (`linuxservice`, `macservice`; agent 0.10.0) and the server alert rules (`connectivity`, `job_failure`, `patch_failure`, `reboot_pending`, `agent_outdated`), which run on the server and take the `config` described in [24-alert-rules](24-alert-rules.md) |
 | PUT | `/api/checks/{id}` | `checks.manage` | Update |
 | DELETE | `/api/checks/{id}` | `checks.manage` | Delete |
 | GET | `/api/checks/{id}/results?agent_id=&limit=` | `checks.view` | Result history |
 | GET | `/api/checks/{id}/instances` | `checks.view` | Per-agent state of this check: streaks, last value/output, pending execution and its deadline |
+| GET | `/api/checks/{id}/overrides` | `checks.manage`, unrestricted | For a server rule: how many devices it covers and where another rule decides instead, `{covered, overrides: [{check_id, name, scope_type, devices}]}` (`scope_type` `fleet` = the fleet default). Other check types return no overrides |
+| GET | `/api/alert-defaults` | `checks.view` | The fleet default of each server rule type, `{defaults: {type: {type, config, updated_by}}, can_manage}` |
+| PUT | `/api/alert-defaults/{type}` | `checks.manage`, unrestricted | Replace one fleet default; the body is the rule `config`. Unknown type **404**, invalid config **400**. Audited `alert_default.update` |
 
 ## Tasks (scheduled automation)
 

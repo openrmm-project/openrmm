@@ -3,6 +3,8 @@ package models
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/p1ngu/rmm/internal/protocol"
 )
 
 // Roles.
@@ -14,12 +16,14 @@ const (
 
 // Check types.
 const (
-	CheckDiskSpace  = "diskspace"
-	CheckMemory     = "memory"
-	CheckCPULoad    = "cpuload"
-	CheckPing       = "ping"
-	CheckWinService = "winservice"
-	CheckScript     = "script"
+	CheckDiskSpace    = "diskspace"
+	CheckMemory       = "memory"
+	CheckCPULoad      = "cpuload"
+	CheckPing         = "ping"
+	CheckWinService   = "winservice"
+	CheckLinuxService = protocol.CheckLinuxService
+	CheckMacService   = protocol.CheckMacService
+	CheckScript       = "script"
 )
 
 // Check / result statuses.

@@ -337,7 +337,7 @@ function AuditScreen() {
     const snap = d.hostname || d.host || d.name;
     const live2 = target && (devMap[target]?.hostname || userMap[target]);
     const byAgent = d.agent && devMap[d.agent]?.hostname;
-    return snap || live2 || byAgent || target;
+    return snap || e.target_label || live2 || byAgent || target;
   };
 
   const resetFilters = () => {

@@ -57,7 +57,7 @@ jobs:
           # CAN is worth the ten minutes: both defects found on main the first
           # time these ran — an ad-hoc bundle having no designated requirement,
           # and chown rejecting nobody's uid on BSD — were in files matched here.
-          has '(_darwin\.(go|m)$|^cmd/rmm-remote/macapp/|^scripts/build-macos-bundle\.sh$|^scripts/test-install-migration\.sh$|^deploy/public/(install|uninstall)\.sh$)' && macos=true
+          has '(^cmd/agent/servicecheck(_test)?\.go$|^internal/protocol/servicecheck(_test)?\.go$|_darwin\.(go|m)$|^cmd/rmm-remote/macapp/|^scripts/build-macos-bundle\.sh$|^scripts/test-install-migration\.sh$|^deploy/public/(install|uninstall)\.sh$)' && macos=true
           has '^openrmm/'                                          && frontend=true
           has '^(deploy/public/install\.|scripts/|cmd/agent/|internal/protocol/)' && installers=true
           has '^(Dockerfile$|\.dockerignore$|deploy/)'             && docker=true

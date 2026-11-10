@@ -122,3 +122,42 @@ test('email preferences save selected rules and defaults independently from even
   await ui.find(tree, (n) => n.type === 'Button' && n.children.includes('action.save'))[0].props.onClick();
   assert.equal(calls[1].rules.mode, 'all');
 });
+
+test('console creates Linux and macOS service checks with platform-specific fields', async () => {
+  const calls = [];
+  const ui = harness({ api: { createCheck: async (body) => calls.push(data(body)) } });
+  const props = { onClose() {}, devMap: {}, policies: [{ id: 'mixed-policy', name: 'Mixed fleet' }], defaultPolicyId: 'mixed-policy' };
+  let tree = ui.render('CheckEditor', props);
+  const changeType = (kind) => { ui.find(tree, (n) => n.type === 'Select')[0].props.onChange({ target: { value: kind } }); tree = ui.render('CheckEditor', props); };
+  const changeField = (label, value) => {
+    const field = ui.find(tree, (n) => n.type === 'Field' && n.props.label === label)[0];
+    ui.find(field, (n) => n.type === 'Input' || n.type === 'Select')[0].props.onChange({ target: { value } });
+    tree = ui.render('CheckEditor', props);
+  };
+  const save = async () => ui.find(tree, (n) => n.type === 'Button' && n.children.includes('checks.create'))[0].props.onClick();
+  changeType('linuxservice');
+  changeField('check.cfg.linuxservice', 'sshd.service');
+  assert.equal(ui.find(tree, (n) => n.type === 'Field' && n.props.label === 'check.service.state').length, 0);
+  await save();
+  assert.deepEqual(calls[0].config, { service: 'sshd.service' });
+  assert.equal(calls[0].policy_id, 'mixed-policy');
+  assert.equal('warn_threshold' in calls[0], false);
+  changeType('macservice');
+  changeField('check.cfg.macservice', 'gui/501/com.example.worker');
+  changeField('check.service.state', 'loaded');
+  await save();
+  assert.deepEqual(calls[1].config, { service: 'gui/501/com.example.worker', state: 'loaded' });
+  assert.equal('err_threshold' in calls[1], false);
+  changeType('linuxservice');
+  changeField('check.cfg.linuxservice', 'nginx');
+  await save();
+  assert.deepEqual(calls[2].config, { service: 'nginx' }, 'macOS options do not leak into Linux');
+});
+
+test('editing a macOS service retains its loaded state', async () => {
+  const calls = [];
+  const ui = harness({ api: { updateCheck: async (...args) => calls.push(data(args)) } });
+  const tree = ui.render('CheckEditor', { check: { id: 'mac-check', type: 'macservice', name: 'On demand', agent_id: 'mac-1', config: { service: 'system/com.example.worker', state: 'loaded' } }, onClose() {}, devMap: {}, policies: [] });
+  await ui.find(tree, (n) => n.type === 'Button' && n.children.includes('checks.save'))[0].props.onClick();
+  assert.deepEqual(calls[0][1].config, { service: 'system/com.example.worker', state: 'loaded' });
+});

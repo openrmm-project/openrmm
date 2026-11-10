@@ -16,6 +16,12 @@ const ruleChecks = [];
 const ruleDefaults = Object.fromEntries(['connectivity', 'job_failure', 'patch_failure', 'reboot_pending', 'agent_outdated'].map((type) => [type, { type, config: type === 'connectivity' ? { mode: 'alert', severity: 'error', after_min: 3 } : { mode: 'ignore', severity: 'warning' } }]));
 let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
 
+const remoteConfig = {
+  ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
+  remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
+  jobs: { allow_unapproved: false }, server: { version: 'e2e', base_url: 'https://agents.example.invalid' },
+};
+
 function json(res, status, body) {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
@@ -41,7 +47,7 @@ const server = createServer(async (req, res) => {
       if (pathname === '/api/me') return json(res, 200, user);
       if (pathname === '/api/checks') {
         if (req.method === 'POST') {
-          const check = { id: 'rule-e2e', ...payload };
+          const check = { id: ruleChecks.length ? 'service-e2e-' + ruleChecks.length : 'rule-e2e', ...payload };
           ruleChecks.push(check);
           return json(res, 201, check);
         }
@@ -58,6 +64,7 @@ const server = createServer(async (req, res) => {
         if (req.method === 'PUT') rulePrefs = payload.rules;
         return json(res, 200, { email: 'e2e@example.invalid', delivery_configured: true, subscriptions: [{ event_type: 'agent_offline', enabled: true }], rules: rulePrefs, available_rules: ruleChecks.map(({ id, name, type }) => ({ id, name, type })) });
       }
+      if (pathname === '/api/config') return json(res, 200, remoteConfig);
       if (pathname === '/api/devices') return json(res, 200, { devices: [{ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z' }] });
       if (pathname === '/api/jobs') return json(res, 200, { jobs: [] });
       if (pathname === '/api/audit') return json(res, 200, { entries: [] });
@@ -238,6 +245,68 @@ async function alertRulesBrowserFlow() {
   return true;
 }
 
+async function servicesAndRemoteSettingsBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Services/settings E2E timed out: ' + fn.toString());
+  };
+  const button = (text) => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const change = (element, value) => {
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  (await wait(() => button('Checks'))).click();
+  for (const [kind, service] of [['linuxservice', 'sshd.service'], ['macservice', 'system/com.apple.notifyd']]) {
+    (await wait(() => button('New check'))).click();
+    const type = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === kind)));
+    change(type, kind);
+    const input = await wait(() => document.querySelector('input[placeholder="' + service + '"]'));
+    change(input, service);
+    if (kind === 'macservice') {
+      const state = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'loaded')));
+      change(state, 'loaded');
+    }
+    (await wait(() => button('Select target…'))).click();
+    (await wait(() => button('SMOKE-PC'))).click();
+    (await wait(() => button('Create check') && !button('Create check').disabled && button('Create check'))).click();
+    await wait(() => !button('Create check'));
+  }
+  (await wait(() => button('Users & Settings'))).click();
+  (await wait(() => button('Configuration'))).click();
+  const tab = (key) => document.getElementById('remote-config-tab-' + key);
+  const panel = () => document.querySelector('[role="tabpanel"]:not([hidden])');
+  await wait(() => tab('native'));
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  assert(panel().id === 'remote-config-panel-native', 'Native is the initial provider tab');
+  assert(!panel().querySelector('input[type="password"]'), 'Native does not show MeshCentral credentials');
+  tab('meshcentral').click();
+  await wait(() => panel().id === 'remote-config-panel-meshcentral');
+  change(panel().querySelector('input[placeholder="https://mesh.example.com"]'), 'https://updated-mesh.example.invalid');
+  change(panel().querySelector('input[type="password"]'), 'e2e-token-placeholder');
+  tab('rustdesk').click();
+  await wait(() => panel().id === 'remote-config-panel-rustdesk');
+  change(panel().querySelector('select'), 'on');
+  tab('default').click();
+  await wait(() => panel().id === 'remote-config-panel-default');
+  change(panel().querySelector('select'), 'rustdesk');
+  tab('native').click();
+  await wait(() => panel().id === 'remote-config-panel-native');
+  change(panel().querySelector('select'), 'on');
+  tab('meshcentral').click();
+  await wait(() => panel().id === 'remote-config-panel-meshcentral');
+  assert(panel().querySelector('input[type="password"]').value === 'e2e-token-placeholder', 'Unsaved token survives tab navigation');
+  tab('meshcentral').focus();
+  tab('meshcentral').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  await wait(() => panel().id === 'remote-config-panel-default');
+  assert(document.activeElement === tab('default'), 'Keyboard moves focus to selected provider');
+  (await wait(() => button('Save configuration'))).click();
+  await wait(() => document.body.textContent.includes('Configuration saved'));
+  document.documentElement.dataset.servicesSettingsE2e = 'passed';
+  return true;
+}
+
 function assertBrowser(result, pattern) {
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, pattern, result.stderr);
@@ -288,6 +357,22 @@ try {
     assert.equal(created?.payload.enabled, true);
     assert.equal(ruleDefaults.connectivity.config.after_min, 30);
     assert.deepEqual(rulePrefs, { mode: 'selected', include_defaults: false, check_ids: ['rule-e2e'] });
+    const settingsFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: servicesAndRemoteSettingsBrowserFlow });
+    assertBrowser(settingsFlow, /data-services-settings-e2e="passed"/);
+    for (const [type, service, state] of [['linuxservice', 'sshd.service', undefined], ['macservice', 'system/com.apple.notifyd', 'loaded']]) {
+      const body = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/checks' && r.payload?.type === type)?.payload;
+      assert.ok(body, type + ' was submitted');
+      assert.equal(body.config.service, service);
+      assert.equal(body.config.state, state);
+      assert.equal('warn_threshold' in body, false);
+    }
+    const saved = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/config')?.payload;
+    assert.equal(saved?.remote.default, 'rustdesk');
+    assert.equal(saved?.remote.meshcentral_url, 'https://updated-mesh.example.invalid');
+    assert.equal(saved?.remote.meshcentral_token_key, 'e2e-token-placeholder');
+    assert.equal(saved?.remote.rustdesk_enabled, true);
+    assert.equal(saved?.remote.guest_access, true);
+    assert.equal(saved?.jobs.allow_unapproved, false);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'expire-token'), '401 scenario must exercise an authenticated request');
   }

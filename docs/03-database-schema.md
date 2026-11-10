@@ -253,7 +253,7 @@ A monitoring check, owned **either** by an agent **or** a policy — exactly one
 | id | uuid PK | |
 | agent_id | uuid FK → agents | nullable (direct check) |
 | policy_id | uuid FK → policies | nullable (inherited check) |
-| type | text | `diskspace`/`memory`/`cpuload`/`ping`/`winservice`/`script` |
+| type | text | `diskspace`/`memory`/`cpuload`/`ping`/`winservice`/`linuxservice`/`macservice`/`script` |
 | name | text | |
 | config | jsonb | type-specific (path / host / service / inline script) |
 | warn_threshold, err_threshold | double | nullable |

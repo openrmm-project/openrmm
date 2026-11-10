@@ -1175,7 +1175,7 @@ func (s *Store) ResolveInapplicableCheckAlerts(ctx context.Context, now time.Tim
 			SELECT 1 FROM checks c
 			JOIN agents a ON a.id=al.agent_id AND a.revoked_at IS NULL
 			LEFT JOIN sites si ON si.id=a.site_id
-			WHERE c.id=al.source_id AND c.enabled AND NOT (c.type=ANY($2::text[])) AND (
+			WHERE c.id=al.source_id AND c.enabled AND NOT (c.type=ANY($2::text[])) AND `+serviceCheckPlatformSQL+` AND (
 				c.agent_id=a.id OR c.policy_id IN (
 					SELECT pa.policy_id FROM policy_assignments pa
 					WHERE (pa.scope_type='agent' AND pa.scope_id=a.id)
@@ -1376,4 +1376,26 @@ func sameAlertTime(a, b *time.Time) bool {
 		return a == nil && b == nil
 	}
 	return a.Equal(*b)
+}
+
+// AlertAuditTargetLabels resolves legacy audit targets without rewriting any
+// immutable audit fields. Call only after authorizing the global audit log.
+func (s *Store) AlertAuditTargetLabels(ctx context.Context, ids []string) (map[string]string, error) {
+	labels := map[string]string{}
+	if len(ids) == 0 {
+		return labels, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id::text, COALESCE(NULLIF(agent_hostname,''),message) FROM alerts WHERE id=ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label string
+		if err := rows.Scan(&id, &label); err != nil {
+			return nil, err
+		}
+		labels[id] = label
+	}
+	return labels, rows.Err()
 }

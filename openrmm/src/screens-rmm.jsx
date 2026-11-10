@@ -18,6 +18,8 @@ const CHECK_TYPES = {
   cpuload: { icon: 'cpu', unit: '%', dir: 'high', cfg: null },
   ping: { icon: 'network', unit: '', dir: 'state', cfg: 'host', cfgPh: '10.0.0.1' },
   winservice: { icon: 'settings', unit: '', dir: 'state', cfg: 'service', cfgPh: 'Spooler' }, // i18n-ignore: a Windows service name
+  linuxservice: { icon: 'settings', unit: '', dir: 'state', cfg: 'service', cfgPh: 'sshd.service' },
+  macservice: { icon: 'settings', unit: '', dir: 'state', cfg: 'service', cfgPh: 'system/com.apple.notifyd' },
   script: { icon: 'script', unit: '', dir: 'script', cfg: 'script', cfgPh: 'exit 0' },
   connectivity: { icon: 'network', unit: '', dir: 'server', server: true },
   job_failure: { icon: 'script', unit: '', dir: 'server', server: true },
@@ -522,6 +524,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
   const initialType = check?.type || 'diskspace';
   const [ruleCfg, setRuleCfg] = useState(() => serverRuleConfig(initialType, check?.config));
   const [cfgVal, setCfgVal] = useState(check?.config?.[checkType(initialType).cfg] || '');
+  const [serviceState, setServiceState] = useState(check?.config?.state || 'running');
   const [shell, setShell] = useState(check?.config?.shell || 'powershell');
   const [warn, setWarn] = useState(check?.warn_threshold ?? 20);
   const [err, setErr] = useState(check?.err_threshold ?? 10);
@@ -538,7 +541,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
 
   const save = async () => {
     setBusy(true);
-    const config = ct.server ? serverRuleConfig(type, ruleCfg) : {}; if (ct.cfg) config[ct.cfg] = cfgVal; if (type === 'script') config.shell = shell;
+    const config = ct.server ? serverRuleConfig(type, ruleCfg) : {}; if (ct.cfg) config[ct.cfg] = cfgVal; if (type === 'script') config.shell = shell; if (type === 'macservice') config.state = serviceState;
     const body = { type, name: name || ct.label, config, interval_sec: Number(interval), enabled,
       failure_count: Number(failureCount), recovery_count: Number(recoveryCount), hysteresis: Number(hysteresis), cooldown_sec: Number(cooldown), timeout_sec: Number(timeout) };
     if (!ct.server && ct.dir !== 'state' && ct.dir !== 'script') { body.warn_threshold = Number(warn); body.err_threshold = Number(err); }
@@ -557,7 +560,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
       <div className="px-5 py-4 border-b border-line flex items-center justify-between"><div className="text-[15px] font-semibold text-ink">{check ? t('checks.editTitle') : t('checks.new')}</div><button onClick={onClose} className="text-faint hover:text-ink"><Icon name="close" size={18} /></button></div>
       <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto scroll-area">
         <div className="grid grid-cols-2 gap-3">
-          <Field label={t('checks.type')}><Select value={type} onChange={(e) => { const next = e.target.value; setType(next); setRuleCfg(serverRuleConfig(next, check?.type === next ? check.config : undefined)); setCfgVal(check?.type === next ? check?.config?.[checkType(next).cfg] || '' : ''); if (next === 'cpuload' && Number(err) <= Number(warn)) { setWarn(80); setErr(90); } if ((next === 'diskspace' || next === 'memory') && Number(err) >= Number(warn)) { setWarn(20); setErr(10); } }}>{Object.keys(CHECK_TYPES).map((k) => <option key={k} value={k}>{checkType(k).label}</option>)}</Select></Field>
+          <Field label={t('checks.type')}><Select value={type} onChange={(e) => { const next = e.target.value; setType(next); setServiceState(check?.type === next ? check?.config?.state || 'running' : 'running'); setRuleCfg(serverRuleConfig(next, check?.type === next ? check.config : undefined)); setCfgVal(check?.type === next ? check?.config?.[checkType(next).cfg] || '' : ''); if (next === 'cpuload' && Number(err) <= Number(warn)) { setWarn(80); setErr(90); } if ((next === 'diskspace' || next === 'memory') && Number(err) >= Number(warn)) { setWarn(20); setErr(10); } }}>{Object.keys(CHECK_TYPES).map((k) => <option key={k} value={k}>{checkType(k).label}</option>)}</Select></Field>
           <Field label={t('checks.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={ct.label} /></Field>
         </div>
         <Field label={t('checks.applyTo')}><Combobox value={target} onChange={setTarget} placeholder={t('checks.selectTarget')}
@@ -568,6 +571,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
         {ct.server && <ServerRuleFields type={type} value={ruleCfg} onChange={setRuleCfg} />}
         {type === 'script' && <Field label={t('deploy.shell')}><Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>}
         {ct.cfg && <Field label={ct.cfgLabel}>{ct.cfg === 'script' ? <CodeEditor value={cfgVal} onChange={setCfgVal} shell={shell} minHeight={120} /> : <Input value={cfgVal} onChange={(e) => setCfgVal(e.target.value)} placeholder={ct.cfgPh} className="mono" />}</Field>}
+        {type === 'macservice' && <Field label={t('check.service.state')}><Select value={serviceState} onChange={(e) => setServiceState(e.target.value)}><option value="running">{t('check.service.running')}</option><option value="loaded">{t('check.service.loaded')}</option></Select></Field>}
         {!ct.server && ct.dir !== 'state' && ct.dir !== 'script' && (
           <div className="grid grid-cols-3 gap-3">
             <Field label={t('checks.warn', { unit: ct.unit })}><Input type="number" value={warn} onChange={(e) => setWarn(e.target.value)} /></Field>
@@ -580,7 +584,7 @@ function CheckEditor({ check, onClose, devMap, policies, defaultPolicyId }) {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><Field label={t('checks.failuresToAlert')}><Input type="number" min="1" max="100" value={failureCount} onChange={(e) => setFailureCount(e.target.value)} /></Field><Field label={t('checks.successesToRecover')}><Input type="number" min="1" max="100" value={recoveryCount} onChange={(e) => setRecoveryCount(e.target.value)} /></Field><Field label={t('checks.timeout')}><Input type="number" min="5" value={timeout} onChange={(e) => setTimeoutSec(e.target.value)} /></Field><Field label={t('checks.cooldown')}><Input type="number" min="0" value={cooldown} onChange={(e) => setCooldown(e.target.value)} /></Field>{(ct.dir === 'low' || ct.dir === 'high') && <Field label={t('checks.hysteresis')}><Input type="number" min="0" max="100" step="0.1" value={hysteresis} onChange={(e) => setHysteresis(e.target.value)} /></Field>}</div>
         </div>}
         <label className="flex items-center gap-2.5"><Toggle checked={enabled} onChange={(next) => { setEnabled(next); toast.info(next ? t('checks.willEnable') : t('checks.willDisable')); }} /><span className="text-[13px] text-ink">{t('checks.enabledLabel')}</span></label>
-        <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{ct.server ? t('rules.serverHelp') : ct.dir === 'low' ? t('checks.help.low') : ct.dir === 'high' ? t('checks.help.high') : type === 'ping' ? t('checks.help.ping') : ct.dir === 'state' ? t('checks.help.state') : t('checks.help.script')}</div>
+        <div className="flex items-start gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11.5px] text-muted"><Icon name="info" size={14} className="mt-0.5 shrink-0 text-faint" />{ct.server ? t('rules.serverHelp') : type === 'linuxservice' ? t('check.service.linuxHint') : type === 'macservice' ? t('check.service.macHint') : ct.dir === 'low' ? t('checks.help.low') : ct.dir === 'high' ? t('checks.help.high') : type === 'ping' ? t('checks.help.ping') : ct.dir === 'state' ? t('checks.help.state') : t('checks.help.script')}</div>
       </div>
       <div className="px-5 py-3.5 border-t border-line flex items-center gap-2">{check && can('checks.manage') && <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button>}<div className="flex-1" /><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!target}>{check ? t('checks.save') : t('checks.create')}</Button></div>
     </Modal>

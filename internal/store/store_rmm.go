@@ -1419,7 +1419,8 @@ func (s *Store) ListChecks(ctx context.Context, agentID, policyID string) ([]mod
 // directly plus those from any policy in scope.
 func (s *Store) ChecksForAgent(ctx context.Context, agentID string, siteID, clientID *string) ([]models.Check, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+checkCols+` FROM checks WHERE enabled AND (proposed_by='' OR approved_by<>'') AND (agent_id=$1 OR `+policyFilter+`)`,
+		`SELECT `+checkCols+` FROM checks c WHERE enabled AND (proposed_by='' OR approved_by<>'') AND (agent_id=$1 OR `+policyFilter+`)
+ AND (c.type NOT IN ('linuxservice','macservice') OR EXISTS (SELECT 1 FROM agents a WHERE a.id=$1 AND `+serviceCheckPlatformSQL+`))`,
 		agentID, siteID, clientID)
 	if err != nil {
 		return nil, err

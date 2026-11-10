@@ -14,7 +14,7 @@ alerts it could not turn off.
 
 | Kind | Types | Runs on | One device can have |
 |---|---|---|---|
-| **Agent checks** | `diskspace`, `memory`, `cpuload`, `ping`, `winservice`, `script` | the agent, on its interval | any number; each raises its own alert |
+| **Agent checks** | `diskspace`, `memory`, `cpuload`, `ping`, `winservice`, `linuxservice`, `macservice`, `script` | the agent, on its interval | any number; each raises its own alert |
 | **Server rules** | `connectivity`, `job_failure`, `patch_failure`, `reboot_pending`, `agent_outdated` | the server, from what it already knows | one per type: the one in force (below) |
 
 Both live in the `checks` table, owned by a device (`agent_id`) or a policy

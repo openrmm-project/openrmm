@@ -787,8 +787,26 @@ func (s *Server) transitionAlert(w http.ResponseWriter, r *http.Request, action 
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "alert."+action, id,
-		alertAuditDetail(map[string]any{"note": in.Note, "version": alert.Version}))
+		alertTransitionAuditDetail(alert, in.Note))
 	writeJSON(w, http.StatusOK, alert)
+}
+
+// Snapshot a readable target while preserving the alert UUID as the audit key.
+// The hostname survives device deletion; message names system-only alerts.
+func alertTransitionAuditDetail(alert *models.Alert, note string) []byte {
+	detail := map[string]any{"note": note, "version": alert.Version}
+	if alert.AgentHostname != "" {
+		detail["hostname"] = alert.AgentHostname
+	}
+	if alert.Message != "" {
+		detail["name"] = alert.Message
+	}
+	if alert.AgentSnapshotID != nil {
+		detail["agent"] = *alert.AgentSnapshotID
+	} else if alert.AgentID != nil {
+		detail["agent"] = *alert.AgentID
+	}
+	return alertAuditDetail(detail)
 }
 
 func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {

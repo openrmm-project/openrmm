@@ -12,12 +12,14 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/p1ngu/rmm/internal/protocol"
 )
 
 func SupportedCheckType(checkType string) bool {
 	switch checkType {
 	case CheckDiskSpace, CheckMemory, CheckCPULoad,
-		CheckPing, CheckWinService, CheckScript:
+		CheckPing, CheckWinService, CheckLinuxService, CheckMacService, CheckScript:
 		return true
 	default:
 		return IsServerRule(checkType)
@@ -100,6 +102,13 @@ func ValidateCheck(c *Check) error {
 		if err := json.Unmarshal(c.Config, &cfg); err != nil || strings.TrimSpace(cfg.Service) == "" {
 			return fmt.Errorf("winservice config.service is required")
 		}
+		c.WarnThreshold, c.ErrThreshold = nil, nil
+	case CheckLinuxService, CheckMacService:
+		cfg, err := protocol.NormalizeServiceCheck(c.Type, c.Config)
+		if err != nil {
+			return err
+		}
+		c.Config, _ = json.Marshal(cfg)
 		c.WarnThreshold, c.ErrThreshold = nil, nil
 	case CheckScript:
 		var cfg struct {

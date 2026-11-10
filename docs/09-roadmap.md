@@ -21,7 +21,7 @@ circuit breaker and a global pause ([23-ai-autonomy](23-ai-autonomy.md)).
   (Company/Site/Department/device), enforced on read + write paths and on the
   AI/MCP surface.
 - **Script library** + run-on-device.
-- **Monitoring checks** (diskspace, memory, cpuload, ping, winservice, script)
+- **Monitoring checks** (diskspace, memory, cpuload, ping, winservice, linuxservice, macservice, script)
   with thresholds, history, and a server-driven scheduler.
 - **Scheduled tasks** (interval/daily/weekly) dispatched as pre-approved automation.
 - **Policies** assigned to client/site/department/agent; agents inherit checks/tasks.

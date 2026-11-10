@@ -398,10 +398,29 @@ func (s *Scheduler) dispatchChecks(ctx context.Context, agentID string, siteID, 
 		s.recordError("list checks for "+agentID, err)
 		return
 	}
+	var endpoint *models.Agent
 	for i := range checks {
 		c := &checks[i]
 		if models.IsServerRule(c.Type) {
 			continue // evaluated by the server, never sent to the agent
+		}
+		if models.IsPlatformServiceCheck(c.Type) {
+			if endpoint == nil {
+				endpoint, err = s.store.GetAgent(ctx, agentID)
+				if err != nil {
+					s.recordError("read service check agent "+agentID, err)
+					return
+				}
+			}
+			if !models.ServiceCheckMatchesOS(c.Type, endpoint.OS) {
+				continue
+			}
+			if !models.AgentVersionAtLeast(endpoint.Version, models.MinAgentVersionServiceChecks) {
+				if _, err := s.store.MarkCheckUnknown(ctx, c.ID, agentID, "Requires agent "+models.MinAgentVersionServiceChecks+" or later.", now); err != nil {
+					s.recordError("mark unsupported service check "+c.ID, err)
+				}
+				continue
+			}
 		}
 		last, err := s.store.LastCheckActivity(ctx, c.ID, agentID)
 		if err != nil {
@@ -885,7 +904,7 @@ func computeStatusWithPrevious(c *models.Check, res protocol.CheckResultMsg, pre
 		default:
 			return models.CheckFailing
 		}
-	case models.CheckPing, models.CheckWinService:
+	case models.CheckPing, models.CheckWinService, models.CheckLinuxService, models.CheckMacService:
 		if res.Success {
 			return models.CheckPassing
 		}

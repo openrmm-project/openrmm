@@ -20,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httprate"
+	"github.com/google/uuid"
 
 	"github.com/p1ngu/rmm/internal/ai"
 	"github.com/p1ngu/rmm/internal/auth"
@@ -1853,8 +1854,37 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Legacy alert actions stored only the alert UUID. Add a display-only
+	// label to the response; never alter the immutable detail/hash-chain data.
+	alertTargets := []string{}
+	for _, entry := range entries {
+		if oneOf(entry.Action, "alert.ack", "alert.resolve", "alert.suppress") {
+			if parsed, err := uuid.Parse(entry.Target); err == nil {
+				alertTargets = append(alertTargets, parsed.String())
+			}
+		}
+	}
+	labels, err := s.store.AlertAuditTargetLabels(r.Context(), alertTargets)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type labeledAuditEntry struct {
+		models.AuditEntry
+		TargetLabel string `json:"target_label,omitempty"`
+	}
+	labeled := make([]labeledAuditEntry, 0, len(entries))
+	for _, entry := range entries {
+		label := ""
+		if oneOf(entry.Action, "alert.ack", "alert.resolve", "alert.suppress") {
+			if parsed, err := uuid.Parse(entry.Target); err == nil {
+				label = labels[parsed.String()]
+			}
+		}
+		labeled = append(labeled, labeledAuditEntry{AuditEntry: entry, TargetLabel: label})
+	}
 	out := map[string]any{
-		"entries": entries,
+		"entries": labeled,
 		"total":   total,
 		"limit":   len(entries),
 		"offset":  offset,

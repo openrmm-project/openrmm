@@ -72,7 +72,31 @@ A **check** is owned by an agent (direct) **or** a policy (inherited). Types:
 | `cpuload` | CPU usage % | alert when **above** warn/err |
 | `ping` | host reachable (`config.host`) | fail when unreachable |
 | `winservice` | Windows service running (`config.service`) | fail when not running |
+| `linuxservice` | Linux systemd service (`config.service`) | pass when loaded and active |
+| `macservice` | macOS launchd service (`config.service`, `config.state`) | pass when running, or loaded if requested |
 | `script` | exit code (`config.shell`, `config.script`) | 0=passing, 1=warning, else failing |
+
+Linux and macOS service checks require **agent 0.10.0 or later**. Older
+agents show an unknown check state with an upgrade message; no execution is
+sent to them. In mixed-platform policies, these checks apply only to the
+matching OS, including coverage and inbound results. Fleet alert defaults are
+independent of these check types.
+
+- Linux requires **systemd**. Enter one unit such as `sshd` (normalized to
+  `sshd.service`), `nginx.service`, or `worker@blue.service`. Only literal
+  service names are accepted, with no patterns, paths or commands. A loaded,
+  active unit passes, including active/exited oneshot services.
+- macOS uses **launchd**. A label such as `com.apple.notifyd` defaults to
+  `system/com.apple.notifyd`. Explicit `system/label`, `gui/UID/label` and
+  `user/UID/label` targets are supported. `config.state` defaults to `running`;
+  choose `loaded` for on-demand jobs that need not run continuously. A missing
+  service or inaccessible domain fails rather than being reported healthy.
+
+The agent reads status with fixed argument lists, without a shell. Status
+queries have a ten-second limit and a 64 KiB output budget. Only a status
+summary is returned; launchd output can contain environment secrets and is
+never forwarded to the server or model. These checks do not start, stop,
+enable, or restart services.
 
 What applies to one device — its own checks and tasks plus those its policies
 bring — is listed in the device drawer's **Checks** and **Tasks** tabs, with each

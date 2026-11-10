@@ -8,6 +8,12 @@ tag.
 
 ### Added
 
+- **Linux and macOS service checks:** monitor systemd units and launchd jobs
+  from Checks, with platform-specific policy coverage. Requires agent 0.10.0
+  or later. macOS can require a job to be running or merely loaded for
+  on-demand services. Status queries use fixed arguments and return summaries
+  without exposing launchd environment variables.
+
 - **Configurable alert rules** ([guide](docs/24-alert-rules.md)): manage connectivity, failed jobs and patches, pending reboots and outdated agents in Checks, with policy inheritance, fleet defaults and per-rule email preferences. AI chat and MCP can propose rules for human review; server rules never execute on endpoints. Existing alert defaults stay unchanged on upgrade.
 
 - **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
@@ -41,6 +47,10 @@ tag.
 
 ### Changed
 
+- Remote-access settings now have separate Native, MeshCentral, RustDesk and
+  Default provider tabs. Unsaved edits are preserved across tabs and saved
+  together; stored credentials remain write-only.
+
 - The console asks in its own dialogs, never in the browser's prompt or confirm
   over the tab: silencing an alert (minutes and reason in one dialog),
   resolving one or many, a device's remote id, the remote file browser's new
@@ -53,6 +63,11 @@ tag.
   with job management permission approves it.
 
 ### Fixed
+
+- Alert acknowledgement, resolution and silencing now snapshot a readable
+  target in the audit trail. Older alert actions resolve their target label
+  when the alert still exists, without rewriting immutable audit records.
+  The original target UUID remains available on hover and in CSV exports.
 
 - **An acknowledged alert that kept firing could not be silenced or
   resolved.** Each new occurrence of the same condition, an offline device every

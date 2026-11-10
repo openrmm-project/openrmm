@@ -172,7 +172,7 @@ Migration 028 adds a private monitoring scope timestamp to agents, advances it w
 
 Agent-owned and directly owned check silences are bound to the same scope revision. They do not follow a moved device or reveal their private reasons in the destination. Device-owned silences created before this migration must be reviewed and recreated; global administrators can still see and cancel their historical entries. Client, site, department and policy maintenance retain their configured shared applicability.
 
-Migration 028 is part of this unshipped feature. Do not apply an earlier draft to a persistent environment: a database that already recorded its checksum needs a subsequent migration, not an edited applied migration.
+Migration 028 ships in 0.10.0. A test database that applied an earlier pre-release draft of it must be recreated: an applied migration is never edited, so a changed checksum is refused.
 
 ## Validation
 

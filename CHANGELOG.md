@@ -6,6 +6,8 @@ tag.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-10
+
 ### Added
 
 - **Linux and macOS service checks:** monitor systemd units and launchd jobs
@@ -13,9 +15,7 @@ tag.
   or later. macOS can require a job to be running or merely loaded for
   on-demand services. Status queries use fixed arguments and return summaries
   without exposing launchd environment variables.
-
 - **Configurable alert rules** ([guide](docs/24-alert-rules.md)): manage connectivity, failed jobs and patches, pending reboots and outdated agents in Checks, with policy inheritance, fleet defaults and per-rule email preferences. AI chat and MCP can propose rules for human review; server rules never execute on endpoints. Existing alert defaults stay unchanged on upgrade.
-
 - **Risk-based autonomy for the AI assistant** ([#184](https://github.com/openrmm-project/openrmm/issues/184),
   [docs/23-ai-autonomy.md](docs/23-ai-autonomy.md)). Two kinds of action can now
   run without a person approving at the time, and only for roles granted them:
@@ -49,11 +49,9 @@ tag.
 
 - Notification rule selection now has name/type search and a scroll area for
   five visible rules. Filtering preserves selections outside the visible list.
-
 - Remote-access settings now have separate Native, MeshCentral, RustDesk and
   Default provider tabs. Unsaved edits are preserved across tabs and saved
   together; stored credentials remain write-only.
-
 - The console asks in its own dialogs, never in the browser's prompt or confirm
   over the tab: silencing an alert (minutes and reason in one dialog),
   resolving one or many, a device's remote id, the remote file browser's new
@@ -67,25 +65,15 @@ tag.
 
 ### Fixed
 
-- CSV exports neutralize formula-like text, including hidden and full-width
-  prefixes, before serialization, at the start of a value and after every
-  separator or line break, so a `;` list separator (Excel in pt-BR, de-DE,
-  es-ES) cannot split a value into a cell that starts with a formula. Audit
-  exports use the shared console encoder; stored values, alert UUIDs and
-  immutable audit records are preserved.
 - The default remote provider list no longer offers Terminal, which the
   server always refused as a default (saving failed with "invalid remote
   provider"), and offers RustDesk, which can be the default again while it is
   enabled. GET and PUT `/api/config` share one list; a save that would leave
   RustDesk as the default while it is off is refused.
-- Remote-provider test fixtures now enforce the configuration API's accepted
-  defaults and write-only token behavior, with real-router contract coverage.
-
 - Alert acknowledgement, resolution and silencing now snapshot a readable
   target in the audit trail. Older alert actions resolve their target label
   when the alert still exists, without rewriting immutable audit records.
   The original target UUID remains available on hover and in CSV exports.
-
 - **An acknowledged alert that kept firing could not be silenced or
   resolved.** Each new occurrence of the same condition, an offline device every
   30 seconds or a check on every result, bumped the alert's version, so the
@@ -103,6 +91,19 @@ tag.
   Korean pages included, and its own PowerShell (inventory, patches, device
   queries) writes UTF-8, which loses nothing in any language.
 
+### Security
+
+- **CSV exports could carry spreadsheet formulas from device-reported text.**
+  A hostname or software name an endpoint reports, such as `=1+1`, or `x;=1+1`
+  (which Excel splits into its own cell where the list separator is `;`, as in
+  pt-BR, de-DE or es-ES), reached the inventory and audit exports and the
+  console's Reports and Audit downloads as a cell a spreadsheet would
+  calculate. Exports now put an apostrophe before formula-like text wherever a
+  cell can begin: at the start of a value and after every comma, semicolon,
+  tab or line break, also behind invisible characters and in full-width forms.
+  Stored values, alert UUIDs and audit records are unchanged; only the
+  exported text differs.
+
 ### Dependencies
 
 - `github.com/jackc/pgx/v5` 5.12.0 (GHSA-j38q-h3ph-jjpq, GHSA-95fj-3fxw-g62g)
@@ -113,6 +114,27 @@ tag.
   `channel_binding`. It uses go-jose only through go-oidc, to verify the
   single sign-on provider's ID tokens. `govulncheck` reports nothing before or
   after.
+
+### Upgrade notes
+
+- This release adds database migrations 026 to 028 (AI autonomy, the built-in
+  administrator's autonomy permissions, alert rules).
+- The built-in **administrator** role holds the four autonomy permissions, so
+  an administrator's AI chat and MCP can run read-only device queries without
+  approval right after the upgrade. Scripts run on their own only once an
+  administrator releases them. To keep the previous behavior, pause autonomy in
+  Settings ▸ AI, or give people a custom role without these permissions.
+- Device queries, script parameters and the Linux/macOS service checks need
+  agent **0.10.0**; older agents are refused them until they update.
+- Silences set directly on a device before the upgrade carry no scope record:
+  review and recreate them ([alert rules guide](docs/24-alert-rules.md)).
+  Global administrators can still see and cancel the old entries. Jobs queued
+  before the upgrade raise no failed-job rule alerts. The new server rules other
+  than connectivity stay off until enabled, and connectivity keeps its 3-minute
+  `error` default.
+- CSV exports show an apostrophe before formula-like text, also after a
+  separator inside a value (`x;'=1+1`). Import text columns as text, or use the
+  JSON APIs when the exact source text is needed.
 
 ## [0.9.5] - 2026-11-09
 

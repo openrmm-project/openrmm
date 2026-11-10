@@ -13,12 +13,13 @@ const permissions = ['ai_chat.use', 'alerts.view', 'alerts.manage', 'jobs.view',
 const user = { id: 'user-1', username: 'smoke-admin', role: 'admin', permissions, created_at: '2026-01-01T00:00:00Z' };
 const apiRequests = [];
 const ruleChecks = [];
+const extraChecks = Array.from({ length: 60 }, (_, i) => ({ id: 'sample-rule-' + (i + 1), name: 'Monitor ' + String(i + 1).padStart(2, '0'), type: 'ping', agent_id: 'dev-1', config: { host: '127.0.0.1' }, enabled: true, interval_sec: 300 }));
 const ruleDefaults = Object.fromEntries(['connectivity', 'job_failure', 'patch_failure', 'reboot_pending', 'agent_outdated'].map((type) => [type, { type, config: type === 'connectivity' ? { mode: 'alert', severity: 'error', after_min: 3 } : { mode: 'ignore', severity: 'warning' } }]));
 let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
 
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
-  remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
+  remote: { default: 'native', providers: ['native', 'meshcentral'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
   jobs: { allow_unapproved: false }, server: { version: 'e2e', base_url: 'https://agents.example.invalid' },
 };
 
@@ -51,7 +52,7 @@ const server = createServer(async (req, res) => {
           ruleChecks.push(check);
           return json(res, 201, check);
         }
-        return json(res, 200, { checks: ruleChecks });
+        return json(res, 200, { checks: [...ruleChecks, ...extraChecks] });
       }
       if (pathname === '/api/policies') return json(res, 200, { policies: [] });
       if (pathname === '/api/alert-defaults') return json(res, 200, { defaults: ruleDefaults, can_manage: true });
@@ -62,12 +63,26 @@ const server = createServer(async (req, res) => {
       }
       if (pathname === '/api/me/notifications') {
         if (req.method === 'PUT') rulePrefs = payload.rules;
-        return json(res, 200, { email: 'e2e@example.invalid', delivery_configured: true, subscriptions: [{ event_type: 'agent_offline', enabled: true }], rules: rulePrefs, available_rules: ruleChecks.map(({ id, name, type }) => ({ id, name, type })) });
+        return json(res, 200, { email: 'e2e@example.invalid', delivery_configured: true, subscriptions: [{ event_type: 'agent_offline', enabled: true }], rules: rulePrefs, available_rules: [...ruleChecks, ...extraChecks].map(({ id, name, type }) => ({ id, name, type })) });
       }
-      if (pathname === '/api/config') return json(res, 200, remoteConfig);
+      if (pathname === '/api/config') {
+        if (req.method === 'PUT') {
+          if (payload?.remote?.default && !['native', 'meshcentral'].includes(payload.remote.default)) return json(res, 400, { error: 'invalid remote provider' });
+          const { meshcentral_token_key, ...remote } = payload.remote || {};
+          Object.assign(remoteConfig.remote, remote);
+          if (meshcentral_token_key?.trim()) remoteConfig.remote.meshcentral_token_set = true;
+        }
+        return json(res, 200, remoteConfig);
+      }
       if (pathname === '/api/devices') return json(res, 200, { devices: [{ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z' }] });
       if (pathname === '/api/jobs') return json(res, 200, { jobs: [] });
-      if (pathname === '/api/audit') return json(res, 200, { entries: [] });
+      if (pathname === '/api/audit') {
+        const entries = Number(url.searchParams.get('limit')) >= 50 ? [
+          { id: 'audit-snapshot', actor: user.id, action: 'alert.ack', target: 'alert-target-1', detail: { hostname: '=1+1' }, created_at: '2026-11-10T12:00:00Z' },
+          { id: 'audit-legacy', actor: user.id, action: 'alert.resolve', target: 'alert-target-2', detail: { version: 2 }, target_label: 'ORDINARY-HOST', created_at: '2026-11-10T12:00:00Z' },
+        ] : [];
+        return json(res, 200, { entries, total: entries.length });
+      }
       if (pathname === '/api/alerts') return json(res, 200, { alerts: [] });
       if (pathname === '/api/sites') return json(res, 200, { sites: [] });
       if (pathname === '/api/clients') return json(res, 200, { clients: [] });
@@ -239,6 +254,23 @@ async function alertRulesBrowserFlow() {
   const rule = [...labels].find((el) => el.textContent.includes('Device connectivity'));
   if (!rule) throw new Error('Created rule missing from email preferences');
   rule.querySelector('button').click();
+  const list = await wait(() => document.getElementById('notification-custom-rules'));
+  const rows = list.querySelectorAll('label');
+  if (rows.length < 60 || list.scrollHeight <= list.clientHeight) throw new Error('Large rule list must scroll');
+  if (list.clientHeight > rows[0].getBoundingClientRect().height * 5 + 2) throw new Error('More than five rule rows visible');
+  const search = card.querySelector('input[aria-controls="notification-custom-rules"]');
+  const filter = (value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, value);
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    search.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  filter('MONITOR 60');
+  await wait(() => list.querySelectorAll('label').length === 1);
+  list.querySelector('label button').click();
+  filter('no matching monitor');
+  await wait(() => list.querySelectorAll('label').length === 0);
+  filter('');
+  await wait(() => list.querySelectorAll('label').length > 60);
   (await wait(() => button('Save', card))).click();
   await wait(() => document.body.textContent.includes('Notification settings saved'));
   document.documentElement.dataset.alertRulesE2e = 'passed';
@@ -290,7 +322,7 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   change(panel().querySelector('select'), 'on');
   tab('default').click();
   await wait(() => panel().id === 'remote-config-panel-default');
-  change(panel().querySelector('select'), 'rustdesk');
+  change(panel().querySelector('select'), 'meshcentral');
   tab('native').click();
   await wait(() => panel().id === 'remote-config-panel-native');
   change(panel().querySelector('select'), 'on');
@@ -305,6 +337,26 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   await wait(() => document.body.textContent.includes('Configuration saved'));
   document.documentElement.dataset.servicesSettingsE2e = 'passed';
   return true;
+}
+
+async function auditCsvBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Audit CSV flow timed out');
+  };
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Audit log'))).click();
+  const exportButton = await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Export CSV') && !el.disabled));
+  const original = URL.createObjectURL;
+  let download;
+  URL.createObjectURL = (blob) => { download = blob.text(); return original.call(URL, blob); };
+  try {
+    exportButton.click();
+    await wait(() => download);
+    const csv = await download;
+    if (!csv.includes('"\'=1+1","alert-target-1"') || !csv.includes('"ORDINARY-HOST","alert-target-2"')) throw new Error('CSV guard or legitimate target missing');
+    document.documentElement.dataset.auditCsvE2e = 'passed';
+    return true;
+  } finally { URL.createObjectURL = original; }
 }
 
 function assertBrowser(result, pattern) {
@@ -356,7 +408,7 @@ try {
     assert.equal(created?.payload.config.mode, 'ignore');
     assert.equal(created?.payload.enabled, true);
     assert.equal(ruleDefaults.connectivity.config.after_min, 30);
-    assert.deepEqual(rulePrefs, { mode: 'selected', include_defaults: false, check_ids: ['rule-e2e'] });
+    assert.deepEqual(rulePrefs, { mode: 'selected', include_defaults: false, check_ids: ['rule-e2e', 'sample-rule-60'] });
     const settingsFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: servicesAndRemoteSettingsBrowserFlow });
     assertBrowser(settingsFlow, /data-services-settings-e2e="passed"/);
     for (const [type, service, state] of [['linuxservice', 'sshd.service', undefined], ['macservice', 'system/com.apple.notifyd', 'loaded']]) {
@@ -367,12 +419,17 @@ try {
       assert.equal('warn_threshold' in body, false);
     }
     const saved = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/config')?.payload;
-    assert.equal(saved?.remote.default, 'rustdesk');
+    assert.equal(saved?.remote.default, 'meshcentral');
     assert.equal(saved?.remote.meshcentral_url, 'https://updated-mesh.example.invalid');
     assert.equal(saved?.remote.meshcentral_token_key, 'e2e-token-placeholder');
     assert.equal(saved?.remote.rustdesk_enabled, true);
     assert.equal(saved?.remote.guest_access, true);
     assert.equal(saved?.jobs.allow_unapproved, false);
+    assert.equal(remoteConfig.remote.default, 'meshcentral');
+    assert.equal(remoteConfig.remote.rustdesk_enabled, true);
+    assert.equal('meshcentral_token_key' in remoteConfig.remote, false, 'GET config stays write-only');
+    const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });
+    assertBrowser(csvFlow, /data-audit-csv-e2e="passed"/);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'expire-token'), '401 scenario must exercise an authenticated request');
   }

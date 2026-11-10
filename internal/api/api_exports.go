@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/p1ngu/rmm/internal/exports"
 	"github.com/p1ngu/rmm/internal/models"
@@ -89,8 +90,17 @@ func (c *spreadsheetSafeCSV) Write(record []string) error {
 }
 
 func spreadsheetSafeCell(cell string) string {
-	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+	// Match the console policy, including format characters such as BOM/ZWSP
+	// and full-width formula prefixes. Never change the stored source value.
+	probe := strings.TrimLeftFunc(cell, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) })
+	if strings.HasPrefix(cell, "\t") || strings.HasPrefix(cell, "\r") || strings.HasPrefix(cell, "\n") {
 		return "'" + cell
+	}
+	for _, r := range probe {
+		if strings.ContainsRune("=+-@＝＋－＠", r) {
+			return "'" + cell
+		}
+		break
 	}
 	return cell
 }

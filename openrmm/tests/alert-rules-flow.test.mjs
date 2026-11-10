@@ -161,3 +161,31 @@ test('editing a macOS service retains its loaded state', async () => {
   await ui.find(tree, (n) => n.type === 'Button' && n.children.includes('checks.save'))[0].props.onClick();
   assert.deepEqual(calls[0][1].config, { service: 'system/com.example.worker', state: 'loaded' });
 });
+
+
+test('notification rule search handles large lists without dropping hidden selections', async () => {
+  const calls = [];
+  const prefs = { email: 'operator@example.invalid', subscriptions: [], rules: { mode: 'selected', include_defaults: true, check_ids: ['r1', 'r60'] }, available_rules: Array.from({ length: 60 }, (_, i) => ({ id: 'r' + (i + 1), name: 'Monitor ' + String(i + 1).padStart(2, '0'), type: 'connectivity' })) };
+  const ui = harness({ useQuery: () => ({ data: prefs, refetch() {} }), api: { updateMyNotifications: async (body) => calls.push(data(body)) } });
+  ui.render('NotificationsCard');
+  let tree = ui.render('NotificationsCard');
+  const list = () => ui.find(tree, (n) => n.props?.id === 'notification-custom-rules')[0];
+  assert.ok(list(), 'rules have a bounded scroll region');
+  assert.ok(list().props.className.includes('max-h-60'));
+  assert.equal(ui.find(list(), (n) => n.type === 'label' && n.props.className.includes('h-12')).length, 60);
+  const search = () => ui.find(tree, (n) => n.type === 'Input' && n.props['aria-controls'] === 'notification-custom-rules')[0];
+  search().props.onChange({ target: { value: 'monitor 59' } });
+  tree = ui.render('NotificationsCard');
+  assert.equal(ui.find(list(), (n) => n.type === 'Toggle').length, 1);
+  ui.find(list(), (n) => n.type === 'Toggle')[0].props.onChange(true);
+  tree = ui.render('NotificationsCard');
+  search().props.onChange({ target: { value: 'no such rule' } });
+  tree = ui.render('NotificationsCard');
+  assert.equal(ui.find(list(), (n) => n.type === 'Toggle').length, 0);
+  assert.ok(ui.find(tree, (n) => n.children?.includes('notify.rulesNoMatches')).length > 0);
+  await ui.find(tree, (n) => n.type === 'Button' && n.children.includes('action.save'))[0].props.onClick();
+  assert.deepEqual(calls[0].rules.check_ids, ['r1', 'r60', 'r59']);
+  search().props.onChange({ target: { value: 'CHECK.TYPE.CONNECTIVITY' } });
+  tree = ui.render('NotificationsCard');
+  assert.equal(ui.find(list(), (n) => n.type === 'Toggle').length, 60, 'search uses the translated type label too');
+});

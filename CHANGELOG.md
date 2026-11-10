@@ -47,6 +47,9 @@ tag.
 
 ### Changed
 
+- Notification rule selection now has name/type search and a scroll area for
+  five visible rules. Filtering preserves selections outside the visible list.
+
 - Remote-access settings now have separate Native, MeshCentral, RustDesk and
   Default provider tabs. Unsaved edits are preserved across tabs and saved
   together; stored credentials remain write-only.
@@ -63,6 +66,15 @@ tag.
   with job management permission approves it.
 
 ### Fixed
+
+- CSV exports neutralize formula-like text, including hidden and full-width
+  prefixes, before serialization. Audit exports use the shared console encoder;
+  stored values, alert UUIDs and immutable audit records are preserved.
+- The default remote provider list no longer offers Terminal, which the
+  server always refused as a default (saving failed with "invalid remote
+  provider"). GET and PUT `/api/config` now share one list.
+- Remote-provider test fixtures now enforce the configuration API's accepted
+  defaults and write-only token behavior, with real-router contract coverage.
 
 - Alert acknowledgement, resolution and silencing now snapshot a readable
   target in the audit trail. Older alert actions resolve their target label

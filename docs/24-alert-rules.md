@@ -112,6 +112,11 @@ The event types are the same (`check_failed`, `check_recovered`,
 - **Selected rules**: only alerts from the checks and rules picked in Settings ▸
   Email notifications, plus the fleet defaults when "Built-in defaults" is ticked.
 
+The custom-rule picker shows up to five rows in a scroll area, with a search
+by rule name or translated check type. Searching narrows only the visible list;
+selections outside the filter remain selected and are saved together. The
+built-in-defaults switch stays outside the scroll area.
+
 `notification_rule_filters (user_id, mode, include_defaults)` and
 `notification_rule_selections (user_id, check_id)` hold the choice. Scope and
 the `alerts.view` permission still apply on top of it: no choice can reveal a

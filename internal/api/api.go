@@ -679,7 +679,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 			"autonomy_paused": eff.AIAutonomyPaused,
 		},
 		"remote": map[string]any{
-			"providers":                  []string{"native", "terminal", "meshcentral"},
+			"providers":                  defaultRemoteProviders,
 			"default":                    eff.RemoteDefaultProvider,
 			"meshcentral_url":            eff.MeshCentralURL,
 			"meshcentral_user":           eff.MeshCentralUser,
@@ -744,7 +744,7 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, "native", "meshcentral") {
+	if in.Remote.DefaultProvider != "" && !oneOf(in.Remote.DefaultProvider, defaultRemoteProviders...) {
 		writeErr(w, http.StatusBadRequest, "invalid remote provider")
 		return
 	}
@@ -778,6 +778,12 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "config.update", "app_settings", settings.AuditDetail(changed))
 	s.getConfig(w, r)
 }
+
+// defaultRemoteProviders is what PUT /api/config accepts as the default remote
+// provider, and what GET offers for it: the console must never offer a choice
+// the server refuses. The terminal is a separate device sub-permission, never
+// the default remote session.
+var defaultRemoteProviders = []string{"native", "meshcentral"}
 
 func oneOf(v string, allowed ...string) bool {
 	for _, a := range allowed {

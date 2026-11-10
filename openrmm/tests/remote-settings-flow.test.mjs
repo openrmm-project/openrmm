@@ -8,13 +8,15 @@ const source = await readFile(new URL('../src/screens-rmm2.jsx', import.meta.url
 const code = source.slice(source.indexOf('function ConfigItem('), source.indexOf('// SMTPPanel configures'));
 const config = {
   ai: { provider: 'openai-compatible', base_url: 'https://ai.example.invalid/v1', model: 'test', configured: true, api_key_set: true },
-  remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'shared-admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
+  remote: { default: 'native', providers: ['native', 'meshcentral'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'shared-admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
   jobs: { allow_unapproved: false }, server: { version: 'test', base_url: 'https://agents.example.invalid' },
 };
 
 function harness(canManage = true, failSave = false) {
   const states = [], deps = [], effects = [], calls = [], errors = [];
   let cursor = 0;
+  let currentConfig = JSON.parse(JSON.stringify(config));
+  let meshToken = 'stored-test-token';
   const sandbox = {
     React: { createElement(type, props, ...children) {
       return typeof type === 'function' ? type({ ...props, children }) : { type, props: props || {}, children };
@@ -28,9 +30,17 @@ function harness(canManage = true, failSave = false) {
       const i = cursor++;
       if (!deps[i] || values.some((v, j) => v !== deps[i][j])) { effects.push(fn); deps[i] = values; }
     },
-    useQuery: () => ({ data: config }), useAuth: () => ({ can: () => canManage }),
+    useQuery: () => ({ data: currentConfig }), useAuth: () => ({ can: () => canManage }),
     useToast: () => ({ success() {}, error(...args) { errors.push(args); } }),
-    api: { async updateConfig(body) { calls.push(JSON.parse(JSON.stringify(body))); if (failSave) throw new Error('save failed'); } },
+    api: { async updateConfig(body) {
+      calls.push(JSON.parse(JSON.stringify(body)));
+      if (failSave) throw new Error('save failed');
+      if (body.remote.default && !['native', 'meshcentral'].includes(body.remote.default)) throw new Error('invalid remote provider');
+      const { meshcentral_token_key, ...remote } = body.remote;
+      if (meshcentral_token_key.trim()) meshToken = meshcentral_token_key;
+      currentConfig = { ...currentConfig, remote: { ...currentConfig.remote, ...remote, meshcentral_token_set: !!meshToken } };
+      return currentConfig;
+    } },
     t: (key) => key, cx: (...v) => v.filter(Boolean).join(' '),
     ...Object.fromEntries(['Card', 'Field', 'Select', 'Input', 'Button', 'Icon', 'StatusPill', 'Skeleton'].map((k) => [k, k])),
   };
@@ -46,7 +56,7 @@ function harness(canManage = true, failSave = false) {
   const render = () => { cursor = 0; tree = sandbox.ConfigPanel(); effects.splice(0).forEach((fn) => fn()); return tree; };
   render(); render();
   return {
-    calls, errors, render, find,
+    calls, errors, render, find, stored: () => JSON.parse(JSON.stringify(currentConfig)), token: () => meshToken,
     tabs: () => find(tree, (n) => n.props.role === 'tab'),
     panel: () => find(tree, (n) => n.props.role === 'tabpanel' && !n.props.hidden)[0],
     selectTab(key) { find(tree, (n) => n.props.id === 'remote-config-tab-' + key)[0].props.onClick(); render(); },
@@ -79,15 +89,20 @@ test('remote settings separate provider fields and preserve unsaved values when 
   ui.change('RustDesk', 'on');
   ui.selectTab('default');
   assert.deepEqual(labels(), ['cfg.defaultProvider']);
-  ui.change('cfg.defaultProvider', 'rustdesk');
+  // Only the defaults the server accepts are offered: never Terminal.
+  assert.deepEqual(ui.find(ui.panel(), (n) => n.type === 'option').map((n) => n.props.value), ['native', 'meshcentral']);
+  ui.change('cfg.defaultProvider', 'meshcentral');
   ui.selectTab('meshcentral');
   assert.equal(ui.find(ui.panel(), (n) => n.type === 'Input' && n.props.type === 'password')[0].props.value, 'test-token-not-a-real-secret');
   assert.equal(ui.calls.length, 0, 'switching tabs makes no write request');
   await ui.save();
-  assert.deepEqual(ui.calls[0].remote, { ...Object.fromEntries(Object.entries(config.remote).filter(([k]) => !['providers', 'meshcentral_token_set'].includes(k))), default: 'rustdesk', meshcentral_url: 'https://new-mesh.example.invalid', meshcentral_token_key: 'test-token-not-a-real-secret', meshcentral_shared_account: false, rustdesk_enabled: true, guest_access: true });
+  assert.deepEqual(ui.calls[0].remote, { ...Object.fromEntries(Object.entries(config.remote).filter(([k]) => !['providers', 'meshcentral_token_set'].includes(k))), default: 'meshcentral', meshcentral_url: 'https://new-mesh.example.invalid', meshcentral_token_key: 'test-token-not-a-real-secret', meshcentral_shared_account: false, rustdesk_enabled: true, guest_access: true });
   assert.equal(ui.find(ui.panel(), (n) => n.type === 'Input' && n.props.type === 'password')[0].props.value, '');
   assert.equal(ui.calls[0].ai.api_key, '');
   assert.equal(ui.calls[0].jobs.allow_unapproved, false);
+  assert.equal(ui.stored().remote.default, 'meshcentral');
+  assert.equal(ui.stored().remote.rustdesk_enabled, true);
+  assert.equal(ui.token(), 'test-token-not-a-real-secret');
 });
 
 test('remote settings retain tokens on failed save and leave existing token untouched on an ordinary save', async () => {
@@ -130,5 +145,24 @@ test('provider tabs support keyboard navigation and expose consistent accessible
     assert.equal(ui.tabs().filter((n) => n.props.tabIndex === 0).length, 1);
     assert.equal(selected.props['aria-controls'], ui.panel().props.id);
     assert.equal(ui.panel().props['aria-labelledby'], selected.props.id);
+  }
+});
+
+
+test('configuration fixtures reject unsupported defaults without applying other pending edits', async () => {
+  for (const provider of ['terminal', 'rustdesk']) {
+    const ui = harness();
+    ui.selectTab('meshcentral');
+    ui.change('cfg.meshUrl', 'https://must-not-persist.example.invalid');
+    ui.change('cfg.meshToken', 'pending-test-token');
+    ui.selectTab('default');
+    ui.change('cfg.defaultProvider', provider);
+    await ui.save();
+    assert.equal(ui.errors.length, 1);
+    assert.equal(ui.stored().remote.default, 'native');
+    assert.equal(ui.stored().remote.meshcentral_url, config.remote.meshcentral_url);
+    assert.equal(ui.token(), 'stored-test-token');
+    ui.selectTab('meshcentral');
+    assert.equal(ui.find(ui.panel(), (n) => n.type === 'Input' && n.props.type === 'password')[0].props.value, 'pending-test-token');
   }
 });

@@ -6,6 +6,8 @@ import { transformSync } from 'esbuild';
 
 const source = await readFile(new URL('../src/screens-jobs.jsx', import.meta.url), 'utf8');
 const code = source.slice(source.indexOf('function AuditScreen('), source.indexOf('window.JobsScreen ='));
+const uiSource = await readFile(new URL('../src/ui.jsx', import.meta.url), 'utf8');
+const csvCode = uiSource.slice(uiSource.indexOf('function csvEscape('), uiSource.indexOf('// downloadText saves'));
 const id = '47e4ba8d-56e9-41cf-91bb-daa70e9371eb';
 function render(entries) {
   const downloads = [];
@@ -23,7 +25,7 @@ function render(entries) {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(transformSync(code, { loader: 'jsx' }).code, sandbox);
+  vm.runInContext(csvCode + transformSync(code, { loader: 'jsx' }).code, sandbox);
   const tree = sandbox.AuditScreen();
   const find = (n, fn, out = []) => {
     if (!n || typeof n !== 'object') return out;
@@ -51,4 +53,22 @@ test('acknowledged alert audit targets use snapshot or legacy label and retain t
   assert.equal(ui.downloads.length, 1);
   assert.ok(ui.downloads[0][1].includes('"LAB-WINDOWS","' + id + '"'));
   assert.ok(ui.downloads[0][1].includes('"ORIGINAL-HOST","' + id + '"'));
+});
+
+
+test('audit CSV guards snapshots, legacy labels and other columns without mutating the audit entry', async () => {
+  const entries = [
+    { id: 'snapshot', action: 'alert.ack', target: id, actor: '=1+1', detail: { hostname: '=1+1' } },
+    { id: 'legacy', action: 'alert.resolve', target: id, detail: { version: 2 }, target_label: '  @SUM(A1)' },
+    { id: 'ordinary', action: 'alert.suppress', target: id, detail: { hostname: 'WINDOWS-TEST' } },
+  ];
+  const before = JSON.stringify(entries);
+  const ui = render(entries);
+  await ui.find(ui.tree, (n) => n.type === 'Button' && n.props.icon === 'download')[0].props.onClick();
+  const csv = ui.downloads[0][1];
+  assert.ok(csv.includes('"\'=1+1","' + id + '"'));
+  assert.ok(csv.includes('"\'  @SUM(A1)","' + id + '"'));
+  assert.ok(csv.includes('"WINDOWS-TEST","' + id + '"'));
+  assert.ok(csv.includes(',"\'=1+1",'), 'actor text is guarded too');
+  assert.equal(JSON.stringify(entries), before, 'only the exported representation changes');
 });

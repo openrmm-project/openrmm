@@ -584,10 +584,21 @@ function Sparkline({ data, width = 160, height = 36, colorFn }) {
 }
 
 /* ------------------------------ csv / download ---------------------------- */
-// csvEscape quotes a value when it contains a comma, quote or newline.
-function csvEscape(v) { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
-// toCSV builds a CRLF-joined CSV string from a header row + data rows.
-function toCSV(headers, rows) { return [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n'); }
+// CSV is for spreadsheet viewing: prefix formula-like text with an apostrophe
+// before quoting, matching the server export policy. Inspect through leading
+// whitespace/control/format characters without changing the original value.
+// Typed numbers stay numeric. Only the exported representation is guarded.
+function csvEscape(v, alwaysQuote = false) {
+  const text = v == null ? '' : String(v);
+  const probe = text.replace(/^[\p{White_Space}\p{Cc}\p{Cf}]*/u, '');
+  const guarded = typeof v !== 'number' && (/^[=+\-@＝＋－＠]/u.test(probe) || /^[\t\r\n]/.test(text));
+  const cell = guarded ? "'" + text : text;
+  return alwaysQuote || guarded || /[",;\r\n]/.test(cell) ? '"' + cell.replace(/"/g, '""') + '"' : cell;
+}
+// Audit exports retain their historical all-fields-quoted representation.
+function toCSV(headers, rows, alwaysQuote = false) {
+  return [headers, ...rows].map((row) => row.map((value) => csvEscape(value, alwaysQuote)).join(',')).join('\r\n');
+}
 // downloadText saves text as a file from the browser — no server/endpoint write.
 function downloadText(name, text, mime) {
   const url = URL.createObjectURL(new Blob([text], { type: (mime || 'text/plain') + ';charset=utf-8' }));

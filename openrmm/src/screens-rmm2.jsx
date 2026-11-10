@@ -1595,6 +1595,7 @@ function NotificationsCard() {
   const [rulePrefs, setRulePrefs] = useState(null);
   const [subs, setSubs] = useState(null);   // null until loaded: event_type -> enabled
   const [busy, setBusy] = useState(false);
+  const [ruleSearch, setRuleSearch] = useState('');
   const data = prefsQ.data;
   const email = data?.email || '';
   const [sending, setSending] = useState(false);
@@ -1624,6 +1625,10 @@ function NotificationsCard() {
     } catch (e) { toast.error(t('notify.saveFailed'), e.message); }
     finally { setBusy(false); }
   };
+
+  const availableRules = data?.available_rules || [];
+  const query = ruleSearch.trim().toLocaleLowerCase();
+  const matchingRules = availableRules.filter((item) => !query || (item.name + ' ' + window.checkType(item.type).label).toLocaleLowerCase().includes(query));
 
   if (!data || subs === null || rulePrefs === null) return <Skeleton className="h-56 w-full max-w-2xl rounded-2xl mb-5" />;
   return (
@@ -1664,10 +1669,17 @@ function NotificationsCard() {
         <div className="text-[13px] font-semibold text-ink">{t('notify.rulesTitle')}</div>
         <Select value={rulePrefs.mode} onChange={(e) => setRulePrefs((prev) => ({ ...prev, mode: e.target.value }))}><option value="all">{t('notify.rulesAll')}</option><option value="selected">{t('notify.rulesSelected')}</option></Select>
         <p className="text-[11.5px] text-muted">{t('notify.rulesHint')}</p>
-        {rulePrefs.mode === 'selected' && <div className="max-h-64 overflow-y-auto space-y-2">
+        {rulePrefs.mode === 'selected' && <div className="space-y-3">
           <label className="flex items-center gap-2 text-[12px]"><Toggle checked={rulePrefs.include_defaults} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, include_defaults: value }))} />{t('notify.rulesDefaults')}</label>
-          {(data.available_rules || []).map((item) => <label key={item.id} className="flex items-center gap-2 text-[12px]"><Toggle checked={(rulePrefs.check_ids || []).includes(item.id)} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, check_ids: value ? [...new Set([...(prev.check_ids || []), item.id])] : (prev.check_ids || []).filter((id) => id !== item.id) }))} /><span>{item.name} · {window.checkType(item.type).label}</span></label>)}
-          {!(data.available_rules || []).length && <p className="text-[11.5px] text-faint">{t('notify.rulesNone')}</p>}
+          {availableRules.length > 0 && <>
+            <div className="relative"><Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" /><Input value={ruleSearch} onChange={(e) => setRuleSearch(e.target.value)} placeholder={t('notify.rulesSearch')} aria-label={t('notify.rulesSearch')} aria-controls="notification-custom-rules" className="pl-9" /></div>
+            <div className="text-[11.5px] text-faint" aria-live="polite">{t('notify.rulesCount', { shown: matchingRules.length, total: availableRules.length })}</div>
+            <div id="notification-custom-rules" role="region" aria-label={t('notify.rulesTitle')} tabIndex={0} className="max-h-60 overflow-y-auto overscroll-contain scroll-area rounded-lg border border-line">
+              {matchingRules.map((item) => <label key={item.id} className="h-12 px-3 flex items-center gap-3 text-[12px] border-b border-line last:border-0"><Toggle checked={(rulePrefs.check_ids || []).includes(item.id)} disabled={!email} onChange={(value) => setRulePrefs((prev) => ({ ...prev, check_ids: value ? [...new Set([...(prev.check_ids || []), item.id])] : (prev.check_ids || []).filter((id) => id !== item.id) }))} /><span className="min-w-0 flex-1"><span className="block truncate text-ink" title={item.name}>{item.name}</span><span className="block truncate text-[11px] text-muted">{window.checkType(item.type).label}</span></span></label>)}
+              {!matchingRules.length && <p className="p-3 text-[11.5px] text-faint">{t('notify.rulesNoMatches')}</p>}
+            </div>
+          </>}
+          {!availableRules.length && <p className="text-[11.5px] text-faint">{t('notify.rulesNone')}</p>}
         </div>}
       </div>
       <div className="mt-4 space-y-1.5">

@@ -33,3 +33,16 @@ func TestSpreadsheetSafeCSVNeutralisesFormulas(t *testing.T) {
 		}
 	}
 }
+
+func TestSpreadsheetSafeCSVHandlesHiddenAndUnicodeFormulaPrefixes(t *testing.T) {
+	for _, value := range []string{" =1", "\n=1", "\ufeff+1", "\u200b@SUM(A1)", "\x00-1", "\u0085=1", "＝1", "＋1", "－1", "＠SUM(A1)"} {
+		if got := spreadsheetSafeCell(value); got != "'"+value {
+			t.Errorf("unguarded cell %q", value)
+		}
+	}
+	for _, value := range []string{"WINDOWS-TEST", "São Paulo", "a=b", "a,b", "a\nb", " plain text", "'=1"} {
+		if got := spreadsheetSafeCell(value); got != value {
+			t.Errorf("ordinary text changed: %q", value)
+		}
+	}
+}

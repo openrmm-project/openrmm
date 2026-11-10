@@ -153,6 +153,11 @@ type JobMsg struct {
 	// splices it into the script text. Agents before 0.10.0 ignore them, which
 	// is why the server refuses such jobs for them.
 	Params map[string]string `json:"params,omitempty"`
+	// Vars are script variables and built-in device context. The agent sets
+	// each one as an environment variable of that exact name and never splices
+	// it into the script text. Agents before 0.11.0 ignore the field.
+	Vars       map[string]string `json:"vars,omitempty"`
+	SecretVars []string          `json:"secret_vars,omitempty"`
 }
 
 // JobCancelMsg asks the agent to kill a running job's process.

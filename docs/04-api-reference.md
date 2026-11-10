@@ -597,3 +597,10 @@ See [17-mcp-oauth](17-mcp-oauth.md).
 |------|-------------|
 | `/ws/agent` | Agent connection (see [05-agent-protocol](05-agent-protocol.md)) |
 | `/ws/remote?session=&role=agent\|viewer` | Native remote relay. Agent sends `Authorization: Remote-Agent <ticket>`; viewer sends its one-time ticket and bearer identity in `Sec-WebSocket-Protocol`. Tickets are never accepted in a viewer URL. In split ingress, the agent uses the agents origin and the browser uses the console origin. |
+
+## Script variables
+
+See [Script variables and secrets](25-script-variables.md#api) for the authenticated
+variable definition/value endpoints, scope inheritance, write-only secrets, and
+`scripts.variables` permission. Library scripts accept a `variables` array of names;
+values are resolved at dispatch and are never returned on the script or job.

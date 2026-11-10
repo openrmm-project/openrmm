@@ -34,6 +34,7 @@ import (
 	gnet "github.com/shirou/gopsutil/v3/net"
 
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/scriptvars"
 )
 
 // agentVersion is overwritten at release build time from the tag (see
@@ -41,7 +42,7 @@ import (
 // release whose capabilities this source actually has: the server gates features
 // on this string, so an agent that under-reports is refused work it can do, and
 // one that over-reports is handed work it cannot.
-var agentVersion = "0.10.0"
+var agentVersion = "0.11.0"
 
 type state struct {
 	AgentID               string `json:"agent_id"`
@@ -489,6 +490,7 @@ var runJobScript = runScriptCtx
 // runJobScriptEnv runs a released script with its parameters in the
 // environment. A variable for tests, like runJobScript.
 var runJobScriptEnv = runScriptCtxEnv
+var runJobScriptVars = runScriptCtxEnvSecrets
 
 func (a *agent) runJob(job protocol.JobMsg) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -522,13 +524,28 @@ func (a *agent) runJob(job protocol.JobMsg) {
 	case job.Type == protocol.JobTypeDeviceQuery:
 		log.Printf("running job %s (device query)", job.JobID)
 		exitCode, stdout, stderr = runDeviceQuery(ctx, job.Script)
-	case len(job.Params) > 0:
-		log.Printf("running job %s (%s, %d parameters)", job.JobID, job.Shell, len(job.Params))
+	case len(job.Params) > 0 || len(job.Vars) > 0:
+		log.Printf("running job %s (%s, %d parameters, %d variables)", job.JobID, job.Shell, len(job.Params), len(job.Vars))
 		env, err := paramEnv(job.Shell, job.Params)
+		if err == nil {
+			var extra []string
+			extra, err = varEnv(job.Shell, job.Vars)
+			env = append(env, extra...)
+		}
 		if err != nil {
 			exitCode, stderr = 2, err.Error()
 		} else {
-			exitCode, stdout, stderr = runJobScriptEnv(ctx, job.Shell, job.Script, env)
+			if len(job.Vars) > 0 {
+				var secrets []string
+				for _, name := range job.SecretVars {
+					if value, ok := job.Vars[name]; ok {
+						secrets = append(secrets, value)
+					}
+				}
+				exitCode, stdout, stderr = runJobScriptVars(ctx, job.Shell, job.Script, env, secrets)
+			} else {
+				exitCode, stdout, stderr = runJobScriptEnv(ctx, job.Shell, job.Script, env)
+			}
 		}
 	default:
 		log.Printf("running job %s (%s)", job.JobID, job.Shell)
@@ -540,6 +557,14 @@ func (a *agent) runJob(job protocol.JobMsg) {
 			exitCode = -1
 		}
 	}
+	var secrets []string
+	for _, name := range job.SecretVars {
+		if value, ok := job.Vars[name]; ok {
+			secrets = append(secrets, value)
+		}
+	}
+	stdout = scriptvars.Redact(stdout, secrets)
+	stderr = scriptvars.Redact(stderr, secrets)
 	a.reportResult(protocol.JobResultMsg{
 		JobID: job.JobID, ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Success: exitCode == 0, NotStarted: notStarted,
 	})
@@ -1197,12 +1222,25 @@ func runScriptCtx(ctx context.Context, shell, script string) (int, string, strin
 // runScriptCtxEnv is runScriptCtx with extra environment variables: a released
 // script's parameters, which reach it as data and never as script text.
 func runScriptCtxEnv(ctx context.Context, shell, script string, extraEnv []string) (int, string, string) {
+	return runScriptCtxEnvSecrets(ctx, shell, script, extraEnv, nil)
+}
+
+func runScriptCtxEnvSecrets(ctx context.Context, shell, script string, extraEnv, secretValues []string) (int, string, string) {
 	var cmd *exec.Cmd
 	switch shell {
 	case "powershell":
 		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 	case "cmd":
-		cmd = exec.CommandContext(ctx, "cmd", "/C", script)
+		if len(extraEnv) > 0 {
+			path, cleanup, err := writeTempScript("@echo off\r\n"+script, ".cmd")
+			if err != nil {
+				return 2, "", "cannot stage script"
+			}
+			defer cleanup()
+			cmd = exec.CommandContext(ctx, "cmd", "/D", "/Q", "/C", path)
+		} else {
+			cmd = exec.CommandContext(ctx, "cmd", "/C", script)
+		}
 	case "sh":
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	case "bash":
@@ -1265,10 +1303,13 @@ func runScriptCtxEnv(ctx context.Context, shell, script string, extraEnv []strin
 			stderr.WriteString("\n" + err.Error())
 		}
 	}
-	// Cap captured output to avoid OOM / DB bloat from runaway scripts.
+	// Redact only secret values, before truncation and the durable outbox.
+	cleanOut := scriptvars.Redact(decodeShellOutput(shell, stdout.Bytes()), secretValues)
+	cleanErr := scriptvars.Redact(decodeShellOutput(shell, stderr.Bytes()), secretValues)
+	// Cap captured output to avoid DB bloat from runaway scripts.
 	return exitCode,
-		truncateRunes(decodeShellOutput(shell, stdout.Bytes()), maxJobOutput),
-		truncateRunes(decodeShellOutput(shell, stderr.Bytes()), maxJobOutput)
+		truncateRunes(cleanOut, maxJobOutput),
+		truncateRunes(cleanErr, maxJobOutput)
 }
 
 // maxJobOutput bounds stdout/stderr captured per job (1 MiB each).

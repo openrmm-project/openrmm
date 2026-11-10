@@ -6,6 +6,17 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Scoped script variables and encrypted secrets** ([guide](docs/25-script-variables.md)):
+  manage reusable values in Scripts with a separate permission, inherit overrides
+  from client/site/department/device scopes, and bind names to saved scripts.
+  Agent 0.11.0+ receives built-in RMM context and variable values as environment
+  data. Secrets are write-only in the API and masked before agent result storage
+  and server job history; variable declarations are bound to AI release hashes.
+  Includes scheduled library tasks and staged CMD execution, plus nine-language
+  console copy and unit/integration/browser regression tests.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

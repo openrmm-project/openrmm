@@ -204,6 +204,10 @@ type Script struct {
 	// accepted values. They reach the device as OPENRMM_PARAM_<NAME>
 	// environment variables, never pasted into the body.
 	Params []ScriptParam `json:"params"`
+	// Variables are the names of script variables this script may read.
+	// The values are not stored on the script; they are resolved for the
+	// device at execution and are empty here.
+	Variables []string `json:"variables"`
 	// ContentHash identifies the exact script displayed for review. Computed on read.
 	ContentHash string `json:"content_hash"`
 	// The release for the AI to run this script without approval

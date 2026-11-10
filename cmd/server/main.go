@@ -128,7 +128,7 @@ func main() {
 	}
 
 	h := hub.New()
-	jobSvc := jobs.New(st, h)
+	jobSvc := jobs.New(st, h).WithSettings(cfg)
 	remoteMgr := remote.NewManager(st, h, cfg.MeshCentralURL, cfg.MeshCentralTokenKey, cfg.MeshCentralUser, cfg.MeshCentralEnabled, cfg.RustDeskEnabled)
 	remoteMgr.SetMeshMatchHostname(cfg.MeshCentralMatchHostname)
 	remoteMgr.SetMeshSharedAccount(cfg.MeshCentralSharedAccount)

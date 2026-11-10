@@ -37,6 +37,7 @@ const GROUPS = [
     ['docs/08-remote-access.md', 'remote-access', 'Remote access'],
     ['docs/10-monitoring-policies.md', 'monitoring-policies', 'Monitoring, policies and alerts'],
     ['docs/24-alert-rules.md', 'alert-rules', 'Alert rules'],
+    ['docs/25-script-variables.md', 'script-variables', 'Script variables and secrets'],
     ['docs/16-patch-management.md', 'patch-management', 'Update management'],
     ['docs/20-email-notifications.md', 'email-notifications', 'Email notifications'],
     ['docs/15-reports.md', 'reports', 'Reports'],

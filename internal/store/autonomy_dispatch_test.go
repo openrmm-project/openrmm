@@ -29,3 +29,16 @@ func TestDispatchRequiresTheExactCurrentRelease(t *testing.T) {
 		t.Fatal("different release hash dispatched")
 	}
 }
+
+func TestAutonomousDispatchRejectsDifferentVariableSnapshot(t *testing.T) {
+	sc := &models.Script{Shell: "sh", Body: "echo ok", Variables: []string{"CUSTOM_KEY"}}
+	sc.AIReleasedHash = models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables)
+	j := &models.Job{Shell: sc.Shell, Script: sc.Body, Variables: []string{"OTHER_KEY"}}
+	if err := validateAutonomousRelease(sc, j, sc.AIReleasedHash); err == nil {
+		t.Fatal("dispatch accepted names outside the reviewed release")
+	}
+	j.Variables = []string{"CUSTOM_KEY"}
+	if err := validateAutonomousRelease(sc, j, sc.AIReleasedHash); err != nil {
+		t.Fatal(err)
+	}
+}

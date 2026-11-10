@@ -781,13 +781,13 @@ func (s *Store) AgentScope(ctx context.Context, agentID string) (siteID, clientI
 // ===================== Scripts =====================
 
 const scriptCols = `id, name, description, category, shell, body, default_args, created_at, updated_at,
-	params, ai_released_by, ai_released_at, ai_released_hash`
+	params, ai_released_by, ai_released_at, ai_released_hash, variables`
 
 func scanScript(row pgx.Row) (*models.Script, error) {
 	var sc models.Script
-	var params []byte
+	var params, variables []byte
 	err := row.Scan(&sc.ID, &sc.Name, &sc.Description, &sc.Category, &sc.Shell, &sc.Body, &sc.DefaultArgs, &sc.CreatedAt, &sc.UpdatedAt,
-		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash)
+		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash, &variables)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -802,7 +802,15 @@ func scanScript(row pgx.Row) (*models.Script, error) {
 	if sc.Params == nil {
 		sc.Params = []models.ScriptParam{}
 	}
-	sc.ContentHash = models.ScriptContentHash(sc.Shell, sc.Body, sc.Params)
+	if len(variables) > 0 {
+		if err := json.Unmarshal(variables, &sc.Variables); err != nil {
+			return nil, err
+		}
+	}
+	if sc.Variables == nil {
+		sc.Variables = []string{}
+	}
+	sc.ContentHash = models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables)
 	sc.AIReleased = sc.AIReleaseCurrent()
 	return &sc, nil
 }
@@ -819,9 +827,9 @@ func scriptParamsJSON(params []models.ScriptParam) []byte {
 func (s *Store) CreateScript(ctx context.Context, sc *models.Script) (*models.Script, error) {
 	sc.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params))
+		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params, variables)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params), jobVariablesJSON(sc.Variables))
 	if err != nil {
 		return nil, err
 	}
@@ -982,18 +990,19 @@ func (s *Store) ListScripts(ctx context.Context) ([]models.Script, error) {
 // the declared parameters — revokes a release for the AI in the same statement,
 // so there is no moment at which the new content is released under the old
 // one's approval. revoked reports whether a release was withdrawn.
-func (s *Store) UpdateScript(ctx context.Context, sc *models.Script) (revoked bool, err error) {
+func (s *Store) UpdateScript(ctx context.Context, sc *models.Script, variableAccess ...bool) (revoked bool, err error) {
+	allowVariables := len(variableAccess) == 0 || variableAccess[0]
 	err = s.pool.QueryRow(ctx,
-		`WITH old AS (SELECT shell, body, params, ai_released_hash FROM scripts WHERE id=$1 FOR UPDATE)
-		 UPDATE scripts AS s SET name=$2, description=$3, category=$4, shell=$5, body=$6, default_args=$7, params=$8,
+		`WITH old AS (SELECT shell, body, params, variables, ai_released_hash FROM scripts WHERE id=$1 FOR UPDATE)
+		 UPDATE scripts AS s SET name=$2, description=$3, category=$4, shell=$5, body=$6, default_args=$7, params=$8, variables=$9,
 		   ai_released_by   = CASE WHEN changed.yes THEN NULL ELSE s.ai_released_by END,
 		   ai_released_at   = CASE WHEN changed.yes THEN NULL ELSE s.ai_released_at END,
 		   ai_released_hash = CASE WHEN changed.yes THEN '' ELSE s.ai_released_hash END,
 		   updated_at=now()
-		 FROM old, LATERAL (SELECT (old.shell <> $5 OR old.body <> $6 OR old.params <> $8::jsonb) AS yes) AS changed
-		 WHERE s.id=$1
+		 FROM old, LATERAL (SELECT (old.shell <> $5 OR old.body <> $6 OR old.params <> $8::jsonb OR old.variables <> $9::jsonb) AS yes) AS changed
+		 WHERE s.id=$1 AND ($10 OR (s.variables='[]'::jsonb AND $9::jsonb='[]'::jsonb))
 		 RETURNING (changed.yes AND old.ai_released_hash <> '')`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params)).Scan(&revoked)
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params), jobVariablesJSON(sc.Variables), allowVariables).Scan(&revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	}
@@ -1047,7 +1056,7 @@ func (s *Store) RecordAIScriptOutcome(ctx context.Context, id string, success bo
 		   ai_released_by    = CASE WHEN trip.yes THEN NULL ELSE s.ai_released_by END,
 		   ai_released_at    = CASE WHEN trip.yes THEN NULL ELSE s.ai_released_at END,
 		   ai_released_hash  = CASE WHEN trip.yes THEN '' ELSE s.ai_released_hash END
-		 FROM trip WHERE s.id=$1
+		 FROM trip WHERE s.id=$1 AND ($10 OR (s.variables='[]'::jsonb AND $9::jsonb='[]'::jsonb))
 		 RETURNING trip.yes`, id, success, limit).Scan(&revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/p1ngu/rmm/internal/autonomy"
@@ -49,7 +50,7 @@ func (s *Store) WithAutonomousDispatch(ctx context.Context, j *models.Job, relea
 }
 
 func validateAutonomousRelease(sc *models.Script, j *models.Job, releaseHash string) error {
-	if !sc.AIReleaseCurrent() || sc.AIReleasedHash != releaseHash || sc.Shell != j.Shell || sc.Body != j.Script {
+	if !sc.AIReleaseCurrent() || sc.AIReleasedHash != releaseHash || sc.Shell != j.Shell || sc.Body != j.Script || !slices.Equal(sc.Variables, j.Variables) {
 		return fmt.Errorf("the script release changed before dispatch")
 	}
 	if err := autonomy.CheckRelease(sc); err != nil {

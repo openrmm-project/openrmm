@@ -9,13 +9,16 @@ import WebSocket from 'ws';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.woff2': 'font/woff2' };
-const permissions = ['ai_chat.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'];
+const permissions = ['ai_chat.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'scripts.variables', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'];
 const user = { id: 'user-1', username: 'smoke-admin', role: 'admin', permissions, created_at: '2026-01-01T00:00:00Z' };
 const apiRequests = [];
 const ruleChecks = [];
 const extraChecks = Array.from({ length: 60 }, (_, i) => ({ id: 'sample-rule-' + (i + 1), name: 'Monitor ' + String(i + 1).padStart(2, '0'), type: 'ping', agent_id: 'dev-1', config: { host: '127.0.0.1' }, enabled: true, interval_sec: 300 }));
 const ruleDefaults = Object.fromEntries(['connectivity', 'job_failure', 'patch_failure', 'reboot_pending', 'agent_outdated'].map((type) => [type, { type, config: type === 'connectivity' ? { mode: 'alert', severity: 'error', after_min: 3 } : { mode: 'ignore', severity: 'warning' } }]));
 let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
+
+const scriptVariables = [];
+const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', description: '', category: 'Tests', shell: 'sh', body: 'printf \'%s\' "$CUSTOM_KEY"', params: [], variables: [] }];
 
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
@@ -46,6 +49,24 @@ const server = createServer(async (req, res) => {
       if (!token) return json(res, 401, { error: 'missing bearer token' });
       if (token === 'expire-token') return json(res, 401, { error: 'expired token' });
       if (pathname === '/api/me') return json(res, 200, user);
+      if (pathname === '/api/script-variables') {
+        if (req.method === 'POST') {
+          const item = { id: 'variable-e2e', ...payload, values: [] }; scriptVariables.push(item);
+          return json(res, 201, item);
+        }
+        return json(res, 200, { variables: scriptVariables });
+      }
+      if (pathname === '/api/script-variables/variable-e2e/values' && req.method === 'PUT') {
+        const item = scriptVariables[0];
+        item.values = [{ scope_type: payload.scope_type, scope_id: payload.scope_id, set: true, ...(item.secret ? {} : { value: payload.value }) }];
+        return json(res, 200, { name: item.name, set: true });
+      }
+      if (pathname === '/api/scripts') return json(res, 200, { scripts: libraryScripts });
+      if (pathname === '/api/script-categories') return json(res, 200, { categories: [{ name: 'Tests', count: 1 }] });
+      if (pathname === '/api/scripts/script-e2e' && req.method === 'PUT') {
+        Object.assign(libraryScripts[0], payload); return json(res, 200, libraryScripts[0]);
+      }
+      if (pathname === '/api/devices/dev-1/run-script' && req.method === 'POST') return json(res, 201, { id: 'variable-job-e2e', status: 'awaiting_approval', requires_approval: true });
       if (pathname === '/api/checks') {
         if (req.method === 'POST') {
           const check = { id: ruleChecks.length ? 'service-e2e-' + ruleChecks.length : 'rule-e2e', ...payload };
@@ -278,6 +299,48 @@ async function alertRulesBrowserFlow() {
   return true;
 }
 
+async function scriptVariablesBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Script variables E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const change = (element, value) => {
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true })); element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  (await wait(() => button('Scripts'))).click();
+  (await wait(() => document.getElementById('scripts-tab-variables'))).click();
+  (await wait(() => button('New variable'))).click();
+  const definition = await wait(() => document.querySelector('[role="dialog"][aria-label="Script variables"]'));
+  change(definition.querySelector('input[aria-label="Name"]'), 'CUSTOM_KEY');
+  definition.querySelector('input[type="checkbox"]').click();
+  (await wait(() => button('Save', definition) && !button('Save', definition).disabled && button('Save', definition))).click();
+  await wait(() => !document.contains(definition));
+  (await wait(() => button('Set a value'))).click();
+  const dialog = await wait(() => document.querySelector('[role="dialog"][aria-label="Value"]'));
+  const input = dialog.querySelector('input[type="password"]');
+  if (!input || input.value !== '') throw new Error('Secret must start blank in a password field');
+  change(input, 'synthetic-browser-customer-key');
+  (await wait(() => button('Save', dialog) && !button('Save', dialog).disabled && button('Save', dialog))).click();
+  await wait(() => !document.contains(dialog) && document.body.textContent.includes('Stored (hidden)'));
+  if (document.body.textContent.includes('synthetic-browser-customer-key')) throw new Error('Secret rendered after save');
+  document.getElementById('scripts-tab-library').click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer')))).click();
+  const label = await wait(() => [...document.querySelectorAll('label')].find((el) => el.textContent.includes('CUSTOM_KEY') && el.querySelector('input[type="checkbox"]')));
+  label.querySelector('input').click();
+  (await wait(() => button('Save script'))).click();
+  await wait(() => !button('Save script'));
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer') && el.textContent.includes('Script variables')))).click();
+  (await wait(() => button('Run on device'))).click();
+  const device = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'dev-1')));
+  change(device, 'dev-1');
+  (await wait(() => button('Create job') && !button('Create job').disabled && button('Create job'))).click();
+  await wait(() => !button('Create job'));
+  document.documentElement.dataset.scriptVariablesE2e = 'passed'; return true;
+}
+
 async function servicesAndRemoteSettingsBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -429,6 +492,13 @@ try {
     assert.equal(remoteConfig.remote.default, 'rustdesk');
     assert.equal(remoteConfig.remote.rustdesk_enabled, true);
     assert.equal('meshcentral_token_key' in remoteConfig.remote, false, 'GET config stays write-only');
+    const variablesFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: scriptVariablesBrowserFlow });
+    assertBrowser(variablesFlow, /data-script-variables-e2e="passed"/);
+    assert.equal(scriptVariables[0]?.secret, true);
+    assert.equal('value' in scriptVariables[0].values[0], false, 'secret read-back is write-only');
+    assert.deepEqual(libraryScripts[0].variables, ['CUSTOM_KEY']);
+    const variableJob = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
+    assert.deepEqual(variableJob?.payload, { script_id: 'script-e2e', params: {} });
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });
     assertBrowser(csvFlow, /data-audit-csv-e2e="passed"/);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');

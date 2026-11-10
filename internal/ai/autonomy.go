@@ -624,6 +624,7 @@ func runPreapprovedAction(ctx context.Context, tc ToolContext, args json.RawMess
 		j, err := tc.Jobs.StartAutonomous(ctx, &models.Job{
 			AgentID: in.AgentID, Type: models.JobRunScript, Description: label, Shell: sc.Shell, Script: sc.Body,
 			CreatedBy: tc.principal(), Autonomy: models.AutonomyPreapproved, ScriptID: &scriptID, Params: params,
+			Variables: sc.Variables,
 		}, basis, sc.AIReleasedHash, runLimits)
 		switch {
 		case errors.Is(err, store.ErrRateLimited):

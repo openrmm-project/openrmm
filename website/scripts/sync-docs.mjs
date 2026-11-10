@@ -36,6 +36,7 @@ const GROUPS = [
     ['docs/23-ai-autonomy.md', 'ai-autonomy', 'AI autonomy'],
     ['docs/08-remote-access.md', 'remote-access', 'Remote access'],
     ['docs/10-monitoring-policies.md', 'monitoring-policies', 'Monitoring, policies and alerts'],
+    ['docs/24-alert-rules.md', 'alert-rules', 'Alert rules'],
     ['docs/16-patch-management.md', 'patch-management', 'Update management'],
     ['docs/20-email-notifications.md', 'email-notifications', 'Email notifications'],
     ['docs/15-reports.md', 'reports', 'Reports'],

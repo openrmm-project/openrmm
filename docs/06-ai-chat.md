@@ -76,7 +76,7 @@ server (`11-mcp`).
 | `propose_script` | `jobs.create` | **write (gated)** | Create a job in `awaiting_approval` — never executes |
 | `propose_bulk_deploy` | `jobs.create` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
 | `propose_task` | `tasks.manage` | **write (gated)** | Create a scheduled task **disabled** and stamped `proposed_by` — the scheduler selects `WHERE enabled`, so it never runs until a person enables it |
-| `propose_check` | `checks.manage` | **write (gated)** | Same, for a monitoring check |
+| `propose_check` | `checks.manage` | **write (gated)** | Same, for a monitoring check or a server alert rule ([24-alert-rules](24-alert-rules.md)) |
 | `propose_policy` | `policies.manage` | **write (gated)** | Create a policy marked as awaiting review. Unrestricted admins only, like the REST handler |
 | `propose_move_devices` | `clients.manage` | **write (gated)** | Propose moving up to 500 devices to a site (and optional department). Changes nothing until a person approves it under Devices ▸ Pending operations |
 | `propose_delete_devices` | `devices.delete` | **write (gated)** | Propose deleting up to 500 devices. The approver must type the device count |

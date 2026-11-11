@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,17 @@ func TestScriptVariablesJobLifecycleE2EIntegration(t *testing.T) {
 		if strings.Contains(string(entry.Detail), secret) {
 			t.Fatal("audit contains secret")
 		}
+	}
+}
+
+func TestScriptVariablesCMDRejectedAtDefinitionBoundary(t *testing.T) {
+	s := &Server{}
+	request := httptest.NewRequest("POST", "/api/scripts", nil)
+	if _, err := s.prepareScriptVariables(request, "cmd", []string{"CUSTOM_KEY"}); err == nil {
+		t.Fatal("CMD binding reached database validation")
+	}
+	names, err := s.prepareScriptVariables(request, "cmd", nil)
+	if err != nil || names != nil {
+		t.Fatal("ordinary CMD definition control refused")
 	}
 }

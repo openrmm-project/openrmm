@@ -1232,15 +1232,9 @@ func runScriptCtxEnvSecrets(ctx context.Context, shell, script string, extraEnv,
 		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
 	case "cmd":
 		if len(extraEnv) > 0 {
-			path, cleanup, err := writeTempScript("@echo off\r\n"+script, ".cmd")
-			if err != nil {
-				return 2, "", "cannot stage script"
-			}
-			defer cleanup()
-			cmd = exec.CommandContext(ctx, "cmd", "/D", "/Q", "/C", path)
-		} else {
-			cmd = exec.CommandContext(ctx, "cmd", "/C", script)
+			return 2, "", "cmd scripts cannot receive variables; use powershell"
 		}
+		cmd = exec.CommandContext(ctx, "cmd", "/C", script)
 	case "sh":
 		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	case "bash":

@@ -2008,4 +2008,5 @@
   'audit.action.script_variable.delete': "Script variable deleted",
   'audit.action.script_variable.set': "Script variable value set",
   'audit.action.script_variable.clear': "Script variable value removed",
+  'vars.cmdUnsupported': "CMD cannot receive script variables or built-in context safely. Use PowerShell, Bash, sh or Python.",
 };

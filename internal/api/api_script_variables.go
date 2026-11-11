@@ -188,6 +188,9 @@ func (s *Server) prepareScriptVariables(r *http.Request, shell string, names []s
 	if err != nil {
 		return nil, err
 	}
+	if err := scriptvars.CheckShell(shell, len(normalized)); err != nil {
+		return nil, err
+	}
 	missing, err := s.store.UnknownScriptVariables(r.Context(), normalized)
 	if err != nil {
 		return nil, err

@@ -2,11 +2,14 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgconn"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
@@ -207,5 +210,188 @@ func TestScriptVariableSecretConversionSerializesWritersIntegration(t *testing.T
 		if !strings.HasPrefix(value, "enc:v1:") || strings.Contains(value, "synthetic-key") {
 			t.Fatal("conversion raced a plaintext write")
 		}
+	}
+}
+
+func TestScriptVariablesReleaseFailureResetIntegration(t *testing.T) {
+	url := os.Getenv("RMM_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	st := newIsolatedStore(t, "script_vars_breaker", url)
+	ctx := context.Background()
+	sc, err := st.CreateScript(ctx, &models.Script{Name: "reviewed", Shell: "sh", Body: "echo ok", Variables: []string{"CUSTOM_KEY"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetScriptAIRelease(ctx, sc.ID, "reviewer", sc.ContentHash, sc.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	outcome := func(success bool, want bool) {
+		t.Helper()
+		revoked, err := st.RecordAIScriptOutcome(ctx, sc.ID, success, 3)
+		if err != nil || revoked != want {
+			t.Fatalf("breaker result=%t err=%v", revoked, err)
+		}
+	}
+	outcome(false, false)
+	outcome(false, false)
+	outcome(true, false)
+	outcome(false, false)
+	outcome(false, false)
+	outcome(false, true)
+	got, err := st.GetScript(ctx, sc.ID)
+	if err != nil || got.AIReleased {
+		t.Fatal("variable-bound release survived breaker")
+	}
+}
+
+func TestScriptVariableDispatchLocksAndRechecksScopeIntegration(t *testing.T) {
+	url := os.Getenv("RMM_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	st := newIsolatedStore(t, "script_vars_transfer", url)
+	ctx := context.Background()
+	cfg := &config.Config{SettingsEncryptionKey: "synthetic-instance-key"}
+	a, err := st.CreateClient(ctx, "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateClient(ctx, "B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sa, err := st.CreateSite(ctx, a.ID, "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := st.CreateSite(ctx, b.ID, "B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := st.CreateAgent(ctx, "PC", "linux", "amd64", "0.11.0", "synthetic-token", &sa.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := st.CreateScriptVariable(ctx, "CUSTOM_KEY", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, value := range map[string]string{a.ID: "customer-A-synthetic-key", b.ID: "customer-B-synthetic-key"} {
+		if err := st.SetScriptVariableValue(ctx, cfg, v.ID, "client", id, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revisionA, err := st.ScriptVariableScopeRevision(ctx, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envA, _, err := st.ResolveScriptVariables(ctx, cfg, agent.ID, []string{v.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envA[v.Name] != "customer-A-synthetic-key" {
+		t.Fatal("A resolution control failed")
+	}
+	if err := st.MoveAgents(ctx, []string{agent.ID}, sb.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	sends := 0
+	send := func() bool { sends++; return true }
+	if sent, err := st.WithScriptVariablesDispatch(ctx, agent.ID, revisionA, send); err == nil || sent || sends != 0 {
+		t.Fatal("stale A context dispatched after B move")
+	}
+	sc, err := st.CreateScript(ctx, &models.Script{Name: "reviewed", Shell: "sh", Body: "echo ok", Variables: []string{v.Name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetScriptAIRelease(ctx, sc.ID, "reviewer", sc.ContentHash, sc.UpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	scriptID := sc.ID
+	j := &models.Job{AgentID: agent.ID, Autonomy: models.AutonomyPreapproved, ScriptID: &scriptID, Shell: sc.Shell, Script: sc.Body, Variables: sc.Variables}
+	if sent, err := st.WithAutonomousDispatch(ctx, j, sc.ContentHash, send, revisionA); err == nil || sent || sends != 0 {
+		t.Fatal("autonomy bypassed variable scope guard")
+	}
+	revisionB, err := st.ScriptVariableScopeRevision(ctx, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envB, _, err := st.ResolveScriptVariables(ctx, cfg, agent.ID, []string{v.Name})
+	if err != nil || envB[v.Name] != "customer-B-synthetic-key" {
+		t.Fatal("B resolution control failed")
+	}
+	if sent, err := st.WithScriptVariablesDispatch(ctx, agent.ID, revisionB, send); err != nil || !sent || sends != 1 {
+		t.Fatal("fresh B context refused")
+	}
+	if sent, err := st.WithAutonomousDispatch(ctx, j, sc.ContentHash, send, revisionB); err != nil || !sent || sends != 2 {
+		t.Fatal("fresh autonomous context refused")
+	}
+	if err := st.MoveAgents(ctx, []string{agent.ID}, sa.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := st.WithScriptVariablesDispatch(ctx, agent.ID, revisionA, send); err == nil || sent || sends != 2 {
+		t.Fatal("away-and-back move reused stale revision")
+	}
+	// Hold the guard at its enqueue callback. A real move must wait on the
+	// agent row; bounded lock_timeout proves contention without scheduling sleeps.
+	current, err := st.ScriptVariableScopeRevision(ctx, agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	guardCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		sent, err := st.WithScriptVariablesDispatch(guardCtx, agent.ID, current, func() bool {
+			close(entered)
+			select {
+			case <-release:
+				return true
+			case <-guardCtx.Done():
+				return false
+			}
+		})
+		if err == nil && !sent {
+			err = fmt.Errorf("guard callback did not send")
+		}
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-guardCtx.Done():
+		t.Fatal("guard did not acquire row lock")
+	}
+	tx, err := st.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='100ms'`); err != nil {
+		t.Fatal(err)
+	}
+	_, err = tx.Exec(ctx, `UPDATE agents SET site_id=$2 WHERE id=$1`, agent.ID, sb.ID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatal("move was not blocked by the dispatch row lock")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MoveAgents(ctx, []string{agent.ID}, sb.ID, nil); err != nil {
+		t.Fatal("move failed after guard released its lock")
 	}
 }

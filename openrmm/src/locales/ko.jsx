@@ -1940,4 +1940,5 @@
   'audit.action.script_variable.delete': "스크립트 변수 삭제",
   'audit.action.script_variable.set': "스크립트 변수 값 설정",
   'audit.action.script_variable.clear': "스크립트 변수 값 삭제",
+  'vars.cmdUnsupported': "CMD는 스크립트 변수나 기본 컨텍스트를 안전하게 받을 수 없습니다. PowerShell, Bash, sh 또는 Python을 사용하세요.",
 };

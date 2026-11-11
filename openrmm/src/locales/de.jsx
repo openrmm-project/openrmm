@@ -1995,4 +1995,5 @@
   'audit.action.script_variable.delete': "Skriptvariable gelöscht",
   'audit.action.script_variable.set': "Variablenwert gesetzt",
   'audit.action.script_variable.clear': "Variablenwert entfernt",
+  'vars.cmdUnsupported': "CMD kann Skriptvariablen und Kontext nicht sicher empfangen. Verwenden Sie PowerShell, Bash, sh oder Python.",
 };

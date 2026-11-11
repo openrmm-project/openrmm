@@ -1995,4 +1995,5 @@
   'audit.action.script_variable.delete': "已删除脚本变量",
   'audit.action.script_variable.set': "已设置脚本变量值",
   'audit.action.script_variable.clear': "已删除脚本变量值",
+  'vars.cmdUnsupported': "CMD 无法安全接收脚本变量或内置上下文。请使用 PowerShell、Bash、sh 或 Python。",
 };

@@ -14,7 +14,7 @@ tag.
   Agent 0.11.0+ receives built-in RMM context and variable values as environment
   data. Secrets are write-only in the API and masked before agent result storage
   and server job history; variable declarations are bound to AI release hashes.
-  Includes scheduled library tasks and staged CMD execution, plus nine-language
+  Includes scheduled library tasks, refuses unsafe CMD variable expansion, and adds nine-language
   console copy and unit/integration/browser regression tests.
 
 ## [0.10.0] - 2026-11-10

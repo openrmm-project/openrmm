@@ -8,6 +8,9 @@ import (
 )
 
 func varEnv(shell string, vars map[string]string) ([]string, error) {
+	if err := scriptvars.CheckShell(shell, len(vars)); err != nil {
+		return nil, err
+	}
 	if len(vars) > 38 {
 		return nil, fmt.Errorf("too many script variables")
 	}

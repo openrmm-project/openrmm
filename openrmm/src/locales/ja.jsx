@@ -1995,4 +1995,5 @@
   'audit.action.script_variable.delete': "スクリプト変数を削除",
   'audit.action.script_variable.set': "スクリプト変数の値を設定",
   'audit.action.script_variable.clear': "スクリプト変数の値を削除",
+  'vars.cmdUnsupported': "CMD はスクリプト変数や組み込み情報を安全に受け取れません。PowerShell、Bash、sh、Python を使用してください。",
 };

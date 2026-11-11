@@ -12,7 +12,7 @@ import (
 )
 
 func TestScriptVariableEnvironmentValidation(t *testing.T) {
-	for _, shell := range []string{"bash", "sh", "powershell", "python", "cmd"} {
+	for _, shell := range []string{"bash", "sh", "powershell", "python"} {
 		env, err := varEnv(shell, map[string]string{"CUSTOM_KEY": "$(printf injected); & x", "RMM_AGENT_HOSTNAME": "PC 01"})
 		if err != nil || strings.Join(env, "\n") != "CUSTOM_KEY=$(printf injected); & x\nRMM_AGENT_HOSTNAME=PC 01" {
 			t.Fatalf("environment = %v, %v", env, err)
@@ -65,12 +65,31 @@ func TestScriptVariablesMaskBeforeOutputTruncation(t *testing.T) {
 		t.Fatalf("context was interpolated: %q %s", out, stderr)
 	}
 }
-func TestScriptVariablesWindowsBatch(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows cmd runner")
+
+// Regression: on the initial commit this accepts the canary as environment
+// data; CMD would subsequently interpret the ampersand during percent expansion.
+func TestScriptVariablesRejectCMDBeforeExecution(t *testing.T) {
+	for _, vars := range []map[string]string{{"CUSTOM_KEY": "value & echo OPENRMM_INJECTION_CANARY"}, {"RMM_CLIENT_NAME": "value & echo OPENRMM_INJECTION_CANARY"}} {
+		if _, err := varEnv("cmd", vars); err == nil {
+			t.Fatal("CMD variable injection accepted")
+		}
 	}
-	code, out, stderr := runScriptCtxEnvSecrets(context.Background(), "cmd", "echo %CUSTOM_KEY%", []string{"CUSTOM_KEY=synthetic-customer-key"}, []string{"synthetic-customer-key"})
-	if code != 0 || strings.Contains(out+stderr, "synthetic-customer-key") || !strings.Contains(out, "********") {
-		t.Fatalf("batch variable execution/masking failed: code=%d", code)
+	env, err := varEnv("cmd", nil)
+	if err != nil || len(env) != 0 {
+		t.Fatal("ordinary CMD control refused")
+	}
+}
+func TestScriptVariablesWindowsPowerShell(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows PowerShell runner")
+	}
+	secret := "synthetic-key & echo OPENRMM_INJECTION_CANARY"
+	code, out, stderr := runScriptCtxEnvSecrets(context.Background(), "powershell", `Write-Output $env:CUSTOM_KEY`, []string{"CUSTOM_KEY=" + secret}, []string{secret})
+	if code != 0 || strings.Contains(out+stderr, secret) || !strings.Contains(out, "********") {
+		t.Fatal("PowerShell environment/masking failed")
+	}
+	code, out, stderr = runScriptCtxEnv(context.Background(), "cmd", "echo OPENRMM_CMD_CONTROL", nil)
+	if code != 0 || !strings.Contains(out, "OPENRMM_CMD_CONTROL") {
+		t.Fatal("ordinary CMD execution regressed")
 	}
 }

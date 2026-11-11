@@ -1940,4 +1940,5 @@
   'audit.action.script_variable.delete': "Pemboleh ubah skrip dipadam",
   'audit.action.script_variable.set': "Nilai pemboleh ubah ditetapkan",
   'audit.action.script_variable.clear': "Nilai pemboleh ubah dibuang",
+  'vars.cmdUnsupported': "CMD tidak boleh menerima pemboleh ubah atau konteks dengan selamat. Gunakan PowerShell, Bash, sh atau Python.",
 };

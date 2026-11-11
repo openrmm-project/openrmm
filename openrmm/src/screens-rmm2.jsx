@@ -305,15 +305,16 @@ function ScriptEditor({ script, onClose, categories = [] }) {
         <div className="rounded-xl border border-line p-3 space-y-2">
           <div className="font-semibold text-[12.5px]">{t('vars.variables')}</div>
           <div className="text-[12px] text-muted">{t('vars.bindHint')}</div>
-          {(variablesQ.data?.variables || []).map((v) => <label key={v.id} className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={variables.includes(v.name)} disabled={readOnly || !can('scripts.variables')} onChange={(e) => setVariables(e.target.checked ? [...variables, v.name].sort() : variables.filter((name) => name !== v.name))} /><code>{v.name}</code>{v.secret && <span>{t('vars.secret')}</span>}</label>)}
-          {variables.filter((name) => !(variablesQ.data?.variables || []).some((v) => v.name === name)).map((name) => <div key={name} className="text-warn">{name}<Button size="sm" disabled={readOnly || !can('scripts.variables')} onClick={() => setVariables(variables.filter((value) => value !== name))}>{t('action.remove')}</Button></div>)}
+          {shell === 'cmd' && <div className="text-[12px] text-warn">{t('vars.cmdUnsupported')}</div>}
+          {(variablesQ.data?.variables || []).map((v) => <label key={v.id} className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={variables.includes(v.name)} disabled={readOnly || shell === 'cmd' || !can('scripts.variables')} onChange={(e) => setVariables(e.target.checked ? [...variables, v.name].sort() : variables.filter((name) => name !== v.name))} /><code>{v.name}</code>{v.secret && <span>{t('vars.secret')}</span>}</label>)}
+          {variables.filter((name) => !(variablesQ.data?.variables || []).some((v) => v.name === name)).map((name) => <div key={name} className="text-warn">{name}<Button size="sm" disabled={readOnly || shell === 'cmd' || !can('scripts.variables')} onClick={() => setVariables(variables.filter((value) => value !== name))}>{t('action.remove')}</Button></div>)}
         </div>
         {script && <AIReleasePanel script={script} contentChanged={contentChanged} />}
       </div>
       {!readOnly && (
         <div className="px-5 py-3.5 border-t border-line flex justify-between gap-2">
           {script ? <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button> : <span />}
-          <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!name || !body}>{script ? t('script.save') : t('script.create')}</Button></div>
+          <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!name || !body || (shell === 'cmd' && variables.length > 0)}>{script ? t('script.save') : t('script.create')}</Button></div>
         </div>
       )}
       {runOpen && <RunOnDevice script={{ id: script?.id, name, shell, body, params: script?.params || [], variables: script?.variables || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}

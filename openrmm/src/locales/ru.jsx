@@ -1966,4 +1966,5 @@
   'audit.action.script_variable.delete': "Переменная скрипта удалена",
   'audit.action.script_variable.set': "Значение переменной задано",
   'audit.action.script_variable.clear': "Значение переменной удалено",
+  'vars.cmdUnsupported': "CMD не может безопасно принимать переменные и встроенный контекст. Используйте PowerShell, Bash, sh или Python.",
 };

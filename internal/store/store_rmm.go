@@ -1056,7 +1056,7 @@ func (s *Store) RecordAIScriptOutcome(ctx context.Context, id string, success bo
 		   ai_released_by    = CASE WHEN trip.yes THEN NULL ELSE s.ai_released_by END,
 		   ai_released_at    = CASE WHEN trip.yes THEN NULL ELSE s.ai_released_at END,
 		   ai_released_hash  = CASE WHEN trip.yes THEN '' ELSE s.ai_released_hash END
-		 FROM trip WHERE s.id=$1 AND ($10 OR (s.variables='[]'::jsonb AND $9::jsonb='[]'::jsonb))
+		 FROM trip WHERE s.id=$1
 		 RETURNING trip.yes`, id, success, limit).Scan(&revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -466,4 +467,38 @@ func jobVariablesJSON(names []string) []byte {
 	}
 	raw, _ := json.Marshal(names)
 	return raw
+}
+
+// ScriptVariableScopeRevision must be read BEFORE resolving values. A move
+// between this read and resolution is rejected at the final send, including ABA.
+func (s *Store) ScriptVariableScopeRevision(ctx context.Context, agentID string) (time.Time, error) {
+	var revision time.Time
+	err := s.pool.QueryRow(ctx, `SELECT monitoring_scope_since FROM agents WHERE id=$1`, agentID).Scan(&revision)
+	return revision, err
+}
+
+func lockScriptVariableScope(ctx context.Context, tx pgx.Tx, agentID string, revision time.Time) error {
+	var current time.Time
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT monitoring_scope_since,status FROM agents WHERE id=$1 FOR SHARE`, agentID).Scan(&current, &status); err != nil {
+		return err
+	}
+	if revision.IsZero() || !current.Equal(revision) || status == models.AgentRevoked {
+		return fmt.Errorf("device scope changed before script variable dispatch")
+	}
+	return nil
+}
+
+// WithScriptVariablesDispatch serializes the authorization point with device
+// moves/deletion. send is only a nonblocking hub enqueue, never a DB operation.
+func (s *Store) WithScriptVariablesDispatch(ctx context.Context, agentID string, revision time.Time, send func() bool) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockScriptVariableScope(ctx, tx, agentID, revision); err != nil {
+		return false, err
+	}
+	return send(), nil
 }

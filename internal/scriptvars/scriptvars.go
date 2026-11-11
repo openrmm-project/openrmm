@@ -124,6 +124,15 @@ func ValidValue(secret bool, value string) error {
 	return nil
 }
 
+// CheckShell keeps values as data. CMD expands percent variables before parsing
+// operators; even quoting cannot make arbitrary credential values inert.
+func CheckShell(shell string, count int) error {
+	if shell == "cmd" && count > 0 {
+		return fmt.Errorf("cmd scripts cannot receive variables; use powershell")
+	}
+	return nil
+}
+
 // Redact removes secret values from text that will be stored. Longer values
 // are removed first so one secret that contains another is not left behind.
 func Redact(text string, secrets []string) string {

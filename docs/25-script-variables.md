@@ -63,13 +63,11 @@ print('Installing on', os.environ['RMM_AGENT_HOSTNAME'])
 account_key = os.environ['HUNTRESS_ACCOUNT_KEY']
 ```
 
-CMD scripts receive `%HUNTRESS_ACCOUNT_KEY%` through the environment. When variables
-are present, the agent stages the unchanged script in a temporary batch file and
-executes its path with `/D /Q /C`, rather than putting the expanded script in the
-initial `cmd.exe` command line. Interactive `OPENRMM_PARAM_*` parameters remain
-unsupported for CMD. Batch expansion, `call`, delayed expansion and child command
-lines can still interpret or expose values: prefer PowerShell for credentials and
-use the vendor's stdin, file or environment interface when supported.
+CMD does not receive custom variables or built-in context. Its percent expansion
+can turn a credential or device/client name into command syntax even when the
+script is staged to a batch file. The API, job dispatch and agent reject CMD
+variable payloads. Ordinary CMD scripts continue working without injected values;
+use PowerShell for Windows scripts requiring variables.
 
 Built-in context is injected automatically into job script executions on capable
 agents. Older agents continue running ordinary scripts without this context.
@@ -94,6 +92,12 @@ Secret values use the same AES-GCM format and instance key as settings. Preserve
 without that key prevents decryption. A public variable can become secret in a
 transaction that encrypts all its values. A secret cannot become public. Previous
 public copies in backups, API responses or logs are not retroactively removed.
+
+The server snapshots the device scope revision before resolution and locks/rechecks
+it at the final nonblocking send, including autonomous delivery. A concurrent move
+(including away and back) fails the dispatch rather than sending former-client
+credentials. Values already sent or cached on an endpoint cannot be revoked by a
+move; rotate credentials as part of an ownership transfer.
 
 The server sends only the selected names' resolved values over the authenticated
 agent connection. Jobs store the names, not plaintext values. An encrypted
@@ -135,5 +139,5 @@ Unit tests cover encryption compatibility, name validation, release hashes,
 version gates, environment-only delivery, redaction failures, output truncation,
 the durable outbox, and the console's write-only forms. CI additionally runs
 Postgres upgrade/inheritance/RBAC and full router/job-lifecycle integration tests,
-real Chrome create/bind/run UI flow, and Windows CMD execution. These tests use
+real Chrome create/bind/run UI flow, and Windows PowerShell execution plus CMD refusal. These tests use
 synthetic keys. Real vendor installers and policies still need a staging trial.

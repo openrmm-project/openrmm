@@ -49,6 +49,38 @@ test('editing a secret definition cannot unmask it or submit previous values', a
   assert.equal(toggle.props.checked, true); assert.equal(toggle.props.disabled, true); await ui.save();
   assert.deepEqual(ui.calls, [{ name: 'updateScriptVariable', args: ['v1', { description: '', secret: true }] }]);
 });
+test('new variable names preserve case without a field length cap', async () => {
+  for (const name of ['customerKey', '_myKey', 'customerKey_' + 'Ab'.repeat(4096)]) {
+    const ui = harness('ScriptVariableDefinition', { variable: {}, onClose() {} });
+    const input = ui.input('checks.name');
+    assert.equal(input.props.maxLength, undefined);
+    input.props.onChange({ target: { value: name } }); ui.render();
+    assert.equal(ui.input('checks.name').props.value, name);
+    assert.equal(ui.find((n) => n.type === 'Button' && n.children.includes('action.save'))[0].props.disabled, false);
+    await ui.save();
+    assert.deepEqual(ui.calls, [{ name: 'createScriptVariable', args: [{ name, description: '', secret: false }] }]);
+  }
+  const invalid = harness('ScriptVariableDefinition', { variable: {}, onClose() {} });
+  for (const name of ['', '1key', 'has space', 'key=value']) {
+    invalid.input('checks.name').props.onChange({ target: { value: name } }); invalid.render();
+    assert.equal(invalid.find((n) => n.type === 'Button' && n.children.includes('action.save'))[0].props.disabled, true);
+  }
+});
+test('short secrets and long values can be saved without prefill or length caps', async () => {
+  for (const secret of [false, true]) {
+    for (const value of ['x', 'v'.repeat(65536)]) {
+      const ui = harness('ScriptVariableValueEditor', { variable: { id: 'v1', name: 'customerKey', secret }, onClose() {} });
+      assert.equal(ui.input('vars.value').props.maxLength, undefined);
+      assert.equal(ui.find((n) => n.type === 'Button' && n.children.includes('action.save'))[0].props.disabled, true);
+      ui.input('vars.value').props.onChange({ target: { value } }); ui.render();
+      assert.equal(ui.find((n) => n.type === 'Button' && n.children.includes('action.save'))[0].props.disabled, false);
+      await ui.save(); ui.render();
+      assert.deepEqual(ui.calls, [{ name: 'setScriptVariableValue', args: ['v1', { scope_type: 'global', scope_id: '', value }] }]);
+      assert.equal(ui.input('vars.value').props.value, '');
+      assert.equal(ui.input('vars.value').props.type, secret ? 'password' : 'text');
+    }
+  }
+});
 test('variable-only library scripts run by stored ID, with no secret values in the request', async () => {
   const runner = src.slice(src.indexOf('function RunOnDevice('), src.indexOf('// The values a script accepts,'));
   const ui = harness('RunOnDevice', { script: { id: 's1', name: 'installer', variables: ['CUSTOM_KEY'], params: [] }, devMap: { a1: { hostname: 'PC', status: 'online' } }, onClose() {}, onDone() {} }, false, runner);

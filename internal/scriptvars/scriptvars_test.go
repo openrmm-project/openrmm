@@ -8,32 +8,68 @@ import (
 )
 
 func TestUserNames(t *testing.T) {
-	if err := ValidUserName("HUNTRESS_ACCOUNT_KEY"); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"rmm_agent_id", "RMM_AGENT_ID", "OPENRMM_PARAM_X", "PATH", "1KEY", "has space", "key"} {
-		if err := ValidUserName(name); err == nil {
-			t.Errorf("accepted %q", name)
+	for _, name := range []string{"HUNTRESS_ACCOUNT_KEY", "key", "my_ApiKey", "_privateKey", "key_" + strings.Repeat("Ab", 4096)} {
+		if err := ValidUserName(name); err != nil {
+			t.Fatal(err)
 		}
 	}
-	names, err := Normalize([]string{"SCREENCONNECT_INSTANCE", "HUNTRESS_ACCOUNT_KEY", "HUNTRESS_ACCOUNT_KEY"})
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"", "rmm_agent_id", "RMM_AGENT_ID", "OpenRmm_PARAM_X", "Path", "PATH", "1KEY", "has space", "bad-name", "a=b", "a\x00b"} {
+		if err := ValidUserName(name); err == nil {
+			t.Fatalf("invalid name accepted: %q", name)
+		}
 	}
-	if strings.Join(names, ",") != "HUNTRESS_ACCOUNT_KEY,SCREENCONNECT_INSTANCE" {
-		t.Fatalf("normalized = %v", names)
+	names, err := Normalize([]string{"myKey", "AnotherKey", "myKey"})
+	if err != nil || strings.Join(names, ",") != "AnotherKey,myKey" {
+		t.Fatalf("names=%v err=%v", names, err)
+	}
+	if _, err := Normalize([]string{"myKey", "MYKEY"}); err == nil {
+		t.Fatal("ambiguous cross-platform names accepted")
 	}
 }
 
 func TestSecretValueBounds(t *testing.T) {
-	if err := ValidValue(true, "short"); err == nil {
-		t.Fatal("short secret accepted")
+	for _, secret := range []bool{false, true} {
+		for _, value := range []string{"x", "short", strings.Repeat("v", 65536)} {
+			if err := ValidValue(secret, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, value := range []string{"", "bad\nvalue", "bad\rvalue", "bad\x00value"} {
+			if err := ValidValue(secret, value); err == nil {
+				t.Fatal("invalid environment value accepted")
+			}
+		}
 	}
-	if err := ValidValue(false, "acme"); err != nil {
+}
+
+func TestShortSecretsAreRedactedWithoutOutputGrowth(t *testing.T) {
+	for _, secret := range []string{"x", "abc", "secret7"} {
+		input := "value=" + secret + " end"
+		got := Redact(input, []string{secret})
+		if strings.Contains(got, secret) || len(got) > len(input) {
+			t.Fatal("short secret leaked or expanded output")
+		}
+	}
+	input := strings.Repeat("*x", 8192)
+	got := Redact(input, []string{"*", "x", "a-longer-secret"})
+	twice := Redact(got, []string{"*", "x", "a-longer-secret"})
+	if len(got) > len(input) || len(twice) > len(got) || strings.Contains(got, "x") {
+		t.Fatal("repeated redaction expands output")
+	}
+	if Redact("plain output", []string{""}) != "plain output" {
+		t.Fatal("empty snapshot entry rewrote output")
+	}
+	if Redact("public output", []string{"private"}) != "public output" {
+		t.Fatal("non-secret control changed")
+	}
+}
+
+func TestEnvironmentPayloadBudget(t *testing.T) {
+	if err := ValidEnvironmentSize(map[string]string{"key": strings.Repeat("x", 65536)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidValue(true, "abcd\nsecret"); err == nil {
-		t.Fatal("newline accepted")
+	if err := ValidEnvironmentSize(map[string]string{"a": strings.Repeat("x", MaxEnvironmentBytes)}); err == nil {
+		t.Fatal("aggregate payload budget removed")
 	}
 }
 

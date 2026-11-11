@@ -112,6 +112,35 @@ func TestScriptVariablesResolveOnlyAtDispatchAndMaskStoredOutput(t *testing.T) {
 		t.Fatal("secret in job history")
 	}
 }
+func TestScriptVariablesShortSecretsKeepTheirNamesAndAreMasked(t *testing.T) {
+	for _, secret := range []string{"x", "q7X"} {
+		svc, fs, sender := variableService()
+		fs.secret = secret
+		ctx := context.Background()
+		j, err := svc.ProposeScriptWithParams(ctx, "a1", &models.Script{Shell: "sh", Body: `printf '%s' "$customerKey"`, Variables: []string{"customerKey"}}, nil, "test", "user")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.Approve(ctx, j.ID, "approver"); err != nil {
+			t.Fatal(err)
+		}
+		if len(sender.frames) != 1 {
+			t.Fatal("job was not dispatched")
+		}
+		var envelope protocol.Envelope
+		var msg protocol.JobMsg
+		if json.Unmarshal(sender.frames[0], &envelope) != nil || json.Unmarshal(envelope.Data, &msg) != nil || msg.Vars["customerKey"] != secret {
+			t.Fatal("name spelling or short value changed in delivery")
+		}
+		if err := svc.OnResult(ctx, "a1", protocol.JobResultMsg{JobID: j.ID, Success: true, Stdout: "value=" + secret, Stderr: secret}); err != nil {
+			t.Fatal(err)
+		}
+		got := fs.jobs[j.ID]
+		if strings.Contains(got.Stdout+got.Stderr, secret) || !strings.Contains(got.Stdout, "*") {
+			t.Fatal("short secret survived result masking")
+		}
+	}
+}
 func TestScriptVariablesFailClosedOnRedactionReadOrWrite(t *testing.T) {
 	for _, mode := range []string{"read", "decrypt", "write"} {
 		t.Run(mode, func(t *testing.T) {

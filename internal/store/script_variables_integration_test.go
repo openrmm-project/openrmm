@@ -2,14 +2,16 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgconn"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
@@ -120,7 +122,8 @@ func TestScriptVariablesMigrationUpgradeAndRedispatchIntegration(t *testing.T) {
 	}
 	st := newMigrationTestStore(t, url)
 	ctx := context.Background()
-	if err := st.migrate(ctx, migrations[:len(migrations)-1]); err != nil {
+	// Keep testing the pre-variables schema, even when later migrations are added.
+	if err := st.migrate(ctx, migrations[:28]); err != nil {
 		t.Fatal(err)
 	}
 	client, err := st.CreateClient(ctx, "Before upgrade")
@@ -172,6 +175,92 @@ func TestScriptVariablesMigrationUpgradeAndRedispatchIntegration(t *testing.T) {
 	if err != nil || !slices.Equal(got.Variables, j.Variables) {
 		t.Fatal("job declaration snapshot lost")
 	}
+}
+
+func TestScriptVariableNamesMigrationPreservesBindingsIntegration(t *testing.T) {
+	url := os.Getenv("RMM_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	st := newMigrationTestStore(t, url)
+	ctx := context.Background()
+	if err := st.migrate(ctx, migrations[:29]); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{SettingsEncryptionKey: "synthetic-instance-key"}
+	legacy, err := st.CreateScriptVariable(ctx, "CUSTOM_KEY", "before migration", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetScriptVariableValue(ctx, cfg, legacy.ID, "global", "", "legacy-synthetic-credential"); err != nil {
+		t.Fatal(err)
+	}
+	sc, err := st.CreateScript(ctx, &models.Script{Name: "before migration", Shell: "sh", Body: `printf '%s' "$CUSTOM_KEY"`, Variables: []string{legacy.Name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeHash := models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables)
+	for i := 0; i < 2; i++ {
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var name, stored string
+	if err := st.pool.QueryRow(ctx, `SELECT d.name, v.value FROM script_variables d JOIN script_variable_values v ON v.variable_id=d.id WHERE d.id=$1`, legacy.ID).Scan(&name, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if name != legacy.Name || !strings.HasPrefix(stored, "enc:v1:") || strings.Contains(stored, "legacy-synthetic-credential") {
+		t.Fatal("migration changed legacy name or encryption")
+	}
+	got, err := st.GetScript(ctx, sc.ID)
+	if err != nil || !slices.Equal(got.Variables, sc.Variables) || models.ScriptContentHash(got.Shell, got.Body, got.Params, got.Variables) != beforeHash {
+		t.Fatal("migration changed existing script bindings or hash")
+	}
+	agent, err := st.CreateAgent(ctx, "PC", "linux", "amd64", "0.11.0", "synthetic-token", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var longName strings.Builder
+	longName.WriteString("_longKey_")
+	for i := 0; i < 128; i++ {
+		// Avoid a compressible repeated name that would conceal the old raw
+		// B-tree index's key-size ceiling.
+		fmt.Fprintf(&longName, "%x", sha256.Sum256([]byte(fmt.Sprintf("name-%d", i))))
+	}
+	for _, tc := range []struct {
+		name, value string
+		secret      bool
+	}{
+		{legacy.Name, "legacy-synthetic-credential", true},
+		{"customerKey", "x", true},
+		{longName.String(), strings.Repeat("v", 65536), false},
+	} {
+		v := legacy
+		if tc.name != legacy.Name {
+			v, err = st.CreateScriptVariable(ctx, tc.name, "after migration", tc.secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := st.SetScriptVariableValue(ctx, cfg, v.ID, "global", "", tc.value); err != nil {
+				t.Fatal(err)
+			}
+		}
+		env, secrets, err := st.ResolveScriptVariables(ctx, cfg, agent.ID, []string{tc.name})
+		if err != nil || env[tc.name] != tc.value || (len(secrets) == 1) != tc.secret {
+			t.Fatal("name, value or secret resolution changed")
+		}
+		// The unique index must reject case aliases even for names larger than a
+		// raw B-tree key. It must not truncate or rewrite the stored identifier.
+		if _, err := st.CreateScriptVariable(ctx, strings.ToLower(tc.name), "alias", false); err == nil {
+			t.Fatal("case-only alias inserted")
+		} else {
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+				t.Fatalf("expected unique constraint, got %v", err)
+			}
+		}
+	}
+	assertCurrentMigrationState(t, st)
 }
 
 func TestScriptVariableSecretConversionSerializesWritersIntegration(t *testing.T) {

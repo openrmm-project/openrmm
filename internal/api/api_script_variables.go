@@ -64,7 +64,7 @@ func (s *Server) createScriptVariable(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name required")
 		return
 	}
-	in.Name = strings.ToUpper(strings.TrimSpace(in.Name))
+	in.Name = strings.TrimSpace(in.Name)
 	created, err := s.store.CreateScriptVariable(r.Context(), in.Name, in.Description, in.Secret)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

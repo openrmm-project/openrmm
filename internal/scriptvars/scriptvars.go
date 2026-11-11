@@ -17,10 +17,24 @@ import (
 	"github.com/p1ngu/rmm/internal/secretcrypto"
 )
 
-const (
-	MinSecretLen = 8
-	MaxValueLen  = 4096
-)
+// MaxEnvironmentBytes bounds the combined environment data; individual fields have
+// no business character limit. API request and operating-system limits also apply.
+const MaxEnvironmentBytes = 8 << 20
+
+func ValidEnvironmentSize(env map[string]string) error {
+	total := 0
+	for name, value := range env {
+		if len(name) > MaxEnvironmentBytes-total {
+			return fmt.Errorf("script environment exceeds payload budget")
+		}
+		total += len(name)
+		if len(value) > MaxEnvironmentBytes-total-2 {
+			return fmt.Errorf("script environment exceeds payload budget")
+		}
+		total += len(value) + 2
+	}
+	return nil
+}
 
 // Built-in names are injected for every supported run. They are not secrets
 // and cannot be overridden by a user-defined variable.
@@ -33,7 +47,7 @@ const (
 	BuiltinSiteName      = "RMM_SITE_NAME"
 )
 
-var userName = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,40}$`)
+var userName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // reserved are process controls a script variable must not replace.
 var reserved = map[string]struct{}{
@@ -73,10 +87,11 @@ func Builtins(d Device) map[string]string {
 
 // ValidUserName reports whether a caller may create a variable of this name.
 func ValidUserName(name string) error {
-	if !userName.MatchString(name) || strings.HasPrefix(name, "RMM_") || strings.HasPrefix(name, "OPENRMM_") {
-		return fmt.Errorf("variable name must be A-Z, digits and underscores, and cannot start with RMM_ or OPENRMM_")
+	canonical := strings.ToUpper(name)
+	if !userName.MatchString(name) || strings.HasPrefix(canonical, "RMM_") || strings.HasPrefix(canonical, "OPENRMM_") {
+		return fmt.Errorf("variable name must start with a letter or underscore and contain only letters, digits and underscores; RMM_ and OPENRMM_ are reserved")
 	}
-	if _, blocked := reserved[name]; blocked {
+	if _, blocked := reserved[canonical]; blocked {
 		return fmt.Errorf("variable name %s is reserved", name)
 	}
 	return nil
@@ -87,16 +102,20 @@ func Normalize(names []string) ([]string, error) {
 	if len(names) == 0 {
 		return []string{}, nil
 	}
-	seen := make(map[string]struct{}, len(names))
+	seen := make(map[string]string, len(names))
 	out := make([]string, 0, len(names))
 	for _, name := range names {
 		if err := ValidUserName(name); err != nil {
 			return nil, err
 		}
-		if _, ok := seen[name]; ok {
+		key := strings.ToUpper(name)
+		if previous, ok := seen[key]; ok {
+			if previous != name {
+				return nil, fmt.Errorf("variable names cannot differ only by letter case")
+			}
 			continue
 		}
-		seen[name] = struct{}{}
+		seen[key] = name
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -106,20 +125,14 @@ func Normalize(names []string) ([]string, error) {
 	return out, nil
 }
 
-// ValidValue checks a value before it is stored. Secrets have a minimum
-// length so redaction cannot be dodged with a one-character needle.
-func ValidValue(secret bool, value string) error {
+// ValidValue rejects data that cannot be carried by an environment variable.
+// Size is bounded by the API/transport and the target OS, not a field policy.
+func ValidValue(_ bool, value string) error {
 	if value == "" {
 		return fmt.Errorf("value required")
 	}
-	if len(value) > MaxValueLen {
-		return fmt.Errorf("value is longer than %d characters", MaxValueLen)
-	}
 	if strings.ContainsAny(value, "\x00\r\n") {
-		return fmt.Errorf("value cannot contain line breaks")
-	}
-	if secret && len(value) < MinSecretLen {
-		return fmt.Errorf("a secret must be at least %d characters", MinSecretLen)
+		return fmt.Errorf("value cannot contain NUL or line breaks")
 	}
 	return nil
 }
@@ -138,11 +151,19 @@ func CheckShell(shell string, count int) error {
 func Redact(text string, secrets []string) string {
 	ordered := append([]string(nil), secrets...)
 	sort.Slice(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })
+	// Accept short secrets without turning repeated masking into output growth.
+	// Each replacement is no longer than any nonempty secret in the snapshot.
+	width := 8
 	for _, secret := range ordered {
-		if len(secret) < MinSecretLen {
-			continue
+		if len(secret) > 0 && len(secret) < width {
+			width = len(secret)
 		}
-		text = strings.ReplaceAll(text, secret, "********")
+	}
+	marker := strings.Repeat("*", width)
+	for _, secret := range ordered {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, marker)
+		}
 	}
 	return text
 }

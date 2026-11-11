@@ -18,12 +18,26 @@ func TestScriptVariableEnvironmentValidation(t *testing.T) {
 			t.Fatalf("environment = %v, %v", env, err)
 		}
 	}
-	for _, vars := range []map[string]string{{"PATH": "bad"}, {"RMM_UNKNOWN": "bad"}, {"OPENRMM_PARAM_X": "bad"}, {"bad": "x"}, {"CUSTOM_KEY": "has\nnewline"}, {"CUSTOM_KEY": strings.Repeat("x", 4097)}} {
+	for _, vars := range []map[string]string{{"PATH": "bad"}, {"RMM_UNKNOWN": "bad"}, {"OPENRMM_PARAM_X": "bad"}, {"CUSTOM_KEY": "has\nnewline"}} {
 		if _, err := varEnv("sh", vars); err == nil {
 			t.Fatal("invalid environment accepted")
 		}
 	}
 }
+func TestScriptVariableEnvironmentPreservesUserCaseAndLongValues(t *testing.T) {
+	longName := "myKey_" + strings.Repeat("Ab", 4096)
+	longValue := strings.Repeat("v", 65536)
+	env, err := varEnv("sh", map[string]string{longName: longValue, "smallKey": "x"})
+	if err != nil || len(env) != 2 || env[0] != longName+"="+longValue || env[1] != "smallKey=x" {
+		t.Fatal("case or field length changed")
+	}
+	for _, vars := range []map[string]string{{"Path": "unsafe"}, {"myKey": "first", "MYKEY": "second"}} {
+		if _, err := varEnv("powershell", vars); err == nil {
+			t.Fatal("reserved or duplicate name accepted")
+		}
+	}
+}
+
 func TestScriptVariableOutputMaskedBeforeDurableOutbox(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	a := newDedupeAgent(t, path)
@@ -64,6 +78,10 @@ func TestScriptVariablesMaskBeforeOutputTruncation(t *testing.T) {
 	if code != 0 || out != "$(printf injected)" {
 		t.Fatalf("context was interpolated: %q %s", out, stderr)
 	}
+	code, out, stderr = runScriptCtxEnvSecrets(context.Background(), "sh", `printf '%s' "$customerKey"`, []string{"customerKey=q7X"}, []string{"q7X"})
+	if code != 0 || strings.Contains(out+stderr, "q7X") || out != "***" {
+		t.Fatal("mixed-case variable or short secret masking failed")
+	}
 }
 
 // Regression: on the initial commit this accepts the canary as environment
@@ -87,6 +105,10 @@ func TestScriptVariablesWindowsPowerShell(t *testing.T) {
 	code, out, stderr := runScriptCtxEnvSecrets(context.Background(), "powershell", `Write-Output $env:CUSTOM_KEY`, []string{"CUSTOM_KEY=" + secret}, []string{secret})
 	if code != 0 || strings.Contains(out+stderr, secret) || !strings.Contains(out, "********") {
 		t.Fatal("PowerShell environment/masking failed")
+	}
+	code, out, stderr = runScriptCtxEnvSecrets(context.Background(), "powershell", `Write-Output $env:customerKey`, []string{"customerKey=q7X"}, []string{"q7X"})
+	if code != 0 || strings.Contains(out+stderr, "q7X") || !strings.Contains(out, "***") {
+		t.Fatal("PowerShell mixed-case variable or short secret masking failed")
 	}
 	code, out, stderr = runScriptCtxEnv(context.Background(), "cmd", "echo OPENRMM_CMD_CONTROL", nil)
 	if code != 0 || !strings.Contains(out, "OPENRMM_CMD_CONTROL") {

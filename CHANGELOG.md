@@ -15,7 +15,9 @@ tag.
   data. Secrets are write-only in the API and masked before agent result storage
   and server job history; variable declarations are bound to AI release hashes.
   Includes scheduled library tasks, refuses unsafe CMD variable expansion, and adds nine-language
-  console copy and unit/integration/browser regression tests.
+  console copy and unit/integration/browser regression tests. Names preserve the
+  user's letter case, names and values have no field-specific length cap, and
+  short secrets are accepted and masked. Scope overrides are optional.
 
 ## [0.10.0] - 2026-11-10
 

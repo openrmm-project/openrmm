@@ -18,6 +18,65 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
+func TestScriptVariablesUserChosenNamesAndValuesAPIIntegration(t *testing.T) {
+	f := newScriptFixture(t)
+	for _, tc := range []struct {
+		name, value string
+		secret      bool
+	}{
+		{"customerKey", "q7X", true},
+		{"_shortKey", "x", true},
+		{"customerKey_" + strings.Repeat("Ab", 4096), strings.Repeat("v", 65536), false},
+	} {
+		payload, _ := json.Marshal(map[string]any{"name": tc.name, "secret": tc.secret})
+		rec := f.do("POST", "/api/script-variables", string(payload))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create status %d", rec.Code)
+		}
+		var created store.ScriptVariable
+		if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || created.Name != tc.name {
+			t.Fatal("name spelling was not preserved")
+		}
+		payload, _ = json.Marshal(map[string]any{"scope_type": "global", "value": tc.value})
+		if rec = f.do("PUT", "/api/script-variables/"+created.ID+"/values", string(payload)); rec.Code != http.StatusOK {
+			t.Fatalf("set value status %d", rec.Code)
+		}
+		rec = f.do("GET", "/api/script-variables", "")
+		var list struct {
+			Variables []store.ScriptVariable `json:"variables"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil {
+			t.Fatal("list failed")
+		}
+		found := false
+		for _, item := range list.Variables {
+			if item.ID != created.ID {
+				continue
+			}
+			found = true
+			if item.Name != tc.name || len(item.Values) != 1 || !item.Values[0].Set {
+				t.Fatal("value or original name missing")
+			}
+			want := tc.value
+			if tc.secret {
+				want = ""
+			}
+			if item.Values[0].Value != want {
+				t.Fatal("secret exposed or public value truncated")
+			}
+		}
+		if !found {
+			t.Fatal("created variable missing")
+		}
+	}
+	for _, name := range []string{"CUSTOMERKEY", "Path", "rmm_agent_id", "OpenRmm_PARAM_X", "1key", "has space"} {
+		payload, _ := json.Marshal(map[string]any{"name": name})
+		if rec := f.do("POST", "/api/script-variables", string(payload)); rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid or ambiguous name accepted: %s (status %d)", name, rec.Code)
+		}
+	}
+}
+
 func TestScriptVariablesRBACAndWriteOnlyAPIIntegration(t *testing.T) {
 	f := newScriptFixture(t)
 	ctx := context.Background()

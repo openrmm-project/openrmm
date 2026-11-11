@@ -14,7 +14,9 @@ saved library run or a scheduled library task for scripts that require variables
    administrator receives it by default. Existing custom roles keep their grants.
 2. Open **Scripts → Script variables**, create a name such as
    `HUNTRESS_ACCOUNT_KEY`, and mark it **Secret** before entering a credential.
-3. Set a global or scoped value. Inheritance, from least to most specific, is:
+3. Set a global value to reuse it across devices. Optionally override it for a
+   client, site, department or individual device; configuring every level is not
+   required. Inheritance, from least to most specific, is:
    **global → client → site → department → device**. Removing an override restores
    the next matching value; values from other clients are never a fallback.
 4. Edit the library script and select the variables it may receive. The definition
@@ -24,12 +26,21 @@ saved library run or a scheduled library task for scripts that require variables
    path, just like a parameterized script. Existing explicitly released AI actions
    keep their separate autonomy checks; changing the declarations withdraws a release.
 
-Names start with an uppercase letter, contain uppercase ASCII letters, digits and
-underscores, and are at most 41 characters. The prefixes `RMM_`, `OPENRMM_` and
-process-control names such as `PATH` are reserved. Each script can declare up to
-32 names. Values must be nonempty, at most 4096 bytes, without NUL or line breaks;
-secrets need at least 8 bytes. A missing value, deleted definition, incapable agent
-or decryption error fails the run rather than running without the requested value.
+Names start with an ASCII letter or underscore and contain ASCII letters, digits
+and underscores. Your choice of upper/lowercase is preserved: `customerKey` is a
+valid name. Names differing only by letter case cannot coexist, because Windows
+environment names are case-insensitive. The prefixes `RMM_`, `OPENRMM_` and
+process-control names such as `PATH` are reserved regardless of case. Each script
+can declare up to 32 names. Names and values have no field-specific character
+maximum; values must be nonempty and cannot contain NUL or line breaks. Secrets
+may be as short as one character and are masked in results too. Short secrets can
+mask ordinary output more often, so avoid echoing credentials.
+
+Request bodies remain limited to 1 MiB and the combined environment data has an
+8 MiB safety budget. The target operating system also limits process arguments
+and environment size; a value accepted by the vault may exceed that platform's
+execution limit. A missing value, deleted definition, incapable agent or decryption
+error fails the run rather than running without the requested value.
 
 Only an unrestricted operator can create, change or delete global definitions or
 set global values. A scoped variable manager can set/clear overrides only within

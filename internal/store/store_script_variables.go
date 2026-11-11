@@ -381,6 +381,9 @@ func (s *Store) ResolveScriptVariables(ctx context.Context, cfg *config.Config, 
 		}
 		env[name] = plain
 	}
+	if err := scriptvars.ValidEnvironmentSize(env); err != nil {
+		return nil, nil, err
+	}
 	return env, secrets, nil
 }
 

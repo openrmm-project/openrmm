@@ -18,7 +18,7 @@ const ruleDefaults = Object.fromEntries(['connectivity', 'job_failure', 'patch_f
 let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
 
 const scriptVariables = [];
-const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', description: '', category: 'Tests', shell: 'sh', body: 'printf \'%s\' "$CUSTOM_KEY"', params: [], variables: [] }];
+const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', description: '', category: 'Tests', shell: 'sh', body: 'printf \'%s\' "$customerKey"', params: [], variables: [] }];
 
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
@@ -314,7 +314,7 @@ async function scriptVariablesBrowserFlow() {
   (await wait(() => document.getElementById('scripts-tab-variables'))).click();
   (await wait(() => button('New variable'))).click();
   const definition = await wait(() => document.querySelector('[role="dialog"][aria-label="Script variables"]'));
-  change(definition.querySelector('input[aria-label="Name"]'), 'CUSTOM_KEY');
+  change(definition.querySelector('input[aria-label="Name"]'), 'customerKey');
   definition.querySelector('input[type="checkbox"]').click();
   (await wait(() => button('Save', definition) && !button('Save', definition).disabled && button('Save', definition))).click();
   await wait(() => !document.contains(definition));
@@ -322,13 +322,13 @@ async function scriptVariablesBrowserFlow() {
   const dialog = await wait(() => document.querySelector('[role="dialog"][aria-label="Value"]'));
   const input = dialog.querySelector('input[type="password"]');
   if (!input || input.value !== '') throw new Error('Secret must start blank in a password field');
-  change(input, 'synthetic-browser-customer-key');
+  change(input, 'q7X');
   (await wait(() => button('Save', dialog) && !button('Save', dialog).disabled && button('Save', dialog))).click();
   await wait(() => !document.contains(dialog) && document.body.textContent.includes('Stored (hidden)'));
-  if (document.body.textContent.includes('synthetic-browser-customer-key')) throw new Error('Secret rendered after save');
+  if (document.body.textContent.includes('q7X')) throw new Error('Secret rendered after save');
   document.getElementById('scripts-tab-library').click();
   (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer')))).click();
-  const label = await wait(() => [...document.querySelectorAll('label')].find((el) => el.textContent.includes('CUSTOM_KEY') && el.querySelector('input[type="checkbox"]')));
+  const label = await wait(() => [...document.querySelectorAll('label')].find((el) => el.textContent.includes('customerKey') && el.querySelector('input[type="checkbox"]')));
   label.querySelector('input').click();
   (await wait(() => button('Save script'))).click();
   await wait(() => !button('Save script'));
@@ -494,9 +494,12 @@ try {
     assert.equal('meshcentral_token_key' in remoteConfig.remote, false, 'GET config stays write-only');
     const variablesFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: scriptVariablesBrowserFlow });
     assertBrowser(variablesFlow, /data-script-variables-e2e="passed"/);
+    assert.equal(scriptVariables[0]?.name, 'customerKey');
     assert.equal(scriptVariables[0]?.secret, true);
+    const variableValue = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/script-variables/variable-e2e/values');
+    assert.equal(variableValue?.payload.value, 'q7X', 'short secrets must be submitted without rewriting');
     assert.equal('value' in scriptVariables[0].values[0], false, 'secret read-back is write-only');
-    assert.deepEqual(libraryScripts[0].variables, ['CUSTOM_KEY']);
+    assert.deepEqual(libraryScripts[0].variables, ['customerKey']);
     const variableJob = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
     assert.deepEqual(variableJob?.payload, { script_id: 'script-e2e', params: {} });
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });

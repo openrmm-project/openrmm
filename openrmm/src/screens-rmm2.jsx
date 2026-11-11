@@ -115,11 +115,11 @@ function ScriptVariableDefinition({ variable, onClose }) {
   };
   return <Modal open onClose={onClose} width="max-w-lg"><div role="dialog" aria-label={t('vars.variables')} className="p-5 space-y-4">
     <div className="font-semibold">{t('vars.variables')}</div>
-    <Field label={t('checks.name')}><Input aria-label={t('checks.name')} value={name} disabled={!!variable.id} onChange={(e) => setName(e.target.value.toUpperCase())} maxLength={41} placeholder="HUNTRESS_ACCOUNT_KEY" /></Field>{/* i18n-ignore: environment variable identifier */}
+    <Field label={t('checks.name')} hint={t('vars.nameHint')}><Input aria-label={t('checks.name')} value={name} disabled={!!variable.id} onChange={(e) => setName(e.target.value)} placeholder="customerKey" /></Field>{/* i18n-ignore: environment variable identifier */}
     <Field label={t('common.description')}><Input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} /></Field>
     <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={secret} disabled={!!variable.secret} onChange={(e) => setSecret(e.target.checked)} />{t('vars.secret')}</label>
     <p className="text-[12px] text-muted">{t('vars.secretHint')}</p>
-    <div className="flex justify-end gap-2"><Button onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} disabled={!/^[A-Z][A-Z0-9_]{0,40}$/.test(name)} onClick={save}>{t('action.save')}</Button></div>
+    <div className="flex justify-end gap-2"><Button onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} disabled={!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)} onClick={save}>{t('action.save')}</Button></div>
   </div></Modal>;
 }
 
@@ -150,8 +150,8 @@ function ScriptVariableValueEditor({ variable, value: existing, onClose }) {
     <Field label={t('vars.scope')}><Select aria-label={t('vars.scope')} value={scope} onChange={(e) => { setScope(e.target.value); setScopeTarget(''); }} disabled={!!existing}><option value="global">{t('vars.global')}</option>{['client', 'site', 'group', 'agent'].map((key) => <option key={key} value={key}>{t('sup.scope.' + key)}</option>)}</Select></Field>
     {scope !== 'global' && <Field label={t('vars.target')}><Combobox value={scopeTarget} onChange={setScopeTarget} options={options} disabled={!!existing} placeholder={t('vars.target')} /></Field>}
     {error && <div role="alert" className="text-bad text-[12px]">{error}</div>}
-    <Field label={t('vars.value')} hint={variable.secret ? t('vars.secretHint') : undefined}><Input aria-label={t('vars.value')} type={variable.secret ? 'password' : 'text'} value={value} onChange={(e) => setValue(e.target.value)} autoComplete="new-password" maxLength={4096} /></Field>
-    <div className="flex justify-end gap-2"><Button onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} disabled={!value || (variable.secret && value.length < 8) || (scope !== 'global' && !scopeTarget)} onClick={save}>{t('action.save')}</Button></div>
+    <Field label={t('vars.value')} hint={variable.secret ? t('vars.secretHint') : undefined}><Input aria-label={t('vars.value')} type={variable.secret ? 'password' : 'text'} value={value} onChange={(e) => setValue(e.target.value)} autoComplete="new-password" /></Field>
+    <div className="flex justify-end gap-2"><Button onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} disabled={!value || (scope !== 'global' && !scopeTarget)} onClick={save}>{t('action.save')}</Button></div>
   </div></Modal>;
 }
 

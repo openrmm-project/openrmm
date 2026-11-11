@@ -30,6 +30,36 @@ function asList(value) {
   return [];
 }
 
+// A catalog row's approval, worked out by the server from where its devices
+// are. Approved stays approved through the install: a claimed or failed install
+// is not a reason to ask for the decision again. Label: t('patch.approval.<a>').
+const APPROVAL_STYLE = {
+  pending: 'text-faint bg-elevated border-line2',
+  approved: 'text-ok bg-oksoft border-ok/25',
+  declined: 'text-bad bg-badsoft border-bad/25',
+  partial: 'text-warn bg-warnsoft border-warn/25',
+};
+function ApprovalBadge({ a }) {
+  const key = APPROVAL_STYLE[a] ? a : 'pending';
+  return <span className={cx('inline-flex items-center rounded-full border px-2 py-[3px] text-[11.5px] font-medium', APPROVAL_STYLE[key])}>{tEnum('patch.approval', key)}</span>;
+}
+// The catalog's lists. A patch is in a list when at least one of its devices
+// is in that state, so one approved for a client and declined for another is
+// in both: the same rule as ?approval= on GET /api/patches.
+const n0 = (v) => Number(v) || 0;
+const PATCH_LISTS = {
+  all: () => true,
+  pending: (p) => n0(p.pending_count) > 0,
+  approved: (p) => n0(p.approved_count) + n0(p.installing_count) + n0(p.failed_count) + n0(p.installed_count) > 0,
+  declined: (p) => n0(p.declined_count) > 0,
+};
+// Where a patch's devices are, in the words the device's own patch list uses.
+const DEVICE_STATES = [['missing', 'pending_count'], ['approved', 'approved_count'], ['installing', 'installing_count'], ['failed', 'failed_count'], ['installed', 'installed_count'], ['excluded', 'declined_count']];
+function devicesWithPatch(p) { return DEVICE_STATES.reduce((sum, [, field]) => sum + n0(p[field]), 0); }
+function approvalBreakdown(p) {
+  return DEVICE_STATES.filter(([, field]) => n0(p[field]) > 0).map(([status, field]) => tEnum('patch.status', status) + ' ' + n0(p[field])).join(' · ');
+}
+
 function ComplianceBadge({ s }) {
   const key = COMPLIANCE_STYLE[s] ? s : 'unknown';
   return <span className={cx('inline-flex items-center gap-1.5 rounded-full border px-2 py-[3px] text-[11.5px] font-medium', COMPLIANCE_STYLE[key])}>{t('comp.' + key)}</span>;
@@ -129,7 +159,10 @@ function CatalogTab() {
   const toast = useToast();
   const q = useQuery(['catalog'], () => api.patchCatalog(), { invalidateOn: ['patches'] });
   const [search, setSearch] = useState('');
-  const rows = (q.data?.patches || []).filter((p) => !search || (p.title || '').toLowerCase().includes(search.toLowerCase()) || (p.identifier || '').toLowerCase().includes(search.toLowerCase()));
+  const [list, setList] = useState('all');
+  const all = q.data?.patches || [];
+  const inList = (p) => (PATCH_LISTS[list] || PATCH_LISTS.all)(p);
+  const rows = all.filter((p) => inList(p) && (!search || (p.title || '').toLowerCase().includes(search.toLowerCase()) || (p.identifier || '').toLowerCase().includes(search.toLowerCase())));
   const decide = async (p, decision) => {
     try { await api.approvePatch(p.id, { scope_type: '', scope_id: '', decision }); toast.success(decision === 'approve' ? t('patches.approved') : t('patches.declined'), decision === 'approve' ? t('patches.approvedHint') : undefined); window.dataBus.emit('patches'); }
     catch (e) { toast.error(t('common.failed'), e.message); }
@@ -140,19 +173,28 @@ function CatalogTab() {
         <Icon name="info" size={14} className="text-brandhi mt-0.5 shrink-0" />
         <span>{t('patches.catalogInfo')}</span>
       </div>
-      <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-line">
+        <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('patches.filterPatches')} className="pl-9 h-8" />
         </div>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('patches.listLabel')}>
+          {Object.keys(PATCH_LISTS).map((key) => (
+            <button key={key} type="button" aria-pressed={list === key} onClick={() => setList(key)}
+              className={cx('h-8 px-2.5 rounded-lg border text-[12px] transition inline-flex items-center gap-1.5', list === key ? 'border-brand bg-brandsoft text-ink' : 'border-line2 text-muted hover:text-ink')}>
+              {t('patches.list.' + key)}<span className="tabular text-faint">{all.filter(PATCH_LISTS[key]).length}</span>
+            </button>
+          ))}
+        </div>
       </div>
       {q.loading ? <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
-        : !rows.length ? <EmptyState icon="shield" title={t('patches.none')} msg={t('patches.noneMsg')} />
+        : !all.length ? <EmptyState icon="shield" title={t('patches.none')} msg={t('patches.noneMsg')} />
+          : !rows.length ? <EmptyState icon="shield" title={t('patches.noneInList')} />
           : (
             <div className="overflow-auto scroll-area max-h-[calc(100vh-260px)]">
               <table className="w-full text-[12.5px] border-collapse">
                 <thead className="sticky top-0 bg-elevated/95 backdrop-blur text-left text-faint">
-                  <tr>{[t('patches.col.class'), t('patches.col.title'), t('devices.col.os'), 'KB', t('patches.col.devices'), t('patches.col.approved'), t('patches.col.reboot'), ''].map((h, i) => <th key={i} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
+                  <tr>{[t('patches.col.class'), t('patches.col.title'), t('devices.col.os'), 'KB', t('patches.col.devices'), t('patches.col.approval'), t('patches.col.reboot'), ''].map((h, i) => <th key={i} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {rows.map((p) => (
@@ -161,21 +203,22 @@ function CatalogTab() {
                       <td className="px-4 py-2 text-ink max-w-[420px] truncate" title={p.title}>{p.title || p.identifier}</td>
                       <td className="px-4 py-2"><OsIcon os={p.os} /></td>
                       <td className="px-4 py-2 mono text-muted">{p.kb || '—'}</td>
-                      <td className="px-4 py-2 tabular">{p.missing_count}</td>
-                      <td className="px-4 py-2 tabular text-ok">{p.approved_count || ''}</td>
+                      <td className="px-4 py-2 tabular">{devicesWithPatch(p)}</td>
+                      <td className="px-4 py-2">
+                        <ApprovalBadge a={p.approval} />
+                        <div className={cx('text-[11px] mt-1 whitespace-nowrap', n0(p.failed_count) > 0 ? 'text-bad' : 'text-faint')}>{approvalBreakdown(p)}</div>
+                      </td>
                       <td className="px-4 py-2">{p.reboot_required ? <Icon name="refresh" size={13} className="text-warn" /> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2 text-right">
-                        {can('patches.manage') && (() => {
-                          const fullyApproved = p.approved_count > 0 && p.approved_count >= p.missing_count;
-                          return (
-                            <span className="inline-flex gap-1.5 items-center justify-end">
-                              {fullyApproved
-                                ? <span className="inline-flex items-center gap-1 text-[11.5px] text-ok font-medium"><Icon name="approve" size={13} />{t('patches.approvedBadge')}</span>
-                                : <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>{t('action.approve')}</Button>}
-                              <Button size="sm" variant="ghost" icon="reject" title={fullyApproved ? t('patches.revoke') : t('patches.decline')} onClick={() => decide(p, 'decline')}>{t('patches.decline')}</Button>
-                            </span>
-                          );
-                        })()}
+                        {can('patches.manage') && (
+                          <span className="inline-flex gap-1.5 items-center justify-end">
+                            {/* Approving again is also how a failed install is retried. */}
+                            {p.approval !== 'approved'
+                              ? <Button size="sm" variant="success" icon="approve" onClick={() => decide(p, 'approve')}>{t('action.approve')}</Button>
+                              : n0(p.failed_count) > 0 && <Button size="sm" variant="secondary" icon="refresh" title={t('patches.retryHint')} onClick={() => decide(p, 'approve')}>{t('patches.retry')}</Button>}
+                            {p.approval !== 'declined' && <Button size="sm" variant="ghost" icon="reject" title={p.approval === 'approved' ? t('patches.revoke') : t('patches.decline')} onClick={() => decide(p, 'decline')}>{t('patches.decline')}</Button>}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

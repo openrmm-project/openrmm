@@ -6,6 +6,25 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Approved and declined patch lists:** the Patches ▸ Catalog tab lists All,
+  Pending, Approved or Declined patches, with each patch's approval and where
+  its devices are (waiting, installing, failed, installed, declined).
+  `GET /api/patches` returns the same counts and accepts
+  `?approval=pending|approved|declined`.
+- **Department column** in the Devices list.
+
+### Fixed
+
+- **An approved patch showed as unapproved again.** The catalog counted only
+  devices still waiting to install, so a patch read as unapproved as soon as an
+  install was claimed or failed. Devices that reported the patch after the
+  decision, or again after an install, went back to pending instead of taking
+  the decision. Approving again did nothing to failed installs; it now retries
+  them. A newer decision replaces narrower ones in its scope, so later scans
+  keep what the screen showed.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

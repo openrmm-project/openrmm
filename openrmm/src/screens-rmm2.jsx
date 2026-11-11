@@ -73,7 +73,14 @@ function ScriptVariablesPanel() {
   const [setting, setSetting] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [q, setQ] = useState('');
-  const items = (query.data?.variables || []).filter((v) => (v.name + ' ' + v.description).toLowerCase().includes(q.toLowerCase()));
+  const [kind, setKind] = useState('all');
+  const [open, setOpen] = useState(null);
+  const all = query.data?.variables || [];
+  const needle = q.trim().toLowerCase();
+  // Hundreds of variables stay workable: a search, a secret filter and a
+  // bounded scroll area; each variable's values open on demand.
+  const items = all.filter((v) => (kind === 'all' || (kind === 'secret') === !!v.secret)
+    && (!needle || (v.name + ' ' + (v.description || '')).toLowerCase().includes(needle)));
   const remove = async () => {
     try {
       if (removing.value) await api.clearScriptVariableValue(removing.id, removing.value.scope_type, removing.value.scope_id || '');
@@ -82,17 +89,22 @@ function ScriptVariablesPanel() {
     } catch (e) { toast.error(t('common.failed'), e.message); }
   };
   return <Card><div className="p-4 space-y-4">
-    <div className="flex items-center gap-3"><Input aria-label={t('vars.search')} placeholder={t('vars.search')} value={q} onChange={(e) => setQ(e.target.value)} /><Button onClick={() => setEditing({})} icon="plus">{t('vars.new')}</Button></div>
+    <div className="flex flex-wrap items-center gap-3"><Input aria-label={t('vars.search')} placeholder={t('vars.search')} value={q} onChange={(e) => setQ(e.target.value)} aria-controls="script-variables-list" className="flex-1 min-w-[12rem]" /><Select aria-label={t('vars.filter')} value={kind} onChange={(e) => setKind(e.target.value)} className="w-44"><option value="all">{t('vars.filterAll')}</option><option value="secret">{t('vars.filterSecret')}</option><option value="public">{t('vars.filterPublic')}</option></Select><Button onClick={() => setEditing({})} icon="plus">{t('vars.new')}</Button></div>
     <p className="text-[12px] text-muted">{t('vars.help')}</p>
     <div className="rounded-xl border border-line p-3 text-[12px] space-y-1"><div>{t('vars.builtins')}</div><code className="break-all">{['RMM_AGENT_ID', 'RMM_AGENT_HOSTNAME', 'RMM_CLIENT_ID', 'RMM_CLIENT_NAME', 'RMM_SITE_ID', 'RMM_SITE_NAME'].join(', ')}</code></div>
     {query.error && <div role="alert" className="text-bad">{query.error.message}</div>}
-    {items.map((v) => <div key={v.id} className="rounded-xl border border-line p-3 space-y-2">
-      <div className="flex items-center gap-2"><code className="flex-1 break-all">{v.name}</code>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}<Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
-      <p className="text-[12px] text-muted">{v.description}</p>
+    {all.length > 0 && <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: items.length, total: all.length })}</div>}
+    {items.length > 0 && <div id="script-variables-list" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-[28rem] overflow-y-auto overscroll-contain scroll-area rounded-xl border border-line divide-y divide-line">
+    {items.map((v) => <div key={v.id} className="px-3 py-2 space-y-2">
+      <div className="flex items-center gap-2 min-h-10"><button type="button" aria-expanded={open === v.id} aria-label={t(open === v.id ? 'vars.hideValues' : 'vars.showValues') + ': ' + v.name} onClick={() => setOpen(open === v.id ? null : v.id)} className="flex-1 min-w-0 text-left"><code className="block truncate text-[12.5px] text-ink" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11.5px] text-muted" title={v.description}>{v.description}</span>}</button>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}<span className="text-faint text-[11.5px] whitespace-nowrap">{t('vars.valuesCount', { count: (v.values || []).length })}</span><Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
+      {open === v.id && <div className="space-y-2 pb-1">
+      {!(v.values || []).length && <p className="text-[12px] text-muted">{t('vars.noValues')}</p>}
       {(v.values || []).map((value) => <div key={value.scope_type + ':' + value.scope_id} className="flex flex-wrap items-center gap-2 text-[12px]"><span>{value.scope_type === 'global' ? t('vars.global') : t('sup.scope.' + value.scope_type)} {targetsQ.data?.[value.scope_id] || value.scope_id}</span><code className="flex-1 break-all">{v.secret ? t('vars.masked') : value.value}</code><Button size="sm" onClick={() => setSetting({ variable: v, value })}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving({ ...v, value })}>{t('action.remove')}</Button></div>)}
       <Button size="sm" onClick={() => setSetting({ variable: v })}>{t('vars.setValue')}</Button>
+      </div>}
     </div>)}
-    {!query.loading && items.length === 0 && <p className="text-muted text-[12px]">{t('vars.none')}</p>}
+    </div>}
+    {!query.loading && items.length === 0 && <p className="text-muted text-[12px]">{all.length ? t('vars.noMatches') : t('vars.none')}</p>}
     {editing && <ScriptVariableDefinition variable={editing} onClose={() => setEditing(null)} />}
     {setting && <ScriptVariableValueEditor {...setting} onClose={() => setSetting(null)} />}
     <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={remove} danger title={t('vars.deleteTitle')} body={t('vars.deleteHint')} confirmLabel={t('action.delete')} />
@@ -263,9 +275,14 @@ function ScriptEditor({ script, onClose, categories = [] }) {
   const [params, setParams] = useState(script?.params || []);
   const [variables, setVariables] = useState(script?.variables || []);
   const variablesQ = useQuery(['script-variables'], () => api.listScriptVariables(), { invalidateOn: ['scripts'] });
+  const [varSearch, setVarSearch] = useState('');
+  const availableVars = variablesQ.data?.variables || [];
+  const varNeedle = varSearch.trim().toLowerCase();
+  const matchingVars = availableVars.filter((v) => !varNeedle || (v.name + ' ' + (v.description || '')).toLowerCase().includes(varNeedle));
   const [busy, setBusy] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const readOnly = !can('scripts.manage') || ((script?.variables || []).length > 0 && !can('scripts.variables'));
+  const varsLocked = readOnly || shell === 'cmd' || !can('scripts.variables');
   // What the release is bound to: an edit here withdraws it on save, so the
   // drawer says so before the operator saves rather than after.
   const contentChanged = !!script && (shell !== script.shell || body !== script.body || JSON.stringify(params) !== JSON.stringify(script.params || []) || JSON.stringify(variables) !== JSON.stringify(script.variables || []));
@@ -306,7 +323,16 @@ function ScriptEditor({ script, onClose, categories = [] }) {
           <div className="font-semibold text-[12.5px]">{t('vars.variables')}</div>
           <div className="text-[12px] text-muted">{t('vars.bindHint')}</div>
           {shell === 'cmd' && <div className="text-[12px] text-warn">{t('vars.cmdUnsupported')}</div>}
-          {(variablesQ.data?.variables || []).map((v) => <label key={v.id} className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={variables.includes(v.name)} disabled={readOnly || shell === 'cmd' || !can('scripts.variables')} onChange={(e) => setVariables(e.target.checked ? [...variables, v.name].sort() : variables.filter((name) => name !== v.name))} /><code>{v.name}</code>{v.secret && <span>{t('vars.secret')}</span>}</label>)}
+          {/* Chosen names stay visible above the picker, whatever the search hides. */}
+          <div aria-label={t('vars.selected')} className="flex flex-wrap gap-1.5">{variables.length === 0 ? <span className="text-[12px] text-faint">{t('vars.noneSelected')}</span> : variables.map((name) => <span key={name} className="inline-flex items-center gap-1 rounded-md border border-line bg-elevated px-1.5 py-0.5 text-[11.5px]"><code>{name}</code>{!varsLocked && <button type="button" aria-label={t('action.remove') + ': ' + name} onClick={() => setVariables(variables.filter((value) => value !== name))} className="text-faint hover:text-ink">×</button>}</span>)}</div>
+          {availableVars.length > 0 && <>
+            <Input value={varSearch} onChange={(e) => setVarSearch(e.target.value)} placeholder={t('vars.pickerSearch')} aria-label={t('vars.pickerSearch')} aria-controls="script-variable-picker" />
+            <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: matchingVars.length, total: availableVars.length })}</div>
+            <div id="script-variable-picker" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-60 overflow-y-auto overscroll-contain scroll-area rounded-lg border border-line">
+              {matchingVars.map((v) => <label key={v.id} className="h-12 px-3 flex items-center gap-2 text-[12px] border-b border-line last:border-0"><input type="checkbox" checked={variables.includes(v.name)} disabled={varsLocked} onChange={(e) => setVariables(e.target.checked ? [...new Set([...variables, v.name])].sort() : variables.filter((name) => name !== v.name))} /><span className="min-w-0 flex-1"><code className="block truncate" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11px] text-muted" title={v.description}>{v.description}</span>}</span>{v.secret && <span className="text-faint">{t('vars.secret')}</span>}</label>)}
+              {!matchingVars.length && <p className="p-3 text-[12px] text-faint">{t('vars.noMatches')}</p>}
+            </div>
+          </>}
           {variables.filter((name) => !(variablesQ.data?.variables || []).some((v) => v.name === name)).map((name) => <div key={name} className="text-warn">{name}<Button size="sm" disabled={readOnly || shell === 'cmd' || !can('scripts.variables')} onClick={() => setVariables(variables.filter((value) => value !== name))}>{t('action.remove')}</Button></div>)}
         </div>
         {script && <AIReleasePanel script={script} contentChanged={contentChanged} />}

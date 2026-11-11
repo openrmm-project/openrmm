@@ -17,7 +17,11 @@ tag.
   Includes scheduled library tasks, refuses unsafe CMD variable expansion, and adds nine-language
   console copy and unit/integration/browser regression tests. Names preserve the
   user's letter case, names and values have no field-specific length cap, and
-  short secrets are accepted and masked. Scope overrides are optional.
+  short secrets are accepted and masked. Scope overrides are optional. Names an
+  interpreter or loader reads (`PSModulePath`, `COR_*`, `DOTNET_*`, `PYTHON*`,
+  `LD_*` and similar) are reserved, and the agent refuses a variable that would
+  replace one the device already defines. The Variables tab and the script
+  editor search, filter and scroll, so hundreds of variables stay manageable.
 
 ## [0.10.0] - 2026-11-10
 

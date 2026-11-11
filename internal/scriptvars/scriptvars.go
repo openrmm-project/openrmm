@@ -59,6 +59,29 @@ var reserved = map[string]struct{}{
 	"BASH_ENV": {}, "ENV": {}, "PROMPT_COMMAND": {}, "PS1": {},
 	"HTTP_PROXY": {}, "HTTPS_PROXY": {}, "ALL_PROXY": {}, "NO_PROXY": {},
 	"SSLKEYLOGFILE": {}, "GIT_SSH_COMMAND": {},
+	// Names that turn a value into code or move what runs: shell, PowerShell,
+	// locale and library loading, and certificate trust for downloads.
+	"PS2": {}, "PS3": {}, "PS4": {}, "SHELLOPTS": {}, "BASHOPTS": {}, "CDPATH": {},
+	"GLOBIGNORE": {}, "TMPDIR": {}, "PSMODULEPATH": {}, "PSEXECUTIONPOLICYPREFERENCE": {},
+	"CLASSPATH": {}, "JAVA_TOOL_OPTIONS": {}, "_JAVA_OPTIONS": {}, "JDK_JAVA_OPTIONS": {},
+	"PERLLIB": {}, "LOCPATH": {}, "NLSPATH": {}, "HOSTALIASES": {}, "GCONV_PATH": {},
+	"REQUESTS_CA_BUNDLE": {}, "CURL_CA_BUNDLE": {}, "WGETRC": {}, "CURL_HOME": {},
+	"GIT_SSH": {}, "GIT_EXEC_PATH": {}, "GIT_ASKPASS": {}, "SSH_ASKPASS": {},
+	"GIT_TEMPLATE_DIR": {}, "GIT_PROXY_COMMAND": {}, "GIT_EXTERNAL_DIFF": {},
+	"GIT_PAGER": {}, "GIT_EDITOR": {}, "GIT_SEQUENCE_EDITOR": {}, "PAGER": {}, "EDITOR": {}, "VISUAL": {},
+	// Windows locations scripts use to find installers and data.
+	"PROGRAMFILES": {}, "PROGRAMW6432": {}, "PROGRAMDATA": {}, "COMMONPROGRAMFILES": {},
+	"COMMONPROGRAMW6432": {}, "APPDATA": {}, "LOCALAPPDATA": {}, "USERPROFILE": {},
+	"ALLUSERSPROFILE": {}, "PUBLIC": {}, "SYSTEMDRIVE": {}, "HOMEDRIVE": {}, "HOMEPATH": {},
+}
+
+// reservedPrefixes are whole families an interpreter or loader reads: .NET
+// profilers and startup hooks loaded into PowerShell, the dynamic linker,
+// Python, Perl, Ruby, Node.js, glibc and TLS trust. The agent additionally
+// refuses any name the device's own environment already defines.
+var reservedPrefixes = []string{
+	"COR_", "CORECLR_", "COMPLUS_", "DOTNET_", "APPDOMAIN_MANAGER_",
+	"LD_", "DYLD_", "PYTHON", "PERL5", "RUBY", "NODE_", "GLIBC_", "SSL_CERT_", "GIT_CONFIG",
 }
 
 // Device is the context a run is resolved against.
@@ -93,6 +116,11 @@ func ValidUserName(name string) error {
 	}
 	if _, blocked := reserved[canonical]; blocked {
 		return fmt.Errorf("variable name %s is reserved", name)
+	}
+	for _, prefix := range reservedPrefixes {
+		if strings.HasPrefix(canonical, prefix) {
+			return fmt.Errorf("variable name %s is reserved: names starting with %s control how programs load", name, prefix)
+		}
 	}
 	return nil
 }

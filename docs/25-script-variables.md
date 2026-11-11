@@ -30,7 +30,15 @@ Names start with an ASCII letter or underscore and contain ASCII letters, digits
 and underscores. Your choice of upper/lowercase is preserved: `customerKey` is a
 valid name. Names differing only by letter case cannot coexist, because Windows
 environment names are case-insensitive. The prefixes `RMM_`, `OPENRMM_` and
-process-control names such as `PATH` are reserved regardless of case. Each script
+process-control names such as `PATH` are reserved regardless of case, and so are
+names an interpreter or loader reads, because a value there decides what runs:
+`PSModulePath`, `PSExecutionPolicyPreference`, `PS2`–`PS4`, `SHELLOPTS`,
+`TMPDIR`, Windows locations such as `ProgramFiles` and `APPDATA`, and every name
+starting with `COR_`, `CORECLR_`, `COMPLUS_`, `DOTNET_`, `APPDOMAIN_MANAGER_`,
+`LD_`, `DYLD_`, `PYTHON`, `PERL5`, `RUBY`, `NODE_`, `GLIBC_`, `SSL_CERT_` or
+`GIT_CONFIG`. On top of that list, the agent refuses a variable whose name, in
+any case, the device's own environment already defines: the job fails before
+the script runs and says which name to rename. Each script
 can declare up to 32 names. Names and values have no field-specific character
 maximum; values must be nonempty and cannot contain NUL or line breaks. Secrets
 may be as short as one character and are masked in results too. Short secrets can

@@ -18,6 +18,8 @@ const ruleDefaults = Object.fromEntries(['connectivity', 'job_failure', 'patch_f
 let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
 
 const scriptVariables = [];
+// Enough definitions that the Variables tab and the editor's picker must scroll and be searched.
+const extraVariables = Array.from({ length: 199 }, (_, i) => ({ id: 'variable-extra-' + i, name: 'SAMPLE_VAR_' + String(i).padStart(3, '0'), description: 'Synthetic variable ' + i, secret: i % 2 === 0, values: [] }));
 const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', description: '', category: 'Tests', shell: 'sh', body: 'printf \'%s\' "$customerKey"', params: [], variables: [] }];
 
 const remoteConfig = {
@@ -54,7 +56,7 @@ const server = createServer(async (req, res) => {
           const item = { id: 'variable-e2e', ...payload, values: [] }; scriptVariables.push(item);
           return json(res, 201, item);
         }
-        return json(res, 200, { variables: scriptVariables });
+        return json(res, 200, { variables: [...scriptVariables, ...extraVariables] });
       }
       if (pathname === '/api/script-variables/variable-e2e/values' && req.method === 'PUT') {
         const item = scriptVariables[0];
@@ -318,6 +320,20 @@ async function scriptVariablesBrowserFlow() {
   definition.querySelector('input[type="checkbox"]').click();
   (await wait(() => button('Save', definition) && !button('Save', definition).disabled && button('Save', definition))).click();
   await wait(() => !document.contains(definition));
+  // 200 variables: a bounded scroll area, a counter, search and the secret filter.
+  const list = await wait(() => document.getElementById('script-variables-list'));
+  await wait(() => list.querySelectorAll('button[aria-expanded]').length === 200);
+  if (list.scrollHeight <= list.clientHeight) throw new Error('The variables list must scroll');
+  if (!document.body.textContent.includes('200 of 200 variables')) throw new Error('Variable counter missing');
+  change(document.querySelector('select[aria-label="Filter variables"]'), 'secret');
+  await wait(() => document.getElementById('script-variables-list')?.querySelectorAll('button[aria-expanded]').length === 101);
+  change(document.querySelector('select[aria-label="Filter variables"]'), 'all');
+  change(document.querySelector('input[aria-label="Search variables…"]'), 'CUSTOMERKEY');
+  await wait(() => document.getElementById('script-variables-list')?.querySelectorAll('button[aria-expanded]').length === 1);
+  // Values open on demand.
+  const row = document.getElementById('script-variables-list').querySelector('button[aria-expanded]');
+  if (row.getAttribute('aria-expanded') !== 'false') throw new Error('Values must start closed');
+  row.click();
   (await wait(() => button('Set a value'))).click();
   const dialog = await wait(() => document.querySelector('[role="dialog"][aria-label="Value"]'));
   const input = dialog.querySelector('input[type="password"]');
@@ -328,8 +344,18 @@ async function scriptVariablesBrowserFlow() {
   if (document.body.textContent.includes('q7X')) throw new Error('Secret rendered after save');
   document.getElementById('scripts-tab-library').click();
   (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer')))).click();
-  const label = await wait(() => [...document.querySelectorAll('label')].find((el) => el.textContent.includes('customerKey') && el.querySelector('input[type="checkbox"]')));
+  // The editor's picker: bounded to five rows, searchable, selection shown as a chip.
+  const picker = await wait(() => document.getElementById('script-variable-picker'));
+  await wait(() => picker.querySelectorAll('input[type="checkbox"]').length === 200);
+  if (picker.scrollHeight <= picker.clientHeight) throw new Error('The variable picker must scroll');
+  if (picker.clientHeight > picker.querySelector('label').getBoundingClientRect().height * 5 + 2) throw new Error('More than five picker rows visible');
+  change(document.querySelector('input[aria-controls="script-variable-picker"]'), 'customerkey');
+  await wait(() => picker.querySelectorAll('input[type="checkbox"]').length === 1);
+  const label = await wait(() => [...picker.querySelectorAll('label')].find((el) => el.textContent.includes('customerKey') && el.querySelector('input[type="checkbox"]')));
   label.querySelector('input').click();
+  change(document.querySelector('input[aria-controls="script-variable-picker"]'), 'nothing like this');
+  await wait(() => picker.querySelectorAll('input[type="checkbox"]').length === 0);
+  await wait(() => [...document.querySelectorAll('button')].some((el) => el.getAttribute('aria-label') === 'Remove: customerKey'));
   (await wait(() => button('Save script'))).click();
   await wait(() => !button('Save script'));
   (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer') && el.textContent.includes('Script variables')))).click();

@@ -284,3 +284,27 @@ func TestScriptVariablesCMDRejectedAtDefinitionBoundary(t *testing.T) {
 		t.Fatal("ordinary CMD definition control refused")
 	}
 }
+
+// CI-only PostgreSQL; real router. A name a loader or interpreter reads is
+// refused at creation, whatever its case, and nothing is stored; an ordinary
+// name that only looks alike is accepted.
+func TestScriptVariablesRefuseProgramLoadingNamesAPIIntegration(t *testing.T) {
+	f := newScriptFixture(t)
+	for _, name := range []string{"PSModulePath", "COR_PROFILER", "cor_enable_profiling", "DOTNET_STARTUP_HOOKS", "PYTHONWARNINGS", "ProgramFiles", "LD_AUDIT"} {
+		payload, _ := json.Marshal(map[string]any{"name": name, "secret": false})
+		if rec := f.do("POST", "/api/script-variables", string(payload)); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "reserved") {
+			t.Fatalf("%s: status %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"name": "CORP_ID", "secret": false})
+	if rec := f.do("POST", "/api/script-variables", string(payload)); rec.Code != http.StatusCreated {
+		t.Fatalf("ordinary name refused: %d", rec.Code)
+	}
+	rec := f.do("GET", "/api/script-variables", "")
+	var list struct {
+		Variables []store.ScriptVariable `json:"variables"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Variables) != 1 || list.Variables[0].Name != "CORP_ID" {
+		t.Fatalf("stored definitions: %+v", list.Variables)
+	}
+}

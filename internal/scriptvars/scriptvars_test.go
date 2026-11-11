@@ -110,3 +110,26 @@ func TestEncryptedRedactionsRejectPlaintextAndCorruption(t *testing.T) {
 		t.Fatal("wrong key accepted")
 	}
 }
+
+// Names an interpreter or loader reads would let whoever sets a value decide
+// what runs (a .NET profiler in PowerShell, a module path, the dynamic linker),
+// or move where a script looks for installers. They are reserved whatever the
+// case; ordinary names that merely look alike stay available.
+func TestNamesThatControlProgramLoadingAreReserved(t *testing.T) {
+	for _, name := range []string{
+		"PSModulePath", "psmodulepath", "PSExecutionPolicyPreference", "COR_PROFILER", "COR_ENABLE_PROFILING",
+		"cor_profiler_path", "CORECLR_PROFILER", "ComPlus_ETWEnabled", "DOTNET_STARTUP_HOOKS", "APPDOMAIN_MANAGER_ASM",
+		"LD_AUDIT", "DYLD_LIBRARY_PATH", "PYTHONWARNINGS", "PythonHome", "PERL5LIB", "PERLLIB", "RUBYOPT",
+		"NODE_EXTRA_CA_CERTS", "GLIBC_TUNABLES", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "GIT_CONFIG_GLOBAL",
+		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "PS4", "SHELLOPTS", "TMPDIR", "ProgramFiles", "APPDATA", "LocalAppData", "USERPROFILE",
+	} {
+		if err := ValidUserName(name); err == nil {
+			t.Errorf("reserved name accepted: %s", name)
+		}
+	}
+	for _, name := range []string{"HUNTRESS_ACCOUNT_KEY", "GIT_TOKEN", "GITHUB_TOKEN", "CORP_ID", "LDAP_PASSWORD", "NODEPING_KEY", "PSA_TOKEN", "customerKey"} {
+		if err := ValidUserName(name); err != nil {
+			t.Errorf("ordinary name refused: %s: %v", name, err)
+		}
+	}
+}

@@ -115,3 +115,53 @@ func TestScriptVariablesWindowsPowerShell(t *testing.T) {
 		t.Fatal("ordinary CMD execution regressed")
 	}
 }
+
+// A variable never replaces one the device's own environment defines,
+// whatever the case: the child environment is the agent's followed by the
+// variables, and the last one would win.
+func TestScriptVariablesNeverReplaceTheDeviceEnvironment(t *testing.T) {
+	// Names the denylist does not know: only the device environment rules them out.
+	base := []string{"Corp_Share=\\\\fileserver\\installers", "PATH=/usr/bin", "LAB_SETTING=device", "=C:=C:\\"}
+	for _, name := range []string{"CORP_SHARE", "LAB_SETTING_X", "lab_setting"} {
+		_, err := varEnvOver("powershell", map[string]string{name: "\\\\attacker\\share"}, base)
+		if name == "LAB_SETTING_X" {
+			if err != nil {
+				t.Fatalf("a new name was refused: %v", err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "already defines") {
+			t.Fatalf("%s replaced the device environment: %v", name, err)
+		}
+	}
+	env, err := varEnvOver("sh", map[string]string{"HUNTRESS_ACCOUNT_KEY": "k", "RMM_AGENT_HOSTNAME": "PC 01"}, append(base, "RMM_AGENT_HOSTNAME=agent"))
+	if err != nil || strings.Join(env, ",") != "HUNTRESS_ACCOUNT_KEY=k,RMM_AGENT_HOSTNAME=PC 01" {
+		t.Fatalf("ordinary variables and built-ins: %v %v", env, err)
+	}
+}
+
+// End to end through the job runner: a colliding name fails the job before the
+// script runs; the same job with a free name runs with the value.
+func TestScriptVariableCollisionFailsTheJobBeforeTheScriptRuns(t *testing.T) {
+	t.Setenv("LAB_DEVICE_SETTING", "device-value")
+	a := newDedupeAgent(t, filepath.Join(t.TempDir(), "state.json"))
+	previous := runJobScriptVars
+	t.Cleanup(func() { runJobScriptVars = previous })
+	ran := 0
+	var gotEnv []string
+	runJobScriptVars = func(_ context.Context, _ string, _ string, env []string, _ []string) (int, string, string) {
+		ran++
+		gotEnv = env
+		return 0, "ok", ""
+	}
+	a.runJob(protocol.JobMsg{JobID: "collide", Type: "run_script", Shell: "sh", Script: "echo", Vars: map[string]string{"lab_device_setting": "attacker"}})
+	res := queuedResult(t, a)
+	if ran != 0 || res.ExitCode == 0 || !strings.Contains(res.Stderr, "already defines") {
+		t.Fatalf("colliding job: ran=%d exit=%d stderr=%q", ran, res.ExitCode, res.Stderr)
+	}
+	a.runJob(protocol.JobMsg{JobID: "free", Type: "run_script", Shell: "sh", Script: "echo", Vars: map[string]string{"CUSTOMER_KEY": "k"}})
+	res = queuedResult(t, a)
+	if ran != 1 || res.ExitCode != 0 || !strings.Contains(strings.Join(gotEnv, "\n"), "CUSTOMER_KEY=k") {
+		t.Fatalf("free job: ran=%d exit=%d env=%v", ran, res.ExitCode, gotEnv)
+	}
+}

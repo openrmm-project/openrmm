@@ -154,6 +154,28 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sc)
 }
 
+// approveScript accepts a library script AI Chat or MCP proposed. The library
+// is global, so it takes an unrestricted principal; rejecting is deleting it.
+func (s *Server) approveScript(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	name, err := s.store.ApproveScript(r.Context(), id, actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"name": name})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script.approve", id, detail)
+	out, err := s.store.GetScript(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
 	if !s.requireUnrestricted(w, r, "the global script library") {
 		return
@@ -282,6 +304,10 @@ func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
+	if *in.Release && sc.Pending {
+		writeErr(w, http.StatusConflict, store.ErrScriptPending.Error())
+		return
+	}
 	if !*in.Release {
 		had, err := s.store.ClearScriptAIRelease(r.Context(), id)
 		if err != nil {
@@ -343,6 +369,10 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 	sc, err := s.store.GetScript(r.Context(), in.ScriptID)
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if sc.Pending {
+		writeErr(w, http.StatusConflict, store.ErrScriptPending.Error())
 		return
 	}
 	// A script with declared parameters takes values only from their accepted

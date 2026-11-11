@@ -213,6 +213,34 @@ func Tools() []Tool {
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
+			Name:        "propose_library_script",
+			Description: "Propose a new script for the library (Scripts), so it can be reused across devices. It is created AWAITING REVIEW: it cannot run, be scheduled or be released for AI autonomy until a person reads and approves it in the console. This creates no job and runs nothing; use propose_script to run something on a device. Read values a customer supplies from script variables (list_script_variables), never hardcode credentials.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"name":{"type":"string","description":"short name shown in the library"},
+				"description":{"type":"string","description":"what the script does and what it needs"},
+				"category":{"type":"string","description":"library category; defaults to AI proposals"},
+				"shell":{"type":"string","enum":["bash","sh","powershell","cmd","python"],"description":"interpreter for the script"},
+				"body":{"type":"string","description":"the full script source"},
+				"variables":{"type":"array","items":{"type":"string"},"description":"names of existing, approved script variables the script reads as environment variables; needs the script variables permission; not for cmd"}
+			},"required":["name","description","shell","body"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "list_script_variables",
+			Description: "List the script variable definitions: name, description, whether it is secret and whether it is a proposal awaiting review. Values are never returned, secret or not, and you cannot read or set them. Library scripts read a variable as an environment variable of the same name.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"search":{"type":"string","description":"optional case-insensitive filter on name or description"}
+			},"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "propose_script_variable",
+			Description: "Propose a new script variable definition (a name a library script reads as an environment variable). It is created AWAITING REVIEW and WITHOUT A VALUE: nothing can bind or use it until a person approves it in Scripts > Script variables and sets its values there. Mark credentials as secret. Never ask the user to type a value, secret or not, in the chat.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"name":{"type":"string","description":"letters, digits and underscores, starting with a letter or underscore, for example HUNTRESS_ACCOUNT_KEY"},
+				"description":{"type":"string","description":"what the value is and where the operator finds it"},
+				"secret":{"type":"boolean","description":"true for credentials and keys; a secret can never be made public"}
+			},"required":["name","description","secret"],"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
 			Name:        "query_audit",
 			Description: "Search the audit log: who did what, and when. Read-only — there is no tool to edit or purge it. DEFAULTS TO COUNTS: mode=\"summary\" returns totals by actor and by action family, computed in the database, and is the right call for \"what happened this week\" or \"has anyone touched X\". Use mode=\"entries\" only when you need to read individual records, and narrow it first — the trail is large and reading it wholesale produces confident guesses instead of answers. With no date given, it looks at the last 7 days. To hand the operator the full set, use export_audit instead of paging.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
@@ -293,6 +321,12 @@ func toolPermission(name string) string {
 		return models.PermChecksView
 	case "list_policies":
 		return models.PermPoliciesView
+	case "list_script_variables":
+		return models.PermScriptsView
+	case "propose_library_script":
+		return models.PermScriptsManage
+	case "propose_script_variable":
+		return models.PermScriptsVariables
 	case "query_audit", "export_audit":
 		return models.PermAuditView
 	default:
@@ -359,6 +393,12 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(listChecksTool(ctx, tc, args))
 	case "list_policies":
 		return jsonResult(listPoliciesTool(ctx, tc))
+	case "list_script_variables":
+		return jsonResult(listScriptVariablesTool(ctx, tc, args))
+	case "propose_library_script":
+		return jsonResult(proposeLibraryScript(ctx, tc, args))
+	case "propose_script_variable":
+		return jsonResult(proposeScriptVariable(ctx, tc, args))
 	case "query_audit":
 		return jsonResult(queryAudit(ctx, tc, args))
 	case "export_audit":

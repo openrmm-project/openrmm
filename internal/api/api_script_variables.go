@@ -51,6 +51,24 @@ func (s *Server) listScriptVariables(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"variables": items})
 }
 
+// approveScriptVariable accepts a definition AI Chat or MCP proposed. Like
+// creating one, it is global, so it takes an unrestricted principal; rejecting
+// a proposal is deleting it.
+func (s *Server) approveScriptVariable(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "script variables") {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	name, err := s.store.ApproveScriptVariable(r.Context(), id, actorOf(r))
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"name": name})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script_variable.approve", id, detail)
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": name, "approved_by": actorOf(r)})
+}
+
 func (s *Server) createScriptVariable(w http.ResponseWriter, r *http.Request) {
 	if !s.requireUnrestricted(w, r, "script variables") {
 		return
@@ -144,7 +162,8 @@ func (s *Server) setScriptVariableValue(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.store.SetScriptVariableValue(r.Context(), s.cfg, id, in.ScopeType, in.ScopeID, in.Value); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		// 409 for a proposal still awaiting review, 400 for an invalid value.
+		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
 	detail, _ := json.Marshal(map[string]any{"name": name, "scope_type": in.ScopeType, "scope_id": in.ScopeID, "secret": secret})
@@ -196,7 +215,7 @@ func (s *Server) prepareScriptVariables(r *http.Request, shell string, names []s
 		return nil, err
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("unknown script variable %s", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("unknown script variable, or a proposal awaiting review: %s", strings.Join(missing, ", "))
 	}
 	return normalized, nil
 }

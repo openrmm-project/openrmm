@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -781,13 +782,14 @@ func (s *Store) AgentScope(ctx context.Context, agentID string) (siteID, clientI
 // ===================== Scripts =====================
 
 const scriptCols = `id, name, description, category, shell, body, default_args, created_at, updated_at,
-	params, ai_released_by, ai_released_at, ai_released_hash, variables`
+	params, ai_released_by, ai_released_at, ai_released_hash, variables, proposed_by, approved_by`
 
 func scanScript(row pgx.Row) (*models.Script, error) {
 	var sc models.Script
 	var params, variables []byte
 	err := row.Scan(&sc.ID, &sc.Name, &sc.Description, &sc.Category, &sc.Shell, &sc.Body, &sc.DefaultArgs, &sc.CreatedAt, &sc.UpdatedAt,
-		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash, &variables)
+		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash, &variables, &sc.ProposedBy, &sc.ApprovedBy)
+	sc.Pending = sc.ProposedBy != "" && sc.ApprovedBy == ""
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -827,13 +829,33 @@ func scriptParamsJSON(params []models.ScriptParam) []byte {
 func (s *Store) CreateScript(ctx context.Context, sc *models.Script) (*models.Script, error) {
 	sc.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params, variables)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params), jobVariablesJSON(sc.Variables))
+		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params, variables, proposed_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params), jobVariablesJSON(sc.Variables), sc.ProposedBy)
 	if err != nil {
 		return nil, err
 	}
 	return s.GetScript(ctx, sc.ID)
+}
+
+// ErrScriptPending refuses using a proposed library script nobody approved.
+var ErrScriptPending = fmt.Errorf("%w: the script is a proposal awaiting review; approve it first", ErrConflict)
+
+// ApproveScript accepts a library script AI Chat or MCP proposed. Approving
+// twice, or a script a person wrote, is a conflict: there is nothing to accept.
+func (s *Store) ApproveScript(ctx context.Context, id, approvedBy string) (string, error) {
+	var name string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE scripts SET approved_by=$2, approved_at=now()
+		 WHERE id=$1 AND proposed_by <> '' AND approved_by = ''
+		 RETURNING name`, id, approvedBy).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := s.GetScript(ctx, id); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: this script is not a proposal awaiting review", ErrConflict)
+	}
+	return name, err
 }
 
 // GetScript fetches one script.

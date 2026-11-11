@@ -43,6 +43,7 @@ function ScriptsScreen() {
             <div className="text-[13.5px] font-semibold text-ink group-hover:text-brandhi transition-colors">{s.name}</div>
             <div className="text-[12px] text-muted mt-1 line-clamp-2 leading-snug">{s.description}</div>
             {(s.variables || []).length > 0 && <div className="text-[11px] text-brandhi mt-1">{t('vars.variables')}</div>}
+            {s.pending && <div className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-warn/10 border border-warn/30 text-warn px-1.5 py-0.5 text-[10.5px] font-semibold"><Icon name="sparkle" size={10} />{t('proposal.awaiting')}</div>}
             <div className="text-[11px] text-faint mt-2.5 flex items-center gap-1.5"><Icon name="grid" size={11} />{s.category}
               {s.ai_released && <span className="ml-auto inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{t('script.aiReleasedBadge')}</span>}
             </div>
@@ -79,8 +80,12 @@ function ScriptVariablesPanel() {
   const needle = q.trim().toLowerCase();
   // Hundreds of variables stay workable: a search, a secret filter and a
   // bounded scroll area; each variable's values open on demand.
-  const items = all.filter((v) => (kind === 'all' || (kind === 'secret') === !!v.secret)
+  const items = all.filter((v) => (kind === 'all' || (kind === 'pending' ? !!v.pending : (kind === 'secret') === !!v.secret))
     && (!needle || (v.name + ' ' + (v.description || '')).toLowerCase().includes(needle)));
+  const approve = async (v) => {
+    try { await api.approveScriptVariable(v.id); toast.success(t('proposal.approved'), v.name); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
   const remove = async () => {
     try {
       if (removing.value) await api.clearScriptVariableValue(removing.id, removing.value.scope_type, removing.value.scope_id || '');
@@ -89,18 +94,18 @@ function ScriptVariablesPanel() {
     } catch (e) { toast.error(t('common.failed'), e.message); }
   };
   return <Card><div className="p-4 space-y-4">
-    <div className="flex flex-wrap items-center gap-3"><Input aria-label={t('vars.search')} placeholder={t('vars.search')} value={q} onChange={(e) => setQ(e.target.value)} aria-controls="script-variables-list" className="flex-1 min-w-[12rem]" /><Select aria-label={t('vars.filter')} value={kind} onChange={(e) => setKind(e.target.value)} className="w-44"><option value="all">{t('vars.filterAll')}</option><option value="secret">{t('vars.filterSecret')}</option><option value="public">{t('vars.filterPublic')}</option></Select><Button onClick={() => setEditing({})} icon="plus">{t('vars.new')}</Button></div>
+    <div className="flex flex-wrap items-center gap-3"><Input aria-label={t('vars.search')} placeholder={t('vars.search')} value={q} onChange={(e) => setQ(e.target.value)} aria-controls="script-variables-list" className="flex-1 min-w-[12rem]" /><Select aria-label={t('vars.filter')} value={kind} onChange={(e) => setKind(e.target.value)} className="w-44"><option value="all">{t('vars.filterAll')}</option><option value="secret">{t('vars.filterSecret')}</option><option value="public">{t('vars.filterPublic')}</option><option value="pending">{t('vars.filterPending')}</option></Select><Button onClick={() => setEditing({})} icon="plus">{t('vars.new')}</Button></div>
     <p className="text-[12px] text-muted">{t('vars.help')}</p>
     <div className="rounded-xl border border-line p-3 text-[12px] space-y-1"><div>{t('vars.builtins')}</div><code className="break-all">{['RMM_AGENT_ID', 'RMM_AGENT_HOSTNAME', 'RMM_CLIENT_ID', 'RMM_CLIENT_NAME', 'RMM_SITE_ID', 'RMM_SITE_NAME'].join(', ')}</code></div>
     {query.error && <div role="alert" className="text-bad">{query.error.message}</div>}
     {all.length > 0 && <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: items.length, total: all.length })}</div>}
     {items.length > 0 && <div id="script-variables-list" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-[28rem] overflow-y-auto overscroll-contain scroll-area rounded-xl border border-line divide-y divide-line">
     {items.map((v) => <div key={v.id} className="px-3 py-2 space-y-2">
-      <div className="flex items-center gap-2 min-h-10"><button type="button" aria-expanded={open === v.id} aria-label={t(open === v.id ? 'vars.hideValues' : 'vars.showValues') + ': ' + v.name} onClick={() => setOpen(open === v.id ? null : v.id)} className="flex-1 min-w-0 text-left"><code className="block truncate text-[12.5px] text-ink" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11.5px] text-muted" title={v.description}>{v.description}</span>}</button>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}<span className="text-faint text-[11.5px] whitespace-nowrap">{t('vars.valuesCount', { count: (v.values || []).length })}</span><Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
+      <div className="flex items-center gap-2 min-h-10"><button type="button" aria-expanded={open === v.id} aria-label={t(open === v.id ? 'vars.hideValues' : 'vars.showValues') + ': ' + v.name} onClick={() => setOpen(open === v.id ? null : v.id)} className="flex-1 min-w-0 text-left"><code className="block truncate text-[12.5px] text-ink" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11.5px] text-muted" title={v.description}>{v.description}</span>}</button>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}{v.pending && <span className="rounded-md bg-warn/10 border border-warn/30 text-warn px-1.5 py-0.5 text-[10.5px] font-semibold whitespace-nowrap" title={t('proposal.by', { who: v.proposed_by })}>{t('proposal.awaiting')}</span>}{v.pending && <Button size="sm" variant="primary" onClick={() => approve(v)}>{t('proposal.approve')}</Button>}<span className="text-faint text-[11.5px] whitespace-nowrap">{t('vars.valuesCount', { count: (v.values || []).length })}</span><Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
       {open === v.id && <div className="space-y-2 pb-1">
       {!(v.values || []).length && <p className="text-[12px] text-muted">{t('vars.noValues')}</p>}
       {(v.values || []).map((value) => <div key={value.scope_type + ':' + value.scope_id} className="flex flex-wrap items-center gap-2 text-[12px]"><span>{value.scope_type === 'global' ? t('vars.global') : t('sup.scope.' + value.scope_type)} {targetsQ.data?.[value.scope_id] || value.scope_id}</span><code className="flex-1 break-all">{v.secret ? t('vars.masked') : value.value}</code><Button size="sm" onClick={() => setSetting({ variable: v, value })}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving({ ...v, value })}>{t('action.remove')}</Button></div>)}
-      <Button size="sm" onClick={() => setSetting({ variable: v })}>{t('vars.setValue')}</Button>
+      {v.pending ? <p className="text-[12px] text-warn">{t('vars.pendingHint', { who: v.proposed_by })}</p> : <Button size="sm" onClick={() => setSetting({ variable: v })}>{t('vars.setValue')}</Button>}
       </div>}
     </div>)}
     </div>}
@@ -293,13 +298,19 @@ function ScriptEditor({ script, onClose, categories = [] }) {
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
   };
   const del = async () => { await api.deleteScript(script.id); toast.info(t('script.deleted')); onClose(); };
+  const pending = !!script?.pending;
+  const approve = async () => {
+    try { await api.approveScript(script.id); toast.success(t('proposal.approved'), script.name); onClose(); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
 
   return (
     <Drawer open onClose={onClose} width="max-w-[760px]">
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="script" size={17} /></div>
         <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : t('scripts.new')}</div><div className="text-[12px] text-faint">{readOnly ? t('script.readOnly') : t('script.editing')}</div></div>
-        {can('jobs.create') && script && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
+        {pending && can('scripts.manage') && <Button variant="primary" icon="check" onClick={approve}>{t('proposal.approve')}</Button>}
+        {can('jobs.create') && script && !pending && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
@@ -329,13 +340,14 @@ function ScriptEditor({ script, onClose, categories = [] }) {
             <Input value={varSearch} onChange={(e) => setVarSearch(e.target.value)} placeholder={t('vars.pickerSearch')} aria-label={t('vars.pickerSearch')} aria-controls="script-variable-picker" />
             <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: matchingVars.length, total: availableVars.length })}</div>
             <div id="script-variable-picker" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-60 overflow-y-auto overscroll-contain scroll-area rounded-lg border border-line">
-              {matchingVars.map((v) => <label key={v.id} className="h-12 px-3 flex items-center gap-2 text-[12px] border-b border-line last:border-0"><input type="checkbox" checked={variables.includes(v.name)} disabled={varsLocked} onChange={(e) => setVariables(e.target.checked ? [...new Set([...variables, v.name])].sort() : variables.filter((name) => name !== v.name))} /><span className="min-w-0 flex-1"><code className="block truncate" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11px] text-muted" title={v.description}>{v.description}</span>}</span>{v.secret && <span className="text-faint">{t('vars.secret')}</span>}</label>)}
+              {matchingVars.map((v) => <label key={v.id} className="h-12 px-3 flex items-center gap-2 text-[12px] border-b border-line last:border-0"><input type="checkbox" checked={variables.includes(v.name)} disabled={varsLocked || (v.pending && !variables.includes(v.name))} onChange={(e) => setVariables(e.target.checked ? [...new Set([...variables, v.name])].sort() : variables.filter((name) => name !== v.name))} /><span className="min-w-0 flex-1"><code className="block truncate" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11px] text-muted" title={v.description}>{v.description}</span>}</span>{v.pending && <span className="text-warn whitespace-nowrap">{t('proposal.awaiting')}</span>}{v.secret && <span className="text-faint">{t('vars.secret')}</span>}</label>)}
               {!matchingVars.length && <p className="p-3 text-[12px] text-faint">{t('vars.noMatches')}</p>}
             </div>
           </>}
           {variables.filter((name) => !(variablesQ.data?.variables || []).some((v) => v.name === name)).map((name) => <div key={name} className="text-warn">{name}<Button size="sm" disabled={readOnly || shell === 'cmd' || !can('scripts.variables')} onClick={() => setVariables(variables.filter((value) => value !== name))}>{t('action.remove')}</Button></div>)}
         </div>
-        {script && <AIReleasePanel script={script} contentChanged={contentChanged} />}
+        {pending && <div role="note" className="rounded-xl border border-warn/30 bg-warn/10 p-3 text-[12px] text-warn">{t('script.pendingHint', { who: script.proposed_by })}</div>}
+        {script && !pending && <AIReleasePanel script={script} contentChanged={contentChanged} />}
       </div>
       {!readOnly && (
         <div className="px-5 py-3.5 border-t border-line flex justify-between gap-2">

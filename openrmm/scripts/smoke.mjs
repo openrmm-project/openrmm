@@ -19,8 +19,12 @@ let rulePrefs = { mode: 'all', include_defaults: true, check_ids: [] };
 
 const scriptVariables = [];
 // Enough definitions that the Variables tab and the editor's picker must scroll and be searched.
-const extraVariables = Array.from({ length: 199 }, (_, i) => ({ id: 'variable-extra-' + i, name: 'SAMPLE_VAR_' + String(i).padStart(3, '0'), description: 'Synthetic variable ' + i, secret: i % 2 === 0, values: [] }));
-const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', description: '', category: 'Tests', shell: 'sh', body: 'printf \'%s\' "$customerKey"', params: [], variables: [] }];
+const extraVariables = Array.from({ length: 199 }, (_, i) => ({ id: 'variable-extra-' + i, name: 'SAMPLE_VAR_' + String(i).padStart(3, '0'), description: 'Synthetic variable ' + i, secret: i % 2 === 0, values: [],
+  // One of them is a proposal from an assistant, awaiting review.
+  ...(i === 198 ? { pending: true, proposed_by: 'mcp:claude' } : {}) }));
+const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', description: '', category: 'Tests', shell: 'sh', body: 'printf \'%s\' "$customerKey"', params: [], variables: [] },
+  // Proposed by an assistant over MCP: reviewed and approved in the console.
+  { id: 'script-proposal', name: 'Proposed cleanup', description: 'Removes stale temp files', category: 'AI proposals', shell: 'sh', body: 'find /tmp -mtime +7 -delete', params: [], variables: [], pending: true, proposed_by: 'mcp:claude' }];
 
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
@@ -64,6 +68,12 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { name: item.name, set: true });
       }
       if (pathname === '/api/scripts') return json(res, 200, { scripts: libraryScripts });
+      if (pathname === '/api/scripts/script-proposal/approve' && req.method === 'POST') {
+        Object.assign(libraryScripts[1], { pending: false, approved_by: user.id }); return json(res, 200, libraryScripts[1]);
+      }
+      if (pathname === '/api/script-variables/variable-extra-198/approve' && req.method === 'POST') {
+        Object.assign(extraVariables[198], { pending: false, approved_by: user.id }); return json(res, 200, { id: 'variable-extra-198', name: extraVariables[198].name });
+      }
       if (pathname === '/api/script-categories') return json(res, 200, { categories: [{ name: 'Tests', count: 1 }] });
       if (pathname === '/api/scripts/script-e2e' && req.method === 'PUT') {
         Object.assign(libraryScripts[0], payload); return json(res, 200, libraryScripts[0]);
@@ -327,6 +337,11 @@ async function scriptVariablesBrowserFlow() {
   if (!document.body.textContent.includes('200 of 200 variables')) throw new Error('Variable counter missing');
   change(document.querySelector('select[aria-label="Filter variables"]'), 'secret');
   await wait(() => document.getElementById('script-variables-list')?.querySelectorAll('button[aria-expanded]').length === 101);
+  // The proposal from an assistant: the review filter shows it, Approve accepts it.
+  change(document.querySelector('select[aria-label="Filter variables"]'), 'pending');
+  await wait(() => document.getElementById('script-variables-list')?.querySelectorAll('button[aria-expanded]').length === 1);
+  button('Approve', document.getElementById('script-variables-list')).click();
+  await wait(() => !document.getElementById('script-variables-list'));
   change(document.querySelector('select[aria-label="Filter variables"]'), 'all');
   change(document.querySelector('input[aria-label="Search variables…"]'), 'CUSTOMERKEY');
   await wait(() => document.getElementById('script-variables-list')?.querySelectorAll('button[aria-expanded]').length === 1);
@@ -343,6 +358,11 @@ async function scriptVariablesBrowserFlow() {
   await wait(() => !document.contains(dialog) && document.body.textContent.includes('Stored (hidden)'));
   if (document.body.textContent.includes('q7X')) throw new Error('Secret rendered after save');
   document.getElementById('scripts-tab-library').click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Proposed cleanup') && el.textContent.includes('Awaiting review')))).click();
+  await wait(() => document.querySelector('[role="note"]')?.textContent.includes('mcp:claude'));
+  if (button('Run on device')) throw new Error('A proposed script offered Run on device');
+  (await wait(() => button('Approve'))).click();
+  await wait(() => !button('Approve') && !document.querySelector('[role="note"]'));
   (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer')))).click();
   // The editor's picker: bounded to five rows, searchable, selection shown as a chip.
   const picker = await wait(() => document.getElementById('script-variable-picker'));
@@ -526,6 +546,8 @@ try {
     assert.equal(variableValue?.payload.value, 'q7X', 'short secrets must be submitted without rewriting');
     assert.equal('value' in scriptVariables[0].values[0], false, 'secret read-back is write-only');
     assert.deepEqual(libraryScripts[0].variables, ['customerKey']);
+    assert.ok(apiRequests.some((r) => r.method === 'POST' && r.pathname === '/api/script-variables/variable-extra-198/approve'), 'proposed variable approved');
+    assert.ok(apiRequests.some((r) => r.method === 'POST' && r.pathname === '/api/scripts/script-proposal/approve'), 'proposed script approved');
     const variableJob = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
     assert.deepEqual(variableJob?.payload, { script_id: 'script-e2e', params: {} });
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });

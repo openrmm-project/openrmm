@@ -146,11 +146,37 @@ All endpoints require authentication. Write endpoints require `scripts.variables
 | DELETE | `/api/script-variables/{id}` | Delete definition and overrides |
 | PUT | `/api/script-variables/{id}/values` | `{scope_type, scope_id, value}`; write-only for secrets |
 | DELETE | `/api/script-variables/{id}/values?scope_type=...&scope_id=...` | Remove one override |
+| POST | `/api/script-variables/{id}/approve` | Approve a proposal from AI Chat or MCP; unrestricted principals only; audited `script_variable.approve`. Approving twice, or a definition a person created, is a **409** |
 
 Create/update a library script with `variables: ["HUNTRESS_ACCOUNT_KEY"]`. Send an
 empty array to detach all names. Omitting `variables` on update preserves its
 current declaration. Run it via `POST /api/devices/{id}/run-script` with
 `{ "script_id": "..." }`; callers never submit vault values with a run.
+
+## AI Chat and MCP
+
+An assistant can help define variables, but never sees or sets a value:
+
+- `list_script_variables` (`scripts.view`) returns names, descriptions, the secret
+  flag and whether a definition awaits review. No value, and no client, site or
+  device that holds one, ever reaches the model.
+- `propose_script_variable` (`scripts.variables`) creates a definition **awaiting
+  review**, attributed to the assistant (`proposed_by` = `ai:<user>` or
+  `mcp:<client>`). Until an unrestricted operator approves it in Scripts ▸ Script
+  variables, it takes no value (**409**), no script can bind it, and no run
+  resolves it. Rejecting is deleting it. Values are always set by a person in the
+  console; a model is told never to ask for one in the chat.
+- `propose_library_script` (`scripts.manage`) adds a script to the library
+  **awaiting review**, in the category it names or *AI proposals*. It can bind
+  approved variables only when the caller also holds `scripts.variables`. Until
+  approved (`POST /api/scripts/{id}/approve`, audited `script.approve`), it cannot
+  run (**409**), a scheduled task that points to it does not start, and it cannot
+  be released for AI autonomy. A script approved and later released follows the
+  usual hash-bound release rules ([23-ai-autonomy](23-ai-autonomy.md)).
+
+Both proposals are global definitions, so a principal confined to some clients
+cannot make either, as in the REST API. Neither tool can approve, release or run
+anything; a person reads the proposal first.
 
 ## Validation
 

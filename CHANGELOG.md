@@ -22,6 +22,13 @@ tag.
   `LD_*` and similar) are reserved, and the agent refuses a variable that would
   replace one the device already defines. The Variables tab and the script
   editor search, filter and scroll, so hundreds of variables stay manageable.
+- **AI proposals of script variables and library scripts:** AI Chat and MCP can
+  list variable names (`list_script_variables`), propose a variable definition
+  (`propose_script_variable`) and propose a library script
+  (`propose_library_script`). Both proposals wait for an unrestricted operator
+  to approve them in Scripts: a proposed variable takes no value and binds to
+  nothing, a proposed script cannot run, be scheduled or be released for AI
+  autonomy. The model never sees or sets a variable value.
 
 ## [0.10.0] - 2026-11-10
 

@@ -457,6 +457,8 @@ const api = {
   createScriptVariable(body) { return POST('/api/script-variables', body); },
   updateScriptVariable(id, body) { return PUT('/api/script-variables/' + encodeURIComponent(id), body); },
   deleteScriptVariable(id) { return DELETE('/api/script-variables/' + encodeURIComponent(id)); },
+  approveScriptVariable(id) { return POST('/api/script-variables/' + encodeURIComponent(id) + '/approve', {}); },
+  approveScript(id) { return POST('/api/scripts/' + encodeURIComponent(id) + '/approve', {}); },
   setScriptVariableValue(id, body) { return PUT('/api/script-variables/' + encodeURIComponent(id) + '/values', body); },
   clearScriptVariableValue(id, scopeType, scopeId) { return DELETE('/api/script-variables/' + encodeURIComponent(id) + '/values' + qs({ scope_type: scopeType, scope_id: scopeId })); },
   listScriptCategories() { return GET('/api/script-categories'); },

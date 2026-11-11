@@ -24,7 +24,19 @@ type ScriptVariable struct {
 	Description string                `json:"description"`
 	Secret      bool                  `json:"secret"`
 	Values      []ScriptVariableValue `json:"values"`
+	// ProposedBy is set when AI Chat or MCP proposed the definition ("ai:…",
+	// "mcp:…"). Until ApprovedBy is set too the variable is Pending: no value
+	// can be set, no script can bind it and no run resolves it.
+	ProposedBy string `json:"proposed_by"`
+	ApprovedBy string `json:"approved_by"`
+	Pending    bool   `json:"pending"`
 }
+
+// ErrScriptVariablePending refuses using a proposal a person has not approved.
+var ErrScriptVariablePending = fmt.Errorf("%w: the variable is a proposal awaiting review; approve it first", ErrConflict)
+
+// pendingScriptVariableSQL matches a proposal not yet approved.
+const pendingScriptVariableSQL = "(d.proposed_by <> '' AND d.approved_by = '')"
 
 // ScriptVariableValue is one scope's value. Value is empty when the variable
 // is a secret; Set is true when a value is stored.
@@ -48,7 +60,7 @@ const scriptVariableRankSQL = `
 // ListScriptVariables returns every variable. Secret plaintext is not included.
 func (s *Store) ListScriptVariables(ctx context.Context) ([]ScriptVariable, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT d.id, d.name, d.description, d.secret,
+		SELECT d.id, d.name, d.description, d.secret, d.proposed_by, d.approved_by,
 		       COALESCE(v.scope_type, ''), COALESCE(v.scope_id, ''),
 		       CASE WHEN d.secret OR v.value IS NULL THEN '' ELSE v.value END,
 		       v.value IS NOT NULL
@@ -62,14 +74,15 @@ func (s *Store) ListScriptVariables(ctx context.Context) ([]ScriptVariable, erro
 	byID := map[string]*ScriptVariable{}
 	var order []string
 	for rows.Next() {
-		var id, name, description, scopeType, scopeID, value string
+		var id, name, description, proposedBy, approvedBy, scopeType, scopeID, value string
 		var secret, set bool
-		if err := rows.Scan(&id, &name, &description, &secret, &scopeType, &scopeID, &value, &set); err != nil {
+		if err := rows.Scan(&id, &name, &description, &secret, &proposedBy, &approvedBy, &scopeType, &scopeID, &value, &set); err != nil {
 			return nil, err
 		}
 		item, ok := byID[id]
 		if !ok {
-			item = &ScriptVariable{ID: id, Name: name, Description: description, Secret: secret, Values: []ScriptVariableValue{}}
+			item = &ScriptVariable{ID: id, Name: name, Description: description, Secret: secret, Values: []ScriptVariableValue{},
+				ProposedBy: proposedBy, ApprovedBy: approvedBy, Pending: proposedBy != "" && approvedBy == ""}
 			byID[id] = item
 			order = append(order, id)
 		}
@@ -105,6 +118,48 @@ func (s *Store) CreateScriptVariable(ctx context.Context, name, description stri
 
 // UpdateScriptVariable changes the description and the secret flag. Turning
 // the flag on encrypts existing values atomically. A secret cannot be downgraded.
+// ProposeScriptVariable inserts a definition proposed by AI Chat or MCP. It is
+// pending until ApproveScriptVariable: it takes no value and binds to nothing.
+func (s *Store) ProposeScriptVariable(ctx context.Context, name, description string, secret bool, proposedBy string) (*ScriptVariable, error) {
+	if strings.TrimSpace(proposedBy) == "" {
+		return nil, fmt.Errorf("a proposal needs its author")
+	}
+	if err := scriptvars.ValidUserName(name); err != nil {
+		return nil, err
+	}
+	id := newID()
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO script_variables (id, name, description, secret, proposed_by) VALUES ($1,$2,$3,$4,$5)`,
+		id, name, description, secret, proposedBy); err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("%w: variable %s already exists", ErrConflict, name)
+		}
+		return nil, err
+	}
+	return &ScriptVariable{ID: id, Name: name, Description: description, Secret: secret, Values: []ScriptVariableValue{}, ProposedBy: proposedBy, Pending: true}, nil
+}
+
+// ApproveScriptVariable accepts a pending proposal. Approving twice, or a
+// definition a person created, is a conflict: there is nothing to accept.
+func (s *Store) ApproveScriptVariable(ctx context.Context, id, approvedBy string) (string, error) {
+	var name string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE script_variables d SET approved_by=$2, approved_at=now(), updated_at=now()
+		 WHERE d.id=$1 AND `+pendingScriptVariableSQL+`
+		 RETURNING d.name`, id, approvedBy).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM script_variables WHERE id=$1)`, id).Scan(&exists); err != nil {
+			return "", err
+		}
+		if !exists {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("%w: this variable is not a proposal awaiting review", ErrConflict)
+	}
+	return name, err
+}
+
 func (s *Store) UpdateScriptVariable(ctx context.Context, cfg *config.Config, id, description string, secret bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -183,13 +238,16 @@ func (s *Store) SetScriptVariableValue(ctx context.Context, cfg *config.Config, 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var secret bool
-	err = tx.QueryRow(ctx, `SELECT secret FROM script_variables WHERE id=$1 FOR UPDATE`, id).Scan(&secret)
+	var secret, pending bool
+	err = tx.QueryRow(ctx, `SELECT d.secret, `+pendingScriptVariableSQL+` FROM script_variables d WHERE d.id=$1 FOR UPDATE`, id).Scan(&secret, &pending)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
+	}
+	if pending {
+		return ErrScriptVariablePending
 	}
 	if err := scriptvars.ValidValue(secret, value); err != nil {
 		return err
@@ -228,12 +286,14 @@ func (s *Store) ClearScriptVariableValue(ctx context.Context, id, scopeType, sco
 	return nil
 }
 
-// UnknownScriptVariables returns names that are not defined.
+// UnknownScriptVariables returns names that are not defined, or are AI/MCP
+// proposals nobody approved yet.
 func (s *Store) UnknownScriptVariables(ctx context.Context, names []string) ([]string, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT name FROM script_variables WHERE name = ANY($1)`, names)
+	// A proposal awaiting review is not a variable a script may bind yet.
+	rows, err := s.pool.Query(ctx, `SELECT d.name FROM script_variables d WHERE d.name = ANY($1) AND NOT `+pendingScriptVariableSQL, names)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +364,7 @@ func (s *Store) ResolveScriptVariables(ctx context.Context, cfg *config.Config, 
 		SELECT d.name, d.secret, v.scope_type, v.scope_id, v.value
 		  FROM script_variables d
 		  JOIN script_variable_values v ON v.variable_id = d.id
-		 WHERE d.name = ANY($1) AND (
+		 WHERE d.name = ANY($1) AND NOT `+pendingScriptVariableSQL+` AND (
 		(v.scope_type='global' AND v.scope_id='') OR
 		(v.scope_type='agent' AND v.scope_id=$2) OR
 		(v.scope_type='group' AND v.scope_id=$3 AND $3<>'') OR

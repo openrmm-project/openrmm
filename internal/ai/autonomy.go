@@ -41,7 +41,7 @@ const (
 var toolRiskClass = map[string]string{
 	"list_devices": ClassConsoleRead, "get_inventory": ClassConsoleRead, "get_job_status": ClassConsoleRead,
 	"fleet_summary": ClassConsoleRead, "list_patches": ClassConsoleRead, "inventory_report": ClassConsoleRead,
-	"export_inventory": ClassConsoleRead, "list_tasks": ClassConsoleRead, "list_checks": ClassConsoleRead,
+	"export_inventory": ClassConsoleRead, "list_tasks": ClassConsoleRead, "list_checks": ClassConsoleRead, "list_script_variables": ClassConsoleRead,
 	"list_policies": ClassConsoleRead, "query_audit": ClassConsoleRead, "export_audit": ClassConsoleRead,
 	"list_org": ClassConsoleRead, "list_preapproved_actions": ClassConsoleRead,
 
@@ -49,7 +49,7 @@ var toolRiskClass = map[string]string{
 	"run_preapproved_action": ClassPreapproved,
 
 	"propose_script": ClassChange, "propose_bulk_deploy": ClassChange, "propose_task": ClassChange,
-	"propose_check": ClassChange, "propose_policy": ClassChange, "install_patches": ClassChange,
+	"propose_check": ClassChange, "propose_script_variable": ClassChange, "propose_library_script": ClassChange, "propose_policy": ClassChange, "install_patches": ClassChange,
 	"install_software": ClassChange, "uninstall_software": ClassChange, "restart_service": ClassChange,
 	"install_printer": ClassChange, "flush_dns": ClassChange, "reboot_device": ClassChange,
 	"propose_move_devices": ClassChange, "propose_delete_devices": ClassChange,
@@ -593,6 +593,9 @@ func runPreapprovedAction(ctx context.Context, tc ToolContext, args json.RawMess
 	sc, err := tc.Store.GetScript(ctx, in.ScriptID)
 	if err != nil {
 		return errResult("script not found")
+	}
+	if sc.Pending {
+		return errResult("this script is a proposal awaiting review; it cannot run until a person approves it")
 	}
 	// The release is checked against what would run now, and the deny list is
 	// applied again: a rule added since the release still holds.

@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -181,6 +182,9 @@ func (s *Service) ProposeQuery(ctx context.Context, agentID string, req protocol
 // with declared parameters: what the AI does with a released script when its
 // role may not run releases on its own.
 func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, sc *models.Script, params map[string]string, description, createdBy string) (*models.Job, error) {
+	if sc != nil && sc.Pending {
+		return nil, ErrScriptPending
+	}
 	a, err := s.usableAgent(ctx, agentID)
 	if err != nil {
 		return nil, err
@@ -352,7 +356,14 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 // RunAutomated creates a pre-approved job (from a scheduled task or trusted
 // automation) and dispatches it immediately. No human approval — use only for
 // admin-defined automation, never for AI-authored scripts.
+// ErrScriptPending refuses to run a library script AI Chat or MCP proposed and
+// nobody approved: a scheduled task or a run must not reach it first.
+var ErrScriptPending = errors.New("the library script is a proposal awaiting review; approve it first")
+
 func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, description string, taskID *string, library ...*models.Script) (*models.Job, error) {
+	if len(library) > 0 && library[0] != nil && library[0].Pending {
+		return nil, ErrScriptPending
+	}
 	if !models.SupportedShell(shell) {
 		return nil, fmt.Errorf("unsupported shell %q", shell)
 	}

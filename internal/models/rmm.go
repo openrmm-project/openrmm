@@ -218,6 +218,12 @@ type Script struct {
 	AIReleasedHash string     `json:"ai_released_hash,omitempty"`
 	// AIReleased is computed: a release whose hash still matches the content.
 	AIReleased bool `json:"ai_released"`
+	// ProposedBy is set when AI Chat or MCP proposed the script ("ai:…",
+	// "mcp:…"). Until ApprovedBy is set the script is Pending: it cannot run,
+	// be scheduled or be released for AI autonomy.
+	ProposedBy string `json:"proposed_by"`
+	ApprovedBy string `json:"approved_by"`
+	Pending    bool   `json:"pending"`
 }
 
 // ScriptParam declares one parameter of a library script. Kind "enum" accepts

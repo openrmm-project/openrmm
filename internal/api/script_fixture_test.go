@@ -79,3 +79,27 @@ func (f *scriptFixture) audit(action string) *models.AuditEntry {
 	}
 	return nil
 }
+
+// asUser swaps the fixture's session for one of a new user with these
+// permissions (a custom role) or, when perms is nil, the built-in role, with
+// the given access scopes. It returns a function restoring the previous session.
+func (f *scriptFixture) asUser(t *testing.T, role string, perms []string, scopes []models.UserScope) func() {
+	t.Helper()
+	ctx := context.Background()
+	if perms != nil {
+		role = "r_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+		if _, err := f.store.CreateRole(ctx, &models.Role{Key: role, Name: "Custom " + role, Permissions: perms}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	user, err := f.store.CreateUserWithScopes(ctx, "u-"+uuid.NewString(), "hash", role, scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := f.token
+	f.token = auth.NewToken()
+	if err := f.store.CreateSession(ctx, user.ID, auth.Hash(f.token), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	return func() { f.token = previous }
+}

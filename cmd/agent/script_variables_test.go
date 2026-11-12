@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/scriptvars"
 )
 
 func TestScriptVariableEnvironmentValidation(t *testing.T) {
@@ -165,3 +166,35 @@ func TestScriptVariableCollisionFailsTheJobBeforeTheScriptRuns(t *testing.T) {
 		t.Fatalf("free job: ran=%d exit=%d env=%v", ran, res.ExitCode, gotEnv)
 	}
 }
+
+// The agent refuses a variable environment it cannot pass safely, whatever the
+// server sent: CMD (no safe way to carry arbitrary values), more variables than
+// the agent accepts, one over the payload budget, and a name the device's own
+// environment already defines. A CMD run with variables never starts.
+func TestScriptVariableEnvironmentRefusesWhatCannotBePassed(t *testing.T) {
+	if _, err := varEnvOver("cmd", map[string]string{"CUSTOM_KEY": "x"}, nil); err == nil {
+		t.Fatal("cmd accepted variables")
+	}
+	many := map[string]string{}
+	for i := 0; i < 39; i++ {
+		many["KEY_"+strings.Repeat("A", i+1)] = "x"
+	}
+	if _, err := varEnvOver("sh", many, nil); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("39 variables: %v", err)
+	}
+	if _, err := varEnvOver("sh", map[string]string{"BIG": strings.Repeat("v", scriptvarsMaxEnvironmentBytes()+1)}, nil); err == nil {
+		t.Fatal("an environment over the payload budget was accepted")
+	}
+	if _, err := varEnvOver("powershell", map[string]string{"ProgramFiles": "C:\\evil"}, []string{"PROGRAMFILES=C:\\Program Files"}); err == nil {
+		t.Fatal("a variable replaced one the device already defines")
+	}
+	if env, err := varEnvOver("sh", map[string]string{"CUSTOM_KEY": "x"}, []string{"HOME=/root"}); err != nil || len(env) != 1 {
+		t.Fatalf("an ordinary variable: %v %v", env, err)
+	}
+	code, stdout, stderr := runScriptCtxEnvSecrets(context.Background(), "cmd", "echo %CUSTOM_KEY%", []string{"CUSTOM_KEY=x"}, nil)
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "cannot receive variables") {
+		t.Fatalf("cmd with variables ran: %d %q %q", code, stdout, stderr)
+	}
+}
+
+func scriptvarsMaxEnvironmentBytes() int { return scriptvars.MaxEnvironmentBytes }

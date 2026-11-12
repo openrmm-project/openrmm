@@ -211,6 +211,9 @@ func (s *Server) createCheck(w http.ResponseWriter, r *http.Request) {
 	if c.PolicyID != nil && !s.requirePolicy(w, r, *c.PolicyID, true) {
 		return
 	}
+	// Provenance is the server's to record: a person's check has none, and a
+	// client cannot pass one off as an approved AI proposal.
+	c.ProposedBy, c.ApprovedBy = "", ""
 	c.Enabled = enabledDefaultTrue(body)
 	applyCheckDefaults(body, &c, nil)
 	if err := models.ValidateCheck(&c); err != nil {
@@ -419,6 +422,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t.Enabled = enabledDefaultTrue(body)
+	// Provenance is the server's to record: a person's task has none.
+	t.ProposedBy, t.ApprovedBy = "", ""
 	out, err := s.store.CreateTask(r.Context(), &t)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

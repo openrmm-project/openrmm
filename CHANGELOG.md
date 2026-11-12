@@ -35,6 +35,10 @@ tag.
   approved through the same kind of review. Migration 032 keeps assigned AI
   policies applying. Activations, switch-offs and task and check approvals are
   audited, with labels in all nine languages.
+- **Manage policies / Manage checks** now say what they include: activating and
+  deactivating policies, and switching checks on and off (approving AI-proposed
+  ones). Checks and tasks created through the API no longer accept
+  client-supplied `proposed_by` / `approved_by`.
 - **AI proposals of script variables and library scripts:** AI Chat and MCP can
   list variable names (`list_script_variables`), propose a variable definition
   (`propose_script_variable`) and propose a library script

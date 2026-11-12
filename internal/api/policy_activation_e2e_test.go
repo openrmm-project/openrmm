@@ -259,3 +259,28 @@ func TestPatchPolicyActivationThroughTheAPIE2E(t *testing.T) {
 		}
 	}
 }
+
+// A client cannot claim AI provenance when it creates a check or a task: the
+// server records who proposed and who approved, never the request body.
+func TestCheckAndTaskProvenanceIsTheServersE2E(t *testing.T) {
+	f := newScriptFixture(t)
+	ctx := context.Background()
+	agent, err := f.store.CreateAgent(ctx, "PROVENANCE-HOST", "linux", "amd64", "0.11.0", "hash-"+uuid.NewString(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkBody, _ := json.Marshal(map[string]any{"agent_id": agent.ID, "type": "memory", "name": "Mine", "warn_threshold": 20, "err_threshold": 10,
+		"interval_sec": 300, "enabled": false, "proposed_by": "mcp:forged", "approved_by": "forged"})
+	rec := f.do(http.MethodPost, "/api/checks", string(checkBody))
+	var check models.Check
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &check) != nil || check.ProposedBy != "" || check.ApprovedBy != "" {
+		t.Fatalf("check provenance: %d %s", rec.Code, rec.Body.String())
+	}
+	taskBody, _ := json.Marshal(map[string]any{"agent_id": agent.ID, "name": "Mine", "shell": "sh", "script": "true",
+		"schedule_kind": "interval", "interval_sec": 3600, "enabled": false, "proposed_by": "mcp:forged", "approved_by": "forged"})
+	rec = f.do(http.MethodPost, "/api/tasks", string(taskBody))
+	var task models.Task
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &task) != nil || task.ProposedBy != "" || task.ApprovedBy != "" {
+		t.Fatalf("task provenance: %d %s", rec.Code, rec.Body.String())
+	}
+}

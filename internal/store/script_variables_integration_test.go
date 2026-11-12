@@ -16,6 +16,7 @@ import (
 	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/scriptvars"
+	"github.com/p1ngu/rmm/internal/secretcrypto"
 )
 
 func TestScriptVariablesInheritanceAndEncryptedStorageIntegration(t *testing.T) {
@@ -188,15 +189,23 @@ func TestScriptVariableNamesMigrationPreservesBindingsIntegration(t *testing.T) 
 		t.Fatal(err)
 	}
 	cfg := &config.Config{SettingsEncryptionKey: "synthetic-instance-key"}
-	legacy, err := st.CreateScriptVariable(ctx, "CUSTOM_KEY", "before migration", true)
+	// Seed the version-29 rows with SQL: the store code targets the latest
+	// schema (migration 031 added proposal columns it reads and writes), so it
+	// cannot write a database that has not reached it yet.
+	legacy := &ScriptVariable{ID: newID(), Name: "CUSTOM_KEY"}
+	enc, err := secretcrypto.Encrypt(cfg, "legacy-synthetic-credential")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetScriptVariableValue(ctx, cfg, legacy.ID, "global", "", "legacy-synthetic-credential"); err != nil {
+	if _, err := st.pool.Exec(ctx, `INSERT INTO script_variables (id, name, description, secret) VALUES ($1,$2,'before migration',true)`, legacy.ID, legacy.Name); err != nil {
 		t.Fatal(err)
 	}
-	sc, err := st.CreateScript(ctx, &models.Script{Name: "before migration", Shell: "sh", Body: `printf '%s' "$CUSTOM_KEY"`, Variables: []string{legacy.Name}})
-	if err != nil {
+	if _, err := st.pool.Exec(ctx, `INSERT INTO script_variable_values (variable_id, scope_type, scope_id, value) VALUES ($1,'global','',$2)`, legacy.ID, enc); err != nil {
+		t.Fatal(err)
+	}
+	sc := &models.Script{ID: newID(), Name: "before migration", Shell: "sh", Body: `printf '%s' "$CUSTOM_KEY"`, Variables: []string{legacy.Name}}
+	if _, err := st.pool.Exec(ctx, `INSERT INTO scripts (id, name, description, category, shell, body, default_args, params, variables)
+		VALUES ($1,$2,'','',$3,$4,'','[]',$5)`, sc.ID, sc.Name, sc.Shell, sc.Body, jobVariablesJSON(sc.Variables)); err != nil {
 		t.Fatal(err)
 	}
 	beforeHash := models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables)

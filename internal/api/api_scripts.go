@@ -161,7 +161,11 @@ func (s *Server) approveScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	name, err := s.store.ApproveScript(r.Context(), id, actorOf(r))
+	name, err := s.store.ApproveScript(r.Context(), id, actorOf(r), hasPermission(r, models.PermScriptsVariables))
+	if errors.Is(err, store.ErrScriptApprovalVariables) {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return

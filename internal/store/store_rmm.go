@@ -841,17 +841,28 @@ func (s *Store) CreateScript(ctx context.Context, sc *models.Script) (*models.Sc
 // ErrScriptPending refuses using a proposed library script nobody approved.
 var ErrScriptPending = fmt.Errorf("%w: the script is a proposal awaiting review; approve it first", ErrConflict)
 
+// ErrScriptApprovalVariables protects the transition from unreviewed code to
+// an executable library script that receives vault variables.
+var ErrScriptApprovalVariables = errors.New("scripts.variables required")
+
 // ApproveScript accepts a library script AI Chat or MCP proposed. Approving
 // twice, or a script a person wrote, is a conflict: there is nothing to accept.
-func (s *Store) ApproveScript(ctx context.Context, id, approvedBy string) (string, error) {
+// The permission predicate uses the bindings at the UPDATE, so adding bindings
+// concurrently cannot let a less privileged reviewer approve new vault access.
+func (s *Store) ApproveScript(ctx context.Context, id, approvedBy string, mayUseVariables bool) (string, error) {
 	var name string
 	err := s.pool.QueryRow(ctx, `
 		UPDATE scripts SET approved_by=$2, approved_at=now()
 		 WHERE id=$1 AND proposed_by <> '' AND approved_by = ''
-		 RETURNING name`, id, approvedBy).Scan(&name)
+		   AND ($3 OR jsonb_array_length(variables)=0)
+		 RETURNING name`, id, approvedBy, mayUseVariables).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := s.GetScript(ctx, id); err != nil {
+		sc, err := s.GetScript(ctx, id)
+		if err != nil {
 			return "", err
+		}
+		if sc.Pending && !mayUseVariables && len(sc.Variables) > 0 {
+			return "", ErrScriptApprovalVariables
 		}
 		return "", fmt.Errorf("%w: this script is not a proposal awaiting review", ErrConflict)
 	}

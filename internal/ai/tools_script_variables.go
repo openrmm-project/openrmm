@@ -7,10 +7,6 @@ import (
 	"strings"
 )
 
-// maxListedScriptVariables bounds list_script_variables: names only, but a
-// fleet can define hundreds, and the model needs a search more than a dump.
-const maxListedScriptVariables = 200
-
 // listScriptVariablesTool returns definitions only. Values, and which client,
 // site or device holds one, never reach the model: they are customer data and
 // credentials, and the model has no use for them.
@@ -23,29 +19,11 @@ func listScriptVariablesTool(ctx context.Context, tc ToolContext, args json.RawM
 			return nil, err
 		}
 	}
-	all, err := tc.Store.ListScriptVariables(ctx)
+	definitions, matched, err := tc.Store.ScriptVariableDefinitionsForModel(ctx, in.Search)
 	if err != nil {
 		return nil, err
 	}
-	needle := strings.ToLower(strings.TrimSpace(in.Search))
-	type item struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Secret      bool   `json:"secret"`
-		Pending     bool   `json:"awaiting_review"`
-	}
-	out := []item{}
-	matched := 0
-	for _, v := range all {
-		if needle != "" && !strings.Contains(strings.ToLower(v.Name+" "+v.Description), needle) {
-			continue
-		}
-		matched++
-		if len(out) < maxListedScriptVariables {
-			out = append(out, item{Name: v.Name, Description: v.Description, Secret: v.Secret, Pending: v.Pending})
-		}
-	}
-	return map[string]any{"variables": out, "matched": matched, "truncated": matched > len(out)}, nil
+	return scriptVariableListForModel(definitions, matched), nil
 }
 
 // proposeScriptVariable creates a definition awaiting review. Definitions are

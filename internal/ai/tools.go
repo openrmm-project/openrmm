@@ -394,11 +394,11 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 	case "list_policies":
 		return jsonResult(listPoliciesTool(ctx, tc))
 	case "list_script_variables":
-		return jsonResult(listScriptVariablesTool(ctx, tc, args))
+		return scriptDefinitionResult(listScriptVariablesTool(ctx, tc, args))
 	case "propose_library_script":
-		return jsonResult(proposeLibraryScript(ctx, tc, args))
+		return scriptDefinitionResult(proposeLibraryScript(ctx, tc, args))
 	case "propose_script_variable":
-		return jsonResult(proposeScriptVariable(ctx, tc, args))
+		return scriptDefinitionResult(proposeScriptVariable(ctx, tc, args))
 	case "query_audit":
 		return jsonResult(queryAudit(ctx, tc, args))
 	case "export_audit":

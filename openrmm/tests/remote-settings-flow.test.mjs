@@ -73,8 +73,11 @@ function harness(canManage = true, failSave = false) {
 
 test('remote settings separate provider fields and preserve unsaved values when switching tabs', async () => {
   const ui = harness();
-  assert.deepEqual(ui.tabs().map((n) => n.children[0]), ['cfg.remoteNative', 'MeshCentral', 'RustDesk', 'cfg.defaultProvider']);
+  // The default provider is the first tab and the one that opens.
+  assert.deepEqual(ui.tabs().map((n) => n.children[0]), ['cfg.defaultProvider', 'cfg.remoteNative', 'MeshCentral', 'RustDesk']);
   const labels = () => ui.find(ui.panel(), (n) => n.type === 'Field').map((n) => n.props.label);
+  assert.deepEqual(labels(), ['cfg.defaultProvider']);
+  ui.selectTab('native');
   assert.deepEqual(labels(), ['cfg.guestAccess']);
   ui.change('cfg.guestAccess', 'on');
   ui.selectTab('meshcentral');

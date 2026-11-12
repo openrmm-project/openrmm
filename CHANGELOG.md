@@ -6,6 +6,11 @@ tag.
 
 ## [Unreleased]
 
+### Changed
+
+- **Remote access settings open on Default provider**, now the first tab, before
+  Native, MeshCentral and RustDesk.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

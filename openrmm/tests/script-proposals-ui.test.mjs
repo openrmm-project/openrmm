@@ -13,12 +13,12 @@ const variables = [
   { id: 'v2', name: 'SITE_CODE', description: 'Approved', secret: false, pending: false, values: [{ scope_type: 'global', scope_id: '', value: 'HQ', set: true }] },
 ];
 
-function harness(code, component, props) {
+function harness(code, component, props, permissions = null) {
   const states = []; const calls = []; let cursor = 0; let tree;
   const sandbox = {
     React: { createElement(type, p, ...children) { return typeof type === 'function' ? type({ ...p, children }) : { type, props: p || {}, children }; } },
     useState(initial) { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial; return [states[i], (v) => { states[i] = typeof v === 'function' ? v(states[i]) : v; }]; },
-    useEffect() {}, useToast: () => ({ success() {}, error() {}, info() {} }), useAuth: () => ({ can: () => true }), useDeviceMap: () => ({}),
+    useEffect() {}, useToast: () => ({ success() {}, error() {}, info() {} }), useAuth: () => ({ can: (permission) => permissions === null || permissions.includes(permission) }), useDeviceMap: () => ({}),
     useQuery: (key) => ({ data: key[0] === 'script-variables' ? { variables } : {}, loading: false }),
     t: (key, vars) => (vars ? key + ' ' + JSON.stringify(vars) : key), cx: (...v) => v.filter(Boolean).join(' '), timeAgo: (v) => v,
     api: new Proxy({}, { get: (_, name) => async (...args) => { calls.push([name, ...args]); } }),
@@ -80,4 +80,17 @@ test('a proposed library script is approved from the editor and cannot run or be
   assert.equal(button(approved, 'proposal.approve').length, 0);
   assert.equal(button(approved, 'script.runOnDevice').length, 1);
   assert.equal(approved.find((n) => n.type === 'AIReleasePanel').length, 1);
+});
+
+test('approving a variable-bound proposal needs the variable permission, with unbound controls', () => {
+  const code = slice('function ScriptEditor(', 'function RunOnDevice(');
+  for (const [variables, permissions, expected] of [
+    [['REVIEW_CREDENTIAL'], ['scripts.manage', 'scripts.view'], 0],
+    [[], ['scripts.manage', 'scripts.view'], 1],
+    [['REVIEW_CREDENTIAL'], ['scripts.manage', 'scripts.view', 'scripts.variables'], 1],
+    [['REVIEW_CREDENTIAL'], ['scripts.view', 'scripts.variables'], 0],
+  ]) {
+    const ui = harness(code, 'ScriptEditor', { script: { id: 's-review', name: 'Review', shell: 'powershell', body: 'x', variables, pending: true }, onClose() {} }, permissions);
+    assert.equal(button(ui, 'proposal.approve').length, expected);
+  }
 });

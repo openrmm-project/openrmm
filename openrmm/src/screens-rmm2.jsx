@@ -330,7 +330,7 @@ function ScriptEditor({ script, onClose, categories = [] }) {
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="script" size={17} /></div>
         <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : t('scripts.new')}</div><div className="text-[12px] text-faint">{readOnly ? t('script.readOnly') : t('script.editing')}</div></div>
-        {pending && can('scripts.manage') && <Button variant="primary" icon="check" onClick={() => setReviewing(true)}>{t('proposal.approve')}</Button>}
+        {pending && !readOnly && <Button variant="primary" icon="check" onClick={() => setReviewing(true)}>{t('proposal.approve')}</Button>}
         {can('jobs.create') && script && !pending && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>

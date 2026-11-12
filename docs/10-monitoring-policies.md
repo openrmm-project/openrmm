@@ -218,6 +218,10 @@ Switching it off is one step (`POST /api/policies/{id}/deactivate`, audited as
 it on again restores exactly what applied before. A person's new policy starts
 switched on, as policies always did.
 
+Switching a policy off stops future application of its configuration. It does
+not cancel a job that was already created from an approved task or an authorized
+manual run; that job may still be delivered after the device reconnects.
+
 Switching a policy on goes through a **review**. `GET /api/policies/{id}/review`
 returns everything the click puts into effect — the scopes, every task with its
 script and schedule, every check with its settings, and which of them are AI

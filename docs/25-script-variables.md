@@ -55,8 +55,9 @@ set global values. A scoped variable manager can set/clear overrides only within
 scopes they control. `scripts.view` exposes definitions for the editor; reading
 values additionally requires `scripts.variables`. Secret values are always absent
 from reads. Editing or binding a script that receives variables requires both
-`scripts.manage` and `scripts.variables`; executing a reviewed saved script does
-not grant the ability to retrieve its secrets.
+`scripts.manage` and `scripts.variables`. Approving an AI-proposed script with
+variable bindings requires both permissions too; executing a reviewed saved script
+does not grant the ability to retrieve its secrets.
 
 ## Access values as environment data
 
@@ -173,6 +174,16 @@ An assistant can help define variables, but never sees or sets a value:
   run (**409**), a scheduled task that points to it does not start, and it cannot
   be released for AI autonomy. A script approved and later released follows the
   usual hash-bound release rules ([23-ai-autonomy](23-ai-autonomy.md)).
+
+Model-facing results for these three tools have a **64 KiB serialized JSON
+budget**, including errors and proposal confirmations. Listing returns at most
+200 definitions, clips descriptions to 1,024 Unicode characters and marks clipped
+descriptions. Names longer than 4,096 bytes are omitted rather than shortened;
+identifiers that are returned are exact. The result reports matching counts and
+omissions: refine the search or use the console for large definitions. If a
+proposal's metadata exceeds the budget, its ID and review status are retained;
+do not repeat the mutation. These transport budgets do not limit stored names,
+descriptions or values, or the console's variable API.
 
 Both proposals are global definitions, so a principal confined to some clients
 cannot make either, as in the REST API. Neither tool can approve, release or run

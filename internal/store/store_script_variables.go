@@ -100,6 +100,52 @@ func (s *Store) ListScriptVariables(ctx context.Context) ([]ScriptVariable, erro
 	return out, nil
 }
 
+// ScriptVariableModelDefinition is metadata only; values and scope bindings are
+// never selected by the model-facing query.
+type ScriptVariableModelDefinition struct {
+	Name                 string `json:"name"`
+	Description          string `json:"description"`
+	Secret               bool   `json:"secret"`
+	Pending              bool   `json:"awaiting_review"`
+	DescriptionTruncated bool   `json:"description_truncated,omitempty"`
+}
+
+// These are model transport budgets, not limits on stored variable fields.
+const (
+	ScriptVariableModelLimit            = 200
+	ScriptVariableModelNameBytes        = 4096
+	ScriptVariableModelDescriptionRunes = 1024
+)
+
+// ScriptVariableDefinitionsForModel searches in SQL and selects bounded metadata
+// only. Oversized identifiers are omitted, never silently renamed. matched
+// includes them so the caller can explain omissions and suggest the console.
+func (s *Store) ScriptVariableDefinitionsForModel(ctx context.Context, search string) ([]ScriptVariableModelDefinition, int, error) {
+	needle := strings.ToLower(strings.TrimSpace(search))
+	const matches = `($1='' OR strpos(lower(name || ' ' || description),$1)>0)`
+	var matched int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM script_variables WHERE `+matches, needle).Scan(&matched); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT name, left(description,$3), secret,
+  (proposed_by<>'' AND approved_by=''), length(description)>$3
+  FROM script_variables WHERE `+matches+` AND octet_length(name)<=$2
+  ORDER BY name LIMIT $4`, needle, ScriptVariableModelNameBytes, ScriptVariableModelDescriptionRunes, ScriptVariableModelLimit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []ScriptVariableModelDefinition{}
+	for rows.Next() {
+		var d ScriptVariableModelDefinition
+		if err := rows.Scan(&d.Name, &d.Description, &d.Secret, &d.Pending, &d.DescriptionTruncated); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, d)
+	}
+	return out, matched, rows.Err()
+}
+
 // CreateScriptVariable inserts a definition. It does not take a value: the
 // value is a separate write, so this statement has nothing to leak into the audit.
 func (s *Store) CreateScriptVariable(ctx context.Context, name, description string, secret bool) (*ScriptVariable, error) {

@@ -107,13 +107,13 @@ func TestAIProposalsOfVariablesAndLibraryScriptsWaitForReviewIntegration(t *test
 		t.Fatalf("autonomous run of a pending script: %s", out.Output)
 	}
 	// 6. Approve: the script is ordinary library content from then on.
-	if _, err := f.st.ApproveScript(ctx, scriptID, "admin"); err != nil {
+	if _, err := f.st.ApproveScript(ctx, scriptID, "admin", true); err != nil {
 		t.Fatal(err)
 	}
 	if sc, err = f.st.GetScript(ctx, scriptID); err != nil || sc.Pending || sc.ApprovedBy != "admin" {
 		t.Fatalf("after approval: %+v %v", sc, err)
 	}
-	if _, err := f.st.ApproveScript(ctx, scriptID, "admin"); !errors.Is(err, store.ErrConflict) {
+	if _, err := f.st.ApproveScript(ctx, scriptID, "admin", true); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("second script approval: %v", err)
 	}
 }

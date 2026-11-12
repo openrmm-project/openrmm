@@ -6,6 +6,19 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Audit log columns.** One long value, such as a bare UUID or a JSON detail,
+  widened its column until the table spilled out of the card and cut off the
+  columns on the right. Cells sat at different heights in the same row. The
+  columns now have fixed widths, long values wrap inside their column, rows are
+  vertically centred, and a narrow window scrolls the table. The Detail column
+  no longer repeats what the Target column shows; the CSV export is unchanged.
+- **Patch approvals and declines name the patch** in the audit log instead of
+  showing its id.
+- **Untranslated audit actions:** patch declines, alert silencing and every
+  guest-access action now have labels in all nine languages.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added

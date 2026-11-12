@@ -362,7 +362,7 @@ function AuditScreen() {
         collected.push(...rows);
         if (rows.length < 500 || collected.length >= (batch.total ?? 0)) break;
       }
-      const detailStr = (d) => Object.entries(d || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ');
+      const detailStr = (d) => window.auditDetailText(d);
       // English on purpose: scripts read these columns, whatever the console's language.
       const header = ['Time', 'Actor', 'Actor ID', 'Action', 'Target', 'Target ID', 'Detail'];
       const rows = collected.map((e) => [e.created_at, displayActor(e.actor), e.actor, e.action, displayTarget(e), e.target, detailStr(e.detail)]);
@@ -415,7 +415,16 @@ function AuditScreen() {
       </div></Card>
 
       <Card className="overflow-hidden">
-        <table className="w-full text-left">
+        {/* Fixed columns. Sized by their content, one row with a long detail or
+            a bare UUID (a target with nothing to name it by) took the width
+            from the others and the table spilled past the card, which cut it
+            off. Long values now wrap inside their own column, and a narrow
+            window scrolls the table rather than squeezing it. */}
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[860px] table-fixed text-left">
+          <colgroup>
+            <col className="w-[150px]" /><col className="w-[16%]" /><col className="w-[20%]" /><col className="w-[18%]" /><col />
+          </colgroup>
           <thead><tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
             <th className="font-semibold px-4 py-2.5">{t('audit.col.time')}</th><th className="font-semibold px-3 py-2.5">{t('audit.actor')}</th>
             <th className="font-semibold px-3 py-2.5">{t('audit.action')}</th><th className="font-semibold px-3 py-2.5">{t('audit.col.target')}</th>
@@ -424,18 +433,21 @@ function AuditScreen() {
           <tbody className="divide-y divide-line">
             {entries.map((e) => {
               const m = ACTION_META[e.action] || { icon: 'dot', c: 'text-faint' };
+              // Every cell is centred on the row and shares one line height, so a
+              // row reads level: the action used to sit lower than its neighbours.
               return (
-                <tr key={e.id} className="hover:bg-elevated/40 transition align-top">
+                <tr key={e.id} className="hover:bg-elevated/40 transition align-middle leading-5">
                   <td className="px-4 py-3 text-[12.5px] text-muted whitespace-nowrap" title={e.created_at}>{fmtTime(e.created_at)}</td>
-                  <td className="px-3 py-3 text-[13px] text-ink" title={e.actor}>{displayActor(e.actor)}</td>
-                  <td className="px-3 py-3" title={e.action}><span className={cx('inline-flex items-center gap-1.5 text-[12.5px]', m.c)}><Icon name={m.icon} size={13} />{window.auditActionLabel(e.action)}</span></td>
-                  <td className="px-3 py-3 text-[12.5px] text-muted" title={e.target}>{displayTarget(e)}</td>
-                  <td className="px-4 py-3 text-[12px] text-faint">{Object.entries(e.detail || {}).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')}</td>
+                  <td className="px-3 py-3 text-[13px] text-ink [overflow-wrap:anywhere]" title={e.actor}>{displayActor(e.actor)}</td>
+                  <td className="px-3 py-3" title={e.action}><span className={cx('flex items-start gap-1.5 text-[12.5px]', m.c)}><Icon name={m.icon} size={13} className="shrink-0 mt-[3px]" /><span className="min-w-0">{window.auditActionLabel(e.action)}</span></span></td>
+                  <td className="px-3 py-3 text-[12.5px] text-muted [overflow-wrap:anywhere]" title={e.target}>{displayTarget(e)}</td>
+                  <td className="px-4 py-3 text-[12px] text-faint [overflow-wrap:anywhere]">{window.auditDetailText(e.detail, [e.target, displayTarget(e)])}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </div>
         {!auditQ.loading && !entries.length && (
           <EmptyState icon="audit" title={t('audit.empty')}
             msg={hasFilters ? t('audit.noMatch') : t('audit.nothingYet')} />

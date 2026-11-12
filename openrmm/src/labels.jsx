@@ -19,6 +19,18 @@ function auditActionLabel(action) {
   return t('audit.format', { resource: r, verb: v });
 }
 
+// An audit entry's detail as one line of "key: value" pairs. On screen the
+// pairs that only repeat the Target column (the device's hostname and its id on
+// a remote session, a variable's name) are left out: they pushed the detail
+// that matters onto a third line. The CSV keeps every pair.
+function auditDetailText(detail, repeated = []) {
+  const skip = new Set(repeated.filter((v) => v != null && v !== '').map(String));
+  return Object.entries(detail || {})
+    .filter(([, v]) => !(typeof v !== 'object' && skip.has(String(v))))
+    .map(([k, v]) => `${k}: ${v !== null && typeof v === 'object' ? JSON.stringify(v) : v}`)
+    .join(' · ');
+}
+
 // Short weekday name in the console's language, index 0 = Sunday — the
 // numbering the server stores (Go's time.Weekday). 4 January 2026 was a Sunday.
 function weekdayShort(i) {
@@ -35,5 +47,6 @@ function fmtInterval(sec) {
 }
 
 window.auditActionLabel = auditActionLabel;
+window.auditDetailText = auditDetailText;
 window.weekdayShort = weekdayShort;
 window.fmtInterval = fmtInterval;

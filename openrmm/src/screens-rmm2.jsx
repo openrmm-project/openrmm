@@ -600,9 +600,14 @@ function PolicyActivation({ policy, scopeName, onClose, onActivated }) {
         <>
           <ReviewSection title={t('pol.reviewScopes')}>
             {scopes.length
-              ? <ul className="space-y-1">{scopes.map((a) => <li key={a.id} className="text-[12.5px] text-ink"><span className="text-faint">{tEnum('pol.scope', a.scope_type)}</span> · {scopeName(a) || a.scope_id}</li>)}</ul>
+              ? <ul className="space-y-1">{scopes.map((a) => <li key={a.id} className="text-[12.5px] text-ink flex flex-wrap items-center gap-1.5"><span className="text-faint">{tEnum('pol.scope', a.scope_type)}</span> · {scopeName(a) || a.scope_id}<TargetChips os={a.os} role={a.role} /></li>)}</ul>
               : <p className="text-[12.5px] text-warn">{t('pol.reviewNoScopes')}</p>}
           </ReviewSection>
+          {(review.exclusions || []).length > 0 && (
+            <ReviewSection title={t('pol.reviewExclusions')}>
+              <p className="text-[12.5px] text-ink">{review.exclusions.map((e) => e.hostname || e.agent_id).join(', ')}</p>
+            </ReviewSection>
+          )}
           <ReviewSection title={t('pol.reviewTasks')}>
             {tasks.length ? <div className="space-y-3">{tasks.map((task) => (
               <div key={task.id} className="rounded-xl border border-line p-3">
@@ -655,6 +660,12 @@ function PolicyDetail({ policy, onClose, onSaved }) {
   const groupsQ = useQuery(['gr-pol'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
   const devMap = useDeviceMap();
   const [addScope, setAddScope] = useState('');
+  // Narrow the next assignment to one OS and/or role (empty = any).
+  const [addOs, setAddOs] = useState('');
+  const [addRole, setAddRole] = useState('');
+  const [addExcluded, setAddExcluded] = useState('');
+  const exclQ = useQuery([policy.id, 'pex'], () => api.listPolicyExclusions(policy.id), { invalidateOn: ['policies'] });
+  const exclusions = exclQ.data?.exclusions || [];
   // Editing a policy's checks and tasks in place. The editors come from
   // screens-rmm.jsx via window (each source file is its own block scope), so the
   // forms here are the same ones the Checks and Scheduled tasks screens use
@@ -686,13 +697,31 @@ function PolicyDetail({ policy, onClose, onSaved }) {
   // shown with its site.
   const groupLabel = (g) => { const site = sites.find((s) => s.id === g.site_id); return site ? t('pol.groupInSite', { name: g.name, site: site.name }) : g.name; };
   const scopeName = (a) => {
+    if (a.scope_type === 'global') return t('pol.globalName');
     if (a.scope_type === 'agent') return devMap[a.scope_id]?.hostname;
     if (a.scope_type === 'group') { const g = groups.find((x) => x.id === a.scope_id); return g && groupLabel(g); }
     if (a.scope_type === 'site') return sites.find((s) => s.id === a.scope_id)?.name;
     return clients.find((c) => c.id === a.scope_id)?.name;
   };
 
-  const addAssignment = async () => { if (!addScope) return; const [type, id] = addScope.split(':'); await api.createAssignment(policy.id, { scope_type: type, scope_id: id }); setAddScope(''); toast.success(t('pol.assignedToast'), t('pol.assignedToastMsg')); };
+  const addAssignment = async () => {
+    if (!addScope) return;
+    const [type, id] = addScope.split(':');
+    try {
+      await api.createAssignment(policy.id, { scope_type: type, scope_id: id || '', os: addOs, role: addRole });
+      setAddScope(''); setAddOs(''); setAddRole('');
+      toast.success(t('pol.assignedToast'), t('pol.assignedToastMsg'));
+    } catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  const exclude = async () => {
+    if (!addExcluded) return;
+    try { await api.addPolicyExclusion(policy.id, addExcluded); setAddExcluded(''); toast.info(t('pol.excluded')); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  const include = async (agentId) => {
+    try { await api.removePolicyExclusion(policy.id, agentId); toast.info(t('pol.included')); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info(t('pol.assignmentRemoved')); };
   const deactivate = async () => {
     try { const p = await api.deactivatePolicy(policy.id); onSaved?.(p); toast.info(t('pol.deactivated'), policy.name); }
@@ -729,7 +758,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
           {awaitingReview(policy) ? t('pol.pendingHint', { who: policy.proposed_by }) : t('pol.offHint')}
         </div>
       )}
-      <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'checks', label: t('pol.tab.checks'), count: checks.length }, { value: 'tasks', label: t('pol.tab.tasks'), count: tasks.length }, { value: 'assign', label: t('pol.tab.assign'), count: asg.length }]} />
+      <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'checks', label: t('pol.tab.checks'), count: checks.length }, { value: 'tasks', label: t('pol.tab.tasks'), count: tasks.length }, { value: 'assign', label: t('pol.tab.assign'), count: asg.length }, { value: 'exclusions', label: t('pol.tab.exclusions'), count: exclusions.length }]} />
       <div className="flex-1 overflow-y-auto scroll-area p-5">
         {tab === 'checks' && (
           <div className="space-y-3">
@@ -761,14 +790,16 @@ function PolicyDetail({ policy, onClose, onSaved }) {
           <div className="space-y-4">
             <div className="flex items-start gap-2.5 rounded-xl border border-brand/25 bg-brandsoft px-3.5 py-3"><Icon name="info" size={16} className="text-brandhi mt-0.5 shrink-0" /><div className="text-[12.5px] text-ink leading-relaxed">{t('pol.assignInfo')}</div></div>
             {can('policies.manage') && (
-              <div className="flex items-center gap-2">
-                <Combobox value={addScope} onChange={setAddScope} className="flex-1" placeholder={t('pol.addAssignment')}
+              <div className="flex flex-wrap items-center gap-2">
+                <Combobox value={addScope} onChange={setAddScope} className="flex-1 min-w-[220px]" placeholder={t('pol.addAssignment')}
                   options={[
+                    { value: 'global:', label: t('pol.globalOption'), group: t('pol.group.global') },
                     ...clients.map((c) => ({ value: 'client:' + c.id, label: t('pol.clientAllSites', { name: c.name }), group: t('pol.group.clients') })),
                     ...sites.map((s) => ({ value: 'site:' + s.id, label: s.name, group: t('pol.group.sites') })),
                     ...groups.map((g) => ({ value: 'group:' + g.id, label: groupLabel(g), group: t('pol.group.groups') })),
                     ...Object.values(devMap).map((d) => ({ value: 'agent:' + d.id, label: d.hostname, group: t('pol.group.agents') })),
                   ]} />
+                <TargetSelects os={addOs} role={addRole} onOs={setAddOs} onRole={setAddRole} />
                 <Button variant="primary" icon="plus" onClick={addAssignment} disabled={!addScope}>{t('pol.assign')}</Button>
               </div>
             )}
@@ -776,11 +807,32 @@ function PolicyDetail({ policy, onClose, onSaved }) {
               {asg.map((a) => (
                 <div key={a.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-2.5">
                   <span className={cx('inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[10.5px] font-semibold uppercase', a.scope_type === 'agent' ? 'text-run bg-runsoft border-run/25' : a.scope_type === 'group' ? 'text-ok bg-oksoft border-ok/25' : a.scope_type === 'site' ? 'text-warn bg-warnsoft border-warn/25' : 'text-brandhi bg-brandsoft border-brand/25')}>{tEnum('pol.scope', a.scope_type)}</span>
-                  <span className="flex-1 text-[13px] text-ink">{scopeName(a) || a.scope_id}</span>
-                  {can('policies.manage') && <button onClick={() => removeAssignment(a.id)} className="text-faint hover:text-bad p-1"><Icon name="trash" size={15} /></button>}
+                  <span className="flex-1 text-[13px] text-ink flex flex-wrap items-center gap-2">{scopeName(a) || a.scope_id}<TargetChips os={a.os} role={a.role} /></span>
+                  {can('policies.manage') && <button onClick={() => removeAssignment(a.id)} aria-label={t('action.delete')} className="text-faint hover:text-bad p-1"><Icon name="trash" size={15} /></button>}
                 </div>
               ))}
               {asg.length === 0 && <div className="text-center text-[12.5px] text-faint py-4">{t('pol.notAssigned')}</div>}
+            </div>
+          </div>
+        )}
+        {tab === 'exclusions' && (
+          <div className="space-y-4">
+            <div className="flex items-start gap-2.5 rounded-xl border border-brand/25 bg-brandsoft px-3.5 py-3"><Icon name="info" size={16} className="text-brandhi mt-0.5 shrink-0" /><div className="text-[12.5px] text-ink leading-relaxed">{t('pol.exclusionsInfo')}</div></div>
+            {can('policies.manage') && (
+              <div className="flex items-center gap-2">
+                <Combobox value={addExcluded} onChange={setAddExcluded} className="flex-1" placeholder={t('pol.addExclusion')}
+                  options={Object.values(devMap).filter((d) => !exclusions.some((e) => e.agent_id === d.id)).map((d) => ({ value: d.id, label: d.hostname, group: t('pol.group.agents') }))} />
+                <Button variant="secondary" icon="close" onClick={exclude} disabled={!addExcluded}>{t('pol.exclude')}</Button>
+              </div>
+            )}
+            <div className="space-y-2">
+              {exclusions.map((e) => (
+                <div key={e.agent_id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-2.5">
+                  <span className="flex-1 text-[13px] text-ink">{e.hostname || devMap[e.agent_id]?.hostname || e.agent_id}</span>
+                  {can('policies.manage') && <button onClick={() => include(e.agent_id)} aria-label={t('pol.includeBack')} className="text-faint hover:text-ink p-1"><Icon name="close" size={15} /></button>}
+                </div>
+              ))}
+              {exclusions.length === 0 && <div className="text-center text-[12.5px] text-faint py-4">{t('pol.noExclusions')}</div>}
             </div>
           </div>
         )}

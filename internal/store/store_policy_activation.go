@@ -45,6 +45,9 @@ type PolicyProposal struct {
 	Assignments                   []models.PolicyAssignment
 	Tasks                         []models.Task
 	Checks                        []models.Check
+	// ExcludedAgents are devices the policy leaves out even where an
+	// assignment reaches them.
+	ExcludedAgents []string
 }
 
 // CreatePolicyProposal writes the policy, its scopes, tasks and checks in one
@@ -66,8 +69,16 @@ func (s *Store) CreatePolicyProposal(ctx context.Context, p *PolicyProposal) (*m
 		return nil, err
 	}
 	for _, a := range p.Assignments {
-		if _, err := tx.Exec(ctx, `INSERT INTO policy_assignments (id, policy_id, scope_type, scope_id) VALUES ($1,$2,$3,$4)`,
-			newID(), pol.ID, a.ScopeType, a.ScopeID); err != nil {
+		if err := validateAssignmentTarget(a.ScopeType, a.ScopeID, a.OS, a.Role); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO policy_assignments (id, policy_id, scope_type, scope_id, os, role) VALUES ($1,$2,$3,$4,$5,$6)`,
+			newID(), pol.ID, a.ScopeType, a.ScopeID, a.OS, a.Role); err != nil {
+			return nil, err
+		}
+	}
+	for _, agentID := range p.ExcludedAgents {
+		if err := addExclusion(ctx, tx, false, pol.ID, agentID, p.ProposedBy); err != nil {
 			return nil, err
 		}
 	}
@@ -113,14 +124,14 @@ func policyReview(ctx context.Context, q dbQuerier, id string, lock bool) (*mode
 		return nil, err
 	}
 	review := &models.PolicyReview{Policy: *pol, Assignments: []models.PolicyAssignment{}}
-	rows, err := q.Query(ctx, `SELECT id, policy_id, scope_type, scope_id, created_at FROM policy_assignments
+	rows, err := q.Query(ctx, `SELECT `+assignmentCols+` FROM policy_assignments
 		WHERE policy_id=$1 ORDER BY created_at, id`, id)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var a models.PolicyAssignment
-		if err := rows.Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.OS, &a.Role, &a.CreatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -149,6 +160,9 @@ func policyReview(ctx context.Context, q dbQuerier, id string, lock bool) (*mode
 	}
 	if review.Checks == nil {
 		review.Checks = []models.Check{}
+	}
+	if review.Exclusions, err = listExclusions(ctx, q, false, id); err != nil {
+		return nil, err
 	}
 	review.Seal()
 	return review, nil
@@ -227,7 +241,7 @@ func (s *Store) DeactivatePolicy(ctx context.Context, id string) (*models.Policy
 
 // CreatePatchPolicyProposal writes an AI-proposed patch policy and its scopes
 // in one transaction, switched off, and returns its review.
-func (s *Store) CreatePatchPolicyProposal(ctx context.Context, p *models.PatchPolicy, assignments []models.PatchPolicyAssignment) (*models.PatchPolicyReview, error) {
+func (s *Store) CreatePatchPolicyProposal(ctx context.Context, p *models.PatchPolicy, assignments []models.PatchPolicyAssignment, excluded ...string) (*models.PatchPolicyReview, error) {
 	if p.ProposedBy == "" {
 		return nil, errors.New("a patch policy proposal needs its proposer")
 	}
@@ -240,8 +254,16 @@ func (s *Store) CreatePatchPolicyProposal(ctx context.Context, p *models.PatchPo
 		return nil, err
 	}
 	for _, a := range assignments {
-		if _, err := tx.Exec(ctx, `INSERT INTO patch_policy_assignments (id, policy_id, scope_type, scope_id) VALUES ($1,$2,$3,$4)`,
-			newID(), p.ID, a.ScopeType, a.ScopeID); err != nil {
+		if err := validateAssignmentTarget(a.ScopeType, a.ScopeID, a.OS, a.Role); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO patch_policy_assignments (id, policy_id, scope_type, scope_id, os, role) VALUES ($1,$2,$3,$4,$5,$6)`,
+			newID(), p.ID, a.ScopeType, a.ScopeID, a.OS, a.Role); err != nil {
+			return nil, err
+		}
+	}
+	for _, agentID := range excluded {
+		if err := addExclusion(ctx, tx, true, p.ID, agentID, p.ProposedBy); err != nil {
 			return nil, err
 		}
 	}
@@ -267,20 +289,24 @@ func patchPolicyReview(ctx context.Context, q dbQuerier, id string, lock bool) (
 		return nil, err
 	}
 	review := &models.PatchPolicyReview{Policy: *p, Assignments: []models.PatchPolicyAssignment{}}
-	rows, err := q.Query(ctx, `SELECT id, policy_id, scope_type, scope_id, created_at FROM patch_policy_assignments
+	rows, err := q.Query(ctx, `SELECT `+assignmentCols+` FROM patch_policy_assignments
 		WHERE policy_id=$1 ORDER BY created_at, id`, id)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var a models.PatchPolicyAssignment
-		if err := rows.Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.OS, &a.Role, &a.CreatedAt); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		review.Assignments = append(review.Assignments, a)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if review.Exclusions, err = listExclusions(ctx, q, true, id); err != nil {
 		return nil, err
 	}
 	review.Seal()

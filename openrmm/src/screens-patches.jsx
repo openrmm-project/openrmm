@@ -263,6 +263,7 @@ function PatchPolicyActivation({ policy, onClose }) {
   };
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
   const scopeLabel = (a) => {
+    if (a.scope_type === 'global') return t('pol.globalName');
     if (a.scope_type === 'client') return t('patchpol.clientScope', { name: clients.find((c) => c.id === a.scope_id)?.name || a.scope_id });
     if (a.scope_type === 'site') return t('patchpol.siteScope', { name: sites.find((x) => x.id === a.scope_id)?.name || a.scope_id });
     return devMap[a.scope_id]?.hostname || a.scope_id;
@@ -276,9 +277,14 @@ function PatchPolicyActivation({ policy, onClose }) {
         <>
           <ReviewSection title={t('pol.reviewScopes')}>
             {review.assignments.length
-              ? <ul className="space-y-1">{review.assignments.map((a) => <li key={a.id} className="text-[12.5px] text-ink">{scopeLabel(a)}</li>)}</ul>
+              ? <ul className="space-y-1">{review.assignments.map((a) => <li key={a.id} className="text-[12.5px] text-ink flex flex-wrap items-center gap-1.5">{scopeLabel(a)}<TargetChips os={a.os} role={a.role} /></li>)}</ul>
               : <p className="text-[12.5px] text-warn">{t('pol.reviewNoScopes')}</p>}
           </ReviewSection>
+          {(review.exclusions || []).length > 0 && (
+            <ReviewSection title={t('pol.reviewExclusions')}>
+              <p className="text-[12.5px] text-ink">{review.exclusions.map((e) => e.hostname || e.agent_id).join(', ')}</p>
+            </ReviewSection>
+          )}
           <ReviewSection title={t('patchpol.reviewSettings')}>
             {p.proposed_by && <ReviewRow label={t('review.proposedByLabel')}>{p.proposed_by}</ReviewRow>}
             <ReviewRow label={t('patchpol.autoClasses')}>{classes.length ? classes.map((c) => tEnum('patch.class', c)).join(', ') + ' ' + t('patchpol.afterDays', { n: p.auto_approve_age_days }) : '—'}</ReviewRow>
@@ -378,16 +384,30 @@ function PolicyAssignments({ policyId }) {
   const clientsQ = useQuery(['clients'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
   const sitesQ = useQuery(['sites'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
   const [val, setVal] = useState('');
+  const [os, setOs] = useState('');
+  const [role, setRole] = useState('');
+  const [excluded, setExcluded] = useState('');
+  const devMap = useDeviceMap();
+  const exclQ = useQuery(['patch-excl', policyId], () => api.listPatchPolicyExclusions(policyId), { invalidateOn: ['patch-assign'] });
+  const exclusions = exclQ.data?.exclusions || [];
   const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
   const assigns = q.data?.assignments || [];
   const label = (a) => {
+    if (a.scope_type === 'global') return t('pol.globalName');
     if (a.scope_type === 'client') return t('patchpol.clientScope', { name: clients.find((c) => c.id === a.scope_id)?.name || a.scope_id });
     if (a.scope_type === 'site') return t('patchpol.siteScope', { name: sites.find((s) => s.id === a.scope_id)?.name || a.scope_id });
     return a.scope_type + ': ' + a.scope_id;
   };
   const add = async () => {
     if (!val) return; const [scope_type, scope_id] = val.split(':');
-    try { await api.addPatchAssignment(policyId, { scope_type, scope_id }); setVal(''); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); }
+    try { await api.addPatchAssignment(policyId, { scope_type, scope_id: scope_id || '', os, role }); setVal(''); setOs(''); setRole(''); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  const exclude = async () => {
+    if (!excluded) return;
+    try { await api.addPatchPolicyExclusion(policyId, excluded); setExcluded(''); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  const include = async (agentId) => {
+    try { await api.removePatchPolicyExclusion(policyId, agentId); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); }
   };
   const remove = async (a) => { try { await api.deletePatchAssignment(a.id); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); } };
   return (
@@ -395,17 +415,33 @@ function PolicyAssignments({ policyId }) {
       <div className="space-y-1.5">
         {assigns.map((a) => (
           <div key={a.id} className="flex items-center gap-2 text-[12.5px] bg-elevated/50 rounded-lg px-2.5 py-1.5">
-            <Icon name="building" size={13} className="text-faint" /><span className="flex-1 text-ink">{label(a)}</span>
+            <Icon name="building" size={13} className="text-faint" /><span className="flex-1 text-ink flex flex-wrap items-center gap-1.5">{label(a)}<TargetChips os={a.os} role={a.role} /></span>
             <button onClick={() => remove(a)} className="text-faint hover:text-bad"><Icon name="close" size={14} /></button>
           </div>
         ))}
         <div className="flex gap-2">
           <Select value={val} onChange={(e) => setVal(e.target.value)} className="flex-1">
             <option value="">{t('patchpol.addAssignment')}</option>
+            <option value="global:">{t('pol.globalOption')}</option>
             <optgroup label={t('patchpol.clients')}>{clients.map((c) => <option key={c.id} value={'client:' + c.id}>{c.name}</option>)}</optgroup>
             <optgroup label={t('patchpol.sites')}>{sites.map((s) => <option key={s.id} value={'site:' + s.id}>{s.name}</option>)}</optgroup>
           </Select>
+          <TargetSelects os={os} role={role} onOs={setOs} onRole={setRole} />
           <Button variant="secondary" onClick={add} disabled={!val}>{t('action.add')}</Button>
+        </div>
+        <div className="pt-2 text-[12px] text-muted">{t('pol.exclusionsInfo')}</div>
+        {exclusions.map((e) => (
+          <div key={e.agent_id} className="flex items-center gap-2 text-[12.5px] bg-elevated/50 rounded-lg px-2.5 py-1.5">
+            <Icon name="close" size={13} className="text-faint" /><span className="flex-1 text-ink">{e.hostname || devMap[e.agent_id]?.hostname || e.agent_id}</span>
+            <button onClick={() => include(e.agent_id)} aria-label={t('pol.includeBack')} className="text-faint hover:text-ink"><Icon name="close" size={14} /></button>
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <Select value={excluded} onChange={(e) => setExcluded(e.target.value)} className="flex-1" aria-label={t('pol.addExclusion')}>
+            <option value="">{t('pol.addExclusion')}</option>
+            {Object.values(devMap).filter((d) => !exclusions.some((e) => e.agent_id === d.id)).map((d) => <option key={d.id} value={d.id}>{d.hostname}</option>)}
+          </Select>
+          <Button variant="secondary" onClick={exclude} disabled={!excluded}>{t('pol.exclude')}</Button>
         </div>
       </div>
     </Field>

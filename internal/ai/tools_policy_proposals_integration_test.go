@@ -178,3 +178,63 @@ func TestListPatchPoliciesIsScopedIntegration(t *testing.T) {
 		t.Fatalf("unrestricted list_patch_policies: %s", out)
 	}
 }
+
+// A model proposes a policy narrowed by OS and role, fleet-wide, with devices
+// left out; all of it is stored as proposed and switched off.
+func TestProposePolicyWithTargetingIntegration(t *testing.T) {
+	f := newScopeFixture(t)
+	tc := ToolContext{Store: f.st, Jobs: f.js, Actor: "mcp:api", Permissions: map[string]bool{models.PermPoliciesManage: true, models.PermPatchPoliciesManage: true}}
+	args, _ := json.Marshal(map[string]any{
+		"name": "AI servers " + uuid.NewString()[:8],
+		"assignments": []map[string]string{
+			{"scope_type": "client", "scope_id": f.theirClient, "os": "windows", "role": "server"},
+			{"scope_type": "global", "os": "linux"},
+		},
+		"exclude_devices": []string{f.theirAgent, strings.ToUpper(f.theirAgent)},
+	})
+	res := Execute(f.ctx, tc, "propose_policy", args)
+	var out struct {
+		ID       string
+		Scopes   int
+		Excluded int
+	}
+	if err := json.Unmarshal([]byte(res.Output), &out); err != nil || out.Scopes != 2 || out.Excluded != 1 {
+		t.Fatalf("propose_policy: %s", res.Output)
+	}
+	t.Cleanup(func() { _ = f.st.DeletePolicy(f.ctx, out.ID) })
+	review, err := f.st.PolicyReview(f.ctx, out.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Policy.Enabled || len(review.Exclusions) != 1 || review.Exclusions[0].AgentID != f.theirAgent {
+		t.Fatalf("stored proposal: %+v", review)
+	}
+	got := map[string]string{}
+	for _, a := range review.Assignments {
+		got[a.ScopeType] = a.OS + "/" + a.Role
+	}
+	if got["client"] != "windows/server" || got["global"] != "linux/" {
+		t.Fatalf("stored filters: %v", got)
+	}
+	bad, _ := json.Marshal(map[string]any{"name": "AI bad " + uuid.NewString()[:8], "exclude_devices": []string{uuid.NewString()}})
+	if res := Execute(f.ctx, tc, "propose_policy", bad); !strings.Contains(res.Output, "device not found") {
+		t.Fatalf("unknown excluded device: %s", res.Output)
+	}
+
+	patchArgs, _ := json.Marshal(map[string]any{"name": "AI ws " + uuid.NewString()[:8],
+		"assignments":     []map[string]string{{"scope_type": "global", "role": "workstation"}},
+		"exclude_devices": []string{f.mineAgent}})
+	res = Execute(f.ctx, tc, "propose_patch_policy", patchArgs)
+	var pout struct {
+		ID       string
+		Excluded int
+	}
+	if err := json.Unmarshal([]byte(res.Output), &pout); err != nil || pout.Excluded != 1 {
+		t.Fatalf("propose_patch_policy: %s", res.Output)
+	}
+	t.Cleanup(func() { _ = f.st.DeletePatchPolicy(f.ctx, pout.ID) })
+	preview, err := f.st.PatchPolicyReview(f.ctx, pout.ID)
+	if err != nil || preview.Policy.Enabled || len(preview.Assignments) != 1 || preview.Assignments[0].Role != "workstation" || len(preview.Exclusions) != 1 {
+		t.Fatalf("stored patch proposal: %+v %v", preview, err)
+	}
+}

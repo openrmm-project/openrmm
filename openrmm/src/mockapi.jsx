@@ -297,6 +297,8 @@ const api = {
   deleteDevice(id) { return DELETE('/api/devices/' + id); },
   updateDevice(id, body) { return PATCH('/api/devices/' + id, body); },
   setRemoteIds(id, body) { return PATCH('/api/devices/' + id + '/remote-ids', body); },
+  // A device's role (workstation, server, or '' to follow detection); policy assignments filter on it.
+  setDeviceRole(id, role) { return PUT('/api/devices/' + encodeURIComponent(id) + '/role', { role }); },
   setDeviceGroup(id, group_id) { return PATCH('/api/devices/' + id + '/group', { group_id }); },
   bulkMoveDevices(agent_ids, site_id, group_id) { return POST('/api/devices/bulk/move', { agent_ids, site_id, group_id: group_id || null }); },
   // confirm_count is what the person typed: the server refuses a mismatch, so a
@@ -506,6 +508,10 @@ const api = {
   listAssignments(policyId) { return GET('/api/policies/' + policyId + '/assignments'); },
   createAssignment(policyId, body) { return POST('/api/policies/' + policyId + '/assignments', body); },
   deleteAssignment(aid) { return DELETE('/api/policies/assignments/' + aid); },
+  // Exceptions: devices a policy leaves out whichever assignment reaches them.
+  listPolicyExclusions(id) { return GET('/api/policies/' + encodeURIComponent(id) + '/exclusions'); },
+  addPolicyExclusion(id, agentId) { return POST('/api/policies/' + encodeURIComponent(id) + '/exclusions', { agent_id: agentId }); },
+  removePolicyExclusion(id, agentId) { return DELETE('/api/policies/' + encodeURIComponent(id) + '/exclusions/' + encodeURIComponent(agentId)); },
   // Switching a policy on is reviewed: the review is sealed with a fingerprint,
   // and the activation is refused (409) if the policy changed after it was read.
   reviewPolicy(id) { return GET('/api/policies/' + encodeURIComponent(id) + '/review'); },
@@ -544,6 +550,9 @@ const api = {
   listPatchAssignments(id) { return GET('/api/patch-policies/' + id + '/assignments'); },
   addPatchAssignment(id, b) { return POST('/api/patch-policies/' + id + '/assignments', b); },
   deletePatchAssignment(aid) { return DELETE('/api/patch-policies/assignments/' + aid); },
+  listPatchPolicyExclusions(id) { return GET('/api/patch-policies/' + encodeURIComponent(id) + '/exclusions'); },
+  addPatchPolicyExclusion(id, agentId) { return POST('/api/patch-policies/' + encodeURIComponent(id) + '/exclusions', { agent_id: agentId }); },
+  removePatchPolicyExclusion(id, agentId) { return DELETE('/api/patch-policies/' + encodeURIComponent(id) + '/exclusions/' + encodeURIComponent(agentId)); },
   reviewPatchPolicy(id) { return GET('/api/patch-policies/' + encodeURIComponent(id) + '/review'); },
   activatePatchPolicy(id, fingerprint) { return POST('/api/patch-policies/' + encodeURIComponent(id) + '/activate', { fingerprint }); },
 

@@ -35,6 +35,16 @@ tag.
   approved through the same kind of review. Migration 032 keeps assigned AI
   policies applying. Activations, switch-offs and task and check approvals are
   audited, with labels in all nine languages.
+- **Target policies by OS and device role, with exceptions**
+  ([RFC #258](https://github.com/openrmm-project/openrmm/issues/258),
+  [guide](docs/10-monitoring-policies.md#targeting-by-os-and-device-role-and-exceptions)):
+  an assignment can be narrowed to Windows, macOS or Linux and to workstations
+  or servers, or cover every device; a policy or patch policy can leave chosen
+  devices out. Policies still add up. Roles are detected (Windows product type
+  or edition, Macs as workstations, Linux unset) and can be corrected on any
+  device. One shared definition of reach now drives every resolution query.
+  AI proposals, the activation review and its fingerprint carry the filters and
+  exceptions. Migration 033; agent 0.11 reports the Windows product type.
 - **Manage policies / Manage checks** now say what they include: activating and
   deactivating policies, and switching checks on and off (approving AI-proposed
   ones). Checks and tasks created through the API no longer accept

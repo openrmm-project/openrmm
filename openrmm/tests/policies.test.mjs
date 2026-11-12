@@ -84,7 +84,9 @@ test('a policy can be assigned to a department from the drawer', async () => {
   assert.match(detail, /\.\.\.groups\.map\(\(g\) => \(\{ value: 'group:' \+ g\.id, label: groupLabel\(g\), group: t\('pol\.group\.groups'\) \}\)\)/,
     'the picker must offer departments under their own heading');
   // The picker's value is split on ':' into the body the API validates.
-  assert.match(detail, /const \[type, id\] = addScope\.split\(':'\); await api\.createAssignment\(policy\.id, \{ scope_type: type, scope_id: id \}\)/);
+  // The scope is sent with the assignment's OS and role filters (RFC #258).
+  assert.match(detail, /const \[type, id\] = addScope\.split\(':'\);/);
+  assert.match(detail, /api\.createAssignment\(policy\.id, \{ scope_type: type, scope_id: id \|\| '', os: addOs, role: addRole \}\)/);
   assert.match(detail, /if \(a\.scope_type === 'group'\) \{ const g = groups\.find\(\(x\) => x\.id === a\.scope_id\); return g && groupLabel\(g\); \}/,
     'a department assignment must read by name, not id');
   assert.match(detail, /t\('pol\.groupInSite', \{ name: g\.name, site: site\.name \}\)/,

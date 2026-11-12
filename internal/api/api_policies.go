@@ -117,26 +117,24 @@ func (s *Server) createPolicyAssignment(w http.ResponseWriter, r *http.Request) 
 	if !s.requirePolicy(w, r, policyID, true) {
 		return
 	}
-	var in struct {
-		ScopeType string `json:"scope_type"`
-		ScopeID   string `json:"scope_id"`
-	}
-	if err := decode(r, &in); err != nil || in.ScopeType == "" || in.ScopeID == "" {
+	var in assignmentTarget
+	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "scope_type and scope_id required")
 		return
 	}
-	if !oneOf(in.ScopeType, models.ScopeClient, models.ScopeSite, models.ScopeGroup, models.ScopeAgent) {
-		writeErr(w, http.StatusBadRequest, "invalid policy scope_type")
+	if !s.requireAssignmentTarget(w, r, &in, models.ScopeClient, models.ScopeSite, models.ScopeGroup, models.ScopeAgent) {
 		return
 	}
-	if !s.requireScope(w, r, in.ScopeType, in.ScopeID) {
-		return
-	}
-	a, err := s.store.AssignPolicy(r.Context(), policyID, in.ScopeType, in.ScopeID)
+	a, err := s.store.AssignPolicy(r.Context(), policyID, in.ScopeType, in.ScopeID, in.OS, in.Role)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	name := ""
+	if p, err := s.store.GetPolicy(r.Context(), policyID); err == nil {
+		name = p.Name
+	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "policy.assign", policyID, targetAuditDetail(name, in))
 	writeJSON(w, http.StatusCreated, a)
 }
 
@@ -147,13 +145,15 @@ func (s *Server) deletePolicyAssignment(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	if !s.requirePolicy(w, r, a.PolicyID, true) || !s.requireScope(w, r, a.ScopeType, a.ScopeID) {
+	if !s.requirePolicy(w, r, a.PolicyID, true) || !s.requireAssignmentScope(w, r, a.ScopeType, a.ScopeID) {
 		return
 	}
 	if err := s.store.DeleteAssignment(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "policy.unassign", a.PolicyID,
+		targetAuditDetail("", assignmentTarget{ScopeType: a.ScopeType, ScopeID: a.ScopeID, OS: a.OS, Role: a.Role}))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -191,6 +191,13 @@ func (s *Server) reviewPolicy(w http.ResponseWriter, r *http.Request) {
 		if review.Assignments == nil {
 			review.Assignments = []models.PolicyAssignment{}
 		}
+		visible := review.Exclusions[:0]
+		for _, e := range review.Exclusions {
+			if s.agentAllowed(r, e.AgentID) {
+				visible = append(visible, e)
+			}
+		}
+		review.Exclusions = visible
 		review.Fingerprint = ""
 	}
 	writeJSON(w, http.StatusOK, review)

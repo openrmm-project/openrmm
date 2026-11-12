@@ -582,7 +582,8 @@ func (s *Store) ScopeIntersectsUser(ctx context.Context, userID, scopeType, scop
 	err := s.pool.QueryRow(ctx, `SELECT
 		NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
 		OR EXISTS (SELECT 1 FROM agents a LEFT JOIN sites si ON si.id=a.site_id
-		  WHERE (($2='agent' AND a.id=$3)
+		  WHERE (($2='global')
+		    OR ($2='agent' AND a.id=$3)
 		    OR ($2='group' AND a.group_id=$3)
 		    OR ($2='site' AND a.site_id=$3)
 		    OR ($2='client' AND si.client_id=$3))
@@ -1165,6 +1166,7 @@ func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]model
 		  SELECT 1
 		  FROM policy_assignments pa
 		  JOIN agents a ON (
+		    (pa.scope_type='global') OR
 		    (pa.scope_type='agent'  AND pa.scope_id=a.id) OR
 		    (pa.scope_type='group'  AND pa.scope_id=a.group_id) OR
 		    (pa.scope_type='site'   AND pa.scope_id=a.site_id) OR
@@ -1198,6 +1200,7 @@ func (s *Store) PolicyAllowedForUser(ctx context.Context, userID, policyID strin
 		  SELECT 1
 		  FROM policy_assignments pa
 		  JOIN agents a ON (
+		    (pa.scope_type='global') OR
 		    (pa.scope_type='agent'  AND pa.scope_id=a.id) OR
 		    (pa.scope_type='group'  AND pa.scope_id=a.group_id) OR
 		    (pa.scope_type='site'   AND pa.scope_id=a.site_id) OR
@@ -1253,21 +1256,39 @@ func (s *Store) DeletePolicy(ctx context.Context, id string) error {
 }
 
 // AssignPolicy binds a policy to a scope.
-func (s *Store) AssignPolicy(ctx context.Context, policyID, scopeType, scopeID string) (*models.PolicyAssignment, error) {
+// os and role narrow it to the matching devices of the scope; empty is any.
+func (s *Store) AssignPolicy(ctx context.Context, policyID, scopeType, scopeID string, filters ...string) (*models.PolicyAssignment, error) {
+	os, role := targetFilters(filters)
+	if err := validateAssignmentTarget(scopeType, scopeID, os, role); err != nil {
+		return nil, err
+	}
 	id := newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO policy_assignments (id, policy_id, scope_type, scope_id) VALUES ($1,$2,$3,$4)`,
-		id, policyID, scopeType, scopeID)
+		`INSERT INTO policy_assignments (id, policy_id, scope_type, scope_id, os, role) VALUES ($1,$2,$3,$4,$5,$6)`,
+		id, policyID, scopeType, scopeID, os, role)
 	if err != nil {
 		return nil, err
 	}
-	return &models.PolicyAssignment{ID: id, PolicyID: policyID, ScopeType: scopeType, ScopeID: scopeID, CreatedAt: time.Now()}, nil
+	return &models.PolicyAssignment{ID: id, PolicyID: policyID, ScopeType: scopeType, ScopeID: scopeID, OS: os, Role: role, CreatedAt: time.Now()}, nil
+}
+
+// targetFilters reads the optional (os, role) pair of AssignPolicy and
+// AddPatchPolicyAssignment.
+func targetFilters(filters []string) (string, string) {
+	var os, role string
+	if len(filters) > 0 {
+		os = filters[0]
+	}
+	if len(filters) > 1 {
+		role = filters[1]
+	}
+	return os, role
 }
 
 // ListPolicyAssignments returns assignments for a policy.
 func (s *Store) ListPolicyAssignments(ctx context.Context, policyID string) ([]models.PolicyAssignment, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, policy_id, scope_type, scope_id, created_at FROM policy_assignments WHERE policy_id=$1`, policyID)
+		`SELECT `+assignmentCols+` FROM policy_assignments WHERE policy_id=$1 ORDER BY created_at, id`, policyID)
 	if err != nil {
 		return nil, err
 	}
@@ -1275,7 +1296,7 @@ func (s *Store) ListPolicyAssignments(ctx context.Context, policyID string) ([]m
 	var out []models.PolicyAssignment
 	for rows.Next() {
 		var pa models.PolicyAssignment
-		if err := rows.Scan(&pa.ID, &pa.PolicyID, &pa.ScopeType, &pa.ScopeID, &pa.CreatedAt); err != nil {
+		if err := rows.Scan(&pa.ID, &pa.PolicyID, &pa.ScopeType, &pa.ScopeID, &pa.OS, &pa.Role, &pa.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, pa)
@@ -1287,8 +1308,8 @@ func (s *Store) ListPolicyAssignments(ctx context.Context, policyID string) ([]m
 func (s *Store) GetPolicyAssignment(ctx context.Context, id string) (*models.PolicyAssignment, error) {
 	var a models.PolicyAssignment
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, policy_id, scope_type, scope_id, created_at FROM policy_assignments WHERE id=$1`, id).
-		Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt)
+		`SELECT `+assignmentCols+` FROM policy_assignments WHERE id=$1`, id).
+		Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.OS, &a.Role, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -1301,7 +1322,7 @@ func (s *Store) GetPolicyAssignment(ctx context.Context, id string) (*models.Pol
 // ListPolicyAssignmentsForUser returns only assignments that intersect the
 // user's access scope. Unscoped users see all assignments for the policy.
 func (s *Store) ListPolicyAssignmentsForUser(ctx context.Context, userID, policyID string) ([]models.PolicyAssignment, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT pa.id, pa.policy_id, pa.scope_type, pa.scope_id, pa.created_at
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT pa.id, pa.policy_id, pa.scope_type, pa.scope_id, pa.os, pa.role, pa.created_at
 		FROM policy_assignments pa
 		WHERE pa.policy_id=$2 AND (
 		  NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
@@ -1309,6 +1330,7 @@ func (s *Store) ListPolicyAssignmentsForUser(ctx context.Context, userID, policy
 		    SELECT 1
 		    FROM agents a
 		    WHERE (
+		      (pa.scope_type='global') OR
 		      (pa.scope_type='agent'  AND pa.scope_id=a.id) OR
 		      (pa.scope_type='group'  AND pa.scope_id=a.group_id) OR
 		      (pa.scope_type='site'   AND pa.scope_id=a.site_id) OR
@@ -1332,7 +1354,7 @@ func (s *Store) ListPolicyAssignmentsForUser(ctx context.Context, userID, policy
 	var out []models.PolicyAssignment
 	for rows.Next() {
 		var pa models.PolicyAssignment
-		if err := rows.Scan(&pa.ID, &pa.PolicyID, &pa.ScopeType, &pa.ScopeID, &pa.CreatedAt); err != nil {
+		if err := rows.Scan(&pa.ID, &pa.PolicyID, &pa.ScopeType, &pa.ScopeID, &pa.OS, &pa.Role, &pa.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, pa)
@@ -1346,17 +1368,12 @@ func (s *Store) DeleteAssignment(ctx context.Context, id string) error {
 	return err
 }
 
-// policyFilter is the SQL fragment selecting policies that apply to an agent,
-// given $1=agentID, $2=siteID, $3=clientID.
-// A policy that is switched off applies nothing.
-const policyFilter = `policy_id IN (
-	SELECT pa.policy_id FROM policy_assignments pa
-	WHERE pa.policy_id IN ` + activePoliciesSQL + ` AND (
-	      (pa.scope_type='agent'  AND pa.scope_id=$1)
-	   OR (pa.scope_type='group'  AND pa.scope_id=(SELECT group_id FROM agents WHERE id=$1))
-	   OR (pa.scope_type='site'   AND pa.scope_id=$2)
-	   OR (pa.scope_type='client' AND pa.scope_id=$3))
-)`
+// assignmentCols are a policy assignment's columns, in scan order.
+const assignmentCols = `id, policy_id, scope_type, scope_id, os, role, created_at`
+
+// policyFilter selects the policies that reach the agent $1 (policiesReachingSQL).
+var policyFilter = `policy_id IN (SELECT reach.policy_id FROM agents dev CROSS JOIN LATERAL ` +
+	policiesReachingSQL("dev") + ` reach WHERE dev.id = $1)`
 
 // ===================== Checks =====================
 
@@ -1465,11 +1482,13 @@ func (s *Store) ListChecks(ctx context.Context, agentID, policyID string) ([]mod
 
 // ChecksForAgent resolves the effective checks for an agent: those assigned
 // directly plus those from any policy in scope.
-func (s *Store) ChecksForAgent(ctx context.Context, agentID string, siteID, clientID *string) ([]models.Check, error) {
+// The site and client arguments are kept for callers; the device row is the
+// source of truth for its scope, OS and role.
+func (s *Store) ChecksForAgent(ctx context.Context, agentID string, _, _ *string) ([]models.Check, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+checkCols+` FROM checks c WHERE enabled AND (proposed_by='' OR approved_by<>'') AND (agent_id=$1 OR `+policyFilter+`)
  AND (c.type NOT IN ('linuxservice','macservice') OR EXISTS (SELECT 1 FROM agents a WHERE a.id=$1 AND `+serviceCheckPlatformSQL+`))`,
-		agentID, siteID, clientID)
+		agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1666,10 +1685,10 @@ func (s *Store) ListTasks(ctx context.Context, agentID, policyID string) ([]mode
 }
 
 // TasksForAgent resolves the effective tasks for an agent (direct + via policy).
-func (s *Store) TasksForAgent(ctx context.Context, agentID string, siteID, clientID *string) ([]models.Task, error) {
+func (s *Store) TasksForAgent(ctx context.Context, agentID string, _, _ *string) ([]models.Task, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+taskCols+` FROM tasks WHERE enabled AND (agent_id=$1 OR `+policyFilter+`)`,
-		agentID, siteID, clientID)
+		agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -1697,14 +1716,7 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 func (s *Store) AgentIDsForPolicy(ctx context.Context, policyID string) ([]string, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT a.id FROM agents a
-		 LEFT JOIN sites si ON si.id = a.site_id
-		 WHERE a.revoked_at IS NULL AND EXISTS (
-		   SELECT 1 FROM policy_assignments pa
-		   WHERE pa.policy_id=$1 AND pa.policy_id IN `+activePoliciesSQL+` AND (
-		        (pa.scope_type='agent'  AND pa.scope_id = a.id)
-		     OR (pa.scope_type='group'  AND pa.scope_id = a.group_id)
-		     OR (pa.scope_type='site'   AND pa.scope_id = a.site_id)
-		     OR (pa.scope_type='client' AND pa.scope_id = si.client_id)))`, policyID)
+		 WHERE a.revoked_at IS NULL AND $1::uuid IN `+policiesReachingSQL("a"), policyID)
 	if err != nil {
 		return nil, err
 	}

@@ -664,6 +664,37 @@ function ReviewRow({ label, children }) {
   );
 }
 
+// Policy targeting (RFC #258): an assignment can be narrowed to one OS and/or
+// one role of its scope; empty is any. TargetSelects edits the pair,
+// TargetChips shows it next to an assignment.
+const TARGET_OSES = ['windows', 'macos', 'linux'];
+const DEVICE_ROLES = ['workstation', 'server'];
+
+function TargetSelects({ os, role, onOs, onRole, disabled }) {
+  return (
+    <>
+      <Select aria-label={t('target.osLabel')} value={os} onChange={(e) => onOs(e.target.value)} disabled={disabled} className="w-auto">
+        <option value="">{t('target.anyOS')}</option>
+        {TARGET_OSES.map((o) => <option key={o} value={o}>{t('target.os.' + o)}</option>)}
+      </Select>
+      <Select aria-label={t('target.roleLabel')} value={role} onChange={(e) => onRole(e.target.value)} disabled={disabled} className="w-auto">
+        <option value="">{t('target.anyRole')}</option>
+        {DEVICE_ROLES.map((r) => <option key={r} value={r}>{t('target.role.' + r)}</option>)}
+      </Select>
+    </>
+  );
+}
+
+function TargetChips({ os, role }) {
+  if (!os && !role) return null;
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {os && <span className="rounded-md border border-line2 px-1.5 py-0.5 text-[10.5px] text-muted">{t('target.os.' + os)}</span>}
+      {role && <span className="rounded-md border border-line2 px-1.5 py-0.5 text-[10.5px] text-muted">{t('target.role.' + role)}</span>}
+    </span>
+  );
+}
+
 // TaskReview shows what approving a task switches on: where and when it runs,
 // and the script itself, in full.
 function TaskReview({ task, target, scriptName }) {
@@ -884,6 +915,9 @@ window.ReviewModal = ReviewModal;
 window.ReviewSection = ReviewSection;
 window.ReviewRow = ReviewRow;
 window.TaskReview = TaskReview;
+window.TargetSelects = TargetSelects;
+window.TargetChips = TargetChips;
+window.DEVICE_ROLES = DEVICE_ROLES;
 window.CheckReview = CheckReview;
 window.CHECK_TYPES = CHECK_TYPES;
 window.checkType = checkType;

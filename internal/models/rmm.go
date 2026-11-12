@@ -270,10 +270,14 @@ type Policy struct {
 
 // PolicyAssignment binds a policy to a client, site, group, or agent.
 type PolicyAssignment struct {
-	ID        string    `json:"id"`
-	PolicyID  string    `json:"policy_id"`
-	ScopeType string    `json:"scope_type"`
-	ScopeID   string    `json:"scope_id"`
+	ID        string `json:"id"`
+	PolicyID  string `json:"policy_id"`
+	ScopeType string `json:"scope_type"`
+	ScopeID   string `json:"scope_id"`
+	// OS and Role narrow the assignment to the devices of its scope that match
+	// (TargetOS*, Role*); empty means any. See docs/10 and RFC #258.
+	OS        string    `json:"os"`
+	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -576,6 +580,8 @@ type PatchPolicyAssignment struct {
 	PolicyID  string    `json:"policy_id"`
 	ScopeType string    `json:"scope_type"`
 	ScopeID   string    `json:"scope_id"`
+	OS        string    `json:"os"`
+	Role      string    `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

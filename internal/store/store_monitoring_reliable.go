@@ -40,15 +40,7 @@ func (s *Store) CheckAppliesToAgent(ctx context.Context, checkID, agentID string
 			  AND NOT (c.type=ANY($3::text[]))
  AND `+serviceCheckPlatformSQL+`
 			  AND (c.proposed_by='' OR c.approved_by<>'') AND (
-				c.agent_id=a.id OR c.policy_id IN (
-					SELECT pa.policy_id
-					FROM policy_assignments pa
-					WHERE pa.policy_id IN `+activePoliciesSQL+` AND (
-					      (pa.scope_type='agent' AND pa.scope_id=a.id)
-					   OR (pa.scope_type='group' AND pa.scope_id=a.group_id)
-					   OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
-					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id))
-				)
+				c.agent_id=a.id OR c.policy_id IN `+policiesReachingSQL("a")+`
 			)
 		)`, checkID, agentID, models.ServerRuleTypes).Scan(&applies)
 	return applies, err
@@ -482,16 +474,7 @@ func (s *Store) CheckInstances(ctx context.Context, checkID, userID string, scop
 		       COALESCE(cs.last_output, ''), cs.last_result_at
 		FROM checks c
 		JOIN agents a ON (
-			c.agent_id=a.id OR c.policy_id IN (
-				SELECT pa.policy_id
-				FROM policy_assignments pa
-				LEFT JOIN sites asi ON asi.id=a.site_id
-				WHERE pa.policy_id IN `+activePoliciesSQL+` AND (
-				      (pa.scope_type='agent' AND pa.scope_id=a.id)
-				   OR (pa.scope_type='group' AND pa.scope_id=a.group_id)
-				   OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
-				   OR (pa.scope_type='client' AND pa.scope_id=asi.client_id))
-			)
+			c.agent_id=a.id OR c.policy_id IN `+policiesReachingSQL("a")+`
 		)
 		LEFT JOIN check_states cs ON cs.check_id=c.id AND cs.agent_id=a.id
 		WHERE c.id=$1 AND a.revoked_at IS NULL AND `+serviceCheckPlatformSQL+` AND (

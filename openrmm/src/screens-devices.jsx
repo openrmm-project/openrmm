@@ -37,6 +37,7 @@ function DevicesScreen({ navigate }) {
   const [q, setQ] = useState('');
   const [osF, setOsF] = useState('all');
   const [statusF, setStatusF] = useState('all');
+  const [roleF, setRoleF] = useState('all');
   const [clientF, setClientF] = useState('all');
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -59,6 +60,9 @@ function DevicesScreen({ navigate }) {
     if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((tag) => tag.includes(q.toLowerCase())))) return false;
     if (osF !== 'all' && window.osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
+    // The role policy assignments filter on; "none" finds the devices that
+    // still need one (Linux, until an administrator sets it).
+    if (roleF !== 'all' && (d.role || 'none') !== roleF) return false;
     if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
   });
@@ -80,6 +84,11 @@ function DevicesScreen({ navigate }) {
           </Select>
           <Select value={statusF} onChange={(e) => setStatusF(e.target.value)} className="w-auto min-w-[120px]">
             <option value="all">{t('devices.filter.anyStatus')}</option><option value="online">{t('status.online')}</option><option value="offline">{t('status.offline')}</option>
+          </Select>
+          <Select aria-label={t('device.role')} value={roleF} onChange={(e) => setRoleF(e.target.value)} className="w-auto min-w-[120px]">
+            <option value="all">{t('target.anyRole')}</option>
+            {DEVICE_ROLES.map((r) => <option key={r} value={r}>{t('target.role.' + r)}</option>)}
+            <option value="none">{t('device.roleUnknown')}</option>
           </Select>
           <Select value={clientF} onChange={(e) => setClientF(e.target.value)} className="w-auto min-w-[150px]">
             <option value="all">{t('devices.filter.allClients')}</option>
@@ -117,7 +126,7 @@ function DevicesScreen({ navigate }) {
                   </div>
                 </td>
                 <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
-                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : t('presence.inUse')}</span></Tip> : null}</div></td>
+                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{d.role && <span className="text-faint text-[11px]">{t('target.role.' + d.role)}</span>}{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : t('presence.inUse')}</span></Tip> : null}</div></td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
@@ -331,6 +340,32 @@ function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
 }
 
 /* ----------------------------- Device detail ------------------------------ */
+// DeviceRole shows the role policy assignments filter on, and lets an
+// administrator correct it on any OS: a Mac can serve, a Linux machine can be
+// a desktop. "Follow detection" clears the correction (RFC #258).
+function DeviceRole({ device, canEdit }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const detected = device.os_role ? t('target.role.' + device.os_role) : t('device.roleUnknown');
+  const save = async (role) => {
+    setBusy(true);
+    try { await api.setDeviceRole(device.id, role); window.dataBus.emit('devices'); toast.success(t('device.roleSaved')); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+      <span>{t('device.role')}:</span>
+      {canEdit ? (
+        <Select aria-label={t('device.role')} value={device.role_override || ''} disabled={busy} onChange={(e) => save(e.target.value)} className="w-auto">
+          <option value="">{t('device.roleFollow', { role: detected })}</option>
+          {DEVICE_ROLES.map((r) => <option key={r} value={r}>{t('target.role.' + r)}</option>)}
+        </Select>
+      ) : <span className="text-ink">{device.role ? t('target.role.' + device.role) : t('device.roleUnknown')}</span>}
+    </div>
+  );
+}
+
 function DeviceDetail({ id, onClose, navigate, sites, clients }) {
   const { can } = useAuth();
   const toast = useToast();
@@ -438,6 +473,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                   </div>
                 )}
                 {d.description && <div className="text-[12px] text-faint mt-1">{d.description}</div>}
+                <DeviceRole device={d} canEdit={can('devices.manage')} />
               </div>
               <button onClick={onClose} className="text-faint hover:text-ink p-1.5 -mr-1.5"><Icon name="close" size={18} /></button>
             </div>

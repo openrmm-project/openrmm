@@ -245,6 +245,8 @@ const maxPolicyProposalItems = 25
 type proposedScope struct {
 	ScopeType string `json:"scope_type"`
 	ScopeID   string `json:"scope_id"`
+	OS        string `json:"os"`
+	Role      string `json:"role"`
 }
 
 // proposalScopes validates and de-duplicates the scopes of a proposal: each
@@ -258,8 +260,21 @@ func proposalScopes(ctx context.Context, tc ToolContext, in []proposedScope, all
 	var out []proposedScope
 	for _, a := range in {
 		a.ScopeType, a.ScopeID = strings.TrimSpace(a.ScopeType), strings.TrimSpace(a.ScopeID)
+		a.OS, a.Role = strings.TrimSpace(a.OS), strings.TrimSpace(a.Role)
+		if !models.ValidTargetFilter(a.OS, a.Role) {
+			return nil, fmt.Errorf("os must be windows, macos or linux and role workstation or server (or empty for any)")
+		}
+		if a.ScopeType == models.ScopeGlobal {
+			key := "global::" + a.OS + ":" + a.Role
+			if !seen[key] {
+				seen[key] = true
+				a.ScopeID = models.GlobalScopeID
+				out = append(out, a)
+			}
+			continue
+		}
 		if !slices.Contains(allowed, a.ScopeType) {
-			return nil, fmt.Errorf("scope_type must be one of %s", strings.Join(allowed, ", "))
+			return nil, fmt.Errorf("scope_type must be one of global, %s", strings.Join(allowed, ", "))
 		}
 		canonical, err := uuidCanonical(a.ScopeID)
 		if err != nil {
@@ -267,7 +282,7 @@ func proposalScopes(ctx context.Context, tc ToolContext, in []proposedScope, all
 		}
 		// One spelling per id, so "{…}" or upper case cannot slip a duplicate past.
 		a.ScopeID = canonical
-		key := a.ScopeType + ":" + a.ScopeID
+		key := a.ScopeType + ":" + a.ScopeID + ":" + a.OS + ":" + a.Role
 		if seen[key] {
 			continue
 		}
@@ -280,6 +295,38 @@ func proposalScopes(ctx context.Context, tc ToolContext, in []proposedScope, all
 			return nil, fmt.Errorf("scope not found: %s %s", a.ScopeType, a.ScopeID)
 		}
 		out = append(out, a)
+	}
+	return out, nil
+}
+
+// maxProposalExclusions bounds the devices one proposal may leave out.
+const maxProposalExclusions = 100
+
+// proposalExclusions validates the devices a proposal leaves out: each must be
+// a known device, named once.
+func proposalExclusions(ctx context.Context, tc ToolContext, ids []string) ([]string, error) {
+	if len(ids) > maxProposalExclusions {
+		return nil, fmt.Errorf("at most %d excluded devices in one proposal", maxProposalExclusions)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range ids {
+		canonical, err := uuidCanonical(strings.TrimSpace(id))
+		if err != nil {
+			return nil, fmt.Errorf("exclude_devices: %q is not a device id (use list_devices)", id)
+		}
+		if seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		ok, err := tc.Store.ScopeExists(ctx, models.ScopeAgent, canonical)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("exclude_devices: device not found: %s", canonical)
+		}
+		out = append(out, canonical)
 	}
 	return out, nil
 }
@@ -299,11 +346,12 @@ func uuidCanonical(id string) (string, error) {
 // which refuses if anything changed after they opened the review.
 func proposePolicy(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
 	var in struct {
-		Name        string              `json:"name"`
-		Description string              `json:"description"`
-		Assignments []proposedScope     `json:"assignments"`
-		Tasks       []proposedTaskArgs  `json:"tasks"`
-		Checks      []proposedCheckArgs `json:"checks"`
+		Name           string              `json:"name"`
+		Description    string              `json:"description"`
+		Assignments    []proposedScope     `json:"assignments"`
+		Tasks          []proposedTaskArgs  `json:"tasks"`
+		Checks         []proposedCheckArgs `json:"checks"`
+		ExcludeDevices []string            `json:"exclude_devices"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
@@ -333,9 +381,13 @@ func proposePolicy(ctx context.Context, tc ToolContext, args json.RawMessage) (a
 	}
 	// Everything is validated before anything is written: the proposal is one
 	// transaction, and a refusal leaves nothing half-created behind.
-	p := &store.PolicyProposal{Name: strings.TrimSpace(in.Name), Description: in.Description, ProposedBy: tc.proposalActor()}
+	excluded, err := proposalExclusions(ctx, tc, in.ExcludeDevices)
+	if err != nil {
+		return nil, err
+	}
+	p := &store.PolicyProposal{Name: strings.TrimSpace(in.Name), Description: in.Description, ProposedBy: tc.proposalActor(), ExcludedAgents: excluded}
 	for _, a := range scopes {
-		p.Assignments = append(p.Assignments, models.PolicyAssignment{ScopeType: a.ScopeType, ScopeID: a.ScopeID})
+		p.Assignments = append(p.Assignments, models.PolicyAssignment{ScopeType: a.ScopeType, ScopeID: a.ScopeID, OS: a.OS, Role: a.Role})
 	}
 	placeholder := "proposal"
 	for i, ta := range in.Tasks {
@@ -357,13 +409,14 @@ func proposePolicy(ctx context.Context, tc ToolContext, args json.RawMessage) (a
 		return nil, err
 	}
 	return map[string]any{
-		"id":     review.Policy.ID,
-		"kind":   "policy",
-		"name":   review.Policy.Name,
-		"status": "awaiting_review",
-		"scopes": len(review.Assignments),
-		"tasks":  len(review.Tasks),
-		"checks": len(review.Checks),
+		"id":       review.Policy.ID,
+		"kind":     "policy",
+		"name":     review.Policy.Name,
+		"status":   "awaiting_review",
+		"scopes":   len(review.Assignments),
+		"tasks":    len(review.Tasks),
+		"checks":   len(review.Checks),
+		"excluded": len(review.Exclusions),
 		"message": "PROPOSAL CREATED SWITCHED OFF, with its scopes, tasks and checks. Nothing in it applies to any " +
 			"device until a person reviews all of it in Policies and activates it. Tell the user it is waiting for their review.",
 	}, nil

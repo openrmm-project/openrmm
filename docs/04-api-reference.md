@@ -125,6 +125,7 @@ the caller's authority.
 | POST | `/api/devices/{id}/remote` | `devices.remote` / `devices.files` / `devices.terminal` | Start a remote session |
 | PATCH | `/api/devices/{id}` | `devices.manage` | Set `{description, note}` (identification fields, scope-checked) |
 | PATCH | `/api/devices/{id}/remote-ids` | `devices.manage` | Set external provider identifiers such as `mesh_id` |
+| PUT | `/api/devices/{id}/role` | `devices.manage`, unrestricted | `{role}`: `workstation`, `server`, or `""` to follow detection. Devices report `os_role` (detected), `role_override` and `role` (in effect). Audited as `device.role` |
 | GET | `/api/remote/presence?agent_id=` | `devices.view` | Live remote attachments (who is connected to which device, with `user_name`), for the fleet or one device; scope-filtered. Informational: sessions are never refused because someone else is connected |
 | POST | `/api/devices/{id}/revoke` | `devices.delete` | Revoke device identity, close live control/relay connections, and require fresh enrollment |
 | POST | `/api/devices/{id}/rotate-credential` | `devices.delete` | Rotate an online trusted device's credential over its authenticated control channel |
@@ -472,7 +473,9 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | DELETE | `/api/policies/{id}` | `policies.manage` | Delete |
 | GET | `/api/policies/{id}/assignments` | `policies.view` | List assignments |
 | POST | `/api/policies/{id}/assignments` | `policies.manage` | `{scope_type: client\|site\|group\|agent, scope_id}` (`group` = department) |
-| DELETE | `/api/policies/assignments/{aid}` | `policies.manage` | Remove assignment |
+| DELETE | `/api/policies/assignments/{aid}` | `policies.manage` | Remove assignment. Assignments take optional `os` (`windows`/`macos`/`linux`) and `role` (`workstation`/`server`) filters, and `scope_type: global` (unrestricted principals only). Audited as `policy.assign` / `policy.unassign` |
+| GET/POST | `/api/policies/{id}/exclusions` | `policies.view` / `policies.manage` | List, or add `{agent_id}`: devices the policy leaves out whichever assignment reaches them. Audited as `policy.exclude` |
+| DELETE | `/api/policies/{id}/exclusions/{agentID}` | `policies.manage` | Put the device back. Audited as `policy.include` |
 | GET | `/api/policies/{id}/review` | `policies.view` | Everything switching the policy on puts into effect — scopes, tasks, checks, pending AI proposals — sealed with a `fingerprint`. Tasks need `tasks.view` and checks `checks.view`; a review missing either, or read by a restricted principal (who sees only its own scopes), has no fingerprint |
 | POST | `/api/policies/{id}/activate` | `policies.manage`, `tasks.view`, `checks.view` (+ `tasks.manage` / `checks.manage` when it carries AI proposals of them) | `{fingerprint}` of the review read. Switches the policy on and approves its AI proposals in one transaction; **409** when the policy changed after the review. Unrestricted principals only. Audited as `policy.activate` |
 | POST | `/api/policies/{id}/deactivate` | `policies.manage` | Switch the policy off: it applies nothing until activated again. Audited as `policy.deactivate` |
@@ -518,7 +521,8 @@ must be visible to the caller.
 | PUT/DELETE | `/api/patch-policies/{id}` | `patches.policies.manage` | Update/delete a global definition. Without `timezone`, the policy keeps its zone. **409** when an edit tries to switch on an AI proposal (use activate). Unknown classifications or reboot modes, weekdays outside 0–6 and minutes outside 0–1439 are refused (400); `proposed_by`/`approved_by` in a request are ignored |
 | GET | `/api/patch-policies/{id}/review` | `patches.policies.manage` | The policy's settings and scopes, sealed with a `fingerprint`. A restricted principal sees only the scopes that intersect its own, without a fingerprint |
 | POST | `/api/patch-policies/{id}/activate` | `patches.policies.manage` | `{fingerprint}`. Switches the patch policy on, approving it when it is an AI proposal; **409** for a stale review. Unrestricted principals only. Audited as `patch.policy.activate` |
-| GET/POST | `/api/patch-policies/{id}/assignments` | `patches.policies.manage` | List/add client/site/agent assignment |
+| GET/POST | `/api/patch-policies/{id}/assignments` | `patches.policies.manage` | List/add client/site/agent/global assignment, with optional `os` and `role` filters |
+| GET/POST/DELETE | `/api/patch-policies/{id}/exclusions[/{agentID}]` | `patches.policies.manage` | Devices the patch policy leaves out |
 | DELETE | `/api/patch-policies/assignments/{aid}` | `patches.policies.manage` | Delete an assignment |
 
 Patch policy definitions are global and cannot be mutated by a restricted

@@ -292,3 +292,128 @@ func TestCheckAndTaskProvenanceIsTheServersE2E(t *testing.T) {
 		t.Fatalf("task provenance: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Policy targeting through the router: assignments take OS and role filters
+// and a global scope only an unrestricted principal may use; exceptions are
+// added, listed and removed; a device's role can be corrected; every change
+// is audited.
+func TestPolicyTargetingThroughTheAPIE2E(t *testing.T) {
+	f := newScriptFixture(t)
+	ctx := context.Background()
+	client, err := f.store.CreateClient(ctx, "Targets "+uuid.NewString()[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	site, err := f.store.CreateSite(ctx, client.ID, "HQ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, err := f.store.CreateAgent(ctx, "MAC-"+uuid.NewString()[:6], "darwin", "arm64", "0.11.0", "hash-"+uuid.NewString(), &site.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol, err := f.store.CreatePolicy(ctx, "Servers "+uuid.NewString()[:6], "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/policies/" + pol.ID
+
+	rec := f.do(http.MethodPost, base+"/assignments", `{"scope_type":"client","scope_id":"`+client.ID+`","os":"windows","role":"server"}`)
+	var a models.PolicyAssignment
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &a) != nil || a.OS != "windows" || a.Role != "server" {
+		t.Fatalf("filtered assignment: %d %s", rec.Code, rec.Body.String())
+	}
+	if e := f.audit("policy.assign"); e == nil || !strings.Contains(string(e.Detail), "windows") {
+		t.Fatalf("assignment audit: %+v", e)
+	}
+	for _, bad := range []string{`{"scope_type":"client","scope_id":"` + client.ID + `","os":"darwin"}`, `{"scope_type":"client","scope_id":"` + client.ID + `","role":"kiosk"}`, `{"scope_type":"tenant","scope_id":"x"}`} {
+		if rec := f.do(http.MethodPost, base+"/assignments", bad); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s = %d", bad, rec.Code)
+		}
+	}
+	rec = f.do(http.MethodPost, base+"/assignments", `{"scope_type":"global","scope_id":"ignored","role":"server"}`)
+	var global models.PolicyAssignment
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &global) != nil || global.ScopeID != models.GlobalScopeID {
+		t.Fatalf("global assignment: %d %s", rec.Code, rec.Body.String())
+	}
+	// A principal confined to the client can neither add nor remove a global one.
+	restore := f.asUser(t, models.RoleAdmin, nil, []models.UserScope{{ScopeType: models.ScopeClient, ScopeID: client.ID}})
+	if rec := f.do(http.MethodPost, base+"/assignments", `{"scope_type":"global"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("scoped global assignment = %d", rec.Code)
+	}
+	if rec := f.do(http.MethodDelete, "/api/policies/assignments/"+global.ID, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("scoped removal of a global assignment = %d", rec.Code)
+	}
+	restore()
+	if rec := f.do(http.MethodDelete, "/api/policies/assignments/"+global.ID, ""); rec.Code != http.StatusOK || f.audit("policy.unassign") == nil {
+		t.Fatalf("remove global: %d", rec.Code)
+	}
+
+	// Exceptions.
+	if rec := f.do(http.MethodPost, base+"/exclusions", `{"agent_id":"`+agent.ID+`"}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), agent.ID) {
+		t.Fatalf("exclude: %d %s", rec.Code, rec.Body.String())
+	}
+	if e := f.audit("policy.exclude"); e == nil || e.Target != pol.ID || !strings.Contains(string(e.Detail), agent.Hostname) {
+		t.Fatalf("exclusion audit: %+v", e)
+	}
+	if rec := f.do(http.MethodGet, base+"/exclusions", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), agent.Hostname) {
+		t.Fatalf("list exclusions: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(http.MethodPost, base+"/exclusions", `{"agent_id":"`+uuid.NewString()+`"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("excluding a missing device = %d", rec.Code)
+	}
+	if rec := f.do(http.MethodPost, base+"/exclusions", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("excluding nothing = %d", rec.Code)
+	}
+	review := f.do(http.MethodGet, base+"/review", "")
+	if !strings.Contains(review.Body.String(), `"exclusions":[{"agent_id":"`+agent.ID) {
+		t.Fatalf("the review does not list the exception: %s", review.Body.String())
+	}
+	if rec := f.do(http.MethodDelete, base+"/exclusions/"+agent.ID, ""); rec.Code != http.StatusOK || f.audit("policy.include") == nil {
+		t.Fatalf("include: %d", rec.Code)
+	}
+	if rec := f.do(http.MethodDelete, base+"/exclusions/"+agent.ID, ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("including a device that is not excluded = %d", rec.Code)
+	}
+
+	// A device's role: a Mac can be marked as a server, and put back.
+	rec = f.do(http.MethodPut, "/api/devices/"+agent.ID+"/role", `{"role":"server"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"role":"server"`) || f.audit("device.role") == nil {
+		t.Fatalf("role override: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(http.MethodPut, "/api/devices/"+agent.ID+"/role", `{"role":"kiosk"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown role = %d", rec.Code)
+	}
+	if rec := f.do(http.MethodPut, "/api/devices/"+agent.ID+"/role", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no role = %d", rec.Code)
+	}
+	if rec := f.do(http.MethodPut, "/api/devices/"+agent.ID+"/role", `{"role":""}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"role_override":""`) {
+		t.Fatalf("clear override: %d %s", rec.Code, rec.Body.String())
+	}
+	// The role decides which fleet-wide policies reach a device, so a principal
+	// confined to the device's client cannot change it.
+	restore = f.asUser(t, models.RoleAdmin, nil, []models.UserScope{{ScopeType: models.ScopeClient, ScopeID: client.ID}})
+	if rec := f.do(http.MethodPut, "/api/devices/"+agent.ID+"/role", `{"role":"workstation"}`); rec.Code != http.StatusForbidden {
+		t.Fatalf("scoped role change = %d", rec.Code)
+	}
+	restore()
+
+	// Patch policies take the same filters and exceptions.
+	pp, err := f.store.CreatePatchPolicy(ctx, &models.PatchPolicy{Name: "Patch " + uuid.NewString()[:6], Enabled: true, WindowEndMin: 1439})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pbase := "/api/patch-policies/" + pp.ID
+	if rec := f.do(http.MethodPost, pbase+"/assignments", `{"scope_type":"site","scope_id":"`+site.ID+`","role":"workstation"}`); rec.Code != http.StatusCreated || f.audit("patch.policy.assign") == nil {
+		t.Fatalf("patch assignment: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(http.MethodGet, pbase+"/assignments", ""); !strings.Contains(rec.Body.String(), `"role":"workstation"`) {
+		t.Fatalf("patch assignments: %s", rec.Body.String())
+	}
+	if rec := f.do(http.MethodPost, pbase+"/exclusions", `{"agent_id":"`+agent.ID+`"}`); rec.Code != http.StatusOK || f.audit("patch.policy.exclude") == nil {
+		t.Fatalf("patch exclusion: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(http.MethodDelete, pbase+"/exclusions/"+agent.ID, ""); rec.Code != http.StatusOK || f.audit("patch.policy.include") == nil {
+		t.Fatalf("patch include: %d", rec.Code)
+	}
+}

@@ -100,17 +100,19 @@ func (s *Store) SetAgentSite(ctx context.Context, id string, siteID *string) err
 func scanAgent(row pgx.Row) (*models.Agent, error) {
 	var a models.Agent
 	err := row.Scan(&a.ID, &a.Hostname, &a.Description, &a.Note, &a.OS, &a.Arch, &a.Version, &a.Status,
-		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID, &a.MonitoringScopeSince)
+		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID, &a.MonitoringScopeSince,
+		&a.OSRole, &a.RoleOverride)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	a.Role = models.EffectiveRole(a.OSRole, a.RoleOverride)
 	return &a, nil
 }
 
-const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since`
+const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since, os_role, role_override`
 
 // SetAgentMeta updates the operator-editable identification fields: description
 // (shown in the device list) and note (a private observation, detail-only).
@@ -689,6 +691,14 @@ func (s *Store) UpsertInventory(ctx context.Context, agentID string, data []byte
 		`INSERT INTO inventory (agent_id, data, collected_at) VALUES ($1,$2,now())
 		 ON CONFLICT (agent_id) DO UPDATE SET data=EXCLUDED.data, collected_at=now()`,
 		agentID, data)
+	if err != nil {
+		return err
+	}
+	// The detected role follows the latest inventory (policy targeting); an
+	// administrator's override is kept apart and wins over it.
+	if role, ok := detectedRoleFromInventory(data); ok {
+		_, err = s.pool.Exec(ctx, `UPDATE agents SET os_role=$2 WHERE id=$1 AND os_role IS DISTINCT FROM $2`, agentID, role)
+	}
 	return err
 }
 

@@ -28,6 +28,7 @@ func proposePatchPolicy(ctx context.Context, tc ToolContext, args json.RawMessag
 		Timezone           string          `json:"timezone"`
 		Reboot             string          `json:"reboot"`
 		Assignments        []proposedScope `json:"assignments"`
+		ExcludeDevices     []string        `json:"exclude_devices"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
@@ -64,20 +65,25 @@ func proposePatchPolicy(ctx context.Context, tc ToolContext, args json.RawMessag
 	if err != nil {
 		return nil, err
 	}
+	excluded, err := proposalExclusions(ctx, tc, in.ExcludeDevices)
+	if err != nil {
+		return nil, err
+	}
 	assignments := make([]models.PatchPolicyAssignment, 0, len(scopes))
 	for _, a := range scopes {
-		assignments = append(assignments, models.PatchPolicyAssignment{ScopeType: a.ScopeType, ScopeID: a.ScopeID})
+		assignments = append(assignments, models.PatchPolicyAssignment{ScopeType: a.ScopeType, ScopeID: a.ScopeID, OS: a.OS, Role: a.Role})
 	}
-	review, err := tc.Store.CreatePatchPolicyProposal(ctx, p, assignments)
+	review, err := tc.Store.CreatePatchPolicyProposal(ctx, p, assignments, excluded...)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"id":     review.Policy.ID,
-		"kind":   "patch_policy",
-		"name":   review.Policy.Name,
-		"status": "awaiting_review",
-		"scopes": len(review.Assignments),
+		"id":       review.Policy.ID,
+		"kind":     "patch_policy",
+		"name":     review.Policy.Name,
+		"status":   "awaiting_review",
+		"scopes":   len(review.Assignments),
+		"excluded": len(review.Exclusions),
 		"message": "PATCH POLICY PROPOSED SWITCHED OFF. It approves, installs and reboots nothing until a person " +
 			"reviews it in Patches > Policies and activates it. Tell the user it is waiting for their review.",
 	}, nil

@@ -1466,6 +1466,10 @@ func collectInventory() json.RawMessage {
 	}
 	if hi, err := host.Info(); err == nil {
 		data["platform"] = hi.Platform
+		// On Windows the product type: "Standalone Workstation", "Server" or
+		// "Server (Domain Controller)". The server derives the device role
+		// from it for policy targeting.
+		data["platform_family"] = hi.PlatformFamily
 		data["platform_version"] = hi.PlatformVersion
 		data["kernel_version"] = hi.KernelVersion
 		data["uptime_sec"] = hi.Uptime

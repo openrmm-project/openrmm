@@ -53,39 +53,39 @@ func (s *Store) SetAlertRuleDefault(ctx context.Context, ruleType string, cfg mo
 }
 
 // governingCandidates joins each device to every server rule of type $1 that
-// can govern it: one it owns, and one of each policy assigned to its client,
-// site, department or itself. Only enabled rules count, and an AI proposal only
-// once a person accepted it, so an unreviewed proposal cannot silence anything.
-const governingCandidates = `
+// can govern it: one it owns, and one of each switched-on policy whose
+// assignment reaches it (scope, OS and role filters) and that does not
+// exclude it. Only enabled rules count, and an AI proposal only once a person
+// accepted it, so an unreviewed proposal cannot silence anything.
+var governingCandidates = `
 	FROM agents a
-	LEFT JOIN sites st ON st.id = a.site_id
 	JOIN LATERAL (
-	  SELECT c.id AS check_id, NULL::uuid AS policy_id, 'device' AS scope, 5 AS rank
+	  SELECT c.id AS check_id, NULL::uuid AS policy_id, 'device' AS scope, 5 AS rank, false AS filtered
 	  FROM checks c WHERE c.agent_id = a.id AND c.type = $1
 	  UNION ALL
 	  SELECT c.id, pa.policy_id, pa.scope_type,
-	         CASE pa.scope_type WHEN 'client' THEN 1 WHEN 'site' THEN 2 WHEN 'group' THEN 3 ELSE 4 END
+	         CASE pa.scope_type WHEN 'global' THEN 0 WHEN 'client' THEN 1 WHEN 'site' THEN 2 WHEN 'group' THEN 3 ELSE 4 END,
+	         (pa.os <> '' OR pa.role <> '')
 	  FROM policy_assignments pa
 	  JOIN checks c ON c.policy_id = pa.policy_id AND c.type = $1
-	  WHERE pa.policy_id IN ` + activePoliciesSQL + ` AND (
-	        (pa.scope_type = 'client' AND pa.scope_id = st.client_id)
-	     OR (pa.scope_type = 'site'   AND pa.scope_id = a.site_id)
-	     OR (pa.scope_type = 'group'  AND pa.scope_id = a.group_id)
-	     OR (pa.scope_type = 'agent'  AND pa.scope_id = a.id))
+	  WHERE pa.policy_id IN ` + activePoliciesSQL + ` AND ` + assignmentReachesSQL("pa", "a") + `
+	    AND NOT EXISTS (SELECT 1 FROM policy_exclusions pe WHERE pe.policy_id = pa.policy_id AND pe.agent_id = a.id)
 	) src ON true
 	JOIN checks c ON c.id = src.check_id
 	LEFT JOIN policies p ON p.id = src.policy_id
 	WHERE a.status <> 'revoked' AND c.enabled AND (c.proposed_by = '' OR c.approved_by <> '')`
 
 // governingOrder is the precedence, applied with DISTINCT ON (a.id): the
-// broadest scope decides (a policy at the client, then the site, the
-// department, the device, then a rule the device owns), so a client's rule
-// holds for every device under it. At the same level the more sensitive rule
+// broadest scope decides (a policy assigned to every device, then to the
+// client, the site, the department, the device, then a rule the device owns),
+// so a client's rule holds for every device under it. At the same level an
+// assignment narrowed by OS or role outranks one that is not, since it was
+// aimed at this kind of device. Then the more sensitive rule
 // wins (alert over ignore, a shorter delay, a smaller version gap, every job
 // over tasks only, a higher severity), then the lower id, so the result never
 // depends on row order.
 const governingOrder = `
-	ORDER BY a.id, src.rank,
+	ORDER BY a.id, src.rank, NOT src.filtered,
 	  (c.config->>'mode' = 'ignore'),
 	  COALESCE(NULLIF(c.config->>'after_min', '')::int, 0),
 	  COALESCE(NULLIF(c.config->>'after_days', '')::int, 0),
@@ -134,12 +134,7 @@ func (s *Store) CheckCoveredAgents(ctx context.Context, checkID string) ([]strin
 		WHERE c.id = $1 AND a.status <> 'revoked'
 		UNION
 		SELECT a.id FROM checks c
-		JOIN policy_assignments pa ON pa.policy_id = c.policy_id AND pa.policy_id IN `+activePoliciesSQL+`
-		JOIN agents a ON (
-		     (pa.scope_type = 'agent'  AND pa.scope_id = a.id)
-		  OR (pa.scope_type = 'group'  AND pa.scope_id = a.group_id)
-		  OR (pa.scope_type = 'site'   AND pa.scope_id = a.site_id)
-		  OR (pa.scope_type = 'client' AND pa.scope_id = (SELECT st.client_id FROM sites st WHERE st.id = a.site_id)))
+		JOIN agents a ON c.policy_id IN `+policiesReachingSQL("a")+`
 		WHERE c.id = $1 AND a.status <> 'revoked'`, checkID)
 	if err != nil {
 		return nil, err

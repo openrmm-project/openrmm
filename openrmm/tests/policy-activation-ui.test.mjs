@@ -12,7 +12,8 @@ const rmm = await readFile(new URL('../src/screens-rmm.jsx', import.meta.url), '
 const patches = await readFile(new URL('../src/screens-patches.jsx', import.meta.url), 'utf8');
 const slice = (src, from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 const COMPONENTS = ['Card', 'Modal', 'Drawer', 'Field', 'Input', 'Button', 'Select', 'Toggle', 'ConfirmDialog', 'Icon', 'CodeBlock', 'Skeleton',
-  'EmptyState', 'Page', 'PageHeader', 'OsIcon', 'TaskEditor', 'ReviewModal', 'ReviewSection', 'ReviewRow', 'TaskReview', 'CheckReview', 'ProposalBadge'];
+  'EmptyState', 'Page', 'PageHeader', 'OsIcon', 'TaskEditor', 'ReviewModal', 'ReviewSection', 'ReviewRow', 'TaskReview', 'CheckReview', 'ProposalBadge',
+  'TargetChips', 'TargetSelects'];
 
 function harness(code, component, props, responses, data = {}) {
   const states = []; const calls = []; const toasts = []; let cursor = 0; let effectCursor = 0; let tree;

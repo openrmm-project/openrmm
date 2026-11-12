@@ -141,3 +141,40 @@ func TestProposePatchPolicyIsSwitchedOffIntegration(t *testing.T) {
 		t.Fatalf("scoped patch policy proposal: %s", res.Output)
 	}
 }
+
+// list_patch_policies shows a principal confined to some clients only the patch
+// policies that reach its devices, as the REST listing does; an unrestricted
+// principal sees them all.
+func TestListPatchPoliciesIsScopedIntegration(t *testing.T) {
+	f := newScopeFixture(t)
+	suffix := uuid.NewString()[:8]
+	mine, err := f.st.CreatePatchPolicy(f.ctx, &models.PatchPolicy{Name: "mine " + suffix, Enabled: true, WindowEndMin: 1439})
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := f.st.CreatePatchPolicy(f.ctx, &models.PatchPolicy{Name: "theirs " + suffix, Enabled: true, WindowEndMin: 1439})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = f.st.DeletePatchPolicy(f.ctx, mine.ID)
+		_ = f.st.DeletePatchPolicy(f.ctx, theirs.ID)
+	})
+	if err := f.st.AddPatchPolicyAssignment(f.ctx, mine.ID, models.ScopeAgent, f.mineAgent); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.AddPatchPolicyAssignment(f.ctx, theirs.ID, models.ScopeClient, f.theirClient); err != nil {
+		t.Fatal(err)
+	}
+	scoped := f.scopedContext()
+	scoped.Permissions[models.PermPatchPoliciesManage] = true
+	out := Execute(f.ctx, scoped, "list_patch_policies", json.RawMessage(`{}`)).Output
+	if !strings.Contains(out, mine.ID) || strings.Contains(out, theirs.ID) {
+		t.Fatalf("scoped list_patch_policies: %s", out)
+	}
+	full := ToolContext{Store: f.st, Jobs: f.js, Actor: "admin", Permissions: map[string]bool{models.PermPatchPoliciesManage: true}}
+	out = Execute(f.ctx, full, "list_patch_policies", json.RawMessage(`{}`)).Output
+	if !strings.Contains(out, mine.ID) || !strings.Contains(out, theirs.ID) {
+		t.Fatalf("unrestricted list_patch_policies: %s", out)
+	}
+}

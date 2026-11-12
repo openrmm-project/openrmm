@@ -215,6 +215,14 @@ func TestPatchPolicyActivationThroughTheAPIE2E(t *testing.T) {
 	if rec := f.do(http.MethodPut, base, string(edit)); rec.Code != http.StatusConflict {
 		t.Fatalf("edit switching on a proposal = %d %s", rec.Code, rec.Body.String())
 	}
+	// An edit is validated like a creation, and changes nothing when refused.
+	invalid, _ := json.Marshal(map[string]any{"name": "AI weekend", "enabled": false, "window_days": []int{9}, "reboot": "always"})
+	if rec := f.do(http.MethodPut, base, string(invalid)); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid edit = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(http.MethodPost, base+"/activate", `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("activation without a fingerprint = %d", rec.Code)
+	}
 	rec := f.do(http.MethodGet, base+"/review", "")
 	var fresh models.PatchPolicyReview
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &fresh) != nil || fresh.Fingerprint == "" || !fresh.Policy.Pending {

@@ -77,7 +77,9 @@ server (`11-mcp`).
 | `propose_bulk_deploy` | `jobs.create` | **write (gated)** | Mass deployment: one script across many devices, **split into one approval-gated batch per company** — never executes, never spans companies |
 | `propose_task` | `tasks.manage` | **write (gated)** | Create a scheduled task **disabled** and stamped `proposed_by` — the scheduler selects `WHERE enabled`, so it never runs until a person enables it |
 | `propose_check` | `checks.manage` | **write (gated)** | Same, for a monitoring check or a server alert rule ([24-alert-rules](24-alert-rules.md)) |
-| `propose_policy` | `policies.manage` | **write (gated)** | Create a policy marked as awaiting review. Unrestricted admins only, like the REST handler |
+| `propose_policy` | `policies.manage` | **write (gated)** | A whole policy in one call — scopes, tasks (`tasks.manage`) and checks (`checks.manage`) — **switched off**; a person reviews all of it and activates it in Policies ([10-monitoring-policies](10-monitoring-policies.md#policies-proposed-by-ai-chat-and-mcp)). Unrestricted admins only |
+| `list_patch_policies` | `patches.policies.manage` | read | Patch policies, whether each is switched on and whether it is an AI proposal awaiting review |
+| `propose_patch_policy` | `patches.policies.manage` | **write (gated)** | A patch policy (auto-approval, exclusions, window, reboot, scopes) **switched off** until a person activates it in Patches ▸ Policies ([16-patch-management](16-patch-management.md#patch-policies-proposed-by-ai-chat-and-mcp)). Unrestricted admins only |
 | `list_script_variables` | `scripts.view` | read | Script variable names, descriptions and review state; never values ([25-script-variables](25-script-variables.md#ai-chat-and-mcp)) |
 | `propose_script_variable` | `scripts.variables` | **write (gated)** | A variable definition awaiting review, without a value. Unrestricted admins only |
 | `propose_library_script` | `scripts.manage` | **write (gated)** | A library script awaiting review: it cannot run, be scheduled or be released until approved. Unrestricted admins only |

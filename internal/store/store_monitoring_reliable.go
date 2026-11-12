@@ -43,10 +43,11 @@ func (s *Store) CheckAppliesToAgent(ctx context.Context, checkID, agentID string
 				c.agent_id=a.id OR c.policy_id IN (
 					SELECT pa.policy_id
 					FROM policy_assignments pa
-					WHERE (pa.scope_type='agent' AND pa.scope_id=a.id)
+					WHERE pa.policy_id IN `+activePoliciesSQL+` AND (
+					      (pa.scope_type='agent' AND pa.scope_id=a.id)
 					   OR (pa.scope_type='group' AND pa.scope_id=a.group_id)
 					   OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
-					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id)
+					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id))
 				)
 			)
 		)`, checkID, agentID, models.ServerRuleTypes).Scan(&applies)
@@ -485,10 +486,11 @@ func (s *Store) CheckInstances(ctx context.Context, checkID, userID string, scop
 				SELECT pa.policy_id
 				FROM policy_assignments pa
 				LEFT JOIN sites asi ON asi.id=a.site_id
-				WHERE (pa.scope_type='agent' AND pa.scope_id=a.id)
+				WHERE pa.policy_id IN `+activePoliciesSQL+` AND (
+				      (pa.scope_type='agent' AND pa.scope_id=a.id)
 				   OR (pa.scope_type='group' AND pa.scope_id=a.group_id)
 				   OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
-				   OR (pa.scope_type='client' AND pa.scope_id=asi.client_id)
+				   OR (pa.scope_type='client' AND pa.scope_id=asi.client_id))
 			)
 		)
 		LEFT JOIN check_states cs ON cs.check_id=c.id AND cs.agent_id=a.id

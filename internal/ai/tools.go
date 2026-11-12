@@ -179,10 +179,33 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "propose_policy",
-			Description: "Propose a new policy (a named bundle of checks and tasks that can then be assigned to clients, sites, departments or devices). The policy is created empty and marked as awaiting review; attach tasks and checks to it with propose_task/propose_check. Only unrestricted administrators may create policies — a user confined to one client cannot.",
+			Description: "Propose a policy in ONE call: its name, where it applies (clients, sites, departments or devices), and the scheduled tasks and monitoring checks or server alert rules it carries (same fields as propose_task and propose_check). EVERYTHING IS CREATED SWITCHED OFF: nothing in it applies to any device until a person reviews all of it in Policies and activates it with one confirmation. Get ids from list_org and list_devices. Tasks need the tasks.manage permission and checks checks.manage. Only unrestricted administrators may create policies. You cannot assign or activate an existing policy, and there is no tool to do so.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"name":{"type":"string","description":"policy name"},
-				"description":{"type":"string","description":"what this policy is for"}
+				"description":{"type":"string","description":"what this policy is for"},
+				"assignments":{"type":"array","maxItems":25,"description":"where the policy will apply once activated","items":{"type":"object","properties":{
+					"scope_type":{"type":"string","enum":["client","site","group","agent"],"description":"group is a department"},
+					"scope_id":{"type":"string"}
+				},"required":["scope_type","scope_id"],"additionalProperties":false}},
+				"tasks":{"type":"array","maxItems":25,"items":{"type":"object","properties":{
+						"name":{"type":"string","description":"short name for the task"},
+						"shell":{"type":"string","enum":["bash","sh","powershell","cmd","python"]},
+						"script":{"type":"string","description":"the full script source"},
+						"schedule_kind":{"type":"string","enum":["interval","daily","weekly"]},
+						"interval_sec":{"type":"integer"},
+						"run_at_minute":{"type":"integer","description":"daily: minutes since midnight in timezone (0-1439)"},
+						"days_of_week":{"type":"integer","description":"weekly: bitmask, bit 0 = Sunday"},
+						"run_at_minutes":{"type":"array","items":{"type":"integer"}},
+						"timezone":{"type":"string","description":"IANA zone, default UTC; ask the user rather than guess"}
+					},"required":["name","shell","script","schedule_kind"],"additionalProperties":false}},
+				"checks":{"type":"array","maxItems":25,"items":{"type":"object","properties":{
+						"type":{"type":"string","enum":["diskspace","memory","cpuload","ping","winservice","linuxservice","macservice","script","connectivity","job_failure","patch_failure","reboot_pending","agent_outdated"]},
+						"name":{"type":"string"},
+						"config":{"type":"object","description":"type-specific settings, as in propose_check"},
+						"warn_threshold":{"type":"number"},
+						"err_threshold":{"type":"number"},
+						"interval_sec":{"type":"integer"}
+					},"required":["type","name"],"additionalProperties":false}}
 			},"required":["name"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
@@ -209,8 +232,32 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "list_policies",
-			Description: "List the policies visible to the caller, with id and name. Use this to find a policy_id before proposing a task or check against it.",
+			Description: "List the policies visible to the caller, with id, name, whether each is switched on (enabled) and whether it is an AI proposal still awaiting review (pending). Use this to find a policy_id before proposing a task or check against it.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "list_patch_policies",
+			Description: "List the patch policies visible to the caller: auto-approval, exclusions, maintenance window, reboot behaviour, whether each is switched on and whether it is an AI proposal awaiting review. Read-only.",
+			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		}},
+		{Type: "function", Function: FunctionDef{
+			Name:        "propose_patch_policy",
+			Description: "Propose a patch policy: which classifications to auto-approve and after how many days, exclusions, the maintenance window (weekdays and minutes of the day in an IANA time zone), reboot behaviour, and the clients, sites or devices it covers. It is CREATED SWITCHED OFF: it approves, installs and reboots nothing until a person reviews it in Patches > Policies and activates it. Only unrestricted administrators may create one. Ask for the time zone rather than guess.",
+			Parameters: json.RawMessage(`{"type":"object","properties":{
+				"name":{"type":"string"},
+				"auto_approve":{"type":"array","items":{"type":"string","enum":["security","critical","important","moderate","optional","other"]},"description":"classifications approved automatically once old enough; empty = approve nothing automatically"},
+				"auto_approve_age_days":{"type":"integer","description":"days a patch must be known before it is auto-approved (default 7)"},
+				"exclusions":{"type":"array","items":{"type":"string"},"description":"patch identifiers or classifications never to install"},
+				"window_days":{"type":"array","items":{"type":"integer"},"description":"weekdays installs may run, 0 = Sunday; empty = any day"},
+				"window_start_min":{"type":"integer","description":"window start, minutes since midnight in timezone (default 0)"},
+				"window_end_min":{"type":"integer","description":"window end, minutes since midnight in timezone (default 1439)"},
+				"timezone":{"type":"string","description":"IANA zone of the window, default UTC"},
+				"reboot":{"type":"string","enum":["never","if_required","always"],"description":"default if_required"},
+				"assignments":{"type":"array","maxItems":25,"items":{"type":"object","properties":{
+					"scope_type":{"type":"string","enum":["client","site","agent"]},
+					"scope_id":{"type":"string"}
+				},"required":["scope_type","scope_id"],"additionalProperties":false}}
+			},"required":["name"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "propose_library_script",
@@ -321,6 +368,8 @@ func toolPermission(name string) string {
 		return models.PermChecksView
 	case "list_policies":
 		return models.PermPoliciesView
+	case "list_patch_policies", "propose_patch_policy":
+		return models.PermPatchPoliciesManage
 	case "list_script_variables":
 		return models.PermScriptsView
 	case "propose_library_script":
@@ -393,6 +442,10 @@ func Execute(ctx context.Context, tc ToolContext, name string, args json.RawMess
 		return jsonResult(listChecksTool(ctx, tc, args))
 	case "list_policies":
 		return jsonResult(listPoliciesTool(ctx, tc))
+	case "list_patch_policies":
+		return jsonResult(listPatchPolicies(ctx, tc))
+	case "propose_patch_policy":
+		return jsonResult(proposePatchPolicy(ctx, tc, args))
 	case "list_script_variables":
 		return jsonResult(listScriptVariablesTool(ctx, tc, args))
 	case "propose_library_script":

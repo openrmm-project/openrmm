@@ -219,8 +219,10 @@ func TestAlertRuleMigrationFromPreviousSchemaIntegration(t *testing.T) {
 	if err := st.migrate(ctx, migrations[:27]); err != nil {
 		t.Fatal(err)
 	}
-	policy, err := st.CreatePolicy(ctx, "old policy", "", "")
-	if err != nil {
+	// Seeded with SQL: the store code targets the latest schema (migration 032
+	// added the policy switch it reads and writes).
+	policy := &models.Policy{ID: newID()}
+	if _, err := st.pool.Exec(ctx, `INSERT INTO policies (id, name) VALUES ($1, 'old policy')`, policy.ID); err != nil {
 		t.Fatal(err)
 	}
 	check, err := st.CreateCheck(ctx, &models.Check{PolicyID: &policy.ID, Name: "legacy", Type: models.CheckMemory,

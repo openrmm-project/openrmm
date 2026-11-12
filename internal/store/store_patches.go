@@ -379,25 +379,45 @@ func scanStrings(rows interface {
 // ===================== Patch policies =====================
 
 const patchPolicyCols = `id, name, enabled, auto_approve, auto_approve_age_days, exclusions,
-	window_days, window_start_min, window_end_min, timezone, reboot, created_at`
+	window_days, window_start_min, window_end_min, timezone, reboot, proposed_by, approved_by, created_at`
 
 func scanPatchPolicy(row interface{ Scan(...any) error }) (*models.PatchPolicy, error) {
 	var p models.PatchPolicy
 	if err := row.Scan(&p.ID, &p.Name, &p.Enabled, &p.AutoApprove, &p.AutoApproveAgeDays,
-		&p.Exclusions, &p.WindowDays, &p.WindowStartMin, &p.WindowEndMin, &p.Timezone, &p.Reboot, &p.CreatedAt); err != nil {
+		&p.Exclusions, &p.WindowDays, &p.WindowStartMin, &p.WindowEndMin, &p.Timezone, &p.Reboot,
+		&p.ProposedBy, &p.ApprovedBy, &p.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
+	p.Pending = p.ProposedBy != "" && p.ApprovedBy == ""
 	return &p, nil
 }
 
+// GetPatchPolicy fetches one patch policy.
+func (s *Store) GetPatchPolicy(ctx context.Context, id string) (*models.PatchPolicy, error) {
+	return scanPatchPolicy(s.pool.QueryRow(ctx, `SELECT `+patchPolicyCols+` FROM patch_policies WHERE id=$1`, id))
+}
+
 func (s *Store) CreatePatchPolicy(ctx context.Context, p *models.PatchPolicy) (*models.PatchPolicy, error) {
+	return p, insertPatchPolicy(ctx, s.pool, p)
+}
+
+// insertPatchPolicy writes a new patch policy through pool or transaction q.
+// An AI proposal (ProposedBy set) is always written switched off.
+func insertPatchPolicy(ctx context.Context, q dbQuerier, p *models.PatchPolicy) error {
 	p.ID = newID()
-	err := s.pool.QueryRow(ctx, `INSERT INTO patch_policies
-		(id,name,enabled,auto_approve,auto_approve_age_days,exclusions,window_days,window_start_min,window_end_min,reboot,timezone)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE(NULLIF($11,''),'UTC')) RETURNING timezone, created_at`,
+	if p.ProposedBy != "" {
+		p.Enabled, p.ApprovedBy = false, ""
+	}
+	p.Reboot = defReboot(p.Reboot)
+	p.Pending = p.ProposedBy != ""
+	return q.QueryRow(ctx, `INSERT INTO patch_policies
+		(id,name,enabled,auto_approve,auto_approve_age_days,exclusions,window_days,window_start_min,window_end_min,reboot,timezone,proposed_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE(NULLIF($11,''),'UTC'),$12) RETURNING timezone, created_at`,
 		p.ID, p.Name, p.Enabled, emptyToArr(p.AutoApprove), p.AutoApproveAgeDays, emptyToArr(p.Exclusions),
-		emptyToIntArr(p.WindowDays), p.WindowStartMin, p.WindowEndMin, defReboot(p.Reboot), p.Timezone).Scan(&p.Timezone, &p.CreatedAt)
-	return p, err
+		emptyToIntArr(p.WindowDays), p.WindowStartMin, p.WindowEndMin, p.Reboot, p.Timezone, p.ProposedBy).Scan(&p.Timezone, &p.CreatedAt)
 }
 
 func defReboot(r string) string {

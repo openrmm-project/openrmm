@@ -26,6 +26,20 @@ const libraryScripts = [{ id: 'script-e2e', name: 'Variable installer', descript
   // Proposed by an assistant over MCP: reviewed and approved in the console.
   { id: 'script-proposal', name: 'Proposed cleanup', description: 'Removes stale temp files', category: 'AI proposals', shell: 'sh', body: 'find /tmp -mtime +7 -delete', params: [], variables: [], pending: true, proposed_by: 'mcp:claude' }];
 
+// An assistant's policy, patch policy and device task, all switched off and
+// awaiting review. The first activation of the policy is refused as stale (the
+// assistant added a task while the review was open); the second goes through.
+const aiPolicy = { id: 'pol-ai', name: 'AI workstations', description: 'Proposed over MCP', enabled: false, pending: true, proposed_by: 'mcp:claude', created_at: '2026-11-12T00:00:00Z' };
+let policyReviews = 0;
+const policyReviewTasks = [
+  { id: 'pol-task-1', policy_id: 'pol-ai', name: 'Clean temp', shell: 'bash', script: 'find /tmp -mtime +7 -delete', schedule_kind: 'interval', interval_sec: 3600, run_at_minutes: [], timezone: 'UTC', enabled: false, proposed_by: 'mcp:claude' },
+  { id: 'pol-task-2', policy_id: 'pol-ai', name: 'Second task', shell: 'bash', script: 'uptime', schedule_kind: 'interval', interval_sec: 7200, run_at_minutes: [], timezone: 'UTC', enabled: false, proposed_by: 'mcp:claude' },
+];
+const aiPatchPolicy = { id: 'patch-ai', name: 'AI weekend', enabled: false, pending: true, proposed_by: 'mcp:claude', auto_approve: ['security'], auto_approve_age_days: 3,
+  exclusions: [], window_days: [0, 6], window_start_min: 120, window_end_min: 360, timezone: 'America/Sao_Paulo', reboot: 'always' };
+const aiTask = { id: 'task-ai', agent_id: 'dev-1', name: 'AI cleanup task', shell: 'bash', script: 'find /var/tmp -mtime +30 -delete', schedule_kind: 'interval',
+  interval_sec: 3600, run_at_minute: 0, days_of_week: 0, run_at_minutes: [], timezone: 'UTC', enabled: false, proposed_by: 'mcp:claude' };
+
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
   remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
@@ -87,7 +101,30 @@ const server = createServer(async (req, res) => {
         }
         return json(res, 200, { checks: [...ruleChecks, ...extraChecks] });
       }
-      if (pathname === '/api/policies') return json(res, 200, { policies: [] });
+      if (pathname === '/api/policies') return json(res, 200, { policies: [aiPolicy] });
+      if (pathname === '/api/policies/pol-ai/assignments') return json(res, 200, { assignments: [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
+      if (pathname === '/api/policies/pol-ai/review') {
+        policyReviews++;
+        return json(res, 200, { fingerprint: 'fp-' + policyReviews, policy: aiPolicy, assignments: [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1' }],
+          tasks: policyReviews === 1 ? policyReviewTasks.slice(0, 1) : policyReviewTasks, checks: [], pending_tasks: policyReviews === 1 ? 1 : 2, pending_checks: 0 });
+      }
+      if (pathname === '/api/policies/pol-ai/activate' && req.method === 'POST') {
+        if (payload?.fingerprint !== 'fp-' + policyReviews || policyReviews < 2) return json(res, 409, { error: 'conflict: it changed after this review was opened; review it again' });
+        Object.assign(aiPolicy, { enabled: true, pending: false, approved_by: user.id });
+        return json(res, 200, { policy: aiPolicy, approved_policy: true, approved_tasks: 2, approved_checks: 0 });
+      }
+      if (pathname === '/api/patch-policies') return json(res, 200, { policies: [aiPatchPolicy] });
+      if (pathname === '/api/patch-policies/patch-ai/assignments') return json(res, 200, { assignments: [{ id: 'pasg-1', policy_id: 'patch-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
+      if (pathname === '/api/patch-policies/patch-ai/review') return json(res, 200, { fingerprint: 'pfp', policy: aiPatchPolicy, assignments: [{ id: 'pasg-1', policy_id: 'patch-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
+      if (pathname === '/api/patch-policies/patch-ai/activate' && req.method === 'POST') {
+        if (payload?.fingerprint !== 'pfp') return json(res, 409, { error: 'stale' });
+        Object.assign(aiPatchPolicy, { enabled: true, pending: false, approved_by: user.id });
+        return json(res, 200, aiPatchPolicy);
+      }
+      if (pathname === '/api/tasks') return json(res, 200, { tasks: url.searchParams.get('policy_id') ? [] : [aiTask] });
+      if (pathname === '/api/tasks/task-ai' && req.method === 'PUT') {
+        Object.assign(aiTask, payload, { approved_by: user.id }); return json(res, 200, aiTask);
+      }
       if (pathname === '/api/alert-defaults') return json(res, 200, { defaults: ruleDefaults, can_manage: true });
       if (pathname.startsWith('/api/alert-defaults/') && req.method === 'PUT') {
         const type = pathname.split('/').at(-1);
@@ -341,6 +378,10 @@ async function scriptVariablesBrowserFlow() {
   change(document.querySelector('select[aria-label="Filter variables"]'), 'pending');
   await wait(() => document.getElementById('script-variables-list')?.querySelectorAll('button[aria-expanded]').length === 1);
   button('Approve', document.getElementById('script-variables-list')).click();
+  // Approve opens the review; the proposal is approved from inside it.
+  const variableReview = await wait(() => [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.getAttribute('aria-label') || '').startsWith('Approve the variable')));
+  if (!variableReview.textContent.includes('mcp:claude')) throw new Error('The variable review does not name its proposer');
+  button('Approve', variableReview).click();
   await wait(() => !document.getElementById('script-variables-list'));
   change(document.querySelector('select[aria-label="Filter variables"]'), 'all');
   change(document.querySelector('input[aria-label="Search variables…"]'), 'CUSTOMERKEY');
@@ -362,6 +403,9 @@ async function scriptVariablesBrowserFlow() {
   await wait(() => document.querySelector('[role="note"]')?.textContent.includes('mcp:claude'));
   if (button('Run on device')) throw new Error('A proposed script offered Run on device');
   (await wait(() => button('Approve'))).click();
+  const scriptReview = await wait(() => [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.getAttribute('aria-label') || '').startsWith('Review and approve the script')));
+  if (!scriptReview.textContent.includes('find /tmp -mtime +7 -delete')) throw new Error('The script review does not show the script');
+  button('Approve', scriptReview).click();
   await wait(() => !button('Approve') && !document.querySelector('[role="note"]'));
   (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Variable installer')))).click();
   // The editor's picker: bounded to five rows, searchable, selection shown as a chip.
@@ -446,6 +490,50 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   (await wait(() => button('Save configuration'))).click();
   await wait(() => document.body.textContent.includes('Configuration saved'));
   document.documentElement.dataset.servicesSettingsE2e = 'passed';
+  return true;
+}
+
+async function policyActivationBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Policy activation E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const dialog = (prefix) => [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.getAttribute('aria-label') || '').startsWith(prefix));
+  // A policy proposed by an assistant: switched off, reviewed whole, activated.
+  (await wait(() => button('Policies'))).click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('AI workstations') && el.textContent.includes('AI proposal')))).click();
+  await wait(() => document.querySelector('[role="note"]')?.textContent.includes('mcp:claude'));
+  (await wait(() => button('Activate'))).click();
+  let review = await wait(() => dialog('Review and activate'));
+  await wait(() => review.textContent.includes('Clean temp') && review.textContent.includes('find /tmp -mtime +7 -delete'));
+  button('Activate', review).click();
+  // The assistant added a task meanwhile: refused, explained, reloaded.
+  await wait(() => review.querySelector('[role="alert"]')?.textContent.includes('It changed after you opened this review') && review.textContent.includes('Second task'));
+  button('Activate', review).click();
+  await wait(() => !dialog('Review and activate'));
+  await wait(() => !document.querySelector('[role="note"]') && button('Switch off'));
+  // A patch policy proposed by an assistant.
+  (await wait(() => button('Patches'))).click();
+  // The Patches tab of the same name comes after the navigation entry.
+  (await wait(() => [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Policies').length > 1
+    && [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Policies').at(-1))).click();
+  await wait(() => document.body.textContent.includes('AI weekend') && document.body.textContent.includes('Proposed by mcp:claude'));
+  (await wait(() => button('Activate'))).click();
+  review = await wait(() => dialog('Review and activate'));
+  await wait(() => review.textContent.includes('America/Sao_Paulo') && review.textContent.includes('SMOKE-PC'));
+  button('Activate', review).click();
+  await wait(() => !dialog('Review and activate'));
+  // A task proposed by an assistant: the toggle opens its review.
+  (await wait(() => button('Scheduled tasks'))).click();
+  const row = await wait(() => [...document.querySelectorAll('tr')].find((tr) => tr.textContent.includes('AI cleanup task')));
+  // The enabled column holds the toggle, a button with no text.
+  row.children[4].querySelector('button').click();
+  review = await wait(() => dialog('Review and approve the task'));
+  if (!review.textContent.includes('find /var/tmp -mtime +30 -delete')) throw new Error('The task review does not show its script');
+  button('Approve and switch on', review).click();
+  await wait(() => !dialog('Review and approve the task'));
+  document.documentElement.dataset.policyActivationE2e = 'passed';
   return true;
 }
 
@@ -550,6 +638,16 @@ try {
     assert.ok(apiRequests.some((r) => r.method === 'POST' && r.pathname === '/api/scripts/script-proposal/approve'), 'proposed script approved');
     const variableJob = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
     assert.deepEqual(variableJob?.payload, { script_id: 'script-e2e', params: {} });
+    const activationFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyActivationBrowserFlow });
+    assertBrowser(activationFlow, /data-policy-activation-e2e="passed"/);
+    const activations = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/activate').map((r) => r.payload?.fingerprint);
+    assert.deepEqual(activations, ['fp-1', 'fp-2'], 'the stale review is refused and the reloaded one is sent');
+    assert.equal(aiPolicy.enabled, true);
+    assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/patch-policies/patch-ai/activate')?.payload, { fingerprint: 'pfp' });
+    assert.equal(aiPatchPolicy.enabled, true);
+    const approvedTask = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/tasks/task-ai')?.payload;
+    assert.equal(approvedTask?.enabled, true, 'the AI task was switched on through its review');
+    assert.equal(approvedTask?.script, 'find /var/tmp -mtime +30 -delete');
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });
     assertBrowser(csvFlow, /data-audit-csv-e2e="passed"/);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');

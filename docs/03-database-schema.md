@@ -246,8 +246,11 @@ the registry, so the two do not drift.
 ### `policies` / `policy_assignments`
 A **policy** (id, name, description) bundles checks and tasks.
 `policy_assignments` attaches a policy to a scope: `scope_type`
-(`client`/`site`/`agent`) + `scope_id`. An agent inherits every policy whose
-scope covers it (its own id, its site, or its client).
+(`client`/`site`/`group`/`agent`) + `scope_id`. An agent inherits every policy
+whose scope covers it (its own id, its department, its site, or its client) —
+provided the policy is switched on: `enabled` (migration 032, default true)
+gates every resolution, and `approved_at` records when an AI proposal was
+reviewed.
 
 ### `checks`
 A monitoring check, owned **either** by an agent **or** a policy — exactly one of
@@ -322,9 +325,11 @@ Each dispatched run links back via `jobs.task_id`.
 OR NOT enabled)`.** An AI proposal nobody has reviewed cannot be enabled, and the
 scheduler only ever selects `WHERE enabled` — so it cannot run. The rule is in the
 database because the AI tools and the REST handlers are separate paths into these
-rows; see [07-guardrails-security](07-guardrails-security.md). `policies` carries
-the same two columns for provenance, but no constraint: a policy has no schedule
-of its own, and what makes it dangerous is the tasks and checks attached to it.
+rows; see [07-guardrails-security](07-guardrails-security.md). Since migration
+032 `policies` and `patch_policies` carry the same columns and the same rule
+(`policies_proposal_needs_review`, `patch_policies_proposal_needs_review`): an AI
+policy or patch policy is created switched off and the database refuses to switch
+it on before a person reviewed it.
 
 ### `alerts`
 Beyond the original fields, an alert carries its whole lifecycle (migration

@@ -255,9 +255,17 @@ type Policy struct {
 	// no schedule of its own, so unlike a task it is inert by construction — what
 	// makes it dangerous is the tasks and checks attached to it, and those carry
 	// their own flags and their own constraint.
-	ProposedBy string    `json:"proposed_by,omitempty"`
-	ApprovedBy string    `json:"approved_by,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ProposedBy string `json:"proposed_by,omitempty"`
+	ApprovedBy string `json:"approved_by,omitempty"`
+	// Enabled is the policy's own switch. Switched off, the policy applies
+	// nothing — none of its tasks, checks or server rules reach a device,
+	// whatever each one's flag says. An AI proposal is created switched off,
+	// complete with its scopes, tasks and checks, and the database refuses to
+	// switch it on before a person reviewed it (see ActivatePolicy).
+	Enabled bool `json:"enabled"`
+	// Pending is an AI proposal nobody has reviewed yet (derived).
+	Pending   bool      `json:"pending"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // PolicyAssignment binds a policy to a client, site, group, or agent.
@@ -550,9 +558,16 @@ type PatchPolicy struct {
 	WindowEndMin       int      `json:"window_end_min"`
 	// Timezone is the IANA zone the window's days and minutes are in. A
 	// policy created without one is UTC; an edit that sends none keeps it.
-	Timezone  string    `json:"timezone"`
-	Reboot    string    `json:"reboot"`
-	CreatedAt time.Time `json:"created_at"`
+	Timezone string `json:"timezone"`
+	Reboot   string `json:"reboot"`
+	// ProposedBy names the AI actor that proposed this patch policy ("ai:…",
+	// "mcp:…"), empty when a person created it. An AI proposal is created
+	// switched off and stays off until a person reviews and activates it;
+	// Pending reports that it has not been reviewed yet.
+	ProposedBy string    `json:"proposed_by,omitempty"`
+	ApprovedBy string    `json:"approved_by,omitempty"`
+	Pending    bool      `json:"pending"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // PatchPolicyAssignment binds a patch policy to a scope.

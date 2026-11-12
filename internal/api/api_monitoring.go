@@ -254,6 +254,9 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if existing.ProposedBy != "" && existing.ApprovedBy == "" && c.ApprovedBy != "" {
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "check.approve", id, auditLabel("name", c.Name))
+	}
 	if (existing.Enabled && !c.Enabled) || existing.Type != c.Type {
 		s.cleanupCheckTargets(r, existing, "disabled", "Check disabled by an operator.")
 	}
@@ -467,6 +470,9 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateTask(r.Context(), &t); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if existing.ProposedBy != "" && existing.ApprovedBy == "" && t.ApprovedBy != "" {
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "task.approve", id, auditLabel("name", t.Name))
 	}
 	out, err := s.store.GetTask(r.Context(), t.ID)
 	if err != nil {

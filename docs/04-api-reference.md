@@ -473,6 +473,9 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | GET | `/api/policies/{id}/assignments` | `policies.view` | List assignments |
 | POST | `/api/policies/{id}/assignments` | `policies.manage` | `{scope_type: client\|site\|group\|agent, scope_id}` (`group` = department) |
 | DELETE | `/api/policies/assignments/{aid}` | `policies.manage` | Remove assignment |
+| GET | `/api/policies/{id}/review` | `policies.view` | Everything switching the policy on puts into effect — scopes, tasks, checks, pending AI proposals — sealed with a `fingerprint`. Tasks need `tasks.view` and checks `checks.view`; a review missing either, or read by a restricted principal (who sees only its own scopes), has no fingerprint |
+| POST | `/api/policies/{id}/activate` | `policies.manage`, `tasks.view`, `checks.view` (+ `tasks.manage` / `checks.manage` when it carries AI proposals of them) | `{fingerprint}` of the review read. Switches the policy on and approves its AI proposals in one transaction; **409** when the policy changed after the review. Unrestricted principals only. Audited as `policy.activate` |
+| POST | `/api/policies/{id}/deactivate` | `policies.manage` | Switch the policy off: it applies nothing until activated again. Audited as `policy.deactivate` |
 
 ## Alerts
 
@@ -512,7 +515,9 @@ must be visible to the caller.
 | GET | `/api/patches` | `patches.view` | Scope-filtered fleet catalog |
 | POST | `/api/patches/{id}/approve` | `patches.manage` | `{scope_type,scope_id,decision}`; decision is `approve` or `decline` |
 | GET/POST | `/api/patch-policies` | `patches.policies.manage` | List/create global patch policy definitions. `timezone` is the IANA zone the window's days and minutes are in (default `UTC`) |
-| PUT/DELETE | `/api/patch-policies/{id}` | `patches.policies.manage` | Update/delete a global definition. Without `timezone`, the policy keeps its zone |
+| PUT/DELETE | `/api/patch-policies/{id}` | `patches.policies.manage` | Update/delete a global definition. Without `timezone`, the policy keeps its zone. **409** when an edit tries to switch on an AI proposal (use activate). Unknown classifications or reboot modes, weekdays outside 0–6 and minutes outside 0–1439 are refused (400); `proposed_by`/`approved_by` in a request are ignored |
+| GET | `/api/patch-policies/{id}/review` | `patches.policies.manage` | The policy's settings and scopes, sealed with a `fingerprint`. A restricted principal sees only the scopes that intersect its own, without a fingerprint |
+| POST | `/api/patch-policies/{id}/activate` | `patches.policies.manage` | `{fingerprint}`. Switches the patch policy on, approving it when it is an AI proposal; **409** for a stale review. Unrestricted principals only. Audited as `patch.policy.activate` |
 | GET/POST | `/api/patch-policies/{id}/assignments` | `patches.policies.manage` | List/add client/site/agent assignment |
 | DELETE | `/api/patch-policies/assignments/{aid}` | `patches.policies.manage` | Delete an assignment |
 

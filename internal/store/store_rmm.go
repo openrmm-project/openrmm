@@ -1095,38 +1095,59 @@ func (s *Store) DeleteScript(ctx context.Context, id string) error {
 // ===================== Policies =====================
 
 // CreatePolicy adds a policy.
+// A person's policy starts switched on, as policies always did; an AI proposal
+// starts switched off and waits for a person (CreatePolicyProposal, ActivatePolicy).
 func (s *Store) CreatePolicy(ctx context.Context, name, desc, proposedBy string) (*models.Policy, error) {
-	id := newID()
-	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO policies (id, name, description, proposed_by) VALUES ($1,$2,$3,$4)`,
-		id, name, desc, proposedBy); err != nil {
-		return nil, err
-	}
-	return &models.Policy{ID: id, Name: name, Description: desc, ProposedBy: proposedBy, CreatedAt: time.Now()}, nil
+	return scanPolicy(s.pool.QueryRow(ctx,
+		`INSERT INTO policies (id, name, description, proposed_by, enabled) VALUES ($1,$2,$3,$4,$5)
+		 RETURNING `+policyCols, newID(), name, desc, proposedBy, proposedBy == ""))
 }
 
-// ListPolicies returns all policies.
-func (s *Store) ListPolicies(ctx context.Context) ([]models.Policy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, description, proposed_by, approved_by, created_at FROM policies ORDER BY name`)
+// policyCols and scanPolicy read a policy row; Pending is derived.
+const policyCols = `id, name, description, proposed_by, approved_by, enabled, created_at`
+
+func scanPolicy(row pgx.Row) (*models.Policy, error) {
+	var p models.Policy
+	if err := row.Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.Enabled, &p.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	p.Pending = p.ProposedBy != "" && p.ApprovedBy == ""
+	return &p, nil
+}
+
+func scanPolicies(rows pgx.Rows, err error) ([]models.Policy, error) {
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []models.Policy
 	for rows.Next() {
-		var p models.Policy
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.CreatedAt); err != nil {
+		p, err := scanPolicy(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, p)
+		out = append(out, *p)
 	}
 	return out, rows.Err()
+}
+
+// GetPolicy fetches one policy.
+func (s *Store) GetPolicy(ctx context.Context, id string) (*models.Policy, error) {
+	return scanPolicy(s.pool.QueryRow(ctx, `SELECT `+policyCols+` FROM policies WHERE id=$1`, id))
+}
+
+// ListPolicies returns all policies.
+func (s *Store) ListPolicies(ctx context.Context) ([]models.Policy, error) {
+	return scanPolicies(s.pool.Query(ctx, `SELECT `+policyCols+` FROM policies ORDER BY name`))
 }
 
 // ListPoliciesForUser returns policies that apply to at least one agent in the
 // user's access scope. Unscoped users see all policies.
 func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]models.Policy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT p.id, p.name, p.description, p.proposed_by, p.approved_by, p.created_at
+	return scanPolicies(s.pool.Query(ctx, `SELECT DISTINCT p.id, p.name, p.description, p.proposed_by, p.approved_by, p.enabled, p.created_at
 		FROM policies p
 		WHERE NOT EXISTS (SELECT 1 FROM user_scopes WHERE user_id=$1)
 		OR EXISTS (
@@ -1147,20 +1168,7 @@ func (s *Store) ListPoliciesForUser(ctx context.Context, userID string) ([]model
 		    )
 		  )
 		)
-		ORDER BY p.name`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []models.Policy
-	for rows.Next() {
-		var p models.Policy
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+		ORDER BY p.name`, userID))
 }
 
 // PolicyAllowedForUser reports whether a policy applies to at least one agent in
@@ -1224,18 +1232,8 @@ func (s *Store) PolicyManageAllowedForUser(ctx context.Context, userID, policyID
 // and assignments hanging off it are untouched — this is the label, not the
 // contents.
 func (s *Store) UpdatePolicy(ctx context.Context, id, name, desc string) (*models.Policy, error) {
-	var p models.Policy
-	err := s.pool.QueryRow(ctx,
-		`UPDATE policies SET name=$2, description=$3 WHERE id=$1
-		 RETURNING id, name, description, proposed_by, approved_by, created_at`,
-		id, name, desc).Scan(&p.ID, &p.Name, &p.Description, &p.ProposedBy, &p.ApprovedBy, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &p, nil
+	return scanPolicy(s.pool.QueryRow(ctx,
+		`UPDATE policies SET name=$2, description=$3 WHERE id=$1 RETURNING `+policyCols, id, name, desc))
 }
 
 func (s *Store) DeletePolicy(ctx context.Context, id string) error {
@@ -1339,12 +1337,14 @@ func (s *Store) DeleteAssignment(ctx context.Context, id string) error {
 
 // policyFilter is the SQL fragment selecting policies that apply to an agent,
 // given $1=agentID, $2=siteID, $3=clientID.
+// A policy that is switched off applies nothing.
 const policyFilter = `policy_id IN (
 	SELECT pa.policy_id FROM policy_assignments pa
-	WHERE (pa.scope_type='agent'  AND pa.scope_id=$1)
+	WHERE pa.policy_id IN ` + activePoliciesSQL + ` AND (
+	      (pa.scope_type='agent'  AND pa.scope_id=$1)
 	   OR (pa.scope_type='group'  AND pa.scope_id=(SELECT group_id FROM agents WHERE id=$1))
 	   OR (pa.scope_type='site'   AND pa.scope_id=$2)
-	   OR (pa.scope_type='client' AND pa.scope_id=$3)
+	   OR (pa.scope_type='client' AND pa.scope_id=$3))
 )`
 
 // ===================== Checks =====================
@@ -1369,6 +1369,15 @@ func scanCheck(row pgx.Row) (*models.Check, error) {
 
 // CreateCheck adds a check.
 func (s *Store) CreateCheck(ctx context.Context, c *models.Check) (*models.Check, error) {
+	if err := insertCheck(ctx, s.pool, c); err != nil {
+		return nil, err
+	}
+	return s.GetCheck(ctx, c.ID)
+}
+
+// insertCheck writes a new check through pool or transaction q, filling the
+// defaults the validators expect.
+func insertCheck(ctx context.Context, q dbQuerier, c *models.Check) error {
 	c.ID = newID()
 	if len(c.Config) == 0 {
 		c.Config = []byte("{}")
@@ -1391,17 +1400,14 @@ func (s *Store) CreateCheck(ctx context.Context, c *models.Check) (*models.Check
 	if c.TimeoutSec <= 0 {
 		c.TimeoutSec = 180
 	}
-	_, err := s.pool.Exec(ctx,
+	_, err := q.Exec(ctx,
 		`INSERT INTO checks (id, agent_id, policy_id, type, name, config, warn_threshold, err_threshold,
 		                      interval_sec, failure_count, recovery_count, hysteresis, cooldown_sec, timeout_sec, enabled, proposed_by, approved_by)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 		c.ID, c.AgentID, c.PolicyID, c.Type, c.Name, []byte(c.Config), c.WarnThreshold,
 		c.ErrThreshold, c.IntervalSec, c.FailureCount, c.RecoveryCount, c.Hysteresis,
 		c.CooldownSec, c.TimeoutSec, c.Enabled, c.ProposedBy, c.ApprovedBy)
-	if err != nil {
-		return nil, err
-	}
-	return s.GetCheck(ctx, c.ID)
+	return err
 }
 
 // GetCheck fetches one check.
@@ -1590,15 +1596,20 @@ func scanTask(row pgx.Row) (*models.Task, error) {
 
 // CreateTask adds a scheduled task.
 func (s *Store) CreateTask(ctx context.Context, t *models.Task) (*models.Task, error) {
-	t.ID = newID()
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by, timezone)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE(NULLIF($16,''),'UTC'))`,
-		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ProposedBy, t.ApprovedBy, t.Timezone)
-	if err != nil {
+	if err := insertTask(ctx, s.pool, t); err != nil {
 		return nil, err
 	}
 	return s.GetTask(ctx, t.ID)
+}
+
+// insertTask writes a new task through pool or transaction q.
+func insertTask(ctx context.Context, q dbQuerier, t *models.Task) error {
+	t.ID = newID()
+	_, err := q.Exec(ctx,
+		`INSERT INTO tasks (id, agent_id, policy_id, name, script_id, shell, script, schedule_kind, interval_sec, run_at_minute, days_of_week, run_at_minutes, enabled, proposed_by, approved_by, timezone)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE(NULLIF($16,''),'UTC'))`,
+		t.ID, t.AgentID, t.PolicyID, t.Name, t.ScriptID, t.Shell, t.Script, t.ScheduleKind, t.IntervalSec, t.RunAtMinute, t.DaysOfWeek, int32s(t.RunAtMinutes), t.Enabled, t.ProposedBy, t.ApprovedBy, t.Timezone)
+	return err
 }
 
 // GetTask fetches one task.
@@ -1678,7 +1689,7 @@ func (s *Store) AgentIDsForPolicy(ctx context.Context, policyID string) ([]strin
 		 LEFT JOIN sites si ON si.id = a.site_id
 		 WHERE a.revoked_at IS NULL AND EXISTS (
 		   SELECT 1 FROM policy_assignments pa
-		   WHERE pa.policy_id=$1 AND (
+		   WHERE pa.policy_id=$1 AND pa.policy_id IN `+activePoliciesSQL+` AND (
 		        (pa.scope_type='agent'  AND pa.scope_id = a.id)
 		     OR (pa.scope_type='group'  AND pa.scope_id = a.group_id)
 		     OR (pa.scope_type='site'   AND pa.scope_id = a.site_id)

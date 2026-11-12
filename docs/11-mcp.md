@@ -147,7 +147,9 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
 | Fleet inventory and audit search, counted in the database | ✅ with `reports.view` / `audit.view` (audit: unscoped accounts only) |
 | Hand the operator a CSV of the inventory or audit trail | ✅ same permissions; a download link that works only for the account that asked |
 | Propose scripts/bulk/high-level actions | ✅ only with `jobs.create`; awaits human approval |
-| Propose a task, check or policy | ✅ with `tasks.manage` / `checks.manage` / `policies.manage` — created **disabled**; it never runs until a person enables it |
+| Propose a task, check or policy | ✅ with `tasks.manage` / `checks.manage` / `policies.manage` — created **disabled**; it never runs until a person enables it. A policy comes in one piece, with its scopes, tasks and checks, all switched off |
+| Propose a patch policy | ✅ with `patches.policies.manage` — created **switched off**; it approves, installs and reboots nothing until a person activates it |
+| Assign or activate a policy | ❌ no such tool — a person activates a reviewed policy in the console |
 | Install patches | ✅ with `patches.manage`, but **only ones a person already approved**; unapproved identifiers install nothing |
 | Approve a patch | ❌ no such tool — approval is always a human decision |
 | Enable a task, check or policy it proposed | ❌ the database refuses an unreviewed proposal |
@@ -162,6 +164,15 @@ over MCP as in the chat: proposals wait for an unrestricted operator to approve
 them in Scripts, a proposed variable never takes a value from the model, and a
 proposed library script cannot run, be scheduled or be released for AI autonomy
 before approval. See [25-script-variables](25-script-variables.md#ai-chat-and-mcp).
+
+### Proposing policies and patch policies
+
+`propose_policy` takes the scopes, tasks and checks of a policy in one call and
+writes all of it switched off; `propose_patch_policy` does the same for a patch
+policy. A person reviews either in one dialog and activates it; the activation
+is refused if the proposal changed after the review was opened. See
+[10-monitoring-policies](10-monitoring-policies.md#policies-proposed-by-ai-chat-and-mcp)
+and [16-patch-management](16-patch-management.md#patch-policies-proposed-by-ai-chat-and-mcp).
 
 ### Proposing server alert rules
 

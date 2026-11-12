@@ -361,6 +361,17 @@ func TestPolicyActivationMigrationIntegration(t *testing.T) {
 			t.Fatalf("%s: %+v %v, want %+v", id, p, err, want)
 		}
 	}
+	// The review guards exist on this schema's own tables: a lookup by name
+	// across the database once matched another schema's and skipped them.
+	var guards int
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint
+		WHERE (conname = 'policies_proposal_needs_review' AND conrelid = 'policies'::regclass)
+		   OR (conname = 'patch_policies_proposal_needs_review' AND conrelid = 'patch_policies'::regclass)`).Scan(&guards); err != nil || guards != 2 {
+		t.Fatalf("review constraints on this schema: %d %v", guards, err)
+	}
+	if _, err := st.pool.Exec(ctx, `UPDATE policies SET enabled=true WHERE id=$1`, unassigned); !IsProposalUnreviewed(err) {
+		t.Fatalf("an unreviewed AI policy was switched on after the migration: %v", err)
+	}
 	legacy, err := st.GetPatchPolicy(ctx, patch)
 	if err != nil || !legacy.Enabled || legacy.Pending || legacy.ProposedBy != "" {
 		t.Fatalf("legacy patch policy: %+v %v", legacy, err)

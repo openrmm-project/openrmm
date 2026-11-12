@@ -13,6 +13,20 @@ import (
 	"github.com/p1ngu/rmm/internal/store"
 )
 
+// deviceIn enrols a device under a client, so the client's scope is visible to
+// a reader confined to it.
+func deviceIn(t *testing.T, f *scriptFixture, clientID string) {
+	t.Helper()
+	ctx := context.Background()
+	site, err := f.store.CreateSite(ctx, clientID, "Site "+uuid.NewString()[:8])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CreateAgent(ctx, "PC-"+uuid.NewString()[:8], "linux", "amd64", "0.11.0", "hash-"+uuid.NewString(), &site.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // CI-only PostgreSQL, through the real authenticated router: an AI policy is
 // switched on only by an activation that sends back the fingerprint of the
 // review, by a caller allowed to approve what it carries; the activation and
@@ -24,6 +38,9 @@ func TestPolicyActivationThroughTheAPIE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A policy is visible to a scoped reader through the devices it reaches, so
+	// the client needs one.
+	deviceIn(t, f, client.ID)
 	other, err := f.store.CreateClient(ctx, "Other "+uuid.NewString()[:8])
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +125,14 @@ func TestPolicyActivationThroughTheAPIE2E(t *testing.T) {
 		t.Fatalf("activation: %d %s", rec.Code, rec.Body.String())
 	}
 	entry := f.audit("policy.activate")
-	if entry == nil || entry.Target != id || !strings.Contains(string(entry.Detail), `"approved_tasks":1`) || !strings.Contains(string(entry.Detail), "AI workstations") {
+	var detail struct {
+		Name           string `json:"name"`
+		ApprovedPolicy bool   `json:"approved_policy"`
+		ApprovedTasks  int    `json:"approved_tasks"`
+		ApprovedChecks int    `json:"approved_checks"`
+	}
+	if entry == nil || entry.Target != id || json.Unmarshal(entry.Detail, &detail) != nil || detail.Name != "AI workstations" ||
+		!detail.ApprovedPolicy || detail.ApprovedTasks != 1 || detail.ApprovedChecks != 1 {
 		t.Fatalf("activation audit: %+v", entry)
 	}
 	tasks, err := f.store.ListTasks(ctx, "", id)
@@ -174,6 +198,7 @@ func TestPatchPolicyActivationThroughTheAPIE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	deviceIn(t, f, client.ID)
 	other, err := f.store.CreateClient(ctx, "Other "+uuid.NewString()[:8])
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +239,11 @@ func TestPatchPolicyActivationThroughTheAPIE2E(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":true`) || !strings.Contains(rec.Body.String(), `"pending":false`) {
 		t.Fatalf("activation: %d %s", rec.Code, rec.Body.String())
 	}
-	if e := f.audit("patch.policy.activate"); e == nil || !strings.Contains(string(e.Detail), `"approved_proposal":true`) {
+	var patchDetail struct {
+		Name     string `json:"name"`
+		Approved bool   `json:"approved_proposal"`
+	}
+	if e := f.audit("patch.policy.activate"); e == nil || json.Unmarshal(e.Detail, &patchDetail) != nil || !patchDetail.Approved || patchDetail.Name != "AI weekend" {
 		t.Fatalf("activation audit: %+v", e)
 	}
 

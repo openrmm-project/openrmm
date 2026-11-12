@@ -122,7 +122,13 @@ func TestScriptVariableAccessThroughTheAPIE2E(t *testing.T) {
 	if rec := f.do(http.MethodPut, base, `{"description":"Now secret","secret":true}`); rec.Code != http.StatusOK {
 		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
 	}
-	if e := f.audit("script_variable.update"); e == nil || !strings.Contains(string(e.Detail), `"secret":true`) || !strings.Contains(string(e.Detail), `"was_secret":false`) {
+	// The audit detail is jsonb: compare its fields, not its spelling.
+	var updated struct {
+		Name      string `json:"name"`
+		Secret    bool   `json:"secret"`
+		WasSecret bool   `json:"was_secret"`
+	}
+	if e := f.audit("script_variable.update"); e == nil || json.Unmarshal(e.Detail, &updated) != nil || updated.Name != name || !updated.Secret || updated.WasSecret {
 		t.Fatalf("update audit: %+v", e)
 	}
 	for _, value := range listedVariable(t, f, name).Values {

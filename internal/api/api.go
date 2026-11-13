@@ -342,6 +342,9 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/{id}", s.deletePolicy)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/assignments", s.createPolicyAssignment)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/assignments/{aid}", s.deletePolicyAssignment)
+		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies/{id}/review", s.reviewPolicy)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/activate", s.activatePolicy)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/deactivate", s.deactivatePolicy)
 
 		r.With(s.requirePermission(models.PermScriptsView)).Get("/scripts", s.listScripts)
 		r.With(s.requirePermission(models.PermScriptsView)).Get("/scripts/{id}", s.getScript)
@@ -380,6 +383,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Get("/patch-policies/{id}/assignments", s.listPatchPolicyAssignments)
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies/{id}/assignments", s.addPatchPolicyAssignment)
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Delete("/patch-policies/assignments/{aid}", s.deletePatchPolicyAssignment)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Get("/patch-policies/{id}/review", s.reviewPatchPolicy)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies/{id}/activate", s.activatePatchPolicy)
 
 		r.With(s.requirePermission(models.PermReportsView)).Get("/reports/software", s.reportSoftware)
 		r.With(s.requirePermission(models.PermReportsView)).Get("/reports/hardware", s.reportHardware)

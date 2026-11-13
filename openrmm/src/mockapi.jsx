@@ -506,6 +506,11 @@ const api = {
   listAssignments(policyId) { return GET('/api/policies/' + policyId + '/assignments'); },
   createAssignment(policyId, body) { return POST('/api/policies/' + policyId + '/assignments', body); },
   deleteAssignment(aid) { return DELETE('/api/policies/assignments/' + aid); },
+  // Switching a policy on is reviewed: the review is sealed with a fingerprint,
+  // and the activation is refused (409) if the policy changed after it was read.
+  reviewPolicy(id) { return GET('/api/policies/' + encodeURIComponent(id) + '/review'); },
+  activatePolicy(id, fingerprint) { return POST('/api/policies/' + encodeURIComponent(id) + '/activate', { fingerprint }); },
+  deactivatePolicy(id) { return POST('/api/policies/' + encodeURIComponent(id) + '/deactivate', {}); },
 
   /* ---- alerts ---- */
   listAlerts(params) { return GET('/api/alerts' + qs(typeof params === 'string' ? { status: params } : params)); },
@@ -539,6 +544,8 @@ const api = {
   listPatchAssignments(id) { return GET('/api/patch-policies/' + id + '/assignments'); },
   addPatchAssignment(id, b) { return POST('/api/patch-policies/' + id + '/assignments', b); },
   deletePatchAssignment(aid) { return DELETE('/api/patch-policies/assignments/' + aid); },
+  reviewPatchPolicy(id) { return GET('/api/patch-policies/' + encodeURIComponent(id) + '/review'); },
+  activatePatchPolicy(id, fingerprint) { return POST('/api/patch-policies/' + encodeURIComponent(id) + '/activate', { fingerprint }); },
 
   /* ---- config ---- */
   getConfig() { return GET('/api/config'); },

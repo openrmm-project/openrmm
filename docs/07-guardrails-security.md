@@ -72,7 +72,16 @@ So configuration reuses the switch that already existed:
 - The scheduler's own queries already read `WHERE enabled`, so a proposal is
   inert **with no scheduler change at all**.
 - A person reviews it on the existing Tasks / Checks / Policies screens, which
-  badge it as an *AI proposal*, and enabling it records `approved_by`.
+  badge it as an *AI proposal*, and enabling it records `approved_by`. Enabling
+  a proposal opens a review dialog with what it does (target, schedule, the
+  script itself) instead of a bare toggle.
+- A policy has its own switch since migration 032. `propose_policy` writes the
+  policy with its scopes, tasks and checks **switched off**, and
+  `propose_patch_policy` writes a patch policy switched off. The activation shows
+  all of it in one review sealed with a fingerprint and is refused if anything
+  changed after the review was opened; it never approves a task or check its
+  caller could not approve alone. No tool assigns or activates a policy. See
+  [10-monitoring-policies](10-monitoring-policies.md#switching-a-policy-on-and-off).
 
 Two columns, because they answer different questions. `proposed_by` is permanent
 provenance and survives acceptance — months later the row still says an AI wrote

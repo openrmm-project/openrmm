@@ -67,10 +67,11 @@ const governingCandidates = `
 	         CASE pa.scope_type WHEN 'client' THEN 1 WHEN 'site' THEN 2 WHEN 'group' THEN 3 ELSE 4 END
 	  FROM policy_assignments pa
 	  JOIN checks c ON c.policy_id = pa.policy_id AND c.type = $1
-	  WHERE (pa.scope_type = 'client' AND pa.scope_id = st.client_id)
+	  WHERE pa.policy_id IN ` + activePoliciesSQL + ` AND (
+	        (pa.scope_type = 'client' AND pa.scope_id = st.client_id)
 	     OR (pa.scope_type = 'site'   AND pa.scope_id = a.site_id)
 	     OR (pa.scope_type = 'group'  AND pa.scope_id = a.group_id)
-	     OR (pa.scope_type = 'agent'  AND pa.scope_id = a.id)
+	     OR (pa.scope_type = 'agent'  AND pa.scope_id = a.id))
 	) src ON true
 	JOIN checks c ON c.id = src.check_id
 	LEFT JOIN policies p ON p.id = src.policy_id
@@ -133,7 +134,7 @@ func (s *Store) CheckCoveredAgents(ctx context.Context, checkID string) ([]strin
 		WHERE c.id = $1 AND a.status <> 'revoked'
 		UNION
 		SELECT a.id FROM checks c
-		JOIN policy_assignments pa ON pa.policy_id = c.policy_id
+		JOIN policy_assignments pa ON pa.policy_id = c.policy_id AND pa.policy_id IN `+activePoliciesSQL+`
 		JOIN agents a ON (
 		     (pa.scope_type = 'agent'  AND pa.scope_id = a.id)
 		  OR (pa.scope_type = 'group'  AND pa.scope_id = a.group_id)

@@ -72,6 +72,8 @@ GET  /api/patches[?approval=pending|approved|declined]
 POST /api/patches/{id}/approve           { scope_type, scope_id, decision }
 GET  /api/reports/compliance
 GET/POST/PUT/DELETE /api/patch-policies...
+GET  /api/patch-policies/{id}/review
+POST /api/patch-policies/{id}/activate   { fingerprint }
 ```
 
 Each catalog row counts the in-scope devices in every state (`pending_count`,
@@ -106,6 +108,25 @@ There is deliberately **no tool to approve a patch**. Approval is the human
 decision about what enters the fleet, and an assistant that could approve and then
 install would make the bound above circular. Operators approve through the scoped
 human API/UI or preconfigured policy automation.
+
+### Patch policies proposed by AI Chat and MCP
+
+`propose_patch_policy` (with `patches.policies.manage`, unrestricted principals
+only) proposes a patch policy — the classifications to auto-approve and after how
+many days, exclusions, the maintenance window in an IANA time zone, reboot
+behaviour, and the clients, sites or devices it covers. It is written in one
+transaction **switched off** and attributed (`proposed_by`); until a person
+activates it, it approves, installs and reboots nothing (`PatchPoliciesForAgent`
+selects `WHERE enabled`). `list_patch_policies` lets the model see what already
+exists. The database refuses to switch on an AI proposal nobody reviewed
+(`patch_policies_proposal_needs_review`), and `PUT /api/patch-policies/{id}`
+answers 409 when an edit tries to: the console's Activate button shows the
+settings and scopes in a review sealed with a fingerprint, and
+`POST /api/patch-policies/{id}/activate` refuses (409) a review that no longer
+matches. Audited as `patch.policy.activate`. The REST API ignores `proposed_by`
+and `approved_by` in a request — provenance is recorded by the server — and
+rejects an unknown classification or reboot mode, a weekday outside 0–6, a
+window minute outside 0–1439 or an empty exclusion.
 
 ## Policy behavior
 

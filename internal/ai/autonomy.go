@@ -42,14 +42,14 @@ var toolRiskClass = map[string]string{
 	"list_devices": ClassConsoleRead, "get_inventory": ClassConsoleRead, "get_job_status": ClassConsoleRead,
 	"fleet_summary": ClassConsoleRead, "list_patches": ClassConsoleRead, "inventory_report": ClassConsoleRead,
 	"export_inventory": ClassConsoleRead, "list_tasks": ClassConsoleRead, "list_checks": ClassConsoleRead, "list_script_variables": ClassConsoleRead,
-	"list_policies": ClassConsoleRead, "query_audit": ClassConsoleRead, "export_audit": ClassConsoleRead,
+	"list_policies": ClassConsoleRead, "list_patch_policies": ClassConsoleRead, "query_audit": ClassConsoleRead, "export_audit": ClassConsoleRead,
 	"list_org": ClassConsoleRead, "list_preapproved_actions": ClassConsoleRead,
 
 	"query_device":           ClassDeviceQuery,
 	"run_preapproved_action": ClassPreapproved,
 
 	"propose_script": ClassChange, "propose_bulk_deploy": ClassChange, "propose_task": ClassChange,
-	"propose_check": ClassChange, "propose_script_variable": ClassChange, "propose_library_script": ClassChange, "propose_policy": ClassChange, "install_patches": ClassChange,
+	"propose_check": ClassChange, "propose_script_variable": ClassChange, "propose_library_script": ClassChange, "propose_policy": ClassChange, "propose_patch_policy": ClassChange, "install_patches": ClassChange,
 	"install_software": ClassChange, "uninstall_software": ClassChange, "restart_service": ClassChange,
 	"install_printer": ClassChange, "flush_dns": ClassChange, "reboot_device": ClassChange,
 	"propose_move_devices": ClassChange, "propose_delete_devices": ClassChange,

@@ -204,6 +204,68 @@ target. The forms are the ones the Checks and Scheduled tasks screens use.
 Changing a policy's contents takes `checks.manage` / `tasks.manage`; renaming the
 policy itself takes `policies.manage`.
 
+### Switching a policy on and off
+
+A policy has its own switch (`policies.enabled`, migration 032). Switched off,
+it applies **nothing**: none of its tasks, checks or server alert rules reach
+any device, whatever each one's own flag says. Every query that decides what a
+device gets honours the switch — effective tasks and checks, the check
+scheduler, "run now" on a policy task, the devices a check covers, and the
+server rule that governs a device — and the sweep that closes the alerts of
+checks that stopped applying closes those of a switched-off policy too.
+Switching it off is one step (`POST /api/policies/{id}/deactivate`, audited as
+`policy.deactivate`); its tasks and checks keep their own flags, so switching
+it on again restores exactly what applied before. A person's new policy starts
+switched on, as policies always did.
+
+Switching a policy off stops future application of its configuration. It does
+not cancel a job that was already created from an approved task or an authorized
+manual run; that job may still be delivered after the device reconnects.
+
+Switching a policy on goes through a **review**. `GET /api/policies/{id}/review`
+returns everything the click puts into effect — the scopes, every task with its
+script and schedule, every check with its settings, and which of them are AI
+proposals — sealed with a fingerprint. The console shows it in one dialog, and
+`POST /api/policies/{id}/activate { "fingerprint": "…" }` switches the policy
+on and approves, in the same transaction, every AI proposal it carries. The
+server re-reads the policy with its rows locked and refuses the activation
+(409) when it no longer matches the review — an assistant that proposed one
+more task while the dialog was open, or a colleague who edited a script — and
+the console reloads the review for a second reading. A task or check a person
+switched off stays off. Activating takes `policies.manage` and an unrestricted
+principal, as every policy mutation does, plus `tasks.view` and `checks.view`:
+nobody switches on what they cannot read. Approving the AI tasks or checks
+inside also takes `tasks.manage` or `checks.manage`, so the activation never
+makes an approval its caller could not make alone. The review shows only what
+its reader may see — without `tasks.view` or `checks.view` that section is left
+out and the review carries no fingerprint, and a principal confined to some
+clients sees only the scopes it controls, as the assignment listing does. Audited as `policy.activate`
+with the policy name and the number of tasks and checks approved.
+
+### Policies proposed by AI Chat and MCP
+
+`propose_policy` creates a policy **in one piece**: its name, where it applies
+(clients, sites, departments or devices), and the tasks and checks or server
+alert rules it carries, with the same fields and validation as `propose_task`
+and `propose_check` (at most 25 of each). All of it is written in one
+transaction, **switched off** and attributed (`proposed_by`), and a refusal
+anywhere in the request writes nothing. The database refuses to switch on an
+AI policy nobody reviewed (`policies_proposal_needs_review`), as it already did
+for tasks and checks. A person reads it in Policies and activates it as above;
+to reject it, they delete it. No tool assigns or activates an existing policy,
+so the model can never widen the reach of something already running.
+
+Migration 032 keeps what applied applying: before it, a policy had no review of
+its own and a person reviewed an AI policy by assigning it (no tool assigns), so
+an AI policy that has an assignment is marked reviewed (`approved_by =
+'migration:032'`); an unassigned one, which applied to nothing, now waits
+switched off.
+
+AI-proposed tasks and checks outside a policy are approved through the same
+kind of review: switching one on in the console opens a dialog with its target,
+schedule or settings and the script itself, and confirming it approves and
+enables it (`task.approve` / `check.approve` in the audit log).
+
 ## Alerts
 
 Raised automatically when a check is `failing`/`warning` or an agent goes offline

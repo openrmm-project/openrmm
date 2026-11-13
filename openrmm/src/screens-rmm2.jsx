@@ -82,9 +82,14 @@ function ScriptVariablesPanel() {
   // bounded scroll area; each variable's values open on demand.
   const items = all.filter((v) => (kind === 'all' || (kind === 'pending' ? !!v.pending : (kind === 'secret') === !!v.secret))
     && (!needle || (v.name + ' ' + (v.description || '')).toLowerCase().includes(needle)));
+  // Approving a proposed variable is reviewed like every AI proposal.
+  const [reviewing, setReviewing] = useState(null);
+  const [approving, setApproving] = useState(false);
   const approve = async (v) => {
-    try { await api.approveScriptVariable(v.id); toast.success(t('proposal.approved'), v.name); }
+    setApproving(true);
+    try { await api.approveScriptVariable(v.id); toast.success(t('proposal.approved'), v.name); setReviewing(null); }
     catch (e) { toast.error(t('common.failed'), e.message); }
+    finally { setApproving(false); }
   };
   const remove = async () => {
     try {
@@ -101,7 +106,7 @@ function ScriptVariablesPanel() {
     {all.length > 0 && <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: items.length, total: all.length })}</div>}
     {items.length > 0 && <div id="script-variables-list" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-[28rem] overflow-y-auto overscroll-contain scroll-area rounded-xl border border-line divide-y divide-line">
     {items.map((v) => <div key={v.id} className="px-3 py-2 space-y-2">
-      <div className="flex items-center gap-2 min-h-10"><button type="button" aria-expanded={open === v.id} aria-label={t(open === v.id ? 'vars.hideValues' : 'vars.showValues') + ': ' + v.name} onClick={() => setOpen(open === v.id ? null : v.id)} className="flex-1 min-w-0 text-left"><code className="block truncate text-[12.5px] text-ink" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11.5px] text-muted" title={v.description}>{v.description}</span>}</button>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}{v.pending && <span className="rounded-md bg-warn/10 border border-warn/30 text-warn px-1.5 py-0.5 text-[10.5px] font-semibold whitespace-nowrap" title={t('proposal.by', { who: v.proposed_by })}>{t('proposal.awaiting')}</span>}{v.pending && <Button size="sm" variant="primary" onClick={() => approve(v)}>{t('proposal.approve')}</Button>}<span className="text-faint text-[11.5px] whitespace-nowrap">{t('vars.valuesCount', { count: (v.values || []).length })}</span><Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
+      <div className="flex items-center gap-2 min-h-10"><button type="button" aria-expanded={open === v.id} aria-label={t(open === v.id ? 'vars.hideValues' : 'vars.showValues') + ': ' + v.name} onClick={() => setOpen(open === v.id ? null : v.id)} className="flex-1 min-w-0 text-left"><code className="block truncate text-[12.5px] text-ink" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11.5px] text-muted" title={v.description}>{v.description}</span>}</button>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}{v.pending && <span className="rounded-md bg-warn/10 border border-warn/30 text-warn px-1.5 py-0.5 text-[10.5px] font-semibold whitespace-nowrap" title={t('proposal.by', { who: v.proposed_by })}>{t('proposal.awaiting')}</span>}{v.pending && <Button size="sm" variant="primary" onClick={() => setReviewing(v)}>{t('proposal.approve')}</Button>}<span className="text-faint text-[11.5px] whitespace-nowrap">{t('vars.valuesCount', { count: (v.values || []).length })}</span><Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
       {open === v.id && <div className="space-y-2 pb-1">
       {!(v.values || []).length && <p className="text-[12px] text-muted">{t('vars.noValues')}</p>}
       {(v.values || []).map((value) => <div key={value.scope_type + ':' + value.scope_id} className="flex flex-wrap items-center gap-2 text-[12px]"><span>{value.scope_type === 'global' ? t('vars.global') : t('sup.scope.' + value.scope_type)} {targetsQ.data?.[value.scope_id] || value.scope_id}</span><code className="flex-1 break-all">{v.secret ? t('vars.masked') : value.value}</code><Button size="sm" onClick={() => setSetting({ variable: v, value })}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving({ ...v, value })}>{t('action.remove')}</Button></div>)}
@@ -113,6 +118,16 @@ function ScriptVariablesPanel() {
     {editing && <ScriptVariableDefinition variable={editing} onClose={() => setEditing(null)} />}
     {setting && <ScriptVariableValueEditor {...setting} onClose={() => setSetting(null)} />}
     <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={remove} danger title={t('vars.deleteTitle')} body={t('vars.deleteHint')} confirmLabel={t('action.delete')} />
+    <ReviewModal open={!!reviewing} onClose={() => setReviewing(null)} busy={approving} onConfirm={() => approve(reviewing)}
+      title={reviewing && t('review.variableTitle', { name: reviewing.name })} intro={t('review.variableIntro')} confirmLabel={t('proposal.approve')}>
+      {reviewing && (
+        <div className="space-y-2">
+          <ReviewRow label={t('review.proposedByLabel')}>{reviewing.proposed_by}</ReviewRow>
+          <ReviewRow label={t('common.description')}>{reviewing.description || '—'}</ReviewRow>
+          <ReviewRow label={t('vars.secret')}>{reviewing.secret ? t('review.yes') : t('review.no')}</ReviewRow>
+        </div>
+      )}
+    </ReviewModal>
   </div></Card>;
 }
 
@@ -299,9 +314,15 @@ function ScriptEditor({ script, onClose, categories = [] }) {
   };
   const del = async () => { await api.deleteScript(script.id); toast.info(t('script.deleted')); onClose(); };
   const pending = !!script?.pending;
+  // Approving is reviewed: the stored script, as it will run, is on screen
+  // until the person confirms.
+  const [reviewing, setReviewing] = useState(false);
+  const [approving, setApproving] = useState(false);
   const approve = async () => {
-    try { await api.approveScript(script.id); toast.success(t('proposal.approved'), script.name); onClose(); }
+    setApproving(true);
+    try { await api.approveScript(script.id); toast.success(t('proposal.approved'), script.name); setReviewing(false); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); }
+    finally { setApproving(false); }
   };
 
   return (
@@ -309,7 +330,7 @@ function ScriptEditor({ script, onClose, categories = [] }) {
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="script" size={17} /></div>
         <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : t('scripts.new')}</div><div className="text-[12px] text-faint">{readOnly ? t('script.readOnly') : t('script.editing')}</div></div>
-        {pending && !readOnly && <Button variant="primary" icon="check" onClick={approve}>{t('proposal.approve')}</Button>}
+        {pending && !readOnly && <Button variant="primary" icon="check" onClick={() => setReviewing(true)}>{t('proposal.approve')}</Button>}
         {can('jobs.create') && script && !pending && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
@@ -356,6 +377,17 @@ function ScriptEditor({ script, onClose, categories = [] }) {
         </div>
       )}
       {runOpen && <RunOnDevice script={{ id: script?.id, name, shell, body, params: script?.params || [], variables: script?.variables || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
+      <ReviewModal open={reviewing} onClose={() => setReviewing(false)} busy={approving} onConfirm={approve}
+        title={script && t('review.scriptTitle', { name: script.name })} intro={t('review.scriptIntro')} confirmLabel={t('proposal.approve')}>
+        {script && (
+          <div className="space-y-2">
+            {script.proposed_by && <ReviewRow label={t('review.proposedByLabel')}>{script.proposed_by}</ReviewRow>}
+            {script.description && <ReviewRow label={t('common.description')}>{script.description}</ReviewRow>}
+            <ReviewRow label={t('review.variables')}>{(script.variables || []).length ? script.variables.join(', ') : '—'}</ReviewRow>
+            <CodeBlock code={script.body || ''} shell={script.shell} maxHeight={320} label={script.shell} />
+          </div>
+        )}
+      </ReviewModal>
     </Drawer>
   );
 }
@@ -525,6 +557,72 @@ function PoliciesScreen() {
   );
 }
 
+// PolicyOffBadge marks a policy that is switched off and applies nothing.
+function PolicyOffBadge() {
+  return <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide border border-line2 text-faint">{t('pol.inactive')}</span>;
+}
+
+// PolicyActivation is the one confirmation that switches a policy on: where it
+// applies, every task and check it carries, and which AI proposals the click
+// approves. The review is sealed with a fingerprint; if the policy changed
+// after it was read (an assistant proposed one more task, a colleague edited a
+// script), the server refuses and the review reloads for a second reading.
+function PolicyActivation({ policy, scopeName, onClose, onActivated }) {
+  const toast = useToast();
+  const [review, setReview] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try { setReview(await api.reviewPolicy(policy.id)); }
+    catch (e) { setError(e.message); }
+  };
+  useEffect(() => { load(); }, [policy.id]);
+  const activate = async () => {
+    if (!review) return;
+    setBusy(true); setError('');
+    try {
+      const out = await api.activatePolicy(policy.id, review.fingerprint);
+      toast.success(t('pol.activated'), policy.name);
+      onActivated?.(out?.policy || { ...policy, enabled: true });
+      onClose();
+    } catch (e) {
+      if (e.status === 409) { setError(t('review.stale')); await load(); }
+      else setError(e.message);
+    } finally { setBusy(false); }
+  };
+  const state = (row) => (awaitingReview(row) ? t('pol.reviewWillApprove') : row.enabled ? t('pol.reviewOn') : t('pol.reviewStaysOff'));
+  const tasks = review?.tasks || [], checks = review?.checks || [], scopes = review?.assignments || [];
+  return (
+    <ReviewModal open onClose={onClose} busy={busy} error={error}
+      title={t('pol.activateTitle', { name: policy.name })} intro={t('pol.activateIntro')} confirmLabel={t('pol.activate')}
+      onConfirm={activate}>
+      {!review ? <Skeleton className="h-24 w-full" /> : (
+        <>
+          <ReviewSection title={t('pol.reviewScopes')}>
+            {scopes.length
+              ? <ul className="space-y-1">{scopes.map((a) => <li key={a.id} className="text-[12.5px] text-ink"><span className="text-faint">{tEnum('pol.scope', a.scope_type)}</span> · {scopeName(a) || a.scope_id}</li>)}</ul>
+              : <p className="text-[12.5px] text-warn">{t('pol.reviewNoScopes')}</p>}
+          </ReviewSection>
+          <ReviewSection title={t('pol.reviewTasks')}>
+            {tasks.length ? <div className="space-y-3">{tasks.map((task) => (
+              <div key={task.id} className="rounded-xl border border-line p-3">
+                <div className="flex items-center gap-2 mb-1"><span className="text-[13px] font-medium text-ink">{task.name}</span><span className="text-[11px] text-faint">{state(task)}</span></div>
+                <TaskReview task={task} target={policy.name} />
+              </div>))}</div> : <p className="text-[12.5px] text-faint">{t('pol.reviewNone')}</p>}
+          </ReviewSection>
+          <ReviewSection title={t('pol.reviewChecks')}>
+            {checks.length ? <div className="space-y-3">{checks.map((c) => (
+              <div key={c.id} className="rounded-xl border border-line p-3">
+                <div className="flex items-center gap-2 mb-1"><span className="text-[13px] font-medium text-ink">{c.name}</span><span className="text-[11px] text-faint">{state(c)}</span></div>
+                <CheckReview check={c} target={policy.name} />
+              </div>))}</div> : <p className="text-[12.5px] text-faint">{t('pol.reviewNone')}</p>}
+          </ReviewSection>
+        </>
+      )}
+    </ReviewModal>
+  );
+}
+
 function PolicyCard({ policy, onClick }) {
   const { can } = useAuth();
   const checksQ = useQuery([policy.id, 'pc'], () => can('checks.view') ? api.listChecks({ policy_id: policy.id }) : Promise.resolve({ checks: [] }), { invalidateOn: ['checks'] });
@@ -532,7 +630,7 @@ function PolicyCard({ policy, onClick }) {
   const asgQ = useQuery([policy.id, 'pa'], () => api.listAssignments(policy.id), { invalidateOn: ['policies'] });
   return (
     <button onClick={onClick} className="text-left rounded-2xl border border-line bg-card hover:border-line2 hover:bg-elevated/40 transition p-4 group">
-      <div className="flex items-center gap-2.5 mb-2"><div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="policy" size={17} /></div><div><div className="text-[14px] font-semibold text-ink group-hover:text-brandhi transition-colors">{policy.name}</div>{awaitingReview(policy) && <div className="mt-1"><ProposalBadge /></div>}</div></div>
+      <div className="flex items-center gap-2.5 mb-2"><div className="h-9 w-9 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="policy" size={17} /></div><div><div className="text-[14px] font-semibold text-ink group-hover:text-brandhi transition-colors">{policy.name}</div><div className="mt-1 flex flex-wrap gap-1.5">{!policy.enabled && <PolicyOffBadge />}{awaitingReview(policy) && <ProposalBadge />}</div></div></div>
       <div className="text-[12px] text-muted line-clamp-2 leading-snug min-h-[32px]">{policy.description || t('pol.noDescription')}</div>
       <div className="flex items-center gap-3 mt-3 text-[11.5px] text-faint">
         <span className="flex items-center gap-1"><Icon name="check" size={12} />{t('pol.checks', { n: (checksQ.data?.checks || []).length })}</span>
@@ -566,6 +664,10 @@ function PolicyDetail({ policy, onClose, onSaved }) {
   const [editCheck, setEditCheck] = useState(null); // check object, or 'new'
   const [editTask, setEditTask] = useState(null);   // task object, or 'new'
   const [confirmToggleTask, setConfirmToggleTask] = useState(null);
+  const [reviewTask, setReviewTask] = useState(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
   const canChecks = can('checks.manage'), canTasks = can('tasks.manage');
 
   // Task updates go through PUT, so the server revalidates the whole schedule;
@@ -592,6 +694,10 @@ function PolicyDetail({ policy, onClose, onSaved }) {
 
   const addAssignment = async () => { if (!addScope) return; const [type, id] = addScope.split(':'); await api.createAssignment(policy.id, { scope_type: type, scope_id: id }); setAddScope(''); toast.success(t('pol.assignedToast'), t('pol.assignedToastMsg')); };
   const removeAssignment = async (aid) => { await api.deleteAssignment(aid); toast.info(t('pol.assignmentRemoved')); };
+  const deactivate = async () => {
+    try { const p = await api.deactivatePolicy(policy.id); onSaved?.(p); toast.info(t('pol.deactivated'), policy.name); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
   const [confirmDel, setConfirmDel] = useState(false);
   const del = async () => { try { await api.deletePolicy(policy.id); toast.info(t('pol.deleted')); onClose(); } catch (e) { toast.error(t('common.failed'), e.message); } };
   const saveEdit = async () => {
@@ -611,9 +717,18 @@ function PolicyDetail({ policy, onClose, onSaved }) {
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-10 w-10 rounded-xl bg-brandsoft border border-brand/25 flex items-center justify-center text-brandhi"><Icon name="policy" size={19} /></div>
         <div className="flex-1 min-w-0"><h2 className="text-[16px] font-semibold text-ink truncate">{policy.name}</h2><div className="text-[12px] text-muted truncate">{policy.description || t('pol.noDescription')}</div></div>
+        {can('policies.manage') && (policy.enabled
+          ? <Button size="sm" variant="ghost" icon="reject" onClick={() => setConfirmOff(true)}>{t('pol.deactivate')}</Button>
+          // Activating needs to read what it switches on, as the server requires.
+          : can('tasks.view') && can('checks.view') && <Button size="sm" variant="primary" icon="check" onClick={() => setActivating(true)}>{t('pol.activate')}</Button>)}
         {can('policies.manage') && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing({ name: policy.name, description: policy.description || '' })}>{t('action.edit')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
+      {!policy.enabled && (
+        <div role="note" className="mx-5 mt-3 rounded-xl border border-warn/30 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn">
+          {awaitingReview(policy) ? t('pol.pendingHint', { who: policy.proposed_by }) : t('pol.offHint')}
+        </div>
+      )}
       <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'checks', label: t('pol.tab.checks'), count: checks.length }, { value: 'tasks', label: t('pol.tab.tasks'), count: tasks.length }, { value: 'assign', label: t('pol.tab.assign'), count: asg.length }]} />
       <div className="flex-1 overflow-y-auto scroll-area p-5">
         {tab === 'checks' && (
@@ -636,7 +751,7 @@ function PolicyDetail({ policy, onClose, onSaved }) {
               <div key={task.id} className="flex items-center gap-3 rounded-xl border border-line bg-card px-3.5 py-3">
                 <Icon name="tasks" size={15} className="text-muted" />
                 <div className="flex-1 min-w-0"><div className="text-[13px] text-ink font-medium truncate">{task.name}</div><div className="text-[11px] text-faint">{window.taskSchedule(task)}</div></div>
-                <Toggle checked={task.enabled} onChange={() => setConfirmToggleTask(task)} disabled={!canTasks} />
+                <Toggle checked={task.enabled} onChange={() => (!task.enabled && awaitingReview(task) ? setReviewTask(task) : setConfirmToggleTask(task))} disabled={!canTasks} />
                 {canTasks && <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditTask(task)}>{t('action.edit')}</Button>}
               </div>))}</div>
               : <EmptyState icon="tasks" title={t('pol.noTasks')} msg={canTasks ? t('pol.noTasksMsg') : undefined} />}
@@ -676,6 +791,14 @@ function PolicyDetail({ policy, onClose, onSaved }) {
         </div>
       )}
       <ConfirmDialog open={confirmDel} onClose={() => setConfirmDel(false)} onConfirm={del} danger title={t('pol.deleteTitle')} body={t('pol.deleteBody', { name: policy.name })} confirmLabel={t('pol.delete')} />
+      <ConfirmDialog open={confirmOff} onClose={() => setConfirmOff(false)} onConfirm={deactivate} danger
+        title={t('pol.deactivateTitle', { name: policy.name })} body={t('pol.deactivateBody')} confirmLabel={t('pol.deactivate')} />
+      {activating && <PolicyActivation policy={policy} scopeName={scopeName} onClose={() => setActivating(false)} onActivated={(p) => onSaved?.(p)} />}
+      <ReviewModal open={!!reviewTask} onClose={() => setReviewTask(null)} busy={reviewBusy}
+        title={reviewTask && t('review.taskTitle', { name: reviewTask.name })} intro={t('review.taskIntro')} confirmLabel={t('review.approve')}
+        onConfirm={async () => { setReviewBusy(true); try { await toggleTask(reviewTask); setReviewTask(null); } finally { setReviewBusy(false); } }}>
+        {reviewTask && <TaskReview task={reviewTask} target={policy.name} scriptName={(scriptsQ.data?.scripts || []).find((x) => x.id === reviewTask.script_id)?.name} />}
+      </ReviewModal>
       {editCheck && <CheckEditor check={editCheck === 'new' ? null : editCheck} onClose={() => setEditCheck(null)}
         devMap={devMap} policies={policiesQ.data?.policies || []} defaultPolicyId={policy.id} />}
       {editTask && <TaskEditor task={editTask === 'new' ? null : editTask} onClose={() => setEditTask(null)}

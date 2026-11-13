@@ -235,6 +235,7 @@ function PoliciesTab() {
   const toast = useToast();
   const q = useQuery(['patch-pol'], () => api.listPatchPolicies(), { invalidateOn: ['patch-pol'] });
   const [editing, setEditing] = useState(null);
+  const [activating, setActivating] = useState(null);
   const pols = q.data?.policies || [];
   const del = async (p) => { try { await api.deletePatchPolicy(p.id); window.dataBus.emit('patch-pol'); toast.info(t('patchpol.deleted')); } catch (e) { toast.error(t('common.failed'), e.message); } };
   return (
@@ -249,7 +250,9 @@ function PoliciesTab() {
                   <div className="flex items-center gap-2">
                     <span className="text-[14px] font-semibold text-ink">{p.name}</span>
                     {!p.enabled && <span className="text-[10.5px] uppercase text-faint border border-line2 rounded px-1.5 py-0.5">{t('patchpol.disabled')}</span>}
+                    {p.pending && <ProposalBadge />}
                   </div>
+                  {p.pending && <div className="text-[12px] text-warn mt-1">{t('patchpol.pendingHint', { who: p.proposed_by })}</div>}
                   <div className="text-[12px] text-muted mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
                     <span>{t('patchpol.autoApprove', { classes: asList(p.auto_approve).length ? asList(p.auto_approve).map((c) => tEnum('patch.class', c)).join(', ') : '—' })} {asList(p.auto_approve).length && p.auto_approve_age_days ? t('patchpol.afterDays', { n: p.auto_approve_age_days }) : ''}</span>
                     <span>{t('patchpol.window', { days: asList(p.window_days).length ? asList(p.window_days).map((d) => weekdayShort(Number(d))).join(', ') : t('patchpol.anyDay'), start: minuteToHHMM(p.window_start_min), end: minuteToHHMM(p.window_end_min) + ' ' + scheduleZone(p.timezone) })}</span>
@@ -259,6 +262,7 @@ function PoliciesTab() {
                 </div>
                 {can('patches.policies.manage') && (
                   <div className="flex gap-1.5 shrink-0">
+                    {!p.enabled && <Button size="sm" variant="primary" icon="check" onClick={() => setActivating(p)}>{t('patchpol.activate')}</Button>}
                     <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(p)}>{t('action.edit')}</Button>
                     <Button size="sm" variant="ghost" icon="trash" onClick={() => del(p)} />
                   </div>
@@ -267,7 +271,68 @@ function PoliciesTab() {
             </Card>
           ))}
       {editing && <PolicyModal policy={editing} onClose={() => setEditing(null)} />}
+      {activating && <PatchPolicyActivation policy={activating} onClose={() => setActivating(null)} />}
     </div>
+  );
+}
+
+// PatchPolicyActivation switches a patch policy on after the person read what
+// it will approve, install and reboot, and where. Sealed like a policy review:
+// a change after it was opened makes the server refuse and the review reload.
+function PatchPolicyActivation({ policy, onClose }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const clientsQ = useQuery(['clients'], () => can('clients.view') ? api.listClients() : Promise.resolve({ clients: [] }), { invalidateOn: ['org'] });
+  const sitesQ = useQuery(['sites'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
+  const devMap = useDeviceMap();
+  const [review, setReview] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try { setReview(await api.reviewPatchPolicy(policy.id)); }
+    catch (e) { setError(e.message); }
+  };
+  useEffect(() => { load(); }, [policy.id]);
+  const activate = async () => {
+    if (!review) return;
+    setBusy(true); setError('');
+    try {
+      await api.activatePatchPolicy(policy.id, review.fingerprint);
+      window.dataBus.emit('patch-pol'); toast.success(t('patchpol.activated'), policy.name); onClose();
+    } catch (e) {
+      if (e.status === 409) { setError(t('review.stale')); await load(); }
+      else setError(e.message);
+    } finally { setBusy(false); }
+  };
+  const clients = clientsQ.data?.clients || [], sites = sitesQ.data?.sites || [];
+  const scopeLabel = (a) => {
+    if (a.scope_type === 'client') return t('patchpol.clientScope', { name: clients.find((c) => c.id === a.scope_id)?.name || a.scope_id });
+    if (a.scope_type === 'site') return t('patchpol.siteScope', { name: sites.find((x) => x.id === a.scope_id)?.name || a.scope_id });
+    return devMap[a.scope_id]?.hostname || a.scope_id;
+  };
+  const p = review?.policy || policy;
+  const classes = asList(p.auto_approve);
+  return (
+    <ReviewModal open onClose={onClose} busy={busy} error={error} onConfirm={activate}
+      title={t('patchpol.activateTitle', { name: policy.name })} intro={t('patchpol.activateIntro')} confirmLabel={t('patchpol.activate')}>
+      {!review ? <Skeleton className="h-24 w-full" /> : (
+        <>
+          <ReviewSection title={t('pol.reviewScopes')}>
+            {review.assignments.length
+              ? <ul className="space-y-1">{review.assignments.map((a) => <li key={a.id} className="text-[12.5px] text-ink">{scopeLabel(a)}</li>)}</ul>
+              : <p className="text-[12.5px] text-warn">{t('pol.reviewNoScopes')}</p>}
+          </ReviewSection>
+          <ReviewSection title={t('patchpol.reviewSettings')}>
+            {p.proposed_by && <ReviewRow label={t('review.proposedByLabel')}>{p.proposed_by}</ReviewRow>}
+            <ReviewRow label={t('patchpol.autoClasses')}>{classes.length ? classes.map((c) => tEnum('patch.class', c)).join(', ') + ' ' + t('patchpol.afterDays', { n: p.auto_approve_age_days }) : '—'}</ReviewRow>
+            <ReviewRow label={t('patchpol.windowDays')}>{asList(p.window_days).length ? asList(p.window_days).map((d) => weekdayShort(Number(d))).join(', ') : t('patchpol.anyDay')}</ReviewRow>
+            <ReviewRow label={t('patchpol.windowStart')}>{minuteToHHMM(p.window_start_min)} – {minuteToHHMM(p.window_end_min)} ({p.timezone || 'UTC'})</ReviewRow>
+            <ReviewRow label={t('patchpol.rebootLabel')}>{tEnum('patchpol.reboot', p.reboot)}</ReviewRow>
+            <ReviewRow label={t('patchpol.exclusions')}>{asList(p.exclusions).length ? asList(p.exclusions).join(', ') : '—'}</ReviewRow>
+          </ReviewSection>
+        </>
+      )}
+    </ReviewModal>
   );
 }
 
@@ -306,7 +371,9 @@ function PolicyModal({ policy, onClose }) {
       <div className="p-5 space-y-4 max-h-[85vh] overflow-auto scroll-area">
         <div className="text-[15px] font-semibold text-ink">{isNew ? t('patchpol.newTitle') : t('patchpol.editTitle')}</div>
         <Field label={t('patchpol.name')}><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('patchpol.namePlaceholder')} autoFocus /></Field>
-        <label className="flex items-center gap-2 text-[13px] text-ink"><Toggle checked={enabled} onChange={setEnabled} />{t('patchpol.enabled')}</label>
+        {policy.pending
+          ? <p role="note" className="text-[12.5px] text-warn">{t('patchpol.pendingHint', { who: policy.proposed_by })}</p>
+          : <label className="flex items-center gap-2 text-[13px] text-ink"><Toggle checked={enabled} onChange={setEnabled} />{t('patchpol.enabled')}</label>}
 
         <Field label={t('patchpol.autoClasses')} hint={t('patchpol.autoClassesHint')}>
           <div className="flex flex-wrap gap-1.5">

@@ -1169,7 +1169,7 @@ func (s *Store) ResolveInapplicableCheckAlerts(ctx context.Context, now time.Tim
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := tx.Query(ctx, `UPDATE alerts al SET status='resolved', resolved_at=$1,
 		updated_at=$1, resolved_by='system', resolution_kind='orphaned',
-		resolution_note='The check is disabled, removed, unassigned, or its device is revoked.',
+		resolution_note='The check is disabled, removed, unassigned, its policy is switched off, or its device is revoked.',
 		notification_pending=false, notification_kind='', version=version+1
 		WHERE al.status<>'resolved' AND al.source_type='check' AND NOT EXISTS (
 			SELECT 1 FROM checks c
@@ -1178,10 +1178,11 @@ func (s *Store) ResolveInapplicableCheckAlerts(ctx context.Context, now time.Tim
 			WHERE c.id=al.source_id AND c.enabled AND NOT (c.type=ANY($2::text[])) AND `+serviceCheckPlatformSQL+` AND (
 				c.agent_id=a.id OR c.policy_id IN (
 					SELECT pa.policy_id FROM policy_assignments pa
-					WHERE (pa.scope_type='agent' AND pa.scope_id=a.id)
+					WHERE pa.policy_id IN `+activePoliciesSQL+` AND (
+					      (pa.scope_type='agent' AND pa.scope_id=a.id)
 					   OR (pa.scope_type='group' AND pa.scope_id=a.group_id)
 					   OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
-					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id)
+					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id))
 				)
 			)
 		)

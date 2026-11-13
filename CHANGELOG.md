@@ -28,6 +28,23 @@ tag.
   `LD_*` and similar) are reserved, and the agent refuses a variable that would
   replace one the device already defines. The Variables tab and the script
   editor search, filter and scroll, so hundreds of variables stay manageable.
+- **Policies switch on and off, and AI Chat and MCP propose them whole**
+  ([guide](docs/10-monitoring-policies.md#switching-a-policy-on-and-off)): a
+  switched-off policy applies none of its tasks, checks or alert rules anywhere,
+  and closes the alerts of its checks. `propose_policy` creates a policy with its
+  scopes, tasks and checks in one call, all switched off; `propose_patch_policy`
+  and `list_patch_policies` do the same for patch policies. A person reviews
+  everything in one dialog and activates it with one confirmation; the server
+  refuses an activation whose review went stale (the proposal changed after it
+  was opened) and one that would approve tasks or checks the caller may not
+  approve. AI-proposed tasks, checks, library scripts and script variables are
+  approved through the same kind of review. Migration 032 keeps assigned AI
+  policies applying. Activations, switch-offs and task and check approvals are
+  audited, with labels in all nine languages.
+- **Manage policies / Manage checks** now say what they include: activating and
+  deactivating policies, and switching checks on and off (approving AI-proposed
+  ones). Checks and tasks created through the API no longer accept
+  client-supplied `proposed_by` / `approved_by`.
 - **AI proposals of script variables and library scripts:** AI Chat and MCP can
   list variable names (`list_script_variables`), propose a variable definition
   (`propose_script_variable`) and propose a library script

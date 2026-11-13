@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -256,12 +258,18 @@ func (s *Server) createPatchPolicy(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	// Provenance is the server's to record, never the client's to claim.
+	p.ProposedBy, p.ApprovedBy = "", ""
 	tz, err := models.NormalizeTimezone(p.Timezone)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	p.Timezone = tz
+	if err := models.ValidatePatchPolicy(&p); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	out, err := s.store.CreatePatchPolicy(r.Context(), &p)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -288,11 +296,90 @@ func (s *Server) updatePatchPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Timezone = tz
+	if err := models.ValidatePatchPolicy(&p); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	existing, err := s.store.GetPatchPolicy(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	// An AI proposal is switched on only through its review, so the person
+	// sees the scopes and settings the click puts into effect.
+	if existing.Pending && p.Enabled {
+		writeErr(w, http.StatusConflict, "this patch policy is an AI proposal: review and activate it to switch it on")
+		return
+	}
 	if err := s.store.UpdatePatchPolicy(r.Context(), &p); err != nil {
+		if store.IsProposalUnreviewed(err) {
+			writeErr(w, http.StatusConflict, "this patch policy is an AI proposal: review and activate it to switch it on")
+			return
+		}
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.policy.update", p.ID, nil)
+	updated, err := s.store.GetPatchPolicy(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// reviewPatchPolicy returns a patch policy's settings and scopes, sealed with
+// the fingerprint its activation must send back.
+func (s *Server) reviewPatchPolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requirePatchPolicy(w, r, id, false) {
+		return
+	}
+	review, err := s.store.PatchPolicyReview(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	// As in the assignment listing: a restricted principal sees only the scopes
+	// that intersect its own, and cannot activate a global definition.
+	if uid := s.scopeUserID(r); uid != "" {
+		visible := []models.PatchPolicyAssignment{}
+		for _, a := range review.Assignments {
+			ok, err := s.store.ScopeIntersectsUser(r.Context(), uid, a.ScopeType, a.ScopeID)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if ok {
+				visible = append(visible, a)
+			}
+		}
+		review.Assignments, review.Fingerprint = visible, ""
+	}
+	writeJSON(w, http.StatusOK, review)
+}
+
+// activatePatchPolicy switches a patch policy on — approving it when AI Chat or
+// MCP proposed it — provided it still matches the review the person read.
+func (s *Server) activatePatchPolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.requirePatchPolicy(w, r, id, true) {
+		return
+	}
+	var in struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := decode(r, &in); err != nil || strings.TrimSpace(in.Fingerprint) == "" {
+		writeErr(w, http.StatusBadRequest, "fingerprint of the reviewed patch policy required")
+		return
+	}
+	p, approved, err := s.store.ActivatePatchPolicy(r.Context(), id, actorOf(r), in.Fingerprint)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"name": p.Name, "approved_proposal": approved})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.policy.activate", id, detail)
 	writeJSON(w, http.StatusOK, p)
 }
 

@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/p1ngu/rmm/internal/models"
+	"github.com/p1ngu/rmm/internal/store"
 )
 
 // Configuration tools.
@@ -88,27 +92,24 @@ func proposalResult(kind, id, name string, target string) (any, error) {
 	}, nil
 }
 
-func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
-	var in struct {
-		AgentID      string `json:"agent_id"`
-		PolicyID     string `json:"policy_id"`
-		Name         string `json:"name"`
-		Shell        string `json:"shell"`
-		Script       string `json:"script"`
-		ScheduleKind string `json:"schedule_kind"`
-		IntervalSec  int    `json:"interval_sec"`
-		RunAtMinute  int    `json:"run_at_minute"`
-		DaysOfWeek   int    `json:"days_of_week"`
-		RunAtMinutes []int  `json:"run_at_minutes"`
-		Timezone     string `json:"timezone"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, err
-	}
-	agentID, policyID, err := tc.targetOwner(ctx, in.AgentID, in.PolicyID)
-	if err != nil {
-		return nil, err
-	}
+// proposedTaskArgs is one task as AI Chat and MCP describe it, alone
+// (propose_task) or inside a policy proposal (propose_policy).
+type proposedTaskArgs struct {
+	Name         string `json:"name"`
+	Shell        string `json:"shell"`
+	Script       string `json:"script"`
+	ScheduleKind string `json:"schedule_kind"`
+	IntervalSec  int    `json:"interval_sec"`
+	RunAtMinute  int    `json:"run_at_minute"`
+	DaysOfWeek   int    `json:"days_of_week"`
+	RunAtMinutes []int  `json:"run_at_minutes"`
+	Timezone     string `json:"timezone"`
+}
+
+// task builds the proposed task, switched off and attributed, through the
+// same validation the console goes through, so a proposal cannot be a
+// definition the REST API would have rejected.
+func (in proposedTaskArgs) task(tc ToolContext) (*models.Task, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, fmt.Errorf("name is required")
 	}
@@ -119,7 +120,6 @@ func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 		return nil, fmt.Errorf("unsupported shell %q", in.Shell)
 	}
 	t := &models.Task{
-		AgentID: agentID, PolicyID: policyID,
 		Name: strings.TrimSpace(in.Name), Shell: in.Shell, Script: in.Script,
 		ScheduleKind: in.ScheduleKind, IntervalSec: in.IntervalSec,
 		RunAtMinute: in.RunAtMinute, DaysOfWeek: in.DaysOfWeek, RunAtMinutes: in.RunAtMinutes,
@@ -132,11 +132,30 @@ func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 	if t.ScheduleKind == "" {
 		t.ScheduleKind = models.ScheduleInterval
 	}
-	// The same validation the console goes through, so a proposal cannot be a
-	// definition the REST API would have rejected.
 	if err := models.ValidateSchedule(t); err != nil {
 		return nil, err
 	}
+	return t, nil
+}
+
+func proposeTask(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
+	var in struct {
+		AgentID  string `json:"agent_id"`
+		PolicyID string `json:"policy_id"`
+		proposedTaskArgs
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	agentID, policyID, err := tc.targetOwner(ctx, in.AgentID, in.PolicyID)
+	if err != nil {
+		return nil, err
+	}
+	t, err := in.proposedTaskArgs.task(tc)
+	if err != nil {
+		return nil, err
+	}
+	t.AgentID, t.PolicyID = agentID, policyID
 	out, err := tc.Store.CreateTask(ctx, t)
 	if err != nil {
 		return nil, err
@@ -155,24 +174,21 @@ var legacyCheckTypes = map[string]string{
 	"cpu_load":   models.CheckCPULoad,
 }
 
-func proposeCheck(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
-	var in struct {
-		AgentID       string          `json:"agent_id"`
-		PolicyID      string          `json:"policy_id"`
-		Type          string          `json:"type"`
-		Name          string          `json:"name"`
-		Config        json.RawMessage `json:"config"`
-		WarnThreshold *float64        `json:"warn_threshold"`
-		ErrThreshold  *float64        `json:"err_threshold"`
-		IntervalSec   int             `json:"interval_sec"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return nil, err
-	}
-	agentID, policyID, err := tc.targetOwner(ctx, in.AgentID, in.PolicyID)
-	if err != nil {
-		return nil, err
-	}
+// proposedCheckArgs is one check or server rule as AI Chat and MCP describe
+// it, alone (propose_check) or inside a policy proposal (propose_policy).
+type proposedCheckArgs struct {
+	Type          string          `json:"type"`
+	Name          string          `json:"name"`
+	Config        json.RawMessage `json:"config"`
+	WarnThreshold *float64        `json:"warn_threshold"`
+	ErrThreshold  *float64        `json:"err_threshold"`
+	IntervalSec   int             `json:"interval_sec"`
+}
+
+// check builds the proposed check, switched off and attributed, through the
+// validation the console uses. owner is the device or policy it will belong
+// to; server rule and platform checks depend on it.
+func (in proposedCheckArgs) check(tc ToolContext, agentID, policyID *string) (*models.Check, error) {
 	if canonical, ok := legacyCheckTypes[in.Type]; ok {
 		in.Type = canonical
 	}
@@ -193,6 +209,26 @@ func proposeCheck(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 	if err := models.ValidateCheck(c); err != nil {
 		return nil, err
 	}
+	return c, nil
+}
+
+func proposeCheck(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
+	var in struct {
+		AgentID  string `json:"agent_id"`
+		PolicyID string `json:"policy_id"`
+		proposedCheckArgs
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return nil, err
+	}
+	agentID, policyID, err := tc.targetOwner(ctx, in.AgentID, in.PolicyID)
+	if err != nil {
+		return nil, err
+	}
+	c, err := in.proposedCheckArgs.check(tc, agentID, policyID)
+	if err != nil {
+		return nil, err
+	}
 	out, err := tc.Store.CreateCheck(ctx, c)
 	if err != nil {
 		return nil, err
@@ -200,10 +236,74 @@ func proposeCheck(ctx context.Context, tc ToolContext, args json.RawMessage) (an
 	return proposalResult("check", out.ID, out.Name, ownerLabel(agentID, policyID))
 }
 
+// maxPolicyProposalItems bounds each list in one policy proposal, so a model
+// cannot bury the review under hundreds of rows.
+const maxPolicyProposalItems = 25
+
+// proposedScope is a client, site, department (group) or device a proposal
+// applies to.
+type proposedScope struct {
+	ScopeType string `json:"scope_type"`
+	ScopeID   string `json:"scope_id"`
+}
+
+// proposalScopes validates and de-duplicates the scopes of a proposal: each
+// must be of an allowed type and exist. Unknown ids are refused by name, so the
+// model can correct the one it got wrong.
+func proposalScopes(ctx context.Context, tc ToolContext, in []proposedScope, allowed ...string) ([]proposedScope, error) {
+	if len(in) > maxPolicyProposalItems {
+		return nil, fmt.Errorf("at most %d scopes in one proposal", maxPolicyProposalItems)
+	}
+	seen := map[string]bool{}
+	var out []proposedScope
+	for _, a := range in {
+		a.ScopeType, a.ScopeID = strings.TrimSpace(a.ScopeType), strings.TrimSpace(a.ScopeID)
+		if !slices.Contains(allowed, a.ScopeType) {
+			return nil, fmt.Errorf("scope_type must be one of %s", strings.Join(allowed, ", "))
+		}
+		canonical, err := uuidCanonical(a.ScopeID)
+		if err != nil {
+			return nil, fmt.Errorf("scope_id %q is not an id (use list_org or list_devices)", a.ScopeID)
+		}
+		// One spelling per id, so "{…}" or upper case cannot slip a duplicate past.
+		a.ScopeID = canonical
+		key := a.ScopeType + ":" + a.ScopeID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		ok, err := tc.Store.ScopeExists(ctx, a.ScopeType, a.ScopeID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("scope not found: %s %s", a.ScopeType, a.ScopeID)
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// uuidCanonical returns the one spelling of an id.
+func uuidCanonical(id string) (string, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return "", err
+	}
+	return parsed.String(), nil
+}
+
+// proposePolicy proposes a policy in one piece — where it applies, the tasks
+// and the checks it carries — all of it switched off. A person reads all of it
+// in Policies and switches it on with one activation (store.ActivatePolicy),
+// which refuses if anything changed after they opened the review.
 func proposePolicy(ctx context.Context, tc ToolContext, args json.RawMessage) (any, error) {
 	var in struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string              `json:"name"`
+		Description string              `json:"description"`
+		Assignments []proposedScope     `json:"assignments"`
+		Tasks       []proposedTaskArgs  `json:"tasks"`
+		Checks      []proposedCheckArgs `json:"checks"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return nil, err
@@ -216,11 +316,57 @@ func proposePolicy(ctx context.Context, tc ToolContext, args json.RawMessage) (a
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	out, err := tc.Store.CreatePolicy(ctx, strings.TrimSpace(in.Name), in.Description, tc.proposalActor())
+	if len(in.Tasks) > maxPolicyProposalItems || len(in.Checks) > maxPolicyProposalItems {
+		return nil, fmt.Errorf("at most %d tasks and %d checks in one proposal", maxPolicyProposalItems, maxPolicyProposalItems)
+	}
+	// The tasks and checks need the permissions propose_task and propose_check
+	// need: a policy is not a way around them.
+	if len(in.Tasks) > 0 && !tc.Permissions[models.PermTasksManage] {
+		return nil, fmt.Errorf("proposing tasks needs the tasks.manage permission")
+	}
+	if len(in.Checks) > 0 && !tc.Permissions[models.PermChecksManage] {
+		return nil, fmt.Errorf("proposing checks needs the checks.manage permission")
+	}
+	scopes, err := proposalScopes(ctx, tc, in.Assignments, models.ScopeClient, models.ScopeSite, models.ScopeGroup, models.ScopeAgent)
 	if err != nil {
 		return nil, err
 	}
-	return proposalResult("policy", out.ID, out.Name, "fleet")
+	// Everything is validated before anything is written: the proposal is one
+	// transaction, and a refusal leaves nothing half-created behind.
+	p := &store.PolicyProposal{Name: strings.TrimSpace(in.Name), Description: in.Description, ProposedBy: tc.proposalActor()}
+	for _, a := range scopes {
+		p.Assignments = append(p.Assignments, models.PolicyAssignment{ScopeType: a.ScopeType, ScopeID: a.ScopeID})
+	}
+	placeholder := "proposal"
+	for i, ta := range in.Tasks {
+		t, err := ta.task(tc)
+		if err != nil {
+			return nil, fmt.Errorf("task %d: %w", i+1, err)
+		}
+		p.Tasks = append(p.Tasks, *t)
+	}
+	for i, ca := range in.Checks {
+		c, err := ca.check(tc, nil, &placeholder)
+		if err != nil {
+			return nil, fmt.Errorf("check %d: %w", i+1, err)
+		}
+		p.Checks = append(p.Checks, *c)
+	}
+	review, err := tc.Store.CreatePolicyProposal(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"id":     review.Policy.ID,
+		"kind":   "policy",
+		"name":   review.Policy.Name,
+		"status": "awaiting_review",
+		"scopes": len(review.Assignments),
+		"tasks":  len(review.Tasks),
+		"checks": len(review.Checks),
+		"message": "PROPOSAL CREATED SWITCHED OFF, with its scopes, tasks and checks. Nothing in it applies to any " +
+			"device until a person reviews all of it in Policies and activates it. Tell the user it is waiting for their review.",
+	}, nil
 }
 
 // installPatches dispatches an install for patches a PERSON already approved.

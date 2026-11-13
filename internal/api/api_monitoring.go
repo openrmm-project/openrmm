@@ -211,6 +211,9 @@ func (s *Server) createCheck(w http.ResponseWriter, r *http.Request) {
 	if c.PolicyID != nil && !s.requirePolicy(w, r, *c.PolicyID, true) {
 		return
 	}
+	// Provenance is the server's to record: a person's check has none, and a
+	// client cannot pass one off as an approved AI proposal.
+	c.ProposedBy, c.ApprovedBy = "", ""
 	c.Enabled = enabledDefaultTrue(body)
 	applyCheckDefaults(body, &c, nil)
 	if err := models.ValidateCheck(&c); err != nil {
@@ -253,6 +256,9 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateCheck(r.Context(), &c); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if existing.ProposedBy != "" && existing.ApprovedBy == "" && c.ApprovedBy != "" {
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "check.approve", id, auditLabel("name", c.Name))
 	}
 	if (existing.Enabled && !c.Enabled) || existing.Type != c.Type {
 		s.cleanupCheckTargets(r, existing, "disabled", "Check disabled by an operator.")
@@ -416,6 +422,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t.Enabled = enabledDefaultTrue(body)
+	// Provenance is the server's to record: a person's task has none.
+	t.ProposedBy, t.ApprovedBy = "", ""
 	out, err := s.store.CreateTask(r.Context(), &t)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -467,6 +475,9 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpdateTask(r.Context(), &t); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if existing.ProposedBy != "" && existing.ApprovedBy == "" && t.ApprovedBy != "" {
+		_ = s.store.AddAudit(r.Context(), actorOf(r), "task.approve", id, auditLabel("name", t.Name))
 	}
 	out, err := s.store.GetTask(r.Context(), t.ID)
 	if err != nil {

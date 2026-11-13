@@ -381,6 +381,9 @@ function ChecksScreen({ route } = {}) {
   const [editing, setEditing] = useState(null); // check obj or 'new'
   const [detail, setDetail] = useState(null);
   const [confirmToggle, setConfirmToggle] = useState(null);
+  // An AI proposal is switched on through its review, never a bare toggle.
+  const [reviewCheck, setReviewCheck] = useState(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [showDefaults, setShowDefaults] = useState(false);
   const [focusOpened, setFocusOpened] = useState('');
   const defaultsQ = useQuery(['alert-defaults'], () => api.getAlertDefaults());
@@ -433,7 +436,7 @@ function ChecksScreen({ route } = {}) {
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[11.5px] text-faint mono">{c.warn_threshold != null ? t('checks.thresholds', { warn: c.warn_threshold, err: c.err_threshold }) : '—'}</td>
                   <td className="px-3 py-3 text-[12px] text-muted">{ct.server ? t(c.config?.mode === 'ignore' ? 'rules.ignore' : 'rules.alert') : fmtInterval(c.interval_sec)}</td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><Toggle checked={c.enabled} onChange={() => setConfirmToggle(c)} disabled={!can('checks.manage')} /></td>
+                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}><Toggle checked={c.enabled} onChange={() => (!c.enabled && awaitingReview(c) ? setReviewCheck(c) : setConfirmToggle(c))} disabled={!can('checks.manage')} /></td>
                   <td className="px-4 py-3 text-right text-[12px] text-muted">{c.summary?.total ? t('checks.latest', { ok: c.summary.passing || 0, warn: c.summary.warning || 0, fail: c.summary.failing || 0 }) + (c.summary.unknown ? ' ' + t('checks.latestUnknown', { n: c.summary.unknown }) : '') : t('checks.noState')}</td>
                 </tr>
               );
@@ -447,6 +450,12 @@ function ChecksScreen({ route } = {}) {
       <CheckDetail check={detail} onClose={() => setDetail(null)} devMap={devMap} canViewOverrides={!!defaultsQ.data?.can_manage} onEdit={(c) => { setDetail(null); setEditing(c); }} />
       {showDefaults && <AlertDefaultsEditor canEdit={!!defaultsQ.data?.can_manage} onClose={() => { setShowDefaults(false); defaultsQ.refetch(); }} />}
       {editing && <CheckEditor check={editing === 'new' ? null : editing} onClose={() => setEditing(null)} devMap={devMap} policies={policiesQ.data?.policies || []} />}
+      <ReviewModal open={!!reviewCheck} onClose={() => setReviewCheck(null)} busy={reviewBusy}
+        title={reviewCheck && t('review.checkTitle', { name: reviewCheck.name })} intro={t('review.checkIntro')}
+        confirmLabel={t('review.approve')}
+        onConfirm={async () => { setReviewBusy(true); try { await toggle(reviewCheck); setReviewCheck(null); } finally { setReviewBusy(false); } }}>
+        {reviewCheck && <CheckReview check={reviewCheck} target={devMap[reviewCheck.agent_id]?.hostname || polMap[reviewCheck.policy_id]?.name} />}
+      </ReviewModal>
       <ConfirmDialog open={!!confirmToggle} onClose={() => setConfirmToggle(null)} onConfirm={() => toggle(confirmToggle)}
         title={confirmToggle?.enabled ? t('checks.disableTitle') : t('checks.enableTitle')}
         confirmLabel={confirmToggle?.enabled ? t('action.disable') : t('action.enable')} danger={!!confirmToggle?.enabled}
@@ -609,6 +618,83 @@ function ProposalBadge() {
   );
 }
 
+// ReviewModal is the confirmation an AI proposal goes through before it takes
+// effect: what it does is on screen, and nothing changes until the person
+// confirms. Policies, patch policies, tasks, checks, library scripts and script
+// variables all use it, so every review reads the same way. error shows why the
+// confirmation was refused (for a policy, that it changed under the review).
+function ReviewModal({ open, title, intro, children, confirmLabel, onConfirm, onClose, busy, error }) {
+  if (!open) return null;
+  return (
+    <Modal open onClose={busy ? () => {} : onClose} width="max-w-2xl">
+      <div role="dialog" aria-label={title} className="p-5 flex flex-col gap-4 max-h-[85vh]">
+        <div className="flex items-start gap-3">
+          <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 bg-brandsoft text-brandhi"><Icon name="shield" size={18} /></div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[15px] font-semibold text-ink break-words">{title}</div>
+            {intro && <div className="text-[13px] text-muted mt-1 leading-relaxed">{intro}</div>}
+          </div>
+        </div>
+        <div className="overflow-y-auto scroll-area space-y-4 min-h-0 pr-1">{children}</div>
+        {error && <div role="alert" className="rounded-xl border border-bad/30 bg-badsoft p-3 text-[12.5px] text-bad">{error}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('action.cancel')}</Button>
+          <Button variant="primary" icon="check" loading={busy} onClick={onConfirm}>{confirmLabel}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ReviewSection({ title, children }) {
+  return (
+    <section>
+      <div className="text-[11px] uppercase tracking-wide text-faint font-semibold mb-1.5">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function ReviewRow({ label, children }) {
+  return (
+    <div className="flex gap-3 text-[12.5px] py-1">
+      <div className="w-36 shrink-0 text-faint">{label}</div>
+      <div className="flex-1 min-w-0 text-ink break-words">{children}</div>
+    </div>
+  );
+}
+
+// TaskReview shows what approving a task switches on: where and when it runs,
+// and the script itself, in full.
+function TaskReview({ task, target, scriptName }) {
+  return (
+    <div className="space-y-2">
+      <ReviewRow label={t('review.target')}>{target || '—'}</ReviewRow>
+      <ReviewRow label={t('review.schedule')}>{taskSchedule(task)}</ReviewRow>
+      {task.proposed_by && <ReviewRow label={t('review.proposedByLabel')}>{task.proposed_by}</ReviewRow>}
+      {task.script_id
+        ? <ReviewRow label={t('review.script')}>{t('review.libraryScript', { name: scriptName || task.script_id })}</ReviewRow>
+        : <CodeBlock code={task.script || ''} shell={task.shell} maxHeight={260} label={task.shell} />}
+    </div>
+  );
+}
+
+// CheckReview shows what approving a check or server rule switches on.
+function CheckReview({ check, target }) {
+  const ct = checkType(check.type);
+  const config = check.config && Object.keys(check.config).length ? JSON.stringify(check.config, null, 2) : '';
+  return (
+    <div className="space-y-2">
+      <ReviewRow label={t('review.type')}>{ct.label}</ReviewRow>
+      <ReviewRow label={t('review.target')}>{target || '—'}</ReviewRow>
+      {check.proposed_by && <ReviewRow label={t('review.proposedByLabel')}>{check.proposed_by}</ReviewRow>}
+      {check.warn_threshold != null && <ReviewRow label={t('review.thresholds')}>{t('checks.thresholds', { warn: check.warn_threshold, err: check.err_threshold })}</ReviewRow>}
+      {!ct.server && <ReviewRow label={t('review.interval')}>{fmtInterval(check.interval_sec)}</ReviewRow>}
+      {config && <CodeBlock code={config} shell="json" maxHeight={200} label={t('review.config')} />}
+    </div>
+  );
+}
+
 function TasksScreen() {
   const { can } = useAuth();
   const toast = useToast();
@@ -618,6 +704,9 @@ function TasksScreen() {
   const scriptsQ = useQuery(['scripts-t'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const [editing, setEditing] = useState(null);
   const [confirmToggleTask, setConfirmToggleTask] = useState(null);
+  // An AI proposal is switched on through its review, never a bare toggle.
+  const [reviewTask, setReviewTask] = useState(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const tasks = tasksQ.data?.tasks || [];
   const polMap = {}; (policiesQ.data?.policies || []).forEach((p) => polMap[p.id] = p);
   const scriptMap = {}; (scriptsQ.data?.scripts || []).forEach((s) => scriptMap[s.id] = s);
@@ -662,7 +751,7 @@ function TasksScreen() {
                   <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{dev ? <span className="flex items-center gap-1.5"><OsIcon os={dev.os} size={13} />{dev.hostname}</span> : pol ? <span className="flex items-center gap-1.5 text-brandhi"><Icon name="policy" size={13} />{pol.name}</span> : '—'}</td>
                   <td className="px-3 py-3 text-[12.5px] text-muted flex items-center gap-1.5"><Icon name="clock" size={13} className="text-faint" />{taskSchedule(task)}</td>
                   <td className="px-3 py-3 hidden lg:table-cell text-[12px] text-faint">{sc?.name || t('tasks.inline')}</td>
-                  <td className="px-3 py-3"><Toggle checked={task.enabled} onChange={() => setConfirmToggleTask(task)} disabled={!can('tasks.manage')} /></td>
+                  <td className="px-3 py-3"><Toggle checked={task.enabled} onChange={() => (!task.enabled && awaitingReview(task) ? setReviewTask(task) : setConfirmToggleTask(task))} disabled={!can('tasks.manage')} /></td>
                   <td className="px-4 py-3 text-right">{can('tasks.manage') && <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" icon="play" onClick={() => askRun(task)}>{t('action.runNow')}</Button><Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(task)}>{t('action.edit')}</Button></div>}</td>
                 </tr>
               );
@@ -672,6 +761,12 @@ function TasksScreen() {
         {!tasksQ.loading && tasks.length === 0 && <EmptyState icon="tasks" title={t('tasks.none')} msg={t('tasks.noneMsg')} />}
       </Card>
       {editing && <TaskEditor task={editing === 'new' ? null : editing} onClose={() => setEditing(null)} devMap={devMap} policies={policiesQ.data?.policies || []} scripts={scriptsQ.data?.scripts || []} />}
+      <ReviewModal open={!!reviewTask} onClose={() => setReviewTask(null)} busy={reviewBusy}
+        title={reviewTask && t('review.taskTitle', { name: reviewTask.name })} intro={t('review.taskIntro')}
+        confirmLabel={t('review.approve')}
+        onConfirm={async () => { setReviewBusy(true); try { await toggle(reviewTask); setReviewTask(null); } finally { setReviewBusy(false); } }}>
+        {reviewTask && <TaskReview task={reviewTask} target={devMap[reviewTask.agent_id]?.hostname || polMap[reviewTask.policy_id]?.name} scriptName={scriptMap[reviewTask.script_id]?.name} />}
+      </ReviewModal>
       <ConfirmDialog open={!!confirmToggleTask} onClose={() => setConfirmToggleTask(null)} onConfirm={() => toggle(confirmToggleTask)}
         title={confirmToggleTask?.enabled ? t('tasks.disableTitle') : t('tasks.enableTitle')}
         confirmLabel={confirmToggleTask?.enabled ? t('action.disable') : t('action.enable')} danger={!!confirmToggleTask?.enabled}
@@ -785,6 +880,11 @@ window.TasksScreen = TasksScreen;
 // is wrapped in its own block scope by the build).
 window.awaitingReview = awaitingReview;
 window.ProposalBadge = ProposalBadge;
+window.ReviewModal = ReviewModal;
+window.ReviewSection = ReviewSection;
+window.ReviewRow = ReviewRow;
+window.TaskReview = TaskReview;
+window.CheckReview = CheckReview;
 window.CHECK_TYPES = CHECK_TYPES;
 window.checkType = checkType;
 window.SEV = SEV;

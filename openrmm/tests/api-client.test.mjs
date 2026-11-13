@@ -141,7 +141,9 @@ test('the task toggle keeps the complete task when changing enabled state', asyn
   assert.match(screens,
     /api\.updateTask\(task\.id,\s*\{\s*\.\.\.task,\s*enabled:\s*!task\.enabled\s*\}\)/);
   assert.match(screens, /const \[confirmToggleTask, setConfirmToggleTask\] = useState\(null\)/);
-  assert.match(screens, /onChange=\{\(\) => setConfirmToggleTask\(task\)\}/);
+  // A person's task toggles through the confirmation; an AI proposal that is
+  // still off is switched on only through its review (TaskReview).
+  assert.match(screens, /onChange=\{\(\) => \(!task\.enabled && awaitingReview\(task\) \? setReviewTask\(task\) : setConfirmToggleTask\(task\)\)\}/);
   assert.match(screens, /title=\{confirmToggleTask\?\.enabled \? t\('tasks\.disableTitle'\) : t\('tasks\.enableTitle'\)\}/);
   assert.match(screens, /onConfirm=\{\(\) => toggle\(confirmToggleTask\)\}/);
 });

@@ -22,7 +22,7 @@ function harness(code, component, props, permissions = null) {
     useQuery: (key) => ({ data: key[0] === 'script-variables' ? { variables } : {}, loading: false }),
     t: (key, vars) => (vars ? key + ' ' + JSON.stringify(vars) : key), cx: (...v) => v.filter(Boolean).join(' '), timeAgo: (v) => v,
     api: new Proxy({}, { get: (_, name) => async (...args) => { calls.push([name, ...args]); } }),
-    ...Object.fromEntries(['Card', 'Modal', 'Drawer', 'Field', 'Input', 'Button', 'Select', 'Combobox', 'ConfirmDialog', 'Icon', 'CodeEditor', 'CodeBlock', 'ScriptParamsEditor', 'AIReleasePanel', 'RunOnDevice', 'ScriptVariableDefinition', 'ScriptVariableValueEditor'].map((n) => [n, n])),
+    ...Object.fromEntries(['Card', 'Modal', 'Drawer', 'Field', 'Input', 'Button', 'Select', 'Combobox', 'ConfirmDialog', 'Icon', 'CodeEditor', 'CodeBlock', 'ScriptParamsEditor', 'AIReleasePanel', 'RunOnDevice', 'ScriptVariableDefinition', 'ScriptVariableValueEditor', 'ReviewModal', 'ReviewRow', 'ReviewSection'].map((n) => [n, n])),
   };
   vm.createContext(sandbox); vm.runInContext(transformSync(code, { loader: 'jsx' }).code, sandbox);
   const render = () => { cursor = 0; tree = sandbox[component](props); return tree; };
@@ -43,7 +43,13 @@ test('a proposed variable shows its review state, approves, and takes no value b
   assert.equal(button(ui, 'vars.setValue').length, 0);
   rows()[1].props.onClick(); ui.render();
   assert.equal(button(ui, 'vars.setValue').length, 1, 'an approved variable still takes values');
-  await button(ui, 'proposal.approve')[0].props.onClick();
+  // Approve opens the review; nothing is approved until it is confirmed.
+  await button(ui, 'proposal.approve')[0].props.onClick(); ui.render();
+  assert.deepEqual(ui.calls, []);
+  const review = ui.find((n) => n.type === 'ReviewModal' && n.props.open)[0];
+  assert.ok(review, 'the review opens');
+  assert.ok(JSON.stringify(review).includes('mcp:claude'), 'the review names who proposed it');
+  await review.props.onConfirm();
   assert.deepEqual(ui.calls, [['approveScriptVariable', 'v1']]);
   // The review filter.
   ui.find((n) => n.type === 'Select' && n.props['aria-label'] === 'vars.filter')[0].props.onChange({ target: { value: 'pending' } }); ui.render();
@@ -63,7 +69,12 @@ test('a proposed library script is approved from the editor and cannot run or be
   assert.equal(button(pending, 'script.runOnDevice').length, 0);
   assert.equal(pending.find((n) => n.type === 'AIReleasePanel').length, 0);
   assert.ok(pending.find((n) => n.props?.role === 'note').length === 1 && pending.text().includes('script.pendingHint'));
-  await button(pending, 'proposal.approve')[0].props.onClick();
+  // Approve opens the review with the stored script; only confirming approves.
+  await button(pending, 'proposal.approve')[0].props.onClick(); pending.render();
+  assert.deepEqual(pending.calls, []);
+  const review = pending.find((n) => n.type === 'ReviewModal' && n.props.open)[0];
+  assert.ok(review && JSON.stringify(review).includes('echo hi'), 'the review shows the script as it will run');
+  await review.props.onConfirm();
   assert.deepEqual(pending.calls, [['approveScript', 's9']]);
   const approved = harness(code, 'ScriptEditor', { script: { id: 's8', name: 'Reviewed', shell: 'bash', body: 'echo hi', variables: [], pending: false }, onClose() {} });
   assert.equal(button(approved, 'proposal.approve').length, 0);

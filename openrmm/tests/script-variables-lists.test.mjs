@@ -23,7 +23,7 @@ function harness(code, component, props, { can = () => true } = {}) {
     useQuery: (key) => ({ data: key[0] === 'script-variables' ? { variables: many } : {}, loading: false }),
     t: (key, vars) => (vars ? key + ' ' + JSON.stringify(vars) : key), cx: (...v) => v.filter(Boolean).join(' '), timeAgo: (v) => v,
     api: {},
-    ...Object.fromEntries(['Card', 'Modal', 'Drawer', 'Field', 'Input', 'Button', 'Select', 'Combobox', 'ConfirmDialog', 'Icon', 'CodeEditor', 'CodeBlock', 'ScriptParamsEditor', 'AIReleasePanel', 'RunOnDevice', 'ScriptVariableDefinition', 'ScriptVariableValueEditor'].map((n) => [n, n])),
+    ...Object.fromEntries(['Card', 'Modal', 'Drawer', 'Field', 'Input', 'Button', 'Select', 'Combobox', 'ConfirmDialog', 'Icon', 'CodeEditor', 'CodeBlock', 'ScriptParamsEditor', 'AIReleasePanel', 'RunOnDevice', 'ScriptVariableDefinition', 'ScriptVariableValueEditor', 'ReviewModal', 'ReviewRow', 'ReviewSection'].map((n) => [n, n])),
   };
   vm.createContext(sandbox); vm.runInContext(transformSync(code, { loader: 'jsx' }).code, sandbox);
   const render = () => { cursor = 0; tree = sandbox[component](props); return tree; };

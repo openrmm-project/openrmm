@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/p1ngu/rmm/internal/models"
@@ -31,10 +32,31 @@ func agentScopeClause(scopeType, scopeID string, n int) (string, []any) {
 	}
 }
 
+// decisionStatusSQL is the agent_patches status the recorded decisions call for
+// on one device ($1 agent id) for one patch ($2 patch id): 'approved' or
+// 'excluded' from the most specific of the device, site, client and global
+// decisions, or 'missing' when there is none. A decision is recorded once, but
+// devices keep reporting the patch after it: one that reports it for the first
+// time, or again after an install, has to land in the state the decision set,
+// not back in 'missing' as if nobody had decided.
+const decisionStatusSQL = `COALESCE((
+	SELECT CASE pa.decision WHEN 'decline' THEN 'excluded' ELSE 'approved' END
+	FROM patch_approvals pa
+	LEFT JOIN agents da ON da.id = $1
+	LEFT JOIN sites ds ON ds.id = da.site_id
+	WHERE pa.patch_id = $2 AND (
+	  pa.scope_type = ''
+	  OR (pa.scope_type = 'agent'  AND lower(pa.scope_id) = da.id::text)
+	  OR (pa.scope_type = 'site'   AND lower(pa.scope_id) = da.site_id::text)
+	  OR (pa.scope_type = 'client' AND lower(pa.scope_id) = ds.client_id::text))
+	ORDER BY CASE pa.scope_type WHEN 'agent' THEN 0 WHEN 'site' THEN 1 WHEN 'client' THEN 2 ELSE 3 END
+	LIMIT 1), 'missing')`
+
 // UpsertPatchReport stores an agent's current set of missing patches: it upserts
-// the catalog, marks reported patches as still-missing (preserving approved/
-// excluded state), and clears patches no longer reported (treated as resolved/
-// installed). It also stamps last_patch_scan.
+// the catalog, puts each newly reported patch in the state its recorded decision
+// calls for (approved, excluded, or missing when undecided), keeps the approved/
+// excluded/failed state of patches already known, and clears patches no longer
+// reported (treated as resolved/installed). It also stamps last_patch_scan.
 func (s *Store) UpsertPatchReport(ctx context.Context, agentID string, rep *protocol.PatchReportMsg) error {
 	if rep.Error != "" {
 		// A failed scan is not an empty scan. Preserve the last trusted snapshot.
@@ -63,12 +85,15 @@ func (s *Store) UpsertPatchReport(ctx context.Context, agentID string, rep *prot
 		}
 		seen = append(seen, patchID)
 		// Upsert agent_patches without clobbering an approval/exclusion decision.
+		// A patch still reported after an install, and one left 'missing' by a
+		// server from before decisions applied to late reporters, go back to
+		// what the decision says.
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO agent_patches (agent_id, patch_id, status, available_version, detected_at)
-			VALUES ($1,$2,'missing',$3, now())
+			VALUES ($1,$2,`+decisionStatusSQL+`,$3, now())
 			ON CONFLICT (agent_id, patch_id) DO UPDATE SET
 			    available_version=EXCLUDED.available_version,
-			    status = CASE WHEN agent_patches.status IN ('installed','installing') THEN 'missing'
+			    status = CASE WHEN agent_patches.status IN ('missing','installed','installing') THEN EXCLUDED.status
 			                  ELSE agent_patches.status END,
 			    detected_at = now(), error=''`,
 			agentID, patchID, p.Version); err != nil {
@@ -139,11 +164,80 @@ func (s *Store) ListAgentPatches(ctx context.Context, agentID string) ([]models.
 	return out, rows.Err()
 }
 
-// PatchCatalogRow is a catalog entry with how many in-scope devices are missing it.
+// PatchCatalogRow is a catalog entry with how many in-scope devices are in each
+// state for it, and the approval those states add up to.
 type PatchCatalogRow struct {
 	models.Patch
-	MissingCount  int `json:"missing_count"`
-	ApprovedCount int `json:"approved_count"`
+	// MissingCount is every device that still needs the patch and was not
+	// declined: pending, approved, installing or failed.
+	MissingCount int `json:"missing_count"`
+	// ApprovedCount is the devices where it is approved and waiting to install.
+	ApprovedCount   int `json:"approved_count"`
+	PendingCount    int `json:"pending_count"` // reported, nobody has decided
+	InstallingCount int `json:"installing_count"`
+	FailedCount     int `json:"failed_count"`
+	InstalledCount  int `json:"installed_count"`
+	DeclinedCount   int `json:"declined_count"` // declined (excluded) on the device
+	// Approval is one of the PatchApproval* values.
+	Approval string `json:"approval"`
+}
+
+// What the devices of a catalog row add up to. Approved covers the devices
+// where the patch is approved whatever the install did since (waiting,
+// installing, failed, installed): the decision stands, and it was what used to
+// vanish from the screen the moment an install was claimed.
+const (
+	PatchApprovalPending  = "pending"  // no device has a decision
+	PatchApprovalApproved = "approved" // approved everywhere it is reported
+	PatchApprovalDeclined = "declined" // declined everywhere it is reported
+	PatchApprovalPartial  = "partial"  // a mix: some undecided, or approved here and declined there
+)
+
+func (r PatchCatalogRow) approvedTotal() int {
+	return r.ApprovedCount + r.InstallingCount + r.FailedCount + r.InstalledCount
+}
+
+// catalogApproval derives the row's approval from its device counts.
+func catalogApproval(r PatchCatalogRow) string {
+	approved := r.approvedTotal()
+	switch {
+	case r.PendingCount > 0 && approved == 0 && r.DeclinedCount == 0:
+		return PatchApprovalPending
+	case r.PendingCount > 0 || (approved > 0 && r.DeclinedCount > 0):
+		return PatchApprovalPartial
+	case approved > 0:
+		return PatchApprovalApproved
+	case r.DeclinedCount > 0:
+		return PatchApprovalDeclined
+	default:
+		return PatchApprovalPending
+	}
+}
+
+// ValidPatchApprovalFilter reports whether f is a catalog filter PatchCatalog
+// understands ("" lists everything).
+func ValidPatchApprovalFilter(f string) bool {
+	switch f {
+	case "", PatchApprovalPending, PatchApprovalApproved, PatchApprovalDeclined:
+		return true
+	}
+	return false
+}
+
+// matchesApprovalFilter keeps a row in a filtered catalog when at least one of
+// its devices is in that state, so a patch approved for one client and
+// declined for another is listed under both.
+func matchesApprovalFilter(r PatchCatalogRow, f string) bool {
+	switch f {
+	case PatchApprovalPending:
+		return r.PendingCount > 0
+	case PatchApprovalApproved:
+		return r.approvedTotal() > 0
+	case PatchApprovalDeclined:
+		return r.DeclinedCount > 0
+	default:
+		return true
+	}
 }
 
 // PatchAllowedForUser reports whether a patch exists on any visible device.
@@ -167,14 +261,23 @@ func (s *Store) PatchAllowedForUser(ctx context.Context, userID, patchID string)
 }
 
 // PatchCatalog lists distinct patches with per-state device counts, filtered to
-// the caller's scope (reuses ReportFilter).
-func (s *Store) PatchCatalog(ctx context.Context, f ReportFilter) ([]PatchCatalogRow, error) {
+// the caller's scope (reuses ReportFilter) and, unless approval is "", to the
+// patches with at least one device in that approval state.
+func (s *Store) PatchCatalog(ctx context.Context, f ReportFilter, approval string) ([]PatchCatalogRow, error) {
+	if !ValidPatchApprovalFilter(approval) {
+		return nil, fmt.Errorf("invalid approval filter %q", approval)
+	}
 	where, args := f.where()
 	q := `
 		SELECT p.id, p.os, p.identifier, p.title, p.classification, p.kb, p.cves,
 		       p.reboot_required, p.first_seen, p.last_seen,
 		       COUNT(*) FILTER (WHERE ap.status IN ('missing','approved','installing','failed')),
-		       COUNT(*) FILTER (WHERE ap.status = 'approved')
+		       COUNT(*) FILTER (WHERE ap.status = 'approved'),
+		       COUNT(*) FILTER (WHERE ap.status = 'missing'),
+		       COUNT(*) FILTER (WHERE ap.status = 'installing'),
+		       COUNT(*) FILTER (WHERE ap.status = 'failed'),
+		       COUNT(*) FILTER (WHERE ap.status = 'installed'),
+		       COUNT(*) FILTER (WHERE ap.status = 'excluded')
 		FROM patches p
 		JOIN agent_patches ap ON ap.patch_id = p.id
 		JOIN agents a ON a.id = ap.agent_id` + reportJoins + where + `
@@ -189,21 +292,64 @@ func (s *Store) PatchCatalog(ctx context.Context, f ReportFilter) ([]PatchCatalo
 	for rows.Next() {
 		var r PatchCatalogRow
 		if err := rows.Scan(&r.ID, &r.OS, &r.Identifier, &r.Title, &r.Classification, &r.KB,
-			&r.CVEs, &r.RebootRequired, &r.FirstSeen, &r.LastSeen, &r.MissingCount, &r.ApprovedCount); err != nil {
+			&r.CVEs, &r.RebootRequired, &r.FirstSeen, &r.LastSeen, &r.MissingCount, &r.ApprovedCount,
+			&r.PendingCount, &r.InstallingCount, &r.FailedCount, &r.InstalledCount, &r.DeclinedCount); err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		r.Approval = catalogApproval(r)
+		if matchesApprovalFilter(r, approval) {
+			out = append(out, r)
+		}
 	}
 	return out, rows.Err()
 }
 
+// narrowerDecisionsClause selects the decisions for a patch ($1) recorded at a
+// scope inside the given one: every scoped decision under the global scope, the
+// sites and devices of a client, the devices of a site ($2 is the client's or
+// site's id). It also says whether $2 is used; a device has nothing narrower.
+func narrowerDecisionsClause(scopeType string) (clause string, usesScopeID, ok bool) {
+	switch scopeType {
+	case "":
+		return "scope_type <> ''", false, true
+	case "client":
+		return `((scope_type = 'site' AND lower(scope_id) IN (SELECT id::text FROM sites WHERE client_id = $2::uuid))
+		  OR (scope_type = 'agent' AND lower(scope_id) IN (SELECT a.id::text FROM agents a JOIN sites s ON s.id = a.site_id WHERE s.client_id = $2::uuid)))`, true, true
+	case "site":
+		return `(scope_type = 'agent' AND lower(scope_id) IN (SELECT id::text FROM agents WHERE site_id = $2::uuid))`, true, true
+	default:
+		return "", false, false
+	}
+}
+
 // SetApproval records an approve/decline for a patch within a scope and moves the
-// matching agent_patches rows to approved/excluded (never touching in-flight or
-// installed rows).
-func (s *Store) SetApproval(ctx context.Context, patchID, scopeType, scopeID, decision, source, actor string) error {
+// matching agent_patches rows to approved/excluded, failed ones included so that
+// approving again retries them (never touching in-flight or installed rows). It
+// returns how many devices changed state.
+//
+// The newest decision governs its whole scope: narrower decisions inside it are
+// replaced, the same way its rows are. Devices that report the patch later take
+// the most specific decision left (see decisionStatusSQL), so without this a
+// fleet-wide approval would show approved now and flip back to a site's older
+// decline on that site's next scan.
+func (s *Store) SetApproval(ctx context.Context, patchID, scopeType, scopeID, decision, source, actor string) (int, error) {
+	switch scopeType {
+	case "", "client", "site", "agent":
+	default:
+		// agentScopeClause reads anything else as the whole fleet.
+		return 0, fmt.Errorf("invalid scope_type %q", scopeType)
+	}
+	if scopeType != "" {
+		// Stored as text: keep the canonical form decisionStatusSQL compares.
+		u, err := uuid.Parse(scopeID)
+		if err != nil {
+			return 0, fmt.Errorf("invalid scope_id: %w", err)
+		}
+		scopeID = u.String()
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
@@ -212,7 +358,16 @@ func (s *Store) SetApproval(ctx context.Context, patchID, scopeType, scopeID, de
 		ON CONFLICT (patch_id, scope_type, scope_id) DO UPDATE SET
 		    decision=EXCLUDED.decision, source=EXCLUDED.source, actor=EXCLUDED.actor, created_at=now()`,
 		newID(), patchID, scopeType, scopeID, decision, source, actor); err != nil {
-		return err
+		return 0, err
+	}
+	if clause, usesScopeID, ok := narrowerDecisionsClause(scopeType); ok {
+		args := []any{patchID}
+		if usesScopeID {
+			args = append(args, scopeID)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM patch_approvals WHERE patch_id = $1 AND `+clause, args...); err != nil {
+			return 0, err
+		}
 	}
 	newStatus := models.PatchStatusApproved
 	if decision == "decline" {
@@ -220,12 +375,14 @@ func (s *Store) SetApproval(ctx context.Context, patchID, scopeType, scopeID, de
 	}
 	clause, sargs := agentScopeClause(scopeType, scopeID, 2)
 	args := append([]any{patchID}, sargs...)
-	if _, err := tx.Exec(ctx, `UPDATE agent_patches SET status=$`+itoa(len(args)+1)+`
-		WHERE patch_id=$1 AND status IN ('missing','approved','excluded') AND `+clause,
-		append(args, newStatus)...); err != nil {
-		return err
+	tag, err := tx.Exec(ctx, `UPDATE agent_patches SET status=$`+itoa(len(args)+1)+`, error=''
+		WHERE patch_id=$1 AND status IN ('missing','approved','excluded','failed')
+		AND status <> $`+itoa(len(args)+1)+` AND `+clause,
+		append(args, newStatus)...)
+	if err != nil {
+		return 0, err
 	}
-	return tx.Commit(ctx)
+	return int(tag.RowsAffected()), tx.Commit(ctx)
 }
 
 func itoa(n int) string { return fmt.Sprintf("%d", n) }

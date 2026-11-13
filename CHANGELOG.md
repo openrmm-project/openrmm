@@ -6,10 +6,39 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Approved and declined patch lists:** the Patches ▸ Catalog tab lists All,
+  Pending, Approved or Declined patches, with each patch's approval and where
+  its devices are (waiting, installing, failed, installed, declined).
+  `GET /api/patches` returns the same counts and accepts
+  `?approval=pending|approved|declined`.
+- **Department column** in the Devices list.
+
 ### Changed
 
 - **Remote access settings open on Default provider**, now the first tab, before
   Native, MeshCentral and RustDesk.
+
+### Fixed
+
+- **An approved patch showed as unapproved again.** The catalog counted only
+  devices still waiting to install, so a patch read as unapproved as soon as an
+  install was claimed or failed. Devices that reported the patch after the
+  decision, or again after an install, went back to pending instead of taking
+  the decision. Approving again did nothing to failed installs; it now retries
+  them. A newer decision replaces narrower ones in its scope, so later scans
+  keep what the screen showed.
+- **Audit log columns.** One long value, such as a bare UUID or a JSON detail,
+  widened its column until the table spilled out of the card and cut off the
+  columns on the right. Cells sat at different heights in the same row. The
+  columns now have fixed widths, long values wrap inside their column, rows are
+  vertically centred, and a narrow window scrolls the table. The Detail column
+  no longer repeats what the Target column shows; the CSV export is unchanged.
+- **Patch approvals and declines name the patch** in the audit log instead of
+  showing its id.
+- **Untranslated audit actions:** patch declines, alert silencing and every
+  guest-access action now have labels in all nine languages.
 
 ## [0.10.0] - 2026-11-10
 

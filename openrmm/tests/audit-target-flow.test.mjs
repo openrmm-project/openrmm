@@ -8,6 +8,9 @@ const source = await readFile(new URL('../src/screens-jobs.jsx', import.meta.url
 const code = source.slice(source.indexOf('function AuditScreen('), source.indexOf('window.JobsScreen ='));
 const uiSource = await readFile(new URL('../src/ui.jsx', import.meta.url), 'utf8');
 const csvCode = uiSource.slice(uiSource.indexOf('const CSV_FORMULA_PREFIX'), uiSource.indexOf('// downloadText saves'));
+// The detail column's text comes from labels.jsx; run the real one.
+const labelsSource = await readFile(new URL('../src/labels.jsx', import.meta.url), 'utf8');
+const detailCode = labelsSource.slice(labelsSource.indexOf('function auditDetailText('), labelsSource.indexOf('// Short weekday name'));
 const id = '47e4ba8d-56e9-41cf-91bb-daa70e9371eb';
 function render(entries) {
   const downloads = [];
@@ -25,7 +28,7 @@ function render(entries) {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(csvCode + transformSync(code, { loader: 'jsx' }).code, sandbox);
+  vm.runInContext(csvCode + detailCode + transformSync(code, { loader: 'jsx' }).code, sandbox);
   const tree = sandbox.AuditScreen();
   const find = (n, fn, out = []) => {
     if (!n || typeof n !== 'object') return out;

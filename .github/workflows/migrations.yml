@@ -1,7 +1,7 @@
 name: Database migrations
 
 env:
-  GO_VERSION: '1.26.10'
+  GO_VERSION: '1.26.11'
 
 # The database tests, and the coverage of every Go package with them in.
 #

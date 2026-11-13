@@ -386,7 +386,8 @@ must be recovered separately with the database backup.
 `patches` is the fleet catalog keyed by `(os, identifier)`.
 `agent_patches` tracks each device's missing/approved/installing/installed/failed/
 excluded state. `patch_approvals` stores the latest global/client/site/agent
-approve-or-decline decision. `patch_policies` stores auto-approval, exclusions,
+approve-or-decline decision; a device reporting a patch takes the most specific
+one covering it, and a new decision replaces the narrower ones inside its scope. `patch_policies` stores auto-approval, exclusions,
 maintenance windows (with the IANA `timezone` their days and minutes are in,
 default `UTC`, migration 025) and reboot behavior;
 `patch_policy_assignments` attaches definitions to client/site/agent scopes.

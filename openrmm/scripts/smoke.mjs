@@ -40,6 +40,14 @@ const aiPatchPolicy = { id: 'patch-ai', name: 'AI weekend', enabled: false, pend
 const aiTask = { id: 'task-ai', agent_id: 'dev-1', name: 'AI cleanup task', shell: 'bash', script: 'find /var/tmp -mtime +30 -delete', schedule_kind: 'interval',
   interval_sec: 3600, run_at_minute: 0, days_of_week: 0, run_at_minutes: [], timezone: 'UTC', enabled: false, proposed_by: 'mcp:claude' };
 
+// Policy targeting (RFC #258): the device's role, and the assistant policy's
+// assignments and exceptions as the console changes them.
+const smokeRole = { os_role: '', role_override: '' };
+const smokeDevice = () => ({ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [],
+  last_seen: '2026-01-01T00:00:00Z', ...smokeRole, role: smokeRole.role_override || smokeRole.os_role });
+const policyAssignments = [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1', os: '', role: '' }];
+const policyExclusions = [];
+
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
   remote: { default: 'native', providers: ['native', 'meshcentral', 'rustdesk'], meshcentral_enabled: true, meshcentral_url: 'https://mesh.example.invalid', meshcentral_user: 'admin', meshcentral_token_set: true, meshcentral_shared_account: true, meshcentral_match_hostname: false, rustdesk_enabled: false, guest_access: false },
@@ -92,6 +100,20 @@ const server = createServer(async (req, res) => {
       if (pathname === '/api/scripts/script-e2e' && req.method === 'PUT') {
         Object.assign(libraryScripts[0], payload); return json(res, 200, libraryScripts[0]);
       }
+      if (pathname === '/api/devices/dev-1' && req.method === 'GET') return json(res, 200, smokeDevice());
+      if (pathname === '/api/devices/dev-1/role' && req.method === 'PUT') {
+        if (!['', 'workstation', 'server'].includes(payload?.role)) return json(res, 400, { error: 'invalid role' });
+        smokeRole.role_override = payload.role;
+        return json(res, 200, smokeDevice());
+      }
+      if (pathname === '/api/policies/pol-ai/exclusions') {
+        if (req.method === 'POST') policyExclusions.push({ agent_id: payload.agent_id, hostname: 'SMOKE-PC', created_by: user.id, created_at: '2026-11-12T00:00:00Z' });
+        return json(res, req.method === 'POST' ? 201 : 200, { exclusions: policyExclusions });
+      }
+      if (pathname === '/api/policies/pol-ai/exclusions/dev-1' && req.method === 'DELETE') {
+        policyExclusions.splice(policyExclusions.findIndex((e) => e.agent_id === 'dev-1'), 1);
+        return json(res, 200, { exclusions: policyExclusions });
+      }
       if (pathname === '/api/devices/dev-1/run-script' && req.method === 'POST') return json(res, 201, { id: 'variable-job-e2e', status: 'awaiting_approval', requires_approval: true });
       if (pathname === '/api/checks') {
         if (req.method === 'POST') {
@@ -102,7 +124,14 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { checks: [...ruleChecks, ...extraChecks] });
       }
       if (pathname === '/api/policies') return json(res, 200, { policies: [aiPolicy] });
-      if (pathname === '/api/policies/pol-ai/assignments') return json(res, 200, { assignments: [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
+      if (pathname === '/api/policies/pol-ai/assignments') {
+        if (req.method === 'POST') {
+          const a = { id: 'asg-' + (policyAssignments.length + 1), policy_id: 'pol-ai', ...payload };
+          policyAssignments.push(a);
+          return json(res, 201, a);
+        }
+        return json(res, 200, { assignments: policyAssignments });
+      }
       if (pathname === '/api/policies/pol-ai/review') {
         policyReviews++;
         return json(res, 200, { fingerprint: 'fp-' + policyReviews, policy: aiPolicy, assignments: [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1' }],
@@ -493,6 +522,51 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   return true;
 }
 
+// Policy targeting: correct a device's role, assign a policy to every Windows
+// server, and leave a device out of it and put it back.
+async function policyTargetingBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Policy targeting E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const choose = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  // The device page: Linux has no role until one is set; set it, then follow detection again.
+  (await wait(() => button('Devices'))).click();
+  (await wait(() => [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('SMOKE-PC')))).click();
+  // The list's role filter has the same label; the device page's selector is the one that can follow detection ('').
+  const roleSelect = () => [...document.querySelectorAll('select[aria-label="Role"]')].find((el) => [...el.options].some((o) => o.value === ''));
+  const role = await wait(roleSelect);
+  if (role.options[0].textContent !== 'Detected (Not set)') throw new Error('Linux must show that no role is detected: ' + role.options[0].textContent);
+  choose(role, 'server');
+  await wait(() => roleSelect()?.value === 'server' && document.body.textContent.includes('Device role saved'));
+  choose(roleSelect(), '');
+  await wait(() => roleSelect()?.value === '' && document.body.textContent.includes('Device role saved'));
+  // The policy drawer: an assignment to every Windows server.
+  (await wait(() => button('Policies'))).click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('AI workstations') && el.textContent.includes('AI proposal')))).click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim().startsWith('Assignments')))).click();
+  (await wait(() => button('Add an assignment…'))).click();
+  (await wait(() => button('Every device (narrow it with OS and role)'))).click();
+  choose(await wait(() => document.querySelector('select[aria-label="Operating system"]')), 'windows');
+  choose(await wait(() => document.querySelector('select[aria-label="Device role"]')), 'server');
+  (await wait(() => button('Assign') && !button('Assign').disabled && button('Assign'))).click();
+  await wait(() => [...document.querySelectorAll('span.flex-1')].some((name) => name.textContent === 'Every deviceWindowsServer'));
+  // Exceptions: leave SMOKE-PC out, then put it back.
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim().startsWith('Exceptions')))).click();
+  await wait(() => document.body.textContent.includes('No device is left out.'));
+  (await wait(() => button('Leave out a device…'))).click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'SMOKE-PC' && el.closest('.max-h-60')))).click();
+  (await wait(() => button('Leave out') && !button('Leave out').disabled && button('Leave out'))).click();
+  (await wait(() => document.querySelector('button[aria-label="Put back in the policy"]'))).click();
+  await wait(() => document.body.textContent.includes('No device is left out.'));
+  document.documentElement.dataset.policyTargetingE2e = 'passed';
+  return true;
+}
+
 async function policyActivationBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -638,6 +712,13 @@ try {
     assert.ok(apiRequests.some((r) => r.method === 'POST' && r.pathname === '/api/scripts/script-proposal/approve'), 'proposed script approved');
     const variableJob = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
     assert.deepEqual(variableJob?.payload, { script_id: 'script-e2e', params: {} });
+    const targetingFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyTargetingBrowserFlow });
+    assertBrowser(targetingFlow, /data-policy-targeting-e2e="passed"/);
+    assert.deepEqual(apiRequests.filter((r) => r.method === 'PUT' && r.pathname === '/api/devices/dev-1/role').map((r) => r.payload), [{ role: 'server' }, { role: '' }]);
+    assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/assignments')?.payload, { scope_type: 'global', scope_id: '', os: 'windows', role: 'server' });
+    assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/exclusions')?.payload, { agent_id: 'dev-1' });
+    assert.ok(apiRequests.some((r) => r.method === 'DELETE' && r.pathname === '/api/policies/pol-ai/exclusions/dev-1'), 'the device was put back');
+    assert.equal(policyExclusions.length, 0);
     const activationFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyActivationBrowserFlow });
     assertBrowser(activationFlow, /data-policy-activation-e2e="passed"/);
     const activations = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/activate').map((r) => r.payload?.fingerprint);

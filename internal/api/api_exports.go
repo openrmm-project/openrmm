@@ -241,12 +241,12 @@ func (s *Server) streamInventoryCSV(w http.ResponseWriter, r *http.Request, clai
 		_ = out.Write([]string{"hostname", "os", "arch", "manufacturer", "model", "serial_number",
 			"cpu_model", "cpu_cores", "mem_total_bytes", "gpu", "storage", "storage_bytes",
 			"bios", "platform", "platform_version", "kernel_version", "ip", "mac",
-			"client", "site", "department"})
+			"client", "site", "department", "last_logged_in_user", "last_logged_in_user_at"})
 		for _, x := range rows {
 			_ = out.Write([]string{x.Hostname, x.OS, x.Arch, x.Manufacturer, x.Model, x.Serial,
 				x.CPUModel, num(int64(x.CPUCores)), num(x.MemTotalByte), x.GPU, x.Storage,
 				num(x.StorageBytes), x.BIOS, x.Platform, x.PlatformVer, x.Kernel, x.IP, x.MAC,
-				x.Client, x.Site, x.Department})
+				x.Client, x.Site, x.Department, x.LastLoggedInUser, timeCell(x.LastLoggedInUserAt)})
 		}
 	case "machines":
 		rows, err := s.store.MachinesReport(r.Context(), filter)

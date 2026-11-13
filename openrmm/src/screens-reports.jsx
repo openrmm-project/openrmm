@@ -43,6 +43,11 @@ const REPORT_COLUMNS = {
     { key: 'client', text: (r) => r.client },
     { key: 'site', text: (r) => r.site },
     { key: 'department', text: (r) => r.department },
+    // The last user seen logged in, kept after they log off: who uses the machine.
+    { key: 'last_logged_in_user', text: (r) => r.last_logged_in_user || '',
+      cell: (r) => r.last_logged_in_user
+        ? <span className="mono" title={r.last_logged_in_user_at ? t('rep.lastUserSeen', { when: timeAgo(r.last_logged_in_user_at) }) : undefined}>{r.last_logged_in_user}</span>
+        : <span className="text-faint">—</span> },
   ],
   machines: [
     { key: 'hostname', text: (r) => r.hostname, className: 'text-ink font-medium' },

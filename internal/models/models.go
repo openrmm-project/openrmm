@@ -168,6 +168,10 @@ type Agent struct {
 	// LoggedInUserSince is when it last changed.
 	LoggedInUser      string     `json:"logged_in_user"`
 	LoggedInUserSince *time.Time `json:"logged_in_user_since,omitempty"`
+	// LastLoggedInUser is the last user the agent reported logged in, kept
+	// after they log off; LastLoggedInUserAt is when it last reported them.
+	LastLoggedInUser   string     `json:"last_logged_in_user"`
+	LastLoggedInUserAt *time.Time `json:"last_logged_in_user_at,omitempty"`
 }
 
 // Job is a unit of work targeted at an agent (currently: run a script).

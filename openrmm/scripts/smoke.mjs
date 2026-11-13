@@ -48,6 +48,14 @@ const fleet = [
   { id: 'dev-3', hostname: 'BETA-SRV', description: '', os: 'windows', arch: 'amd64', version: '0.11.0', status: 'offline', tags: [], last_seen: '2025-12-31T00:00:00Z', logged_in_user: '' },
 ];
 
+// Reports ▸ Hardware & System: the last logged-in user, kept after logoff; one
+// is endpoint text that would be a formula in a spreadsheet.
+const hardwareRows = [
+  { hostname: 'SMOKE-PC', os: 'linux', arch: 'amd64', cpu_model: 'Test CPU', client: 'Acme', last_logged_in_user: 'ACME\\maria', last_logged_in_user_at: '2026-01-01T00:00:00Z' },
+  { hostname: 'ALPHA-WS', os: 'windows', arch: 'amd64', cpu_model: 'Test CPU', client: 'Acme', last_logged_in_user: '@SUM(1+1)', last_logged_in_user_at: '2026-01-01T00:00:00Z' },
+  { hostname: 'BETA-SRV', os: 'windows', arch: 'amd64', cpu_model: 'Test CPU', client: 'Acme', last_logged_in_user: '' },
+];
+
 // Policy targeting (RFC #258): the device's role, and the assistant policy's
 // assignments and exceptions as the console changes them.
 const smokeRole = { os_role: '', role_override: '' };
@@ -182,6 +190,7 @@ const server = createServer(async (req, res) => {
         return json(res, 200, remoteConfig);
       }
       if (pathname === '/api/devices') return json(res, 200, { devices: fleet });
+      if (pathname === '/api/reports/hardware') return json(res, 200, { rows: hardwareRows });
       if (pathname === '/api/jobs') return json(res, 200, { jobs: [] });
       if (pathname === '/api/audit') {
         const entries = Number(url.searchParams.get('limit')) >= 50 ? [
@@ -671,6 +680,58 @@ async function devicesUserBrowserFlow() {
   return true;
 }
 
+async function hardwareLastUserBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Hardware last-user E2E timed out: ' + fn.toString());
+  };
+  const button = (text) => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const type = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const rows = () => [...document.querySelectorAll('tbody tr')].filter((tr) => tr.querySelector('td') && !tr.querySelector('[colspan]'));
+  const headers = () => [...document.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+  try { localStorage.removeItem('rmm-report-hidden'); } catch (e) {}
+  (await wait(() => button('Reports'))).click();
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Hardware & System')))).click();
+  await wait(() => rows().length === 3 && rows().some((tr) => tr.textContent.includes('SMOKE-PC')));
+  if (headers().at(-1) !== 'Last logged-in user') throw new Error('The last logged-in user column follows department: ' + headers().join('|'));
+  const maria = await wait(() => [...document.querySelectorAll('tbody td span')].find((el) => el.textContent === 'ACME\\maria'));
+  if (!/^Last seen /.test(maria.title || '')) throw new Error('The tooltip says when the user was last seen: ' + maria.title);
+  const beta = rows().find((tr) => tr.textContent.includes('BETA-SRV'));
+  if (beta.lastElementChild.textContent.trim() !== '—') throw new Error('A machine with no user ever seen shows a dash');
+  // The row filter matches the user.
+  const filter = await wait(() => document.querySelector('input[placeholder="Filter rows…"]'));
+  type(filter, 'maria');
+  await wait(() => rows().length === 1 && rows()[0].textContent.includes('SMOKE-PC'));
+  type(filter, '');
+  await wait(() => rows().length === 3);
+  // The CSV carries it, guarded against spreadsheet formulas.
+  const original = URL.createObjectURL;
+  let download;
+  URL.createObjectURL = (blob) => { download = blob.text(); return original.call(URL, blob); };
+  try {
+    (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Download CSV' && !el.disabled))).click();
+    await wait(() => download);
+    const csv = await download;
+    const [head, ...lines] = csv.split('\r\n');
+    if (!head.endsWith(',Last logged-in user')) throw new Error('CSV header: ' + head);
+    if (!lines.some((l) => l.startsWith('SMOKE-PC,') && l.endsWith(',ACME\\maria'))) throw new Error('CSV misses the last user');
+    if (!lines.some((l) => l.endsWith(`,"'@SUM(1+1)"`)) || lines.some((l) => l.endsWith(',@SUM(1+1)'))) throw new Error('The last user reached the CSV unguarded');
+  } finally { URL.createObjectURL = original; }
+  // Hide the column; the choice is remembered per report.
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim().startsWith('Columns')))).click();
+  const toggle = await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Last logged-in user' && !el.closest('th')));
+  toggle.click();
+  await wait(() => !headers().includes('Last logged-in user'));
+  if (!(localStorage.getItem('rmm-report-hidden') || '').includes('last_logged_in_user')) throw new Error('The hidden column is not remembered');
+  toggle.click();
+  await wait(() => headers().includes('Last logged-in user'));
+  document.documentElement.dataset.hardwareUserE2e = 'passed';
+  return true;
+}
+
 async function auditCsvBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); }
@@ -791,6 +852,8 @@ try {
     assert.equal(approvedTask?.script, 'find /var/tmp -mtime +30 -delete');
     const usersFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: devicesUserBrowserFlow });
     assertBrowser(usersFlow, /data-devices-user-e2e="passed"/);
+    const hardwareFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: hardwareLastUserBrowserFlow });
+    assertBrowser(hardwareFlow, /data-hardware-user-e2e="passed"/);
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });
     assertBrowser(csvFlow, /data-audit-csv-e2e="passed"/);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');

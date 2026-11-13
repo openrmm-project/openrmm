@@ -37,7 +37,7 @@ available only through explicit lab mode.
 
 | type | data | effect |
 |------|------|--------|
-| `heartbeat` | `{ logged_in_user? }` | refresh `last_seen`, mark online; agent 0.11+ sends the interactive user (`DOMAIN\user` on Windows, `""` when no one is logged in), which the server cleans (control and invisible characters removed, 256 characters at most) and stores. An agent that omits the field (older agents send `{}`) leaves the stored user alone |
+| `heartbeat` | `{ logged_in_user? }` | refresh `last_seen`, mark online; agent 0.11+ sends the interactive user (`DOMAIN\user` on Windows, `""` when no one is logged in), which the server cleans (control and invisible characters removed, 256 characters at most) and stores. A non-empty user is also kept as the last logged-in user, which `""` does not clear. An agent that omits the field (older agents send `{}`) leaves the stored user alone |
 | `inventory` | `{ "data": {...} }` | upsert the inventory snapshot |
 | `job_result` | `{ job_id, exit_code, stdout, stderr, success }` | finalize the job (server replies `job_result_ack`) |
 | `patch_report` | `{ os, patches:[{identifier,title,classification,kb,reboot_required,...}] }` | upsert the device's missing patches ([16](16-patch-management.md)) |

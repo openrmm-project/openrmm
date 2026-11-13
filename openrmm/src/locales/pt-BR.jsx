@@ -2118,4 +2118,6 @@
   'devices.filter.anyUser': "Qualquer usuário",
   'devices.filter.withUser': "Com usuário conectado",
   'rep.col.logged_in_user': "Usuário conectado",
+  'rep.col.last_logged_in_user': "Último usuário logado",
+  'rep.lastUserSeen': "Visto pela última vez {when}",
 };

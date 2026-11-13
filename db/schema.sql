@@ -1303,3 +1303,10 @@ ALTER TABLE agents
     ADD COLUMN IF NOT EXISTS logged_in_user TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS logged_in_user_since TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_agents_logged_in_user ON agents (lower(logged_in_user)) WHERE logged_in_user <> '';
+
+-- The last user seen in a device's interactive session, kept after they log
+-- off (Reports ▸ Hardware & System ▸ Last logged-in user), and when the agent
+-- last reported them. logged_in_user is who is logged in now.
+ALTER TABLE agents
+    ADD COLUMN IF NOT EXISTS last_logged_in_user TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS last_logged_in_user_at TIMESTAMPTZ;

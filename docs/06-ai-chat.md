@@ -57,7 +57,7 @@ server (`11-mcp`).
 
 | Tool | Required permission | Kind | Description |
 |------|---------------------|------|-------------|
-| `list_devices` | `devices.view` | read | List agents (id, hostname, os, arch, status, site_id, group_id, role, logged_in_user). `logged_in_user` is the account name of whoever is logged in on the device — personal data that a hosted model provider receives with the tool result; use a local model to keep it in house |
+| `list_devices` | `devices.view` | read | List agents (id, hostname, os, arch, status, site_id, group_id, role, logged_in_user). `logged_in_user` is the account name of whoever is logged in on the device — personal data that a hosted model provider receives with the tool result (as it does the `last_logged_in_user` of `inventory_report` hardware rows); use a local model to keep it in house |
 | `list_org` | `clients.view` | read | Companies, their sites and departments, with ids — scope-filtered |
 | `get_inventory` | `devices.view` | read | Latest inventory for a device |
 | `get_job_status` | `jobs.view` | read | Status + result of a job |

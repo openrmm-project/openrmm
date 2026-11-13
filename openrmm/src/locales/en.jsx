@@ -2125,4 +2125,6 @@
   'devices.filter.anyUser': "Any user",
   'devices.filter.withUser': "A user logged in",
   'rep.col.logged_in_user': "Logged-in user",
+  'rep.col.last_logged_in_user': "Last logged-in user",
+  'rep.lastUserSeen': "Last seen {when}",
 };

@@ -2083,4 +2083,6 @@
   'devices.filter.anyUser': "Любой пользователь",
   'devices.filter.withUser': "Есть вошедший пользователь",
   'rep.col.logged_in_user': "Вошедший пользователь",
+  'rep.col.last_logged_in_user': "Последний вошедший пользователь",
+  'rep.lastUserSeen': "Последний раз замечен {when}",
 };

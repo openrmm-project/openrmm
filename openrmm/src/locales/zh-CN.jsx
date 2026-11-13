@@ -2112,4 +2112,6 @@
   'devices.filter.anyUser': "任意用户",
   'devices.filter.withUser': "有用户登录",
   'rep.col.logged_in_user': "已登录用户",
+  'rep.col.last_logged_in_user': "最近登录的用户",
+  'rep.lastUserSeen': "最近出现：{when}",
 };

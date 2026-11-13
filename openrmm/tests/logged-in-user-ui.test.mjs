@@ -74,3 +74,34 @@ test('the machines report has the column and the device page shows the user', ()
   const header = devices.slice(devices.indexOf("t('device.lastSeen'"));
   assert.match(header.slice(0, 400), /<LoggedInUser device=\{d\} \/>/);
 });
+
+// Reports ▸ Hardware & System ▸ Last logged-in user: the last user seen, kept
+// after they log off, with when in the tooltip; a dash when none was ever seen.
+test('the hardware report shows the last logged-in user, in every language', async () => {
+  const sandbox = {
+    React: { createElement(type, p, ...children) { return { type, props: p || {}, children }; } },
+    t: (key, vars) => (vars ? key + ' ' + JSON.stringify(vars) : key),
+    timeAgo: (when) => 'ago(' + when + ')',
+    fmtBytes: String, fmtTime: String, OsIcon: 'OsIcon', StatusPill: 'StatusPill',
+  };
+  vm.createContext(sandbox);
+  const table = reports.slice(reports.indexOf('const REPORT_COLUMNS'), reports.indexOf('const colLabel'));
+  vm.runInContext(transformSync(table, { loader: 'jsx' }).code.replace('const REPORT_COLUMNS', 'this.REPORT_COLUMNS'), sandbox);
+  const keys = sandbox.REPORT_COLUMNS.hardware.map((c) => c.key);
+  assert.equal(keys.at(-1), 'last_logged_in_user', 'the column follows department');
+  assert.ok(!sandbox.REPORT_COLUMNS.machines.some((c) => c.key === 'last_logged_in_user'), 'the machines report keeps who is logged in now');
+  const col = sandbox.REPORT_COLUMNS.hardware.at(-1);
+  const seen = { last_logged_in_user: 'ACME\\maria', last_logged_in_user_at: '2026-11-12T10:00:00Z' };
+  assert.equal(col.text(seen), 'ACME\\maria', 'CSV and filter text is the name');
+  assert.equal(col.text({}), '');
+  const cell = col.cell(seen);
+  assert.equal(cell.children.join(''), 'ACME\\maria');
+  assert.match(cell.props.title, /^rep\.lastUserSeen .*ago\(2026-11-12T10:00:00Z\)/);
+  assert.equal(col.cell({ last_logged_in_user: 'ACME\\maria' }).props.title, undefined, 'no time, no tooltip');
+  assert.equal(col.cell({ last_logged_in_user: '' }).children.join(''), '—');
+  for (const loc of ['en', 'pt-BR', 'es', 'de', 'zh-CN', 'ja', 'ru', 'ko', 'ms']) {
+    const src = await readFile(new URL(`../src/locales/${loc}.jsx`, import.meta.url), 'utf8');
+    assert.match(src, /'rep\.col\.last_logged_in_user': "[^"]+"/, loc);
+    assert.match(src, /'rep\.lastUserSeen': "[^"]*\{when\}[^"]*"/, loc);
+  }
+});

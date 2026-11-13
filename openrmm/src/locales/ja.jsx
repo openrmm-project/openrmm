@@ -2112,4 +2112,6 @@
   'devices.filter.anyUser': "すべてのユーザー",
   'devices.filter.withUser': "ユーザーがログオン中",
   'rep.col.logged_in_user': "ログオン中のユーザー",
+  'rep.col.last_logged_in_user': "最後にログオンしたユーザー",
+  'rep.lastUserSeen': "最終確認：{when}",
 };

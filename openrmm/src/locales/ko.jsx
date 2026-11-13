@@ -2057,4 +2057,6 @@
   'devices.filter.anyUser': "모든 사용자",
   'devices.filter.withUser': "사용자가 로그인함",
   'rep.col.logged_in_user': "로그인한 사용자",
+  'rep.col.last_logged_in_user': "마지막 로그인 사용자",
+  'rep.lastUserSeen': "마지막 확인: {when}",
 };

@@ -2057,4 +2057,6 @@
   'devices.filter.anyUser': "Mana-mana pengguna",
   'devices.filter.withUser': "Ada pengguna log masuk",
   'rep.col.logged_in_user': "Pengguna log masuk",
+  'rep.col.last_logged_in_user': "Pengguna log masuk terakhir",
+  'rep.lastUserSeen': "Kali terakhir dilihat {when}",
 };

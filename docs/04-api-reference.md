@@ -116,7 +116,7 @@ the caller's authority.
 
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
-| GET | `/api/devices` | `devices.view` | List all agents → `{ "devices": [...] }`. Each device has `logged_in_user` (the interactive user its agent last reported, `""` when no one is logged in) and `logged_in_user_since` |
+| GET | `/api/devices` | `devices.view` | List all agents → `{ "devices": [...] }`. Each device has `logged_in_user` (the interactive user its agent last reported, `""` when no one is logged in) and `logged_in_user_since`, plus `last_logged_in_user` (the last user seen, kept after they log off) and `last_logged_in_user_at` |
 | GET | `/api/devices/{id}` | `devices.view` | One agent |
 | GET | `/api/devices/{id}/inventory` | `devices.view` | Latest inventory snapshot |
 | GET | `/api/devices/{id}/remote-capabilities` | `devices.view` | On-demand conservative native-desktop capability preflight |
@@ -500,7 +500,7 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | GET | `/api/reports/software?scope=&id=` | `reports.view` | Scope-filtered software inventory |
-| GET | `/api/reports/hardware?scope=&id=` | `reports.view` | Scope-filtered hardware inventory |
+| GET | `/api/reports/hardware?scope=&id=` | `reports.view` | Scope-filtered hardware inventory; each row has `last_logged_in_user` and `last_logged_in_user_at` |
 | GET | `/api/reports/machines?scope=&id=` | `reports.view` | Scope-filtered machine inventory |
 | GET | `/api/reports/compliance` | `reports.view` or `patches.view` | Patch compliance rows in caller scope |
 

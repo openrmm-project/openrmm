@@ -58,6 +58,10 @@ tag.
   carry it too. Agent 0.11 reports it with each heartbeat: the Windows console
   session, else an active remote desktop session; the macOS console owner; a
   local Linux seat before SSH. Older agents leave it empty. Migration 034.
+- **Last logged-in user on Hardware & System:** the hardware report, its CSV
+  export and the device API add the last user seen logged in
+  (`last_logged_in_user`, `last_logged_in_user_at`), kept after they log off,
+  so the report says who uses each machine. Migration 035.
 - **Manage policies / Manage checks** now say what they include: activating and
   deactivating policies, and switching checks on and off (approving AI-proposed
   ones). Checks and tasks created through the API no longer accept

@@ -40,6 +40,17 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 		if err := f.store.TouchAgentSession(ctx, a.ID, &user); err != nil {
 			t.Fatal(err)
 		}
+		if err := f.store.UpsertInventory(ctx, a.ID, []byte(`{"cpu_model":"Test CPU"}`)); err != nil {
+			t.Fatal(err)
+		}
+		// WINDOWS-TEST's user logs off: the hardware report keeps them as the
+		// last logged-in user.
+		if host == control {
+			loggedOff := ""
+			if err := f.store.TouchAgentSession(ctx, a.ID, &loggedOff); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	freeTarget, idTarget := "@SUM(A1)", uuid.NewString()
 	for _, target := range []string{freeTarget, idTarget} {
@@ -100,6 +111,27 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 	users := column(machines, userCol)
 	if !users["'"+hostileUser] || users[hostileUser] || !users[plainUser] {
 		t.Fatalf("logged-in users in the CSV: %v", users)
+	}
+
+	code, hardware := get(exports.Claims{Kind: "inventory", Params: map[string]string{"report_type": "hardware"}, User: f.admin.ID})
+	if code != http.StatusOK || len(hardware) < 4 || hardware[0][0] != "hostname" {
+		t.Fatalf("hardware export=%d rows=%v", code, hardware)
+	}
+	lastCol, atCol := slices.Index(hardware[0], "last_logged_in_user"), slices.Index(hardware[0], "last_logged_in_user_at")
+	if lastCol < 0 || atCol != lastCol+1 {
+		t.Fatalf("hardware export has no last logged-in user columns: %v", hardware[0])
+	}
+	if hw := column(hardware, 0); !hw["'"+hostile] || hw[hostile] {
+		t.Fatalf("hostile hostname reached the hardware CSV unguarded: %v", hw)
+	}
+	lastUsers := column(hardware, lastCol)
+	if !lastUsers["'"+hostileUser] || lastUsers[hostileUser] || !lastUsers[plainUser] {
+		t.Fatalf("last logged-in users in the CSV: %v", lastUsers)
+	}
+	for _, row := range hardware[1:] {
+		if row[0] == control && (row[lastCol] != plainUser || row[atCol] == "") {
+			t.Fatalf("the logged-off user is not the last logged-in user: %v", row)
+		}
 	}
 
 	code, audit := get(exports.Claims{Kind: "audit", Params: map[string]string{"action": "csv.export_test"}, User: f.admin.ID})

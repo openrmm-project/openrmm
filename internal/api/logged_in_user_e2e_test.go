@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,9 +14,10 @@ import (
 
 // Runs in the PostgreSQL CI job. Follow the logged-in user from an agent's
 // heartbeat frame through the agents table to the permission-scoped REST API
-// (device, device list, machines report): cleaned on the way in, kept by an
-// agent that does not report it, cleared when no one is logged in, and only
-// shown to principals who may see the device.
+// (device, device list, machines and hardware reports): cleaned on the way in,
+// kept by an agent that does not report it, cleared when no one is logged in
+// (the last logged-in user is kept), and only shown to principals who may see
+// the device.
 func TestLoggedInUserHeartbeatToAPIE2E(t *testing.T) {
 	f := newBulkFixture(t)
 	s := &Server{store: f.st, hub: hub.New()}
@@ -136,11 +138,53 @@ func TestLoggedInUserHeartbeatToAPIE2E(t *testing.T) {
 		t.Fatalf("after logoff: %q %v", a.LoggedInUser, a.LoggedInUserSince)
 	}
 
+	// The last logged-in user outlives the logoff: the device API and the
+	// hardware report (Hardware & System) still say who uses the machine, and
+	// the report keeps to the caller's scope.
+	if a.LastLoggedInUser != `ACME\maria` || a.LastLoggedInUserAt == nil {
+		t.Fatalf("last user after logoff: %q %v", a.LastLoggedInUser, a.LastLoggedInUserAt)
+	}
+	for _, id := range []string{f.a1, f.b1} {
+		if err := f.st.UpsertInventory(f.ctx, id, []byte(`{"cpu_model":"Test CPU"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lastUsers := func(token string) []string {
+		t.Helper()
+		rr := f.do(token, http.MethodGet, "/api/reports/hardware", nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("hardware report: %d %s", rr.Code, rr.Body.String())
+		}
+		var out struct {
+			Rows []struct {
+				LastLoggedInUser   string     `json:"last_logged_in_user"`
+				LastLoggedInUserAt *time.Time `json:"last_logged_in_user_at"`
+			} `json:"rows"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		var users []string
+		for _, row := range out.Rows {
+			if row.LastLoggedInUser != "" && row.LastLoggedInUserAt == nil {
+				t.Fatalf("last user without a time: %+v", row)
+			}
+			users = append(users, row.LastLoggedInUser)
+		}
+		return users
+	}
+	if users := lastUsers(f.scoped); !slices.Contains(users, `ACME\maria`) || slices.Contains(users, `AzureAD\Other`) {
+		t.Fatalf("scoped hardware report: %v", users)
+	}
+	if users := lastUsers(f.admin); !slices.Contains(users, `ACME\maria`) || !slices.Contains(users, `AzureAD\Other`) {
+		t.Fatalf("admin hardware report: %v", users)
+	}
+
 	// A frame from a replaced connection is not applied.
 	s.hub.Remove(f.a1, lease)
 	heartbeat(f.a1, lease, `{"logged_in_user":"ACME\\stale"}`)
-	if a := device(f.admin, f.a1, http.StatusOK); a.LoggedInUser != "" {
-		t.Fatalf("stale connection wrote the user: %q", a.LoggedInUser)
+	if a := device(f.admin, f.a1, http.StatusOK); a.LoggedInUser != "" || a.LastLoggedInUser != `ACME\maria` {
+		t.Fatalf("stale connection wrote the user: %q (last %q)", a.LoggedInUser, a.LastLoggedInUser)
 	}
 
 	// A revoked device's record is not touched.
@@ -152,7 +196,7 @@ func TestLoggedInUserHeartbeatToAPIE2E(t *testing.T) {
 	heartbeat(f.a2, current, `{"logged_in_user":"ACME\\ghost"}`)
 	if ghost, err := f.st.GetAgent(f.ctx, f.a2); err != nil {
 		t.Fatal(err)
-	} else if ghost.LoggedInUser != "" || ghost.Status != "revoked" {
+	} else if ghost.LoggedInUser != "" || ghost.LastLoggedInUser != "" || ghost.Status != "revoked" {
 		t.Fatalf("revoked device recorded a heartbeat: %q %s", ghost.LoggedInUser, ghost.Status)
 	}
 }

@@ -12,7 +12,12 @@
 3. The server upserts the global `(os, identifier)` catalog and per-device state.
 4. An operator creates an approval/decline decision at global, client, site or
    device scope, or a policy auto-approves matching classifications after the
-   configured age.
+   configured age. A device that reports the patch later, or reports it again
+   after an install, takes the most specific decision that covers it (device,
+   then site, then client, then global); without one it is pending. The newest
+   decision replaces the narrower ones inside its scope, so a fleet-wide
+   approval is not undone by a site's older decline on that site's next scan.
+   Approving again moves failed installs back to approved, which retries them.
 5. Manual or in-window policy installation claims only identifiers currently
    approved for that device, marks them installing, and sends an explicit
    `patch_install` list. An empty list never means "install everything".
@@ -63,13 +68,28 @@ GET  /api/devices/{id}/patches
 POST /api/devices/{id}/patches/scan
 POST /api/devices/{id}/patches/install   { identifiers: [...] }
 POST /api/devices/{id}/reboot            { force?: false }
-GET  /api/patches
+GET  /api/patches[?approval=pending|approved|declined]
 POST /api/patches/{id}/approve           { scope_type, scope_id, decision }
 GET  /api/reports/compliance
 GET/POST/PUT/DELETE /api/patch-policies...
 GET  /api/patch-policies/{id}/review
 POST /api/patch-policies/{id}/activate   { fingerprint }
 ```
+
+Each catalog row counts the in-scope devices in every state (`pending_count`,
+`approved_count` waiting to install, `installing_count`, `failed_count`,
+`installed_count`, `declined_count`) and sums them up as `approval`:
+
+- `pending`: no device has a decision;
+- `approved`: approved on every device that reports it, whatever the install
+  did since (waiting, installing, failed or installed);
+- `declined`: declined on every device that reports it;
+- `partial`: a mix, such as approved for one client and declined for another,
+  or undecided on some devices.
+
+`?approval=` lists the patches with at least one device in that state, so a
+partial patch appears in each list it has devices in. The console's Catalog tab
+shows the same lists (All, Pending, Approved, Declined).
 
 All device operations are access-scope checked. A restricted principal cannot
 approve globally. Patch policy definitions are global: restricted principals can

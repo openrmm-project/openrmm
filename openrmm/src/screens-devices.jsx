@@ -31,8 +31,8 @@ function presenceSummary(viewers) {
 // The Devices grid's optional columns (shown or hidden per viewer) and the
 // localStorage key that remembers the choice.
 const DEVICE_COLUMNS_KEY = 'rmm-devices-hidden-columns';
-const DEVICE_OPTIONAL_COLUMNS = ['description', 'os', 'user', 'client', 'site', 'tags'];
-const DEVICE_COLUMN_LABELS = { description: 'common.description', os: 'devices.col.os', user: 'devices.col.user', client: 'devices.col.client', site: 'devices.col.site', tags: 'devices.col.tags' };
+const DEVICE_OPTIONAL_COLUMNS = ['description', 'os', 'user', 'client', 'site', 'department', 'tags'];
+const DEVICE_COLUMN_LABELS = { description: 'common.description', os: 'devices.col.os', user: 'devices.col.user', client: 'devices.col.client', site: 'devices.col.site', department: 'devices.col.department', tags: 'devices.col.tags' };
 
 // hiddenDeviceColumns reads the remembered choice, keeping only known optional
 // columns: anything else stored under the key (an older format, a hand edit)
@@ -88,8 +88,8 @@ function DevicesScreen({ navigate }) {
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const presence = useRemotePresence();
-  // Department names for the pending-operations panel. Moving and deleting
-  // devices themselves happen in Clients & Sites, not here.
+  // Department names for the list's Department column and the pending-operations
+  // panel. Moving and deleting devices themselves happen in Clients & Sites, not here.
   const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
 
   const devices = devicesQ.data?.devices || [];
@@ -101,6 +101,8 @@ function DevicesScreen({ navigate }) {
   // A device belongs to a client (company) through its site; unassigned devices
   // and sites whose client is gone both fall back to the em dash.
   const clientName = (siteId) => clients.find((c) => c.id === clientOfSite(siteId))?.name || '—';
+  // A department (device group) sits under a site; most devices have none.
+  const departmentName = (groupId) => (groupId && groups.find((g) => g.id === groupId)?.name) || '—';
 
   const needle = q.toLowerCase();
   const filtered = devices.filter((d) => {
@@ -118,6 +120,7 @@ function DevicesScreen({ navigate }) {
   const sortValue = {
     hostname: (d) => d.hostname, description: (d) => d.description || '', os: (d) => window.osLabel(d.os),
     client: (d) => clientName(d.site_id).replace('—', ''), site: (d) => siteName(d.site_id).replace('—', ''),
+    department: (d) => departmentName(d.group_id).replace('—', ''),
     user: (d) => d.logged_in_user || '', status: (d) => d.status, last_seen: (d) => d.last_seen || '',
   };
   sortDevices(filtered, sortValue[sort.key] || sortValue.hostname, sort.dir);
@@ -182,6 +185,7 @@ function DevicesScreen({ navigate }) {
               {shows('user') && sortTh('user', t('devices.col.user'), 'px-3 hidden sm:table-cell')}
               {shows('client') && sortTh('client', t('devices.col.client'), 'px-3 hidden md:table-cell')}
               {shows('site') && sortTh('site', t('devices.col.site'), 'px-3 hidden md:table-cell')}
+              {shows('department') && sortTh('department', t('devices.col.department'), 'px-3 hidden md:table-cell')}
               {shows('tags') && <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">{t('devices.col.tags')}</th>}
               {sortTh('status', t('devices.col.status'))}
               {sortTh('last_seen', t('devices.col.lastSeen'), 'px-4 text-right')}
@@ -204,6 +208,7 @@ function DevicesScreen({ navigate }) {
                 {shows('user') && <td className="px-3 py-3 hidden sm:table-cell text-[12.5px] truncate max-w-[200px]"><LoggedInUser device={d} /></td>}
                 {shows('client') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>}
                 {shows('site') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>}
+                {shows('department') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{departmentName(d.group_id)}</td>}
                 {shows('tags') && <td className="px-3 py-3 hidden lg:table-cell">
                   <div className="flex gap-1 flex-wrap max-w-[200px]">{d.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded-md bg-elevated border border-line text-[10.5px] text-muted px-1.5 py-0.5">{tag}</span>)}</div>
                 </td>}

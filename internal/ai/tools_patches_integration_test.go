@@ -55,7 +55,7 @@ func newPatchFixture(t *testing.T) patchFixture {
 		t.Fatal("fixture: the openssl patch was not persisted")
 	}
 	// The human decision, made outside the AI entirely.
-	if err := f.st.SetApproval(f.ctx, opensslID, models.ScopeAgent, f.mineAgent, "approve", "manual", "operator"); err != nil {
+	if _, err := f.st.SetApproval(f.ctx, opensslID, models.ScopeAgent, f.mineAgent, "approve", "manual", "operator"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +177,7 @@ func TestInstallPatchesOnAnOfflineDeviceRequeuesTheClaimIntegration(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.st.SetApproval(f.ctx, rows[0].PatchID, models.ScopeAgent, f.mineAgent, "approve", "manual", "operator"); err != nil {
+	if _, err := f.st.SetApproval(f.ctx, rows[0].PatchID, models.ScopeAgent, f.mineAgent, "approve", "manual", "operator"); err != nil {
 		t.Fatal(err)
 	}
 

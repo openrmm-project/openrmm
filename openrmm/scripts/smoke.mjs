@@ -588,6 +588,8 @@ async function patchPolicyPickersBrowserFlow() {
     element.dispatchEvent(new Event('input', { bubbles: true }));
   };
   const options = () => [...document.querySelectorAll('.max-h-60 button')].map((el) => el.textContent.trim());
+  // The open picker's own search box (the form's name field may still hold the focus).
+  const pickerSearch = () => document.querySelector('.max-h-60')?.previousElementSibling?.querySelector('input');
   (await wait(() => button('Patches'))).click();
   (await wait(() => [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Policies').length > 1
     && [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Policies').at(-1))).click();
@@ -597,7 +599,7 @@ async function patchPolicyPickersBrowserFlow() {
   if (document.body.textContent.includes('agent: dev-1')) throw new Error('A device assignment shows its id');
   // Assigned to: the search narrows the scopes; nothing matching says so.
   (await wait(() => button('Add assignment…'))).click();
-  const search = await wait(() => document.activeElement?.tagName === 'INPUT' && document.activeElement);
+  const search = await wait(pickerSearch);
   await wait(() => options().includes('Every device (narrow it with OS and role)') && options().includes('SMOKE-PC'));
   type(search, 'no-such-scope');
   await wait(() => options().length === 0 && document.body.textContent.includes('No matches'));
@@ -608,7 +610,7 @@ async function patchPolicyPickersBrowserFlow() {
   await wait(() => [...document.querySelectorAll('span.flex-1')].some((el) => el.textContent === 'Every device'));
   // Exceptions: search the devices and leave one out.
   (await wait(() => button('Leave out a device…'))).click();
-  type(await wait(() => document.activeElement?.tagName === 'INPUT' && document.activeElement), 'smoke');
+  type(await wait(pickerSearch), 'smoke');
   await wait(() => options().join('|') === 'SMOKE-PC');
   (await wait(() => [...document.querySelectorAll('.max-h-60 button')].find((el) => el.textContent.trim() === 'SMOKE-PC'))).click();
   (await wait(() => button('Leave out') && !button('Leave out').disabled && button('Leave out'))).click();

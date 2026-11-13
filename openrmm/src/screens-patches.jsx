@@ -396,8 +396,18 @@ function PolicyAssignments({ policyId }) {
     if (a.scope_type === 'global') return t('pol.globalName');
     if (a.scope_type === 'client') return t('patchpol.clientScope', { name: clients.find((c) => c.id === a.scope_id)?.name || a.scope_id });
     if (a.scope_type === 'site') return t('patchpol.siteScope', { name: sites.find((s) => s.id === a.scope_id)?.name || a.scope_id });
+    if (a.scope_type === 'agent') return devMap[a.scope_id]?.hostname || a.scope_id;
     return a.scope_type + ': ' + a.scope_id;
   };
+  // Searchable pickers: a fleet can have hundreds of clients, sites and devices.
+  const scopeOptions = [
+    { value: 'global:', label: t('pol.globalOption'), group: t('pol.group.global') },
+    ...clients.map((c) => ({ value: 'client:' + c.id, label: c.name, group: t('patchpol.clients') })),
+    ...sites.map((s) => ({ value: 'site:' + s.id, label: s.name, group: t('patchpol.sites') })),
+    ...Object.values(devMap).map((d) => ({ value: 'agent:' + d.id, label: d.hostname, group: t('pol.group.agents') })),
+  ];
+  const excludable = Object.values(devMap).filter((d) => !exclusions.some((e) => e.agent_id === d.id))
+    .map((d) => ({ value: d.id, label: d.hostname, group: t('pol.group.agents') }));
   const add = async () => {
     if (!val) return; const [scope_type, scope_id] = val.split(':');
     try { await api.addPatchAssignment(policyId, { scope_type, scope_id: scope_id || '', os, role }); setVal(''); setOs(''); setRole(''); window.dataBus.emit('patch-assign'); } catch (e) { toast.error(t('common.failed'), e.message); }
@@ -419,13 +429,8 @@ function PolicyAssignments({ policyId }) {
             <button onClick={() => remove(a)} className="text-faint hover:text-bad"><Icon name="close" size={14} /></button>
           </div>
         ))}
-        <div className="flex gap-2">
-          <Select value={val} onChange={(e) => setVal(e.target.value)} className="flex-1">
-            <option value="">{t('patchpol.addAssignment')}</option>
-            <option value="global:">{t('pol.globalOption')}</option>
-            <optgroup label={t('patchpol.clients')}>{clients.map((c) => <option key={c.id} value={'client:' + c.id}>{c.name}</option>)}</optgroup>
-            <optgroup label={t('patchpol.sites')}>{sites.map((s) => <option key={s.id} value={'site:' + s.id}>{s.name}</option>)}</optgroup>
-          </Select>
+        <div className="flex flex-wrap gap-2">
+          <Combobox value={val} onChange={setVal} className="flex-1 min-w-[200px]" placeholder={t('patchpol.addAssignment')} options={scopeOptions} />
           <TargetSelects os={os} role={role} onOs={setOs} onRole={setRole} />
           <Button variant="secondary" onClick={add} disabled={!val}>{t('action.add')}</Button>
         </div>
@@ -437,10 +442,7 @@ function PolicyAssignments({ policyId }) {
           </div>
         ))}
         <div className="flex gap-2">
-          <Select value={excluded} onChange={(e) => setExcluded(e.target.value)} className="flex-1" aria-label={t('pol.addExclusion')}>
-            <option value="">{t('pol.addExclusion')}</option>
-            {Object.values(devMap).filter((d) => !exclusions.some((e) => e.agent_id === d.id)).map((d) => <option key={d.id} value={d.id}>{d.hostname}</option>)}
-          </Select>
+          <Combobox value={excluded} onChange={setExcluded} className="flex-1" placeholder={t('pol.addExclusion')} options={excludable} />
           <Button variant="secondary" onClick={exclude} disabled={!excluded}>{t('pol.exclude')}</Button>
         </div>
       </div>

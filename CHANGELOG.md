@@ -48,6 +48,9 @@ tag.
   A device cannot retarget itself: the server keeps the OS it enrolled with
   (a different OS at registration is logged, not applied), and its detected
   role is set once and changed only by an administrator.
+  The patch policy editor's **Assigned to** and exception pickers are
+  searchable, as the policy drawer's are, and also offer single devices; a
+  device assignment shows the device's name instead of its id.
 - **Logged-in user on Devices:** the device list has an optional, sortable
   **Logged-in user** column showing who is logged in interactively
   (`DOMAIN\user`, `AzureAD\user` for Entra ID, the computer name for a local

@@ -1873,17 +1873,31 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Legacy alert actions stored only the alert UUID. Add a display-only
-	// label to the response; never alter the immutable detail/hash-chain data.
-	alertTargets := []string{}
+	// Legacy alert actions, and patch approvals and declines, stored only the
+	// target's UUID: the audit screen showed a bare id in the Target column.
+	// Add a display-only label to the response (the alert's host or message,
+	// the patch's title); never alter the immutable detail/hash-chain data.
+	isAlert := func(action string) bool { return oneOf(action, "alert.ack", "alert.resolve", "alert.suppress") }
+	isPatch := func(action string) bool { return oneOf(action, "patch.approve", "patch.decline") }
+	alertTargets, patchTargets := []string{}, []string{}
 	for _, entry := range entries {
-		if oneOf(entry.Action, "alert.ack", "alert.resolve", "alert.suppress") {
-			if parsed, err := uuid.Parse(entry.Target); err == nil {
-				alertTargets = append(alertTargets, parsed.String())
-			}
+		parsed, err := uuid.Parse(entry.Target)
+		if err != nil {
+			continue
+		}
+		switch {
+		case isAlert(entry.Action):
+			alertTargets = append(alertTargets, parsed.String())
+		case isPatch(entry.Action):
+			patchTargets = append(patchTargets, parsed.String())
 		}
 	}
-	labels, err := s.store.AlertAuditTargetLabels(r.Context(), alertTargets)
+	alertLabels, err := s.store.AlertAuditTargetLabels(r.Context(), alertTargets)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	patchLabels, err := s.store.PatchAuditTargetLabels(r.Context(), patchTargets)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1895,9 +1909,12 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	labeled := make([]labeledAuditEntry, 0, len(entries))
 	for _, entry := range entries {
 		label := ""
-		if oneOf(entry.Action, "alert.ack", "alert.resolve", "alert.suppress") {
-			if parsed, err := uuid.Parse(entry.Target); err == nil {
-				label = labels[parsed.String()]
+		if parsed, err := uuid.Parse(entry.Target); err == nil {
+			switch {
+			case isAlert(entry.Action):
+				label = alertLabels[parsed.String()]
+			case isPatch(entry.Action):
+				label = patchLabels[parsed.String()]
 			}
 		}
 		labeled = append(labeled, labeledAuditEntry{AuditEntry: entry, TargetLabel: label})

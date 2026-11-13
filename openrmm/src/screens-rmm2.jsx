@@ -2458,12 +2458,14 @@ const rustdeskDefaultDisabled = (form) => form.remote_default === 'rustdesk' && 
 // Form values belong to ConfigPanel so changing the visible provider never
 // discards unsaved settings (including the write-only token).
 function RemoteProviderSettings({ form, onChange, remote, canManage }) {
-  const [tab, setTab] = useState('native');
+  // The default provider comes first: it is the choice that matters most, and
+  // the one an operator comes here to change.
+  const [tab, setTab] = useState('default');
   const tabs = [
+    { key: 'default', label: t('cfg.defaultProvider') },
     { key: 'native', label: t('cfg.remoteNative') },
     { key: 'meshcentral', label: 'MeshCentral' },
     { key: 'rustdesk', label: 'RustDesk' },
-    { key: 'default', label: t('cfg.defaultProvider') },
   ];
   const providerLabel = (key) => tabs.find((item) => item.key === key)?.label || key;
   const navigate = (event) => {

@@ -1,8 +1,8 @@
 # 08 — Remote Access
 
 In **Users & Settings → Configuration → Remote access**, provider settings are
-organized into four tabs: **Native**, **MeshCentral**, **RustDesk**, and
-**Default provider**. Native contains the guest-access switch; MeshCentral
+organized into four tabs: **Default provider** (first, and the one that
+opens), **Native**, **MeshCentral** and **RustDesk**. Native contains the guest-access switch; MeshCentral
 contains its connection and account options; RustDesk contains its integration
 switch. The default-provider selector is separate from each integration's
 settings. Switching tabs preserves unsaved edits. Use **Save configuration**

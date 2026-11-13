@@ -14,6 +14,27 @@ tag.
   `GET /api/patches` returns the same counts and accepts
   `?approval=pending|approved|declined`.
 - **Department column** in the Devices list.
+- **Scoped script variables and encrypted secrets** ([guide](docs/25-script-variables.md)):
+  manage reusable values in Scripts with a separate permission, inherit overrides
+  from client/site/department/device scopes, and bind names to saved scripts.
+  Agent 0.11.0+ receives built-in RMM context and variable values as environment
+  data. Secrets are write-only in the API and masked before agent result storage
+  and server job history; variable declarations are bound to AI release hashes.
+  Includes scheduled library tasks, refuses unsafe CMD variable expansion, and adds nine-language
+  console copy and unit/integration/browser regression tests. Names preserve the
+  user's letter case, names and values have no field-specific length cap, and
+  short secrets are accepted and masked. Scope overrides are optional. Names an
+  interpreter or loader reads (`PSModulePath`, `COR_*`, `DOTNET_*`, `PYTHON*`,
+  `LD_*` and similar) are reserved, and the agent refuses a variable that would
+  replace one the device already defines. The Variables tab and the script
+  editor search, filter and scroll, so hundreds of variables stay manageable.
+- **AI proposals of script variables and library scripts:** AI Chat and MCP can
+  list variable names (`list_script_variables`), propose a variable definition
+  (`propose_script_variable`) and propose a library script
+  (`propose_library_script`). Both proposals wait for an unrestricted operator
+  to approve them in Scripts: a proposed variable takes no value and binds to
+  nothing, a proposed script cannot run, be scheduled or be released for AI
+  autonomy. The model never sees or sets a variable value.
 
 ### Changed
 

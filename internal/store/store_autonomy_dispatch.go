@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/p1ngu/rmm/internal/autonomy"
@@ -14,12 +16,19 @@ import (
 // point. A pause or release withdrawal that finishes before it wins. The shared
 // locks are held through send, so a withdrawal cannot finish and then have an
 // older snapshot dispatched. No database or network wait belongs in send.
-func (s *Store) WithAutonomousDispatch(ctx context.Context, j *models.Job, releaseHash string, send func() bool) (bool, error) {
+func (s *Store) WithAutonomousDispatch(ctx context.Context, j *models.Job, releaseHash string, send func() bool, scopeRevision ...time.Time) (bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Reuse this transaction; nesting a pool-backed guard can exhaust the pool.
+	if len(scopeRevision) > 0 && !scopeRevision[0].IsZero() {
+		if err := lockScriptVariableScope(ctx, tx, j.AgentID, scopeRevision[0]); err != nil {
+			return false, err
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext('autonomy:pause'))`); err != nil {
 		return false, err
 	}
@@ -49,7 +58,7 @@ func (s *Store) WithAutonomousDispatch(ctx context.Context, j *models.Job, relea
 }
 
 func validateAutonomousRelease(sc *models.Script, j *models.Job, releaseHash string) error {
-	if !sc.AIReleaseCurrent() || sc.AIReleasedHash != releaseHash || sc.Shell != j.Shell || sc.Body != j.Script {
+	if !sc.AIReleaseCurrent() || sc.AIReleasedHash != releaseHash || sc.Shell != j.Shell || sc.Body != j.Script || !slices.Equal(sc.Variables, j.Variables) {
 		return fmt.Errorf("the script release changed before dispatch")
 	}
 	if err := autonomy.CheckRelease(sc); err != nil {

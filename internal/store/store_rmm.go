@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -781,13 +782,14 @@ func (s *Store) AgentScope(ctx context.Context, agentID string) (siteID, clientI
 // ===================== Scripts =====================
 
 const scriptCols = `id, name, description, category, shell, body, default_args, created_at, updated_at,
-	params, ai_released_by, ai_released_at, ai_released_hash`
+	params, ai_released_by, ai_released_at, ai_released_hash, variables, proposed_by, approved_by`
 
 func scanScript(row pgx.Row) (*models.Script, error) {
 	var sc models.Script
-	var params []byte
+	var params, variables []byte
 	err := row.Scan(&sc.ID, &sc.Name, &sc.Description, &sc.Category, &sc.Shell, &sc.Body, &sc.DefaultArgs, &sc.CreatedAt, &sc.UpdatedAt,
-		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash)
+		&params, &sc.AIReleasedBy, &sc.AIReleasedAt, &sc.AIReleasedHash, &variables, &sc.ProposedBy, &sc.ApprovedBy)
+	sc.Pending = sc.ProposedBy != "" && sc.ApprovedBy == ""
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -802,7 +804,15 @@ func scanScript(row pgx.Row) (*models.Script, error) {
 	if sc.Params == nil {
 		sc.Params = []models.ScriptParam{}
 	}
-	sc.ContentHash = models.ScriptContentHash(sc.Shell, sc.Body, sc.Params)
+	if len(variables) > 0 {
+		if err := json.Unmarshal(variables, &sc.Variables); err != nil {
+			return nil, err
+		}
+	}
+	if sc.Variables == nil {
+		sc.Variables = []string{}
+	}
+	sc.ContentHash = models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables)
 	sc.AIReleased = sc.AIReleaseCurrent()
 	return &sc, nil
 }
@@ -819,13 +829,44 @@ func scriptParamsJSON(params []models.ScriptParam) []byte {
 func (s *Store) CreateScript(ctx context.Context, sc *models.Script) (*models.Script, error) {
 	sc.ID = newID()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params))
+		`INSERT INTO scripts (id, name, description, category, shell, body, default_args, params, variables, proposed_by)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params), jobVariablesJSON(sc.Variables), sc.ProposedBy)
 	if err != nil {
 		return nil, err
 	}
 	return s.GetScript(ctx, sc.ID)
+}
+
+// ErrScriptPending refuses using a proposed library script nobody approved.
+var ErrScriptPending = fmt.Errorf("%w: the script is a proposal awaiting review; approve it first", ErrConflict)
+
+// ErrScriptApprovalVariables protects the transition from unreviewed code to
+// an executable library script that receives vault variables.
+var ErrScriptApprovalVariables = errors.New("scripts.variables required")
+
+// ApproveScript accepts a library script AI Chat or MCP proposed. Approving
+// twice, or a script a person wrote, is a conflict: there is nothing to accept.
+// The permission predicate uses the bindings at the UPDATE, so adding bindings
+// concurrently cannot let a less privileged reviewer approve new vault access.
+func (s *Store) ApproveScript(ctx context.Context, id, approvedBy string, mayUseVariables bool) (string, error) {
+	var name string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE scripts SET approved_by=$2, approved_at=now()
+		 WHERE id=$1 AND proposed_by <> '' AND approved_by = ''
+		   AND ($3 OR jsonb_array_length(variables)=0)
+		 RETURNING name`, id, approvedBy, mayUseVariables).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		sc, err := s.GetScript(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if sc.Pending && !mayUseVariables && len(sc.Variables) > 0 {
+			return "", ErrScriptApprovalVariables
+		}
+		return "", fmt.Errorf("%w: this script is not a proposal awaiting review", ErrConflict)
+	}
+	return name, err
 }
 
 // GetScript fetches one script.
@@ -982,18 +1023,19 @@ func (s *Store) ListScripts(ctx context.Context) ([]models.Script, error) {
 // the declared parameters — revokes a release for the AI in the same statement,
 // so there is no moment at which the new content is released under the old
 // one's approval. revoked reports whether a release was withdrawn.
-func (s *Store) UpdateScript(ctx context.Context, sc *models.Script) (revoked bool, err error) {
+func (s *Store) UpdateScript(ctx context.Context, sc *models.Script, variableAccess ...bool) (revoked bool, err error) {
+	allowVariables := len(variableAccess) == 0 || variableAccess[0]
 	err = s.pool.QueryRow(ctx,
-		`WITH old AS (SELECT shell, body, params, ai_released_hash FROM scripts WHERE id=$1 FOR UPDATE)
-		 UPDATE scripts AS s SET name=$2, description=$3, category=$4, shell=$5, body=$6, default_args=$7, params=$8,
+		`WITH old AS (SELECT shell, body, params, variables, ai_released_hash FROM scripts WHERE id=$1 FOR UPDATE)
+		 UPDATE scripts AS s SET name=$2, description=$3, category=$4, shell=$5, body=$6, default_args=$7, params=$8, variables=$9,
 		   ai_released_by   = CASE WHEN changed.yes THEN NULL ELSE s.ai_released_by END,
 		   ai_released_at   = CASE WHEN changed.yes THEN NULL ELSE s.ai_released_at END,
 		   ai_released_hash = CASE WHEN changed.yes THEN '' ELSE s.ai_released_hash END,
 		   updated_at=now()
-		 FROM old, LATERAL (SELECT (old.shell <> $5 OR old.body <> $6 OR old.params <> $8::jsonb) AS yes) AS changed
-		 WHERE s.id=$1
+		 FROM old, LATERAL (SELECT (old.shell <> $5 OR old.body <> $6 OR old.params <> $8::jsonb OR old.variables <> $9::jsonb) AS yes) AS changed
+		 WHERE s.id=$1 AND ($10 OR (s.variables='[]'::jsonb AND $9::jsonb='[]'::jsonb))
 		 RETURNING (changed.yes AND old.ai_released_hash <> '')`,
-		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params)).Scan(&revoked)
+		sc.ID, sc.Name, sc.Description, sc.Category, sc.Shell, sc.Body, sc.DefaultArgs, scriptParamsJSON(sc.Params), jobVariablesJSON(sc.Variables), allowVariables).Scan(&revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	}

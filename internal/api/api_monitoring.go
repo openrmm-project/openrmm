@@ -545,16 +545,18 @@ func (s *Server) runTask(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	var library *models.Script
 	shell, script := t.Shell, t.Script
 	if t.ScriptID != nil {
 		if sc, err := s.store.GetScript(r.Context(), *t.ScriptID); err == nil {
+			library = sc
 			shell, script = sc.Shell, sc.Body
 		}
 	}
 	tid := t.ID
 	queued := 0
 	for _, id := range ids {
-		if _, err := s.jobs.RunAutomated(r.Context(), id, shell, script, "task: "+t.Name+" (manual run)", &tid); err != nil {
+		if _, err := s.jobs.RunAutomated(r.Context(), id, shell, script, "task: "+t.Name+" (manual run)", &tid, library); err != nil {
 			log.Printf("run task %s on %s: %v", t.ID, id, err)
 			continue
 		}

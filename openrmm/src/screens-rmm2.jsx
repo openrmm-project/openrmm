@@ -6,6 +6,7 @@ function ScriptsScreen() {
   const scriptsQ = useQuery(['scripts'], () => api.listScripts(), { invalidateOn: ['scripts'] });
   const categoriesQ = useQuery(['script-cats'], () => api.listScriptCategories(), { invalidateOn: ['scripts'] });
   const [editing, setEditing] = useState(null);
+  const [tab, setTab] = useState('library');
   const [managing, setManaging] = useState(false);
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('');
@@ -21,6 +22,10 @@ function ScriptsScreen() {
           <Button variant="ghost" icon="grid" onClick={() => setManaging(true)}>{t('scripts.categories')}</Button>
           <Button variant="primary" icon="plus" onClick={() => setEditing('new')}>{t('scripts.new')}</Button>
         </div>} />
+      <div role="tablist" aria-label={t('title.scripts')} className="flex gap-2 mb-4">
+        {['library', ...(can('scripts.variables') ? ['variables'] : [])].map((key) => <Button key={key} role="tab" id={'scripts-tab-' + key} aria-controls={'scripts-panel-' + key} aria-selected={tab === key} onClick={() => setTab(key)} variant={tab === key ? 'secondary' : 'ghost'}>{t('vars.' + key)}</Button>)}
+      </div>
+      {tab === 'variables' && can('scripts.variables') ? <div role="tabpanel" id="scripts-panel-variables" aria-labelledby="scripts-tab-variables"><ScriptVariablesPanel /></div> : <div role="tabpanel" id="scripts-panel-library" aria-labelledby="scripts-tab-library">
       <Card className="mb-4"><div className="flex items-center gap-2 p-2.5">
         <div className="relative flex-1"><Icon name="search" size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('scripts.search')} className={cx(inputCls, 'pl-9')} /></div>
         <Select value={cat} onChange={(e) => setCat(e.target.value)} className="w-auto min-w-[170px]">
@@ -37,6 +42,8 @@ function ScriptsScreen() {
             </div>
             <div className="text-[13.5px] font-semibold text-ink group-hover:text-brandhi transition-colors">{s.name}</div>
             <div className="text-[12px] text-muted mt-1 line-clamp-2 leading-snug">{s.description}</div>
+            {(s.variables || []).length > 0 && <div className="text-[11px] text-brandhi mt-1">{t('vars.variables')}</div>}
+            {s.pending && <div className="mt-1.5 inline-flex items-center gap-1 rounded-md bg-warn/10 border border-warn/30 text-warn px-1.5 py-0.5 text-[10.5px] font-semibold"><Icon name="sparkle" size={10} />{t('proposal.awaiting')}</div>}
             <div className="text-[11px] text-faint mt-2.5 flex items-center gap-1.5"><Icon name="grid" size={11} />{s.category}
               {s.ai_released && <span className="ml-auto inline-flex items-center gap-1 rounded-md bg-brandsoft border border-brand/25 text-brandhi px-1.5 py-0.5 text-[10px] font-semibold"><Icon name="sparkle" size={10} />{t('script.aiReleasedBadge')}</span>}
             </div>
@@ -44,10 +51,125 @@ function ScriptsScreen() {
         ))}
       </div>
       {!scriptsQ.loading && scripts.length === 0 && <Card><EmptyState icon="script" title={t('scripts.none')} msg={t('scripts.noneMsg')} /></Card>}
+      </div>}
       {editing && <ScriptEditor script={editing === 'new' ? null : editing} onClose={() => setEditing(null)} categories={categories} />}
       {managing && <CategoryManager categories={categories} onClose={() => setManaging(false)} />}
     </Page>
   );
+}
+
+// Definitions are global; values are scoped and secrets are always write-only.
+function ScriptVariablesPanel() {
+  const toast = useToast();
+  const query = useQuery(['script-variables'], () => api.listScriptVariables(), { invalidateOn: ['scripts'] });
+  const targetsQ = useQuery(['script-variable-targets'], async () => {
+    const responses = await Promise.allSettled([api.listClients(), api.listSites(), api.listGroups(), api.listDevices()]);
+    const names = {};
+    ['clients', 'sites', 'groups', 'devices'].forEach((key, i) => {
+      if (responses[i].status === 'fulfilled') (responses[i].value[key] || []).forEach((item) => { names[item.id] = item.name || item.hostname; });
+    });
+    return names;
+  });
+  const [editing, setEditing] = useState(null);
+  const [setting, setSetting] = useState(null);
+  const [removing, setRemoving] = useState(null);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('all');
+  const [open, setOpen] = useState(null);
+  const all = query.data?.variables || [];
+  const needle = q.trim().toLowerCase();
+  // Hundreds of variables stay workable: a search, a secret filter and a
+  // bounded scroll area; each variable's values open on demand.
+  const items = all.filter((v) => (kind === 'all' || (kind === 'pending' ? !!v.pending : (kind === 'secret') === !!v.secret))
+    && (!needle || (v.name + ' ' + (v.description || '')).toLowerCase().includes(needle)));
+  const approve = async (v) => {
+    try { await api.approveScriptVariable(v.id); toast.success(t('proposal.approved'), v.name); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  const remove = async () => {
+    try {
+      if (removing.value) await api.clearScriptVariableValue(removing.id, removing.value.scope_type, removing.value.scope_id || '');
+      else await api.deleteScriptVariable(removing.id);
+      setRemoving(null);
+    } catch (e) { toast.error(t('common.failed'), e.message); }
+  };
+  return <Card><div className="p-4 space-y-4">
+    <div className="flex flex-wrap items-center gap-3"><Input aria-label={t('vars.search')} placeholder={t('vars.search')} value={q} onChange={(e) => setQ(e.target.value)} aria-controls="script-variables-list" className="flex-1 min-w-[12rem]" /><Select aria-label={t('vars.filter')} value={kind} onChange={(e) => setKind(e.target.value)} className="w-44"><option value="all">{t('vars.filterAll')}</option><option value="secret">{t('vars.filterSecret')}</option><option value="public">{t('vars.filterPublic')}</option><option value="pending">{t('vars.filterPending')}</option></Select><Button onClick={() => setEditing({})} icon="plus">{t('vars.new')}</Button></div>
+    <p className="text-[12px] text-muted">{t('vars.help')}</p>
+    <div className="rounded-xl border border-line p-3 text-[12px] space-y-1"><div>{t('vars.builtins')}</div><code className="break-all">{['RMM_AGENT_ID', 'RMM_AGENT_HOSTNAME', 'RMM_CLIENT_ID', 'RMM_CLIENT_NAME', 'RMM_SITE_ID', 'RMM_SITE_NAME'].join(', ')}</code></div>
+    {query.error && <div role="alert" className="text-bad">{query.error.message}</div>}
+    {all.length > 0 && <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: items.length, total: all.length })}</div>}
+    {items.length > 0 && <div id="script-variables-list" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-[28rem] overflow-y-auto overscroll-contain scroll-area rounded-xl border border-line divide-y divide-line">
+    {items.map((v) => <div key={v.id} className="px-3 py-2 space-y-2">
+      <div className="flex items-center gap-2 min-h-10"><button type="button" aria-expanded={open === v.id} aria-label={t(open === v.id ? 'vars.hideValues' : 'vars.showValues') + ': ' + v.name} onClick={() => setOpen(open === v.id ? null : v.id)} className="flex-1 min-w-0 text-left"><code className="block truncate text-[12.5px] text-ink" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11.5px] text-muted" title={v.description}>{v.description}</span>}</button>{v.secret && <span className="text-faint text-[12px]">{t('vars.secret')}</span>}{v.pending && <span className="rounded-md bg-warn/10 border border-warn/30 text-warn px-1.5 py-0.5 text-[10.5px] font-semibold whitespace-nowrap" title={t('proposal.by', { who: v.proposed_by })}>{t('proposal.awaiting')}</span>}{v.pending && <Button size="sm" variant="primary" onClick={() => approve(v)}>{t('proposal.approve')}</Button>}<span className="text-faint text-[11.5px] whitespace-nowrap">{t('vars.valuesCount', { count: (v.values || []).length })}</span><Button size="sm" onClick={() => setEditing(v)}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving(v)}>{t('action.delete')}</Button></div>
+      {open === v.id && <div className="space-y-2 pb-1">
+      {!(v.values || []).length && <p className="text-[12px] text-muted">{t('vars.noValues')}</p>}
+      {(v.values || []).map((value) => <div key={value.scope_type + ':' + value.scope_id} className="flex flex-wrap items-center gap-2 text-[12px]"><span>{value.scope_type === 'global' ? t('vars.global') : t('sup.scope.' + value.scope_type)} {targetsQ.data?.[value.scope_id] || value.scope_id}</span><code className="flex-1 break-all">{v.secret ? t('vars.masked') : value.value}</code><Button size="sm" onClick={() => setSetting({ variable: v, value })}>{t('action.edit')}</Button><Button size="sm" onClick={() => setRemoving({ ...v, value })}>{t('action.remove')}</Button></div>)}
+      {v.pending ? <p className="text-[12px] text-warn">{t('vars.pendingHint', { who: v.proposed_by })}</p> : <Button size="sm" onClick={() => setSetting({ variable: v })}>{t('vars.setValue')}</Button>}
+      </div>}
+    </div>)}
+    </div>}
+    {!query.loading && items.length === 0 && <p className="text-muted text-[12px]">{all.length ? t('vars.noMatches') : t('vars.none')}</p>}
+    {editing && <ScriptVariableDefinition variable={editing} onClose={() => setEditing(null)} />}
+    {setting && <ScriptVariableValueEditor {...setting} onClose={() => setSetting(null)} />}
+    <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={remove} danger title={t('vars.deleteTitle')} body={t('vars.deleteHint')} confirmLabel={t('action.delete')} />
+  </div></Card>;
+}
+
+function ScriptVariableDefinition({ variable, onClose }) {
+  const toast = useToast();
+  const [name, setName] = useState(variable.name || '');
+  const [description, setDescription] = useState(variable.description || '');
+  const [secret, setSecret] = useState(!!variable.secret);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      if (variable.id) await api.updateScriptVariable(variable.id, { description, secret });
+      else await api.createScriptVariable({ name, description, secret });
+      onClose();
+    } catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
+  };
+  return <Modal open onClose={onClose} width="max-w-lg"><div role="dialog" aria-label={t('vars.variables')} className="p-5 space-y-4">
+    <div className="font-semibold">{t('vars.variables')}</div>
+    <Field label={t('checks.name')} hint={t('vars.nameHint')}><Input aria-label={t('checks.name')} value={name} disabled={!!variable.id} onChange={(e) => setName(e.target.value)} placeholder="customerKey" /></Field>{/* i18n-ignore: environment variable identifier */}
+    <Field label={t('common.description')}><Input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} /></Field>
+    <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={secret} disabled={!!variable.secret} onChange={(e) => setSecret(e.target.checked)} />{t('vars.secret')}</label>
+    <p className="text-[12px] text-muted">{t('vars.secretHint')}</p>
+    <div className="flex justify-end gap-2"><Button onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} disabled={!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)} onClick={save}>{t('action.save')}</Button></div>
+  </div></Modal>;
+}
+
+function ScriptVariableValueEditor({ variable, value: existing, onClose }) {
+  const toast = useToast();
+  const [scope, setScope] = useState(existing?.scope_type || 'global');
+  const [scopeTarget, setScopeTarget] = useState(existing?.scope_id || '');
+  const [value, setValue] = useState(variable.secret ? '' : existing?.value || '');
+  const [busy, setBusy] = useState(false);
+  const [options, setOptions] = useState([]);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    setOptions([]); setError('');
+    if (scope !== 'global') {
+      const load = { client: () => api.listClients(), site: () => api.listSites(), group: () => api.listGroups(), agent: () => api.listDevices() };
+      load[scope]().then((result) => { if (!cancelled) setOptions((result[{ client: 'clients', site: 'sites', group: 'groups', agent: 'devices' }[scope]] || []).map((item) => ({ value: item.id, label: item.name || item.hostname }))); }).catch((e) => { if (!cancelled) setError(e.message); });
+    }
+    return () => { cancelled = true; };
+  }, [scope]);
+  const save = async () => {
+    setBusy(true);
+    try { await api.setScriptVariableValue(variable.id, { scope_type: scope, scope_id: scope === 'global' ? '' : scopeTarget, value }); setValue(''); onClose(); }
+    catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
+  };
+  return <Modal open onClose={onClose} width="max-w-lg"><div role="dialog" aria-label={t('vars.value')} className="p-5 space-y-4">
+    <code>{variable.name}</code>
+    <Field label={t('vars.scope')}><Select aria-label={t('vars.scope')} value={scope} onChange={(e) => { setScope(e.target.value); setScopeTarget(''); }} disabled={!!existing}><option value="global">{t('vars.global')}</option>{['client', 'site', 'group', 'agent'].map((key) => <option key={key} value={key}>{t('sup.scope.' + key)}</option>)}</Select></Field>
+    {scope !== 'global' && <Field label={t('vars.target')}><Combobox value={scopeTarget} onChange={setScopeTarget} options={options} disabled={!!existing} placeholder={t('vars.target')} /></Field>}
+    {error && <div role="alert" className="text-bad text-[12px]">{error}</div>}
+    <Field label={t('vars.value')} hint={variable.secret ? t('vars.secretHint') : undefined}><Input aria-label={t('vars.value')} type={variable.secret ? 'password' : 'text'} value={value} onChange={(e) => setValue(e.target.value)} autoComplete="new-password" /></Field>
+    <div className="flex justify-end gap-2"><Button onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} disabled={!value || (scope !== 'global' && !scopeTarget)} onClick={save}>{t('action.save')}</Button></div>
+  </div></Modal>;
 }
 
 // Creating, renaming and removing categories. A category is registered in its
@@ -156,26 +278,39 @@ function ScriptEditor({ script, onClose, categories = [] }) {
   const [shell, setShell] = useState(script?.shell || 'bash');
   const [body, setBody] = useState(script?.body || '');
   const [params, setParams] = useState(script?.params || []);
+  const [variables, setVariables] = useState(script?.variables || []);
+  const variablesQ = useQuery(['script-variables'], () => api.listScriptVariables(), { invalidateOn: ['scripts'] });
+  const [varSearch, setVarSearch] = useState('');
+  const availableVars = variablesQ.data?.variables || [];
+  const varNeedle = varSearch.trim().toLowerCase();
+  const matchingVars = availableVars.filter((v) => !varNeedle || (v.name + ' ' + (v.description || '')).toLowerCase().includes(varNeedle));
   const [busy, setBusy] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
-  const readOnly = !can('scripts.manage');
+  const readOnly = !can('scripts.manage') || ((script?.variables || []).length > 0 && !can('scripts.variables'));
+  const varsLocked = readOnly || shell === 'cmd' || !can('scripts.variables');
   // What the release is bound to: an edit here withdraws it on save, so the
   // drawer says so before the operator saves rather than after.
-  const contentChanged = !!script && (shell !== script.shell || body !== script.body || JSON.stringify(params) !== JSON.stringify(script.params || []));
+  const contentChanged = !!script && (shell !== script.shell || body !== script.body || JSON.stringify(params) !== JSON.stringify(script.params || []) || JSON.stringify(variables) !== JSON.stringify(script.variables || []));
 
   const save = async () => {
     setBusy(true);
-    try { const b = { name, description: desc, category, shell, body, params }; if (script) await api.updateScript(script.id, b); else await api.createScript(b); toast.success(script ? t('script.saved') : t('script.created')); onClose(); }
+    try { const b = { name, description: desc, category, shell, body, params, variables }; if (script) await api.updateScript(script.id, b); else await api.createScript(b); toast.success(script ? t('script.saved') : t('script.created')); onClose(); }
     catch (e) { toast.error(t('common.failed'), e.message); } finally { setBusy(false); }
   };
   const del = async () => { await api.deleteScript(script.id); toast.info(t('script.deleted')); onClose(); };
+  const pending = !!script?.pending;
+  const approve = async () => {
+    try { await api.approveScript(script.id); toast.success(t('proposal.approved'), script.name); onClose(); }
+    catch (e) { toast.error(t('common.failed'), e.message); }
+  };
 
   return (
     <Drawer open onClose={onClose} width="max-w-[760px]">
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="script" size={17} /></div>
         <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : t('scripts.new')}</div><div className="text-[12px] text-faint">{readOnly ? t('script.readOnly') : t('script.editing')}</div></div>
-        {can('jobs.create') && script && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
+        {pending && !readOnly && <Button variant="primary" icon="check" onClick={approve}>{t('proposal.approve')}</Button>}
+        {can('jobs.create') && script && !pending && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
@@ -195,15 +330,32 @@ function ScriptEditor({ script, onClose, categories = [] }) {
         <Field label={t('deploy.shell')} className="w-44"><Select value={shell} onChange={(e) => setShell(e.target.value)} disabled={readOnly}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>
         <Field label={t('script.body')}>{readOnly ? <CodeBlock code={body} shell={shell} maxHeight={420} /> : <CodeEditor value={body} onChange={setBody} shell={shell} minHeight={300} />}</Field>
         <ScriptParamsEditor params={params} onChange={setParams} shell={shell} readOnly={readOnly} />
-        {script && <AIReleasePanel script={script} contentChanged={contentChanged} />}
+        <div className="rounded-xl border border-line p-3 space-y-2">
+          <div className="font-semibold text-[12.5px]">{t('vars.variables')}</div>
+          <div className="text-[12px] text-muted">{t('vars.bindHint')}</div>
+          {shell === 'cmd' && <div className="text-[12px] text-warn">{t('vars.cmdUnsupported')}</div>}
+          {/* Chosen names stay visible above the picker, whatever the search hides. */}
+          <div aria-label={t('vars.selected')} className="flex flex-wrap gap-1.5">{variables.length === 0 ? <span className="text-[12px] text-faint">{t('vars.noneSelected')}</span> : variables.map((name) => <span key={name} className="inline-flex items-center gap-1 rounded-md border border-line bg-elevated px-1.5 py-0.5 text-[11.5px]"><code>{name}</code>{!varsLocked && <button type="button" aria-label={t('action.remove') + ': ' + name} onClick={() => setVariables(variables.filter((value) => value !== name))} className="text-faint hover:text-ink">×</button>}</span>)}</div>
+          {availableVars.length > 0 && <>
+            <Input value={varSearch} onChange={(e) => setVarSearch(e.target.value)} placeholder={t('vars.pickerSearch')} aria-label={t('vars.pickerSearch')} aria-controls="script-variable-picker" />
+            <div className="text-[11.5px] text-faint" aria-live="polite">{t('vars.count', { shown: matchingVars.length, total: availableVars.length })}</div>
+            <div id="script-variable-picker" role="region" aria-label={t('vars.variables')} tabIndex={0} className="max-h-60 overflow-y-auto overscroll-contain scroll-area rounded-lg border border-line">
+              {matchingVars.map((v) => <label key={v.id} className="h-12 px-3 flex items-center gap-2 text-[12px] border-b border-line last:border-0"><input type="checkbox" checked={variables.includes(v.name)} disabled={varsLocked || (v.pending && !variables.includes(v.name))} onChange={(e) => setVariables(e.target.checked ? [...new Set([...variables, v.name])].sort() : variables.filter((name) => name !== v.name))} /><span className="min-w-0 flex-1"><code className="block truncate" title={v.name}>{v.name}</code>{v.description && <span className="block truncate text-[11px] text-muted" title={v.description}>{v.description}</span>}</span>{v.pending && <span className="text-warn whitespace-nowrap">{t('proposal.awaiting')}</span>}{v.secret && <span className="text-faint">{t('vars.secret')}</span>}</label>)}
+              {!matchingVars.length && <p className="p-3 text-[12px] text-faint">{t('vars.noMatches')}</p>}
+            </div>
+          </>}
+          {variables.filter((name) => !(variablesQ.data?.variables || []).some((v) => v.name === name)).map((name) => <div key={name} className="text-warn">{name}<Button size="sm" disabled={readOnly || shell === 'cmd' || !can('scripts.variables')} onClick={() => setVariables(variables.filter((value) => value !== name))}>{t('action.remove')}</Button></div>)}
+        </div>
+        {pending && <div role="note" className="rounded-xl border border-warn/30 bg-warn/10 p-3 text-[12px] text-warn">{t('script.pendingHint', { who: script.proposed_by })}</div>}
+        {script && !pending && <AIReleasePanel script={script} contentChanged={contentChanged} />}
       </div>
       {!readOnly && (
         <div className="px-5 py-3.5 border-t border-line flex justify-between gap-2">
           {script ? <Button variant="danger" icon="trash" onClick={del}>{t('action.delete')}</Button> : <span />}
-          <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!name || !body}>{script ? t('script.save') : t('script.create')}</Button></div>
+          <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!name || !body || (shell === 'cmd' && variables.length > 0)}>{script ? t('script.save') : t('script.create')}</Button></div>
         </div>
       )}
-      {runOpen && <RunOnDevice script={{ id: script?.id, name, shell, body, params: script?.params || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
+      {runOpen && <RunOnDevice script={{ id: script?.id, name, shell, body, params: script?.params || [], variables: script?.variables || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
     </Drawer>
   );
 }
@@ -221,7 +373,7 @@ function RunOnDevice({ script, devMap, onClose, onDone }) {
     try {
       // With declared parameters the stored script runs, by id, with the values
       // as data; the server checks them against the declaration.
-      if (declared.length > 0) await api.runLibraryScript(dev, script.id, values);
+      if (declared.length > 0 || (script.variables || []).length > 0) await api.runLibraryScript(dev, script.id, values);
       else await api.runScript(dev, { shell: script.shell, script: script.body, description: t('script.runDesc', { name: script.name }), name: script.name });
       toast.success(t('run.created'), t('script.queuedOn', { host: devMap[dev].hostname })); onClose(); onDone();
     }

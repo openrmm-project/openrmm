@@ -3,20 +3,15 @@ package settings
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"strconv"
 	"strings"
 
 	"github.com/p1ngu/rmm/internal/config"
+	"github.com/p1ngu/rmm/internal/secretcrypto"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -330,58 +325,11 @@ func Save(ctx context.Context, st *store.Store, cfg *config.Config, in SaveReque
 func Encrypt(cfg *config.Config, plaintext string) (string, error)  { return encrypt(cfg, plaintext) }
 func Decrypt(cfg *config.Config, ciphertext string) (string, error) { return decrypt(cfg, ciphertext) }
 
-func encryptionKey(cfg *config.Config) [32]byte {
-	key := cfg.SettingsEncryptionKey
-	if key == "" {
-		key = cfg.AdminToken
-	}
-	return sha256.Sum256([]byte(key))
-}
-
 func encrypt(cfg *config.Config, plaintext string) (string, error) {
-	key := encryptionKey(cfg)
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	out := append(nonce, gcm.Seal(nil, nonce, []byte(plaintext), nil)...)
-	return "enc:v1:" + base64.RawStdEncoding.EncodeToString(out), nil
+	return secretcrypto.Encrypt(cfg, plaintext)
 }
-
 func decrypt(cfg *config.Config, ciphertext string) (string, error) {
-	if !strings.HasPrefix(ciphertext, "enc:v1:") {
-		return ciphertext, nil // migration path for any legacy plaintext value.
-	}
-	key := encryptionKey(cfg)
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	data, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(ciphertext, "enc:v1:"))
-	if err != nil {
-		return "", err
-	}
-	if len(data) < gcm.NonceSize() {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-	nonce, sealed := data[:gcm.NonceSize()], data[gcm.NonceSize():]
-	plain, err := gcm.Open(nil, nonce, sealed, nil)
-	if err != nil {
-		return "", err
-	}
-	return string(plain), nil
+	return secretcrypto.Decrypt(cfg, ciphertext)
 }
 
 func AuditDetail(changed []string) []byte {

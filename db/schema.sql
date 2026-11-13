@@ -1124,3 +1124,79 @@ FOR EACH ROW EXECUTE FUNCTION capture_job_monitoring_scope();
 -- Legacy silences with unknown provenance remain visible to global admins but
 -- must be recreated before applying to a device in its current scope.
 ALTER TABLE alert_suppressions ADD COLUMN IF NOT EXISTS agent_monitoring_scope_since TIMESTAMPTZ;
+-- Script variables (a name a library script may read at runtime).
+--
+-- The value is not part of the script. One script is reused across clients,
+-- and each client, site, department or device can hold its own value; the
+-- most specific scope wins. secret values are encrypted with the instance
+-- settings key and are never written back to an API response, an audit row,
+-- or a job's stored output.
+--
+-- scripts.variables is the list of names that script is allowed to receive.
+-- A script that does not list a name does not receive it, so a technician
+-- who can run or edit an unrelated script cannot read a customer's key.
+-- jobs.variables snapshots that list at creation, so a later edit does not
+-- change a job already approved. jobs.secret_redactions is the ciphertext
+-- of the secret values actually sent, used only to redact the result.
+CREATE TABLE IF NOT EXISTS script_variables (
+    id          UUID PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    secret      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT script_variables_name_valid CHECK (
+        name ~ '^[A-Z][A-Z0-9_]{0,40}$' AND name !~ '^(RMM_|OPENRMM_)'
+    )
+);
+
+CREATE TABLE IF NOT EXISTS script_variable_values (
+    variable_id UUID NOT NULL REFERENCES script_variables(id) ON DELETE CASCADE,
+    scope_type  TEXT NOT NULL,
+    scope_id    TEXT NOT NULL DEFAULT '',
+    value       TEXT NOT NULL,
+    PRIMARY KEY (variable_id, scope_type, scope_id),
+    CONSTRAINT script_variable_values_scope_valid CHECK (
+        scope_type IN ('global', 'client', 'site', 'group', 'agent')
+        AND ((scope_type = 'global' AND scope_id = '') OR (scope_type <> 'global' AND scope_id <> ''))
+    )
+);
+
+ALTER TABLE scripts ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '[]';
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS secret_redactions TEXT NOT NULL DEFAULT '';
+
+INSERT INTO role_permissions (role_key, permission)
+VALUES ('admin', 'scripts.variables')
+ON CONFLICT DO NOTHING;
+
+-- Preserve the user-chosen case and remove the business name length limit.
+ALTER TABLE script_variables DROP CONSTRAINT script_variables_name_valid;
+ALTER TABLE script_variables ADD CONSTRAINT script_variables_name_valid CHECK (
+    name ~ '^[A-Za-z_][A-Za-z0-9_]*$' AND upper(name) !~ '^(RMM_|OPENRMM_)'
+);
+
+-- Windows environment names are case-insensitive. Keep one spelling per name,
+-- preserving it verbatim for Unix. Hash the ASCII-folded identifier so long
+-- names do not hit PostgreSQL's B-tree key-size limit. SHA-256 is built in.
+-- translate makes ASCII folding independent of database locale.
+ALTER TABLE script_variables DROP CONSTRAINT script_variables_name_key;
+CREATE UNIQUE INDEX script_variables_name_casefold_unique ON script_variables (
+    sha256(translate(name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')::bytea)
+);
+
+-- AI Chat and MCP may propose a script variable definition (docs/25). A
+-- proposal carries who proposed it and stays inert until a person approves
+-- it: no value can be set, no script can bind it, and a run never resolves it.
+ALTER TABLE script_variables
+    ADD COLUMN IF NOT EXISTS proposed_by TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS approved_by TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+
+-- The same for library scripts: AI Chat and MCP propose one, a person approves
+-- it before it can run, be scheduled or be released for AI autonomy.
+ALTER TABLE scripts
+    ADD COLUMN IF NOT EXISTS proposed_by TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS approved_by TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;

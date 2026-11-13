@@ -576,7 +576,7 @@ func (f *autonomousFakeStore) RecordAIScriptOutcome(_ context.Context, _ string,
 func (f *autonomousFakeStore) GetScript(context.Context, string) (*models.Script, error) {
 	return nil, store.ErrNotFound
 }
-func (f *autonomousFakeStore) WithAutonomousDispatch(_ context.Context, _ *models.Job, _ string, send func() bool) (bool, error) {
+func (f *autonomousFakeStore) WithAutonomousDispatch(_ context.Context, _ *models.Job, _ string, send func() bool, _ ...time.Time) (bool, error) {
 	if f.denyDispatch {
 		return false, errors.New("release withdrawn")
 	}

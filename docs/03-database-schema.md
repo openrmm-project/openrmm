@@ -226,6 +226,10 @@ Reusable script library: `id`, `name`, `description`, `category`,
 `ai_released_hash` record a release for the AI, bound to the SHA-256 of shell,
 body and parameters; `ai_failure_streak` counts consecutive failed autonomous
 runs ([23](23-ai-autonomy.md)).
+`proposed_by`, `approved_by` and `approved_at` (migration `031`) mark a script
+AI Chat or MCP proposed: while `proposed_by` is set and `approved_by` is empty it
+cannot run, be scheduled or be released. `script_variables` carries the same
+three columns with the same meaning ([25](25-script-variables.md#ai-chat-and-mcp)).
 
 ### `script_categories`
 The catalogue of category names (`id`, `name`, `created_at`), added by migration

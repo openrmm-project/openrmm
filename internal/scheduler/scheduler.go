@@ -471,14 +471,16 @@ func (s *Scheduler) dispatchTasks(ctx context.Context, agentID string, siteID, c
 		if !s.taskDue(t, last, now) {
 			continue
 		}
+		var library *models.Script
 		shell, script := t.Shell, t.Script
 		if t.ScriptID != nil {
 			if sc, err := s.store.GetScript(ctx, *t.ScriptID); err == nil {
+				library = sc
 				shell, script = sc.Shell, sc.Body
 			}
 		}
 		tid := t.ID
-		if _, err := s.jobs.RunAutomated(ctx, agentID, shell, script, "task: "+t.Name, &tid); err != nil {
+		if _, err := s.jobs.RunAutomated(ctx, agentID, shell, script, "task: "+t.Name, &tid, library); err != nil {
 			log.Printf("scheduler: run task %s: %v", t.ID, err)
 		}
 	}

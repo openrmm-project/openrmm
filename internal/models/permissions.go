@@ -39,6 +39,10 @@ const (
 
 	PermScriptsView   = "scripts.view"
 	PermScriptsManage = "scripts.manage"
+	// PermScriptsVariables sets script variables and their values, including
+	// secrets. It is not implied by PermScriptsManage: being able to edit a
+	// script must not grant the ability to read or replace a customer's key.
+	PermScriptsVariables = "scripts.variables"
 
 	PermPatchesView         = "patches.view"
 	PermPatchesManage       = "patches.manage"
@@ -114,6 +118,7 @@ func PermissionCatalog() []Permission {
 		{PermPoliciesManage, "Manage policies", "Create, assign, and delete monitoring policies.", "Policies"},
 		{PermScriptsView, "View scripts", "List and inspect script library entries.", "Scripts"},
 		{PermScriptsManage, "Manage scripts", "Create, edit, and delete script library entries.", "Scripts"},
+		{PermScriptsVariables, "Manage script variables", "Create script variables and set their values, including secrets. Editing a script does not include this.", "Scripts"},
 		{PermPatchesView, "View patches", "View patch compliance, catalog, and per-device patch state.", "Patches"},
 		{PermPatchesManage, "Manage patches", "Scan, approve, install patches, and request reboots.", "Patches"},
 		{PermPatchPoliciesManage, "Manage patch policies", "Create, edit, and delete patch maintenance policies.", "Patches"},
@@ -177,7 +182,7 @@ func DefaultRolePermissions(role string) []string {
 			PermChecksView, PermChecksManage,
 			PermTasksView, PermTasksManage,
 			PermPoliciesView, PermPoliciesManage,
-			PermScriptsView, PermScriptsManage,
+			PermScriptsView, PermScriptsManage, PermScriptsVariables,
 			PermPatchesView, PermPatchesManage, PermPatchPoliciesManage,
 			PermDevicesView, PermDevicesManage, PermDevicesDelete, PermDevicesRemote, PermDevicesFiles, PermDevicesTerminal, PermDevicesRemoteShare,
 			PermClientsView, PermClientsManage,

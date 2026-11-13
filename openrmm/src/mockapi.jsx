@@ -10,7 +10,7 @@ const ROLES = { admin: 3, tech: 2, readonly: 1 };
 const DEFAULT_ROLE_PERMS = {
   readonly: ['devices.view', 'devices.remote', 'clients.view'],
   tech: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'tasks.view', 'policies.view', 'scripts.view', 'patches.view', 'patches.manage', 'devices.view', 'devices.manage', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'reports.view'],
-  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'devices.remote.share', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage', 'ai.autonomy.query', 'ai.autonomy.run', 'mcp.autonomy.query', 'mcp.autonomy.run', 'ai.autonomy.manage'],
+  admin: ['ai_chat.use', 'mcp.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'scripts.variables', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'devices.remote.share', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'users.email.manage', 'roles.manage', 'ai.autonomy.query', 'ai.autonomy.run', 'mcp.autonomy.query', 'mcp.autonomy.run', 'ai.autonomy.manage'],
 };
 const PERM_ALIASES = { admin: 'settings.manage', tech: 'jobs.manage', readonly: 'devices.view' };
 const AUTH_KEY = 'rmm-ai-auth';
@@ -453,6 +453,14 @@ const api = {
   // what lets the editor offer what already exists instead of asking for free
   // text, and renaming rewrites every script filed under the old name — onto a
   // name in use, that is a merge.
+  listScriptVariables() { return GET('/api/script-variables'); },
+  createScriptVariable(body) { return POST('/api/script-variables', body); },
+  updateScriptVariable(id, body) { return PUT('/api/script-variables/' + encodeURIComponent(id), body); },
+  deleteScriptVariable(id) { return DELETE('/api/script-variables/' + encodeURIComponent(id)); },
+  approveScriptVariable(id) { return POST('/api/script-variables/' + encodeURIComponent(id) + '/approve', {}); },
+  approveScript(id) { return POST('/api/scripts/' + encodeURIComponent(id) + '/approve', {}); },
+  setScriptVariableValue(id, body) { return PUT('/api/script-variables/' + encodeURIComponent(id) + '/values', body); },
+  clearScriptVariableValue(id, scopeType, scopeId) { return DELETE('/api/script-variables/' + encodeURIComponent(id) + '/values' + qs({ scope_type: scopeType, scope_id: scopeId })); },
   listScriptCategories() { return GET('/api/script-categories'); },
   createScriptCategory(name) { return POST('/api/script-categories', { name }); },
   renameScriptCategory(name, newName) { return PUT('/api/script-categories/' + encodeURIComponent(name), { name: newName }); },

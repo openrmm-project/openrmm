@@ -155,6 +155,14 @@ known egress IPs; leave it empty for cloud connectors with dynamic egress.
 | Move or delete devices | ⚠️ propose only, with `clients.manage` / `devices.delete`; a person approves it, and a deletion needs the device count typed |
 | Delete a group, site or company | ❌ |
 
+### Proposing script variables and library scripts
+
+`list_script_variables`, `propose_script_variable` and `propose_library_script` work
+over MCP as in the chat: proposals wait for an unrestricted operator to approve
+them in Scripts, a proposed variable never takes a value from the model, and a
+proposed library script cannot run, be scheduled or be released for AI autonomy
+before approval. See [25-script-variables](25-script-variables.md#ai-chat-and-mcp).
+
 ### Proposing server alert rules
 
 The existing propose_check tool also accepts connectivity, job_failure, patch_failure, reboot_pending and agent_outdated. The [alert rules guide](24-alert-rules.md) documents their closed configuration schema. Both chat and MCP create disabled proposals within the caller’s scope; a human must review and enable them, including rules that suppress alerts. No tool edits fleet defaults or approves its own proposal.

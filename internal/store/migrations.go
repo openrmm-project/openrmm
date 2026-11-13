@@ -114,6 +114,15 @@ var migrationV27SQL string
 //go:embed migrations/028_alert_rules.sql
 var migrationV28SQL string
 
+//go:embed migrations/029_script_variables.sql
+var migrationV29SQL string
+
+//go:embed migrations/030_script_variable_names.sql
+var migrationV30SQL string
+
+//go:embed migrations/031_script_variable_proposals.sql
+var migrationV31SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -143,6 +152,9 @@ var migrations = []migration{
 	{version: 26, name: "ai_autonomy", sql: migrationV26SQL},
 	{version: 27, name: "admin_ai_autonomy", sql: migrationV27SQL},
 	{version: 28, name: "alert_rules", sql: migrationV28SQL},
+	{version: 29, name: "script_variables", sql: migrationV29SQL},
+	{version: 30, name: "script_variable_names", sql: migrationV30SQL},
+	{version: 31, name: "script_variable_proposals", sql: migrationV31SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

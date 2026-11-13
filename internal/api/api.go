@@ -349,11 +349,19 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermScriptsManage)).Post("/scripts", s.createScript)
 		r.With(s.requirePermission(models.PermScriptsManage)).Put("/scripts/{id}", s.updateScript)
 		r.With(s.requirePermission(models.PermScriptsManage)).Delete("/scripts/{id}", s.deleteScript)
+		r.With(s.requirePermission(models.PermScriptsManage)).Post("/scripts/{id}/approve", s.approveScript)
 		r.With(s.requirePermission(models.PermScriptsManage), s.requirePermission(models.PermAIAutonomyManage)).
 			Post("/scripts/{id}/ai-release", s.setScriptAIRelease)
 		// Their own prefix rather than /scripts/categories: a category name is not
 		// a script id, and a sibling path would sit next to /scripts/{id} where
 		// only chi's static-before-param rule keeps them apart.
+		r.With(s.requirePermission(models.PermScriptsView)).Get("/script-variables", s.listScriptVariables)
+		r.With(s.requirePermission(models.PermScriptsVariables)).Post("/script-variables", s.createScriptVariable)
+		r.With(s.requirePermission(models.PermScriptsVariables)).Put("/script-variables/{id}", s.updateScriptVariable)
+		r.With(s.requirePermission(models.PermScriptsVariables)).Delete("/script-variables/{id}", s.deleteScriptVariable)
+		r.With(s.requirePermission(models.PermScriptsVariables)).Post("/script-variables/{id}/approve", s.approveScriptVariable)
+		r.With(s.requirePermission(models.PermScriptsVariables)).Put("/script-variables/{id}/values", s.setScriptVariableValue)
+		r.With(s.requirePermission(models.PermScriptsVariables)).Delete("/script-variables/{id}/values", s.clearScriptVariableValue)
 		r.With(s.requirePermission(models.PermScriptsView)).Get("/script-categories", s.listScriptCategories)
 		r.With(s.requirePermission(models.PermScriptsManage)).Post("/script-categories", s.createScriptCategory)
 		r.With(s.requirePermission(models.PermScriptsManage)).Put("/script-categories/{name}", s.renameScriptCategory)

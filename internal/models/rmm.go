@@ -204,6 +204,10 @@ type Script struct {
 	// accepted values. They reach the device as OPENRMM_PARAM_<NAME>
 	// environment variables, never pasted into the body.
 	Params []ScriptParam `json:"params"`
+	// Variables are the names of script variables this script may read.
+	// The values are not stored on the script; they are resolved for the
+	// device at execution and are empty here.
+	Variables []string `json:"variables"`
 	// ContentHash identifies the exact script displayed for review. Computed on read.
 	ContentHash string `json:"content_hash"`
 	// The release for the AI to run this script without approval
@@ -214,6 +218,12 @@ type Script struct {
 	AIReleasedHash string     `json:"ai_released_hash,omitempty"`
 	// AIReleased is computed: a release whose hash still matches the content.
 	AIReleased bool `json:"ai_released"`
+	// ProposedBy is set when AI Chat or MCP proposed the script ("ai:…",
+	// "mcp:…"). Until ApprovedBy is set the script is Pending: it cannot run,
+	// be scheduled or be released for AI autonomy.
+	ProposedBy string `json:"proposed_by"`
+	ApprovedBy string `json:"approved_by"`
+	Pending    bool   `json:"pending"`
 }
 
 // ScriptParam declares one parameter of a library script. Kind "enum" accepts

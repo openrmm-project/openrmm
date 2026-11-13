@@ -458,14 +458,14 @@ func (s *Store) APITokenExists(ctx context.Context, hash string) (bool, error) {
 
 const jobCols = `id, agent_id, type, description, shell, script, status, requires_approval,
 	created_by, approved_by, task_id, batch_id, exit_code, stdout, stderr, created_at, updated_at,
-	autonomy, script_id, params`
+	autonomy, script_id, params, variables`
 
 func scanJob(row pgx.Row) (*models.Job, error) {
 	var j models.Job
-	var params []byte
+	var params, variables []byte
 	err := row.Scan(&j.ID, &j.AgentID, &j.Type, &j.Description, &j.Shell, &j.Script, &j.Status,
 		&j.RequiresApproval, &j.CreatedBy, &j.ApprovedBy, &j.TaskID, &j.BatchID, &j.ExitCode, &j.Stdout, &j.Stderr,
-		&j.CreatedAt, &j.UpdatedAt, &j.Autonomy, &j.ScriptID, &params)
+		&j.CreatedAt, &j.UpdatedAt, &j.Autonomy, &j.ScriptID, &params, &variables)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -479,6 +479,11 @@ func scanJob(row pgx.Row) (*models.Job, error) {
 	}
 	if len(j.Params) == 0 {
 		j.Params = nil
+	}
+	if len(variables) > 0 {
+		if err := json.Unmarshal(variables, &j.Variables); err != nil {
+			return nil, err
+		}
 	}
 	return &j, nil
 }
@@ -496,10 +501,10 @@ func (s *Store) CreateJob(ctx context.Context, j *models.Job) (*models.Job, erro
 	j.ID = newID()
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by, task_id, batch_id,
-		   approved_by, autonomy, script_id, params)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		   approved_by, autonomy, script_id, params, variables)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, j.Status, j.RequiresApproval, j.CreatedBy, j.TaskID, j.BatchID,
-		j.ApprovedBy, j.Autonomy, j.ScriptID, jobParamsJSON(j.Params))
+		j.ApprovedBy, j.Autonomy, j.ScriptID, jobParamsJSON(j.Params), jobVariablesJSON(j.Variables))
 	if err != nil {
 		return nil, err
 	}
@@ -553,10 +558,10 @@ func (s *Store) CreateAutonomousJob(ctx context.Context, j *models.Job, limits A
 	j.ID = newID()
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO jobs (id, agent_id, type, description, shell, script, status, requires_approval, created_by,
-		   approved_by, autonomy, script_id, params)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9,$10,$11,$12)`,
+		   approved_by, autonomy, script_id, params, variables)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,false,$8,$9,$10,$11,$12,$13)`,
 		j.ID, j.AgentID, j.Type, j.Description, j.Shell, j.Script, models.JobPending, j.CreatedBy,
-		j.ApprovedBy, j.Autonomy, j.ScriptID, jobParamsJSON(j.Params)); err != nil {
+		j.ApprovedBy, j.Autonomy, j.ScriptID, jobParamsJSON(j.Params), jobVariablesJSON(j.Variables)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

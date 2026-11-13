@@ -154,6 +154,32 @@ func (s *Server) getScript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sc)
 }
 
+// approveScript accepts a library script AI Chat or MCP proposed. The library
+// is global, so it takes an unrestricted principal; rejecting is deleting it.
+func (s *Server) approveScript(w http.ResponseWriter, r *http.Request) {
+	if !s.requireUnrestricted(w, r, "the global script library") {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	name, err := s.store.ApproveScript(r.Context(), id, actorOf(r), hasPermission(r, models.PermScriptsVariables))
+	if errors.Is(err, store.ErrScriptApprovalVariables) {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"name": name})
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "script.approve", id, detail)
+	out, err := s.store.GetScript(r.Context(), id)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
 	if !s.requireUnrestricted(w, r, "the global script library") {
 		return
@@ -169,6 +195,18 @@ func (s *Server) createScript(w http.ResponseWriter, r *http.Request) {
 	if err := autonomy.ValidateParamSchema(sc.Shell, sc.Params); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if len(sc.Variables) > 0 && !hasPermission(r, models.PermScriptsVariables) {
+		writeErr(w, http.StatusForbidden, "scripts.variables required")
+		return
+	}
+	names, err := s.prepareScriptVariables(r, sc.Shell, sc.Variables)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if names != nil {
+		sc.Variables = names
 	}
 	out, err := s.store.CreateScript(r.Context(), &sc)
 	if err != nil {
@@ -193,7 +231,34 @@ func (s *Server) updateScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	revoked, err := s.store.UpdateScript(r.Context(), &sc)
+	if len(sc.Variables) > 0 && !hasPermission(r, models.PermScriptsVariables) {
+		writeErr(w, http.StatusForbidden, "scripts.variables required")
+		return
+	}
+	names, err := s.prepareScriptVariables(r, sc.Shell, sc.Variables)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	existing, err := s.store.GetScript(r.Context(), sc.ID)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	if names == nil {
+		sc.Variables = existing.Variables
+	} else {
+		sc.Variables = names
+	}
+	if len(existing.Variables) > 0 && !hasPermission(r, models.PermScriptsVariables) {
+		writeErr(w, http.StatusForbidden, "scripts.variables required")
+		return
+	}
+	if _, err := s.prepareScriptVariables(r, sc.Shell, sc.Variables); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	revoked, err := s.store.UpdateScript(r.Context(), &sc, hasPermission(r, models.PermScriptsVariables))
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
@@ -243,6 +308,10 @@ func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
+	if *in.Release && sc.Pending {
+		writeErr(w, http.StatusConflict, store.ErrScriptPending.Error())
+		return
+	}
 	if !*in.Release {
 		had, err := s.store.ClearScriptAIRelease(r.Context(), id)
 		if err != nil {
@@ -261,7 +330,7 @@ func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "content_hash of the reviewed script is required")
 		return
 	}
-	if in.ContentHash != models.ScriptContentHash(sc.Shell, sc.Body, sc.Params) {
+	if in.ContentHash != models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables) {
 		writeErr(w, http.StatusConflict, "the script changed since you viewed it; reload and review it before releasing")
 		return
 	}
@@ -271,7 +340,7 @@ func (s *Server) setScriptAIRelease(w http.ResponseWriter, r *http.Request) {
 		writeCodedErr(w, http.StatusUnprocessableEntity, "release_refused", err.Error())
 		return
 	}
-	hash := models.ScriptContentHash(sc.Shell, sc.Body, sc.Params)
+	hash := models.ScriptContentHash(sc.Shell, sc.Body, sc.Params, sc.Variables)
 	if err := s.store.SetScriptAIRelease(r.Context(), id, actorOf(r), hash, sc.UpdatedAt); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			writeErr(w, http.StatusConflict, "the script was edited meanwhile; review it again before releasing")
@@ -306,10 +375,14 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
+	if sc.Pending {
+		writeErr(w, http.StatusConflict, store.ErrScriptPending.Error())
+		return
+	}
 	// A script with declared parameters takes values only from their accepted
 	// sets, delivered as environment variables. It always waits for approval:
 	// the values are part of what the approver is agreeing to.
-	if len(sc.Params) > 0 || len(in.Params) > 0 {
+	if len(sc.Params) > 0 || len(in.Params) > 0 || len(sc.Variables) > 0 {
 		params, err := autonomy.ValidateParamValues(sc.Params, in.Params)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())

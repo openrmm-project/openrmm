@@ -5,14 +5,17 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/p1ngu/rmm/internal/config"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
+	"github.com/p1ngu/rmm/internal/scriptvars"
 	"github.com/p1ngu/rmm/internal/store"
 )
 
@@ -53,7 +56,7 @@ type AutonomyStore interface {
 	CreateAutonomousJob(ctx context.Context, j *models.Job, limits store.AutonomyLimits) (*models.Job, error)
 	RecordAIScriptOutcome(ctx context.Context, id string, success bool, limit int) (bool, error)
 	GetScript(ctx context.Context, id string) (*models.Script, error)
-	WithAutonomousDispatch(ctx context.Context, j *models.Job, releaseHash string, send func() bool) (bool, error)
+	WithAutonomousDispatch(ctx context.Context, j *models.Job, releaseHash string, send func() bool, scopeRevision ...time.Time) (bool, error)
 }
 
 // ReleaseNotifier tells people when a script's release for the AI was
@@ -71,6 +74,17 @@ type Service struct {
 	store    Store
 	hub      Sender
 	notifier Notifier
+	cfg      *config.Config
+}
+
+// scriptVariableStore is implemented by the PostgreSQL store. Fakes used by
+// unit tests are not, and then a job carries no variables.
+type scriptVariableStore interface {
+	ScriptVariableScopeRevision(ctx context.Context, agentID string) (time.Time, error)
+	WithScriptVariablesDispatch(ctx context.Context, agentID string, revision time.Time, send func() bool) (bool, error)
+	ResolveScriptVariables(ctx context.Context, cfg *config.Config, agentID string, names []string) (map[string]string, []string, error)
+	SaveJobRedactions(ctx context.Context, cfg *config.Config, jobID string, secrets []string) error
+	JobRedactions(ctx context.Context, jobID string) (string, error)
 }
 
 // New builds a job service.
@@ -83,6 +97,12 @@ func New(s Store, h Sender) *Service {
 // than something the lifecycle depends on.
 func (s *Service) WithNotifier(n Notifier) *Service {
 	s.notifier = n
+	return s
+}
+
+// WithSettings enables script-variable resolution and output redaction.
+func (s *Service) WithSettings(cfg *config.Config) *Service {
+	s.cfg = cfg
 	return s
 }
 
@@ -162,6 +182,9 @@ func (s *Service) ProposeQuery(ctx context.Context, agentID string, req protocol
 // with declared parameters: what the AI does with a released script when its
 // role may not run releases on its own.
 func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, sc *models.Script, params map[string]string, description, createdBy string) (*models.Job, error) {
+	if sc != nil && sc.Pending {
+		return nil, ErrScriptPending
+	}
 	a, err := s.usableAgent(ctx, agentID)
 	if err != nil {
 		return nil, err
@@ -174,11 +197,19 @@ func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, s
 			return nil, err
 		}
 	}
+	if err := s.checkScriptVars(a, sc); err != nil {
+		return nil, err
+	}
+	if len(sc.Variables) > 0 {
+		if _, _, err := s.resolveScriptVars(ctx, a.ID, sc.Variables); err != nil {
+			return nil, err
+		}
+	}
 	scriptID := sc.ID
 	j, err := s.store.CreateJob(ctx, &models.Job{
 		AgentID: agentID, Type: models.JobRunScript, Description: description, Shell: sc.Shell, Script: sc.Body,
 		Status: models.JobAwaitingApproval, RequiresApproval: true, CreatedBy: createdBy,
-		ScriptID: &scriptID, Params: params,
+		ScriptID: &scriptID, Params: params, Variables: sc.Variables,
 	})
 	if err != nil {
 		return nil, err
@@ -218,6 +249,14 @@ func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis, rel
 		if err := agentCanRunShell(a, j.Shell); err != nil {
 			return nil, err
 		}
+		if len(j.Variables) > 0 {
+			if err := s.checkScriptVars(a, &models.Script{Shell: j.Shell, Variables: j.Variables}); err != nil {
+				return nil, err
+			}
+			if _, _, err := s.resolveScriptVars(ctx, a.ID, j.Variables); err != nil {
+				return nil, err
+			}
+		}
 	default:
 		return nil, fmt.Errorf("unknown autonomy %q", j.Autonomy)
 	}
@@ -249,8 +288,13 @@ func (s *Service) StartAutonomous(ctx context.Context, j *models.Job, basis, rel
 	// is offline, it would run whenever the device came back — after autonomy
 	// was paused, or the release withdrawn, perhaps hours later.
 	msg := protocol.JobMsg{JobID: created.ID, Type: created.Type, Shell: created.Shell, Script: created.Script, Params: created.Params, ExpiresAt: time.Now().Add(AutonomousDispatchWindow)}
+	revision, err := s.attachVars(ctx, &msg, created)
+	if err != nil {
+		_ = s.store.SetJobResult(ctx, created.ID, models.JobFailed, 2, "", err.Error())
+		return nil, err
+	}
 	frame, _ := encode(protocol.MsgJob, msg)
-	sent, dispatchErr := as.WithAutonomousDispatch(ctx, created, releaseHash, func() bool { return s.hub.Send(created.AgentID, frame) })
+	sent, dispatchErr := as.WithAutonomousDispatch(ctx, created, releaseHash, func() bool { return s.hub.Send(created.AgentID, frame) }, revision)
 	if dispatchErr != nil {
 		_ = s.store.SetJobResult(ctx, created.ID, models.JobFailed, -1, "", "autonomous dispatch authorization was withdrawn")
 		return nil, dispatchErr
@@ -312,7 +356,14 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 // RunAutomated creates a pre-approved job (from a scheduled task or trusted
 // automation) and dispatches it immediately. No human approval — use only for
 // admin-defined automation, never for AI-authored scripts.
-func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, description string, taskID *string) (*models.Job, error) {
+// ErrScriptPending refuses to run a library script AI Chat or MCP proposed and
+// nobody approved: a scheduled task or a run must not reach it first.
+var ErrScriptPending = errors.New("the library script is a proposal awaiting review; approve it first")
+
+func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, description string, taskID *string, library ...*models.Script) (*models.Job, error) {
+	if len(library) > 0 && library[0] != nil && library[0].Pending {
+		return nil, ErrScriptPending
+	}
 	if !models.SupportedShell(shell) {
 		return nil, fmt.Errorf("unsupported shell %q", shell)
 	}
@@ -336,6 +387,17 @@ func (s *Service) RunAutomated(ctx context.Context, agentID, shell, script, desc
 		RequiresApproval: false,
 		CreatedBy:        "scheduler",
 		TaskID:           taskID,
+	}
+	if len(library) > 0 && library[0] != nil {
+		sc := library[0]
+		if len(sc.Params) > 0 {
+			return nil, fmt.Errorf("scheduled library scripts cannot require interactive parameters")
+		}
+		if err := s.checkScriptVars(a, sc); err != nil {
+			return nil, err
+		}
+		j.ScriptID = &sc.ID
+		j.Variables = sc.Variables
 	}
 	j, err = s.store.CreateJob(ctx, j)
 	if err != nil {
@@ -617,12 +679,140 @@ func (s *Service) dispatch(ctx context.Context, j *models.Job) {
 		return
 	} // autonomous jobs run now or never
 	msg := protocol.JobMsg{JobID: j.ID, Type: j.Type, Shell: j.Shell, Script: j.Script, Params: j.Params}
+	revision, err := s.attachVars(ctx, &msg, j)
+	if err != nil {
+		_ = s.store.SetJobResult(ctx, j.ID, models.JobFailed, 2, "", err.Error())
+		return
+	}
 	frame, _ := encode(protocol.MsgJob, msg)
-	if s.hub.Send(j.AgentID, frame) {
+	send := func() bool { return s.hub.Send(j.AgentID, frame) }
+	var sent bool
+	if revision.IsZero() {
+		sent = send()
+	} else {
+		sent, err = s.store.(scriptVariableStore).WithScriptVariablesDispatch(ctx, j.AgentID, revision, send)
+	}
+	if err != nil {
+		_ = s.store.SetJobResult(ctx, j.ID, models.JobFailed, 2, "", "device scope changed before script variable dispatch")
+		return
+	}
+	if sent {
 		_ = s.store.SetJobStatus(ctx, j.ID, models.JobSent, nil)
 	}
 	// If offline, the job stays 'pending' and is delivered by DispatchPending
 	// when the agent reconnects.
+}
+
+// checkScriptVars refuses a run that would need variables the agent cannot
+// receive. CMD does not safely carry arbitrary variable values.
+func (s *Service) checkScriptVars(a *models.Agent, sc *models.Script) error {
+	if err := scriptvars.CheckShell(sc.Shell, len(sc.Variables)); err != nil {
+		return err
+	}
+	if len(sc.Variables) == 0 {
+		return nil
+	}
+	if !models.AgentVersionAtLeast(a.Version, models.MinAgentVersionScriptVars) {
+		reported := a.Version
+		if strings.TrimSpace(reported) == "" {
+			reported = "unknown"
+		}
+		return fmt.Errorf("%s runs script variables only from agent %s or later; it reports %s",
+			a.Hostname, models.MinAgentVersionScriptVars, reported)
+	}
+	return nil
+}
+
+// resolveScriptVars loads values for the snapshotted names. The returned
+// secrets are plaintext and must not be stored on the job or written to the audit.
+func (s *Service) resolveScriptVars(ctx context.Context, agentID string, names []string) (map[string]string, []string, error) {
+	vs, ok := s.store.(scriptVariableStore)
+	if s.cfg == nil || !ok {
+		if len(names) > 0 {
+			return nil, nil, fmt.Errorf("script variables are not available")
+		}
+		return nil, nil, nil
+	}
+	return vs.ResolveScriptVariables(ctx, s.cfg, agentID, names)
+}
+
+// attachVars adds built-ins and the job's snapshotted variables to the
+// message sent to the agent, and stores only the ciphertext needed to redact
+// the result. It does not put secret values on the job row.
+func (s *Service) attachVars(ctx context.Context, msg *protocol.JobMsg, j *models.Job) (time.Time, error) {
+	zero := time.Time{}
+	if j.Type != models.JobRunScript {
+		return zero, nil
+	}
+	if err := scriptvars.CheckShell(j.Shell, len(j.Variables)); err != nil {
+		return zero, err
+	}
+	if j.Shell == models.ShellCmd {
+		return zero, nil
+	}
+	a, err := s.store.GetAgent(ctx, j.AgentID)
+	if err != nil {
+		return zero, err
+	}
+	if err := s.checkScriptVars(a, &models.Script{Shell: j.Shell, Variables: j.Variables}); err != nil {
+		return zero, err
+	}
+	if !models.AgentVersionAtLeast(a.Version, models.MinAgentVersionScriptVars) {
+		return zero, nil
+	}
+	vs, ok := s.store.(scriptVariableStore)
+	if s.cfg == nil || !ok {
+		if len(j.Variables) > 0 {
+			return zero, fmt.Errorf("script variables are not available")
+		}
+		return zero, nil
+	}
+	revision, err := vs.ScriptVariableScopeRevision(ctx, j.AgentID)
+	if err != nil {
+		return zero, err
+	}
+	env, secrets, err := vs.ResolveScriptVariables(ctx, s.cfg, j.AgentID, j.Variables)
+	if err != nil {
+		return zero, err
+	}
+	if len(env) == 0 {
+		return zero, nil
+	}
+	if len(secrets) > 0 {
+		for name, value := range env {
+			for _, secret := range secrets {
+				if value == secret {
+					msg.SecretVars = append(msg.SecretVars, name)
+					break
+				}
+			}
+		}
+		if err := vs.SaveJobRedactions(ctx, s.cfg, j.ID, secrets); err != nil {
+			return zero, err
+		}
+	}
+	msg.Vars = env
+	return revision, nil
+}
+
+// redactJobOutput removes secret values from an agent's report before it is stored.
+func (s *Service) redactJobOutput(ctx context.Context, jobID, stdout, stderr string) (string, string) {
+	vs, ok := s.store.(scriptVariableStore)
+	if !ok || s.cfg == nil {
+		return stdout, stderr
+	}
+	blob, err := vs.JobRedactions(ctx, jobID)
+	if err != nil {
+		return "", "output withheld: secret redaction failed"
+	}
+	if blob == "" {
+		return stdout, stderr
+	}
+	secrets, err := scriptvars.Open(s.cfg, blob)
+	if err != nil {
+		return "", "output withheld: secret redaction failed"
+	}
+	return scriptvars.Redact(stdout, secrets), scriptvars.Redact(stderr, secrets)
 }
 
 // DispatchPending re-sends all approved-but-undelivered jobs to a freshly
@@ -658,7 +848,8 @@ func (s *Service) OnResult(ctx context.Context, agentID string, res protocol.Job
 	if !res.Success {
 		status = models.JobFailed
 	}
-	if err := s.store.SetJobResult(ctx, res.JobID, status, res.ExitCode, res.Stdout, res.Stderr); err != nil {
+	stdout, stderr := s.redactJobOutput(ctx, res.JobID, res.Stdout, res.Stderr)
+	if err := s.store.SetJobResult(ctx, res.JobID, status, res.ExitCode, stdout, stderr); err != nil {
 		return err
 	}
 	host := s.hostname(ctx, j.AgentID)

@@ -49,6 +49,11 @@ const (
 // refuses both up front.
 const MinAgentVersionAutonomy = "0.10.0"
 
+// MinAgentVersionScriptVars is the first agent that reads the vars field of a
+// job and sets those environment variables. An older agent would run the
+// script without them.
+const MinAgentVersionScriptVars = "0.11.0"
+
 // Supported script shells.
 const (
 	ShellBash       = "bash"
@@ -181,6 +186,9 @@ type Job struct {
 	// environment variables and never as script text.
 	ScriptID *string           `json:"script_id,omitempty"`
 	Params   map[string]string `json:"params,omitempty"`
+	// Variables are the script-variable names snapshotted when the job was
+	// created. The values are not stored on the job.
+	Variables []string `json:"variables,omitempty"`
 }
 
 // EnrollToken authorizes a new agent to register.

@@ -15,6 +15,11 @@ tag.
   `?approval=pending|approved|declined`.
 - **Department column** in the Devices list.
 
+### Changed
+
+- **Remote access settings open on Default provider**, now the first tab, before
+  Native, MeshCentral and RustDesk.
+
 ### Fixed
 
 - **An approved patch showed as unapproved again.** The catalog counted only

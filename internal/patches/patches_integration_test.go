@@ -58,7 +58,7 @@ func TestDispatchInstallClaimsApprovedPatchesAndRequeuesOffline(t *testing.T) {
 	if approvedPatchID == "" {
 		t.Fatal("openssl patch was not persisted")
 	}
-	if err := st.SetApproval(ctx, approvedPatchID, models.ScopeAgent, agent.ID, "approve", "manual", "operator"); err != nil {
+	if _, err := st.SetApproval(ctx, approvedPatchID, models.ScopeAgent, agent.ID, "approve", "manual", "operator"); err != nil {
 		t.Fatal(err)
 	}
 

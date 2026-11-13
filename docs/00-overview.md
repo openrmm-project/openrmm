@@ -28,7 +28,7 @@ just read-only device queries and scripts an administrator released in advance
 
 ## What is built (this repo)
 
-As of v0.10.0, verified end-to-end against PostgreSQL:
+As of v0.11.0, verified end-to-end against PostgreSQL:
 
 - Agent enrollment + persistent WebSocket + heartbeat + inventory.
 - Job lifecycle: propose → **human approval** → dispatch → result, fully audited.
@@ -64,8 +64,18 @@ As of v0.10.0, verified end-to-end against PostgreSQL:
   consent page, an applications screen to approve and revoke) — see
   [11-mcp](11-mcp.md) and [17-mcp-oauth](17-mcp-oauth.md).
 - The AI and MCP clients can also **propose configuration** (tasks, checks,
-  policies — created disabled) and **moves or deletions of devices**, carried out
-  only when a person approves them.
+  whole policies and patch policies, library scripts and script variables —
+  created switched off) and **moves or deletions of devices**, carried out only
+  when a person approves them. A policy is activated by one reviewed
+  confirmation, refused if the proposal changed after the review was opened —
+  see [10-monitoring-policies](10-monitoring-policies.md#switching-a-policy-on-and-off).
+- **Policy targeting**: an assignment can be narrowed to one OS and/or one
+  device role (workstation, server) or cover every device, and a policy or
+  patch policy can leave chosen devices out; each policy has its own on/off
+  switch — see [10-monitoring-policies](10-monitoring-policies.md#targeting-by-os-and-device-role-and-exceptions).
+- **Script variables and secrets**: one library script reads per-client, site,
+  department or device values at run time; secrets are encrypted, write-only
+  in the API and masked in results — see [25-script-variables](25-script-variables.md).
 - **Alert email** with per-user subscriptions, a durable outbox and retries,
   through the instance's own SMTP relay or an operator's shared service — see
   [20-email-notifications](20-email-notifications.md).
@@ -75,9 +85,12 @@ As of v0.10.0, verified end-to-end against PostgreSQL:
 - **Fleet inventory reports** (software / hardware / machines) aggregated in the
   database by Company / Site / Department, scope-filtered, with client-side CSV
   export and a matching `inventory_report` AI/MCP tool — see [15-reports](15-reports.md).
+  The Devices list, the machines report and the device page show who is logged
+  in; the hardware report keeps the last logged-in user after they log off.
 - **Patch management**: missing-patch inventory (Windows KBs, Linux advisories),
-  a catalog with approval + classification, patch policies (maintenance windows,
-  auto-approve, exclusions), reboot orchestration and a compliance report — all
+  a catalog with approval + classification and Pending/Approved/Declined lists,
+  patch policies (maintenance windows, auto-approve, KB exclusions, OS/role
+  filters and device exceptions), reboot orchestration and a compliance report — all
   approval/scope/audit-gated. See [16-patch-management](16-patch-management.md).
 - React frontend (`openrmm/`) wired to the backend, translated into nine
   languages; cross-platform Go agent that **self-updates** from the server

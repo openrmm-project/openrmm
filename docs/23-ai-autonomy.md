@@ -23,7 +23,7 @@ model cannot change it, and a tool without a class does not run.
 | Console read | inventory, alerts, jobs, audit, reports, `list_preapproved_actions` | No |
 | Device query | `query_device` | No, **if the role allows it** |
 | Pre-approved action | `run_preapproved_action` | No, **if the role allows it** and an administrator released the script |
-| Change | `propose_script`, bulk deploy, install/uninstall, reboot, restart service, tasks, checks, policies, moving or deleting devices | **Always** |
+| Change | `propose_script`, bulk deploy, install/uninstall, reboot, restart service, tasks, checks, policies and patch policies, library scripts, script variables, moving or deleting devices | **Always** |
 | Stop | `cancel_job` | No (it only stops a job) |
 
 Without the permission, `query_device` and `run_preapproved_action` still work:
@@ -86,9 +86,12 @@ answers only while the device is online, and needs **agent 0.10.0** or later.
 
 In **Scripts**, open a script and use **Release for the AI**. You need
 `scripts.manage` and `ai.autonomy.manage`, and the script must be saved first.
+A library script AI Chat or MCP proposed (`propose_library_script`) cannot be
+released until a person approves it.
 
 - **The release is bound to the content.** The server stores the SHA-256 of the
-  shell, the body and the declared parameters. Any edit to those withdraws the
+  shell, the body, the declared parameters and the script variable names it may
+  receive ([25](25-script-variables.md)). Any edit to those withdraws the
   release in the same database statement; renaming, recategorising or
   re-describing a script keeps it. A release whose hash no longer matches never
   runs.

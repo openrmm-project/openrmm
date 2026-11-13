@@ -515,8 +515,8 @@ must be visible to the caller.
 | POST | `/api/devices/{id}/patches/scan` | `patches.manage` | Ask an online agent to scan; offline returns `503` |
 | POST | `/api/devices/{id}/patches/install` | `patches.manage` | `{identifiers:[...]}`; dispatch only explicitly approved identifiers |
 | POST | `/api/devices/{id}/reboot` | `patches.manage` | `{force?:false}`; default rejects an active native relay session |
-| GET | `/api/patches` | `patches.view` | Scope-filtered fleet catalog |
-| POST | `/api/patches/{id}/approve` | `patches.manage` | `{scope_type,scope_id,decision}`; decision is `approve` or `decline` |
+| GET | `/api/patches` | `patches.view` | Scope-filtered fleet catalog. Each patch carries per-state device counts and an `approval` of `pending`, `approved`, `declined` or `partial`; `?approval=pending\|approved\|declined` lists the patches with at least one device in that state |
+| POST | `/api/patches/{id}/approve` | `patches.manage` | `{scope_type,scope_id,decision}`; decision is `approve` or `decline`. Returns `devices`, how many changed state now. Approving again retries failed installs |
 | GET/POST | `/api/patch-policies` | `patches.policies.manage` | List/create global patch policy definitions. `timezone` is the IANA zone the window's days and minutes are in (default `UTC`) |
 | PUT/DELETE | `/api/patch-policies/{id}` | `patches.policies.manage` | Update/delete a global definition. Without `timezone`, the policy keeps its zone. **409** when an edit tries to switch on an AI proposal (use activate). Unknown classifications or reboot modes, weekdays outside 0–6 and minutes outside 0–1439 are refused (400); `proposed_by`/`approved_by` in a request are ignored |
 | GET | `/api/patch-policies/{id}/review` | `patches.policies.manage` | The policy's settings and scopes, sealed with a `fingerprint`. A restricted principal sees only the scopes that intersect its own, without a fingerprint |

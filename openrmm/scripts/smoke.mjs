@@ -465,7 +465,10 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   const panel = () => document.querySelector('[role="tabpanel"]:not([hidden])');
   await wait(() => tab('native'));
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
-  assert(panel().id === 'remote-config-panel-native', 'Native is the initial provider tab');
+  assert(panel().id === 'remote-config-panel-default', 'The default provider is the first and initial tab');
+  assert(document.querySelector('[role="tab"]') === tab('default'), 'The default provider tab comes first');
+  tab('native').click();
+  await wait(() => panel().id === 'remote-config-panel-native');
   assert(!panel().querySelector('input[type="password"]'), 'Native does not show MeshCentral credentials');
   tab('meshcentral').click();
   await wait(() => panel().id === 'remote-config-panel-meshcentral');
@@ -484,7 +487,7 @@ async function servicesAndRemoteSettingsBrowserFlow() {
   await wait(() => panel().id === 'remote-config-panel-meshcentral');
   assert(panel().querySelector('input[type="password"]').value === 'e2e-token-placeholder', 'Unsaved token survives tab navigation');
   tab('meshcentral').focus();
-  tab('meshcentral').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  tab('meshcentral').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
   await wait(() => panel().id === 'remote-config-panel-default');
   assert(document.activeElement === tab('default'), 'Keyboard moves focus to selected provider');
   (await wait(() => button('Save configuration'))).click();

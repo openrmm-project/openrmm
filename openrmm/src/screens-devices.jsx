@@ -41,8 +41,8 @@ function DevicesScreen({ navigate }) {
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const presence = useRemotePresence();
-  // Department names for the pending-operations panel. Moving and deleting
-  // devices themselves happen in Clients & Sites, not here.
+  // Department names for the list's Department column and the pending-operations
+  // panel. Moving and deleting devices themselves happen in Clients & Sites, not here.
   const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
 
   const devices = devicesQ.data?.devices || [];
@@ -54,6 +54,8 @@ function DevicesScreen({ navigate }) {
   // A device belongs to a client (company) through its site; unassigned devices
   // and sites whose client is gone both fall back to the em dash.
   const clientName = (siteId) => clients.find((c) => c.id === clientOfSite(siteId))?.name || '—';
+  // A department (device group) sits under a site; most devices have none.
+  const departmentName = (groupId) => (groupId && groups.find((g) => g.id === groupId)?.name) || '—';
 
   const filtered = devices.filter((d) => {
     if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((tag) => tag.includes(q.toLowerCase())))) return false;
@@ -99,6 +101,7 @@ function DevicesScreen({ navigate }) {
               <th className="font-semibold px-3 py-2.5">{t('devices.col.os')}</th>
               <th className="font-semibold px-3 py-2.5 hidden md:table-cell">{t('devices.col.client')}</th>
               <th className="font-semibold px-3 py-2.5 hidden md:table-cell">{t('devices.col.site')}</th>
+              <th className="font-semibold px-3 py-2.5 hidden md:table-cell">{t('devices.col.department')}</th>
               <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">{t('devices.col.tags')}</th>
               <th className="font-semibold px-3 py-2.5">{t('devices.col.status')}</th>
               <th className="font-semibold px-4 py-2.5 text-right">{t('devices.col.lastSeen')}</th>
@@ -106,7 +109,7 @@ function DevicesScreen({ navigate }) {
           </thead>
           <tbody className="divide-y divide-line">
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i}><td className="px-4 py-3" colSpan={8}><Skeleton className="h-5 w-full" /></td></tr>
+              <tr key={i}><td className="px-4 py-3" colSpan={9}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
             {!devicesQ.loading && filtered.map((d) => (
               <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
@@ -120,6 +123,7 @@ function DevicesScreen({ navigate }) {
                 <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : t('presence.inUse')}</span></Tip> : null}</div></td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>
                 <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
+                <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{departmentName(d.group_id)}</td>
                 <td className="px-3 py-3 hidden lg:table-cell">
                   <div className="flex gap-1 flex-wrap max-w-[200px]">{d.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded-md bg-elevated border border-line text-[10.5px] text-muted px-1.5 py-0.5">{tag}</span>)}</div>
                 </td>

@@ -105,7 +105,14 @@ func (s *Server) listPatchCatalog(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.store.PatchCatalog(r.Context(), f)
+	// ?approval=pending|approved|declined lists the patches with at least one
+	// device in that state; without it, everything.
+	approval := r.URL.Query().Get("approval")
+	if !store.ValidPatchApprovalFilter(approval) {
+		writeErr(w, http.StatusBadRequest, "approval must be pending, approved or declined")
+		return
+	}
+	rows, err := s.store.PatchCatalog(r.Context(), f, approval)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -156,12 +163,15 @@ func (s *Server) approvePatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "scope_id requires scope_type")
 		return
 	}
-	if err := s.store.SetApproval(r.Context(), patchID, in.ScopeType, in.ScopeID, in.Decision, "manual", actorOf(r)); err != nil {
+	changed, err := s.store.SetApproval(r.Context(), patchID, in.ScopeType, in.ScopeID, in.Decision, "manual", actorOf(r))
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch."+in.Decision, patchID, nil)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	// devices is how many changed state now; devices that report the patch
+	// later take the decision when they do.
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "devices": changed})
 }
 
 func (s *Server) reportCompliance(w http.ResponseWriter, r *http.Request) {

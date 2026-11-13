@@ -57,6 +57,20 @@ tag.
   The patch policy editor's **Assigned to** and exception pickers are
   searchable, as the policy drawer's are, and also offer single devices; a
   device assignment shows the device's name instead of its id.
+- **Logged-in user on Devices:** the device list has an optional, sortable
+  **Logged-in user** column showing who is logged in interactively
+  (`DOMAIN\user`, `AzureAD\user` for Entra ID, the computer name for a local
+  account; "No user logged in" otherwise), with a filter and hostname-style
+  search. Columns can be shown or hidden (remembered per browser), and every
+  column sorts. The device page, the machines report, its CSV export, the
+  device API (`logged_in_user`, `logged_in_user_since`) and AI `list_devices`
+  carry it too. Agent 0.11 reports it with each heartbeat: the Windows console
+  session, else an active remote desktop session; the macOS console owner; a
+  local Linux seat before SSH. Older agents leave it empty. Migration 034.
+- **Last logged-in user on Hardware & System:** the hardware report, its CSV
+  export and the device API add the last user seen logged in
+  (`last_logged_in_user`, `last_logged_in_user_at`), kept after they log off,
+  so the report says who uses each machine. Migration 035.
 - **Manage policies / Manage checks** now say what they include: activating and
   deactivating policies, and switching checks on and off (approving AI-proposed
   ones). Checks and tasks created through the API no longer accept

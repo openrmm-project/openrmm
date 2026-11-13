@@ -99,6 +99,14 @@ type RebootMsg struct {
 }
 
 // Envelope wraps every WebSocket frame.
+// HeartbeatMsg is the agent's periodic keep-alive. LoggedInUser is the user of
+// the device's active interactive session ("" when no one is logged in); an
+// agent older than 0.11 sends no field at all, which leaves the stored value
+// alone.
+type HeartbeatMsg struct {
+	LoggedInUser *string `json:"logged_in_user,omitempty"`
+}
+
 type Envelope struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data,omitempty"`

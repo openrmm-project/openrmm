@@ -133,6 +133,10 @@ type HardwareRow struct {
 	Client       string `json:"client"`
 	Site         string `json:"site"`
 	Department   string `json:"department"`
+	// LastLoggedInUser is the last user seen logged in to the machine, kept
+	// after they log off; LastLoggedInUserAt is when the agent last saw them.
+	LastLoggedInUser   string     `json:"last_logged_in_user"`
+	LastLoggedInUserAt *time.Time `json:"last_logged_in_user_at,omitempty"`
 }
 
 // jsonbArray guards jsonb_array_elements against a missing/non-array value
@@ -168,7 +172,8 @@ func (s *Store) HardwareReport(ctx context.Context, f ReportFilter) ([]HardwareR
 		                 FROM jsonb_array_elements(` + netIfaces + `) ni), ''),
 		       COALESCE((SELECT string_agg(NULLIF(ni->>'mac',''), ', ')
 		                 FROM jsonb_array_elements(` + netIfaces + `) ni), ''),
-		       COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,'')
+		       COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
+		       a.last_logged_in_user, a.last_logged_in_user_at
 		FROM inventory inv
 		JOIN agents a ON a.id = inv.agent_id` + reportJoins +
 		where + `
@@ -183,7 +188,8 @@ func (s *Store) HardwareReport(ctx context.Context, f ReportFilter) ([]HardwareR
 		var r HardwareRow
 		if err := rows.Scan(&r.Hostname, &r.OS, &r.Arch, &r.Manufacturer, &r.Model, &r.Serial,
 			&r.CPUModel, &r.CPUCores, &r.MemTotalByte, &r.GPU, &r.Storage, &r.StorageBytes, &r.BIOS,
-			&r.Platform, &r.PlatformVer, &r.Kernel, &r.IP, &r.MAC, &r.Client, &r.Site, &r.Department); err != nil {
+			&r.Platform, &r.PlatformVer, &r.Kernel, &r.IP, &r.MAC, &r.Client, &r.Site, &r.Department,
+			&r.LastLoggedInUser, &r.LastLoggedInUserAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -205,6 +211,7 @@ type MachineRow struct {
 	Client       string     `json:"client"`
 	Site         string     `json:"site"`
 	Department   string     `json:"department"`
+	LoggedInUser string     `json:"logged_in_user"`
 	LastSeen     *time.Time `json:"last_seen"`
 	CollectedAt  *time.Time `json:"collected_at"`
 }
@@ -223,7 +230,7 @@ func (s *Store) MachinesReport(ctx context.Context, f ReportFilter) ([]MachineRo
 		       COALESCE((SELECT string_agg(NULLIF(ni->>'mac',''), ', ')
 		                 FROM jsonb_array_elements(` + netIfaces + `) ni), ''),
 		       COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
-		       a.last_seen, inv.collected_at
+		       a.logged_in_user, a.last_seen, inv.collected_at
 		FROM agents a` + reportJoins + `
 		LEFT JOIN inventory inv ON inv.agent_id = a.id` +
 		where + `
@@ -238,7 +245,7 @@ func (s *Store) MachinesReport(ctx context.Context, f ReportFilter) ([]MachineRo
 		var r MachineRow
 		if err := rows.Scan(&r.Hostname, &r.OS, &r.Arch, &r.Status, &r.AgentVersion,
 			&r.CPUModel, &r.MemTotalByte, &r.IP, &r.MAC, &r.Client, &r.Site, &r.Department,
-			&r.LastSeen, &r.CollectedAt); err != nil {
+			&r.LoggedInUser, &r.LastSeen, &r.CollectedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

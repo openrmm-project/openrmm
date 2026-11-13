@@ -1295,3 +1295,18 @@ CREATE TABLE IF NOT EXISTS patch_policy_exclusions (
     PRIMARY KEY (policy_id, agent_id)
 );
 CREATE INDEX IF NOT EXISTS idx_patch_policy_exclusions_agent ON patch_policy_exclusions (agent_id);
+
+-- The user of a device's active interactive session, as its agent last
+-- reported it with a heartbeat (Devices ▸ Logged-in user). Empty when no one is
+-- logged in, or when the agent is older than 0.11 and does not report it.
+ALTER TABLE agents
+    ADD COLUMN IF NOT EXISTS logged_in_user TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS logged_in_user_since TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_agents_logged_in_user ON agents (lower(logged_in_user)) WHERE logged_in_user <> '';
+
+-- The last user seen in a device's interactive session, kept after they log
+-- off (Reports ▸ Hardware & System ▸ Last logged-in user), and when the agent
+-- last reported them. logged_in_user is who is logged in now.
+ALTER TABLE agents
+    ADD COLUMN IF NOT EXISTS last_logged_in_user TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS last_logged_in_user_at TIMESTAMPTZ;

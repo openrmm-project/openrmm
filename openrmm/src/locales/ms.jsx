@@ -2073,4 +2073,12 @@
   'audit.action.patch.policy.exclude': "Peranti dikecualikan daripada dasar tampalan",
   'audit.action.patch.policy.include': "Peranti dimasukkan semula ke dalam dasar tampalan",
   'audit.action.device.role': "Peranan peranti ditukar",
+  'devices.col.user': "Pengguna log masuk",
+  'devices.noUser': "Tiada pengguna log masuk",
+  'devices.userSince': "Log masuk {when}",
+  'devices.filter.anyUser': "Mana-mana pengguna",
+  'devices.filter.withUser': "Ada pengguna log masuk",
+  'rep.col.logged_in_user': "Pengguna log masuk",
+  'rep.col.last_logged_in_user': "Pengguna log masuk terakhir",
+  'rep.lastUserSeen': "Kali terakhir dilihat {when}",
 };

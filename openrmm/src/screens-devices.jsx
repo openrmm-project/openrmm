@@ -28,6 +28,41 @@ function presenceSummary(viewers) {
   return t(who.length === 1 ? 'presence.one' : 'presence.many', { who: formatList(who) });
 }
 
+// The Devices grid's optional columns (shown or hidden per viewer) and the
+// localStorage key that remembers the choice.
+const DEVICE_COLUMNS_KEY = 'rmm-devices-hidden-columns';
+const DEVICE_OPTIONAL_COLUMNS = ['description', 'os', 'user', 'client', 'site', 'department', 'tags'];
+const DEVICE_COLUMN_LABELS = { description: 'common.description', os: 'devices.col.os', user: 'devices.col.user', client: 'devices.col.client', site: 'devices.col.site', department: 'devices.col.department', tags: 'devices.col.tags' };
+
+// hiddenDeviceColumns reads the remembered choice, keeping only known optional
+// columns: anything else stored under the key (an older format, a hand edit)
+// shows every column rather than breaking the list.
+function hiddenDeviceColumns(raw) {
+  let parsed;
+  try { parsed = JSON.parse(raw || '[]'); } catch (e) { return []; }
+  return Array.isArray(parsed) ? parsed.filter((k) => DEVICE_OPTIONAL_COLUMNS.includes(k)) : [];
+}
+
+// sortDevices sorts in place by a column value; empty values go last either
+// way, so "no user logged in" never crowds the top of a sorted list.
+function sortDevices(list, value, dir) {
+  const sign = dir === 'desc' ? -1 : 1;
+  list.sort((a, b) => {
+    const x = String(value(a) || ''), y = String(value(b) || '');
+    if (!x !== !y) return x ? -1 : 1;
+    return sign * x.localeCompare(y, undefined, { sensitivity: 'base', numeric: true });
+  });
+  return list;
+}
+
+// LoggedInUser shows who is logged in interactively, as the agent last
+// reported it; an offline device shows its last report, dimmed, with when.
+function LoggedInUser({ device }) {
+  if (!device.logged_in_user) return <span className="text-faint">{t('devices.noUser')}</span>;
+  const since = device.logged_in_user_since ? t('devices.userSince', { when: timeAgo(device.logged_in_user_since) }) : undefined;
+  return <span className={cx('mono', device.status === 'online' ? 'text-ink' : 'text-faint')} title={since}>{device.logged_in_user}</span>;
+}
+
 function DevicesScreen({ navigate }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
   const { can } = useAuth();
@@ -38,7 +73,18 @@ function DevicesScreen({ navigate }) {
   const [osF, setOsF] = useState('all');
   const [statusF, setStatusF] = useState('all');
   const [roleF, setRoleF] = useState('all');
+  const [userF, setUserF] = useState('all');
   const [clientF, setClientF] = useState('all');
+  // Sorting by any column, and optional columns each viewer shows or hides
+  // (kept in this browser only).
+  const [sort, setSort] = useState({ key: 'hostname', dir: 'asc' });
+  const [hiddenCols, setHiddenCols] = useState(() => { try { return hiddenDeviceColumns(localStorage.getItem(DEVICE_COLUMNS_KEY)); } catch (e) { return []; } });
+  const toggleCol = (key) => setHiddenCols((h) => {
+    const next = h.includes(key) ? h.filter((k) => k !== key) : [...h, key];
+    try { localStorage.setItem(DEVICE_COLUMNS_KEY, JSON.stringify(next)); } catch (e) {}
+    return next;
+  });
+  const shows = (key) => !hiddenCols.includes(key);
   const [selected, setSelected] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const presence = useRemotePresence();
@@ -58,8 +104,11 @@ function DevicesScreen({ navigate }) {
   // A department (device group) sits under a site; most devices have none.
   const departmentName = (groupId) => (groupId && groups.find((g) => g.id === groupId)?.name) || '—';
 
+  const needle = q.toLowerCase();
   const filtered = devices.filter((d) => {
-    if (q && !(d.hostname.toLowerCase().includes(q.toLowerCase()) || (d.description || '').toLowerCase().includes(q.toLowerCase()) || d.tags.some((tag) => tag.includes(q.toLowerCase())))) return false;
+    if (q && !(d.hostname.toLowerCase().includes(needle) || (d.description || '').toLowerCase().includes(needle) || (d.logged_in_user || '').toLowerCase().includes(needle) || d.tags.some((tag) => tag.includes(needle)))) return false;
+    if (userF === 'with' && !d.logged_in_user) return false;
+    if (userF === 'none' && d.logged_in_user) return false;
     if (osF !== 'all' && window.osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
     // The role policy assignments filter on; "none" finds the devices that
@@ -68,6 +117,25 @@ function DevicesScreen({ navigate }) {
     if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
   });
+  const sortValue = {
+    hostname: (d) => d.hostname, description: (d) => d.description || '', os: (d) => window.osLabel(d.os),
+    client: (d) => clientName(d.site_id).replace('—', ''), site: (d) => siteName(d.site_id).replace('—', ''),
+    department: (d) => departmentName(d.group_id).replace('—', ''),
+    user: (d) => d.logged_in_user || '', status: (d) => d.status, last_seen: (d) => d.last_seen || '',
+  };
+  sortDevices(filtered, sortValue[sort.key] || sortValue.hostname, sort.dir);
+  const sortBy = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
+  const optionalCols = DEVICE_OPTIONAL_COLUMNS.map((key) => ({ key }));
+  const visibleCount = 3 + DEVICE_OPTIONAL_COLUMNS.filter(shows).length;
+  // A sortable header cell (a render helper, not a component, so the header
+  // keeps its focus across renders).
+  const sortTh = (k, label, className = 'px-3') => (
+    <th key={k} className={cx('font-semibold py-2.5', className)} aria-sort={sort.key === k ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button type="button" onClick={() => sortBy(k)} className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-ink">
+        {label}{sort.key === k && <Icon name={sort.dir === 'asc' ? 'chevdown' : 'chevright'} size={11} className={sort.dir === 'asc' ? '' : '-rotate-90'} />}
+      </button>
+    </th>
+  );
 
   return (
     <Page wide>
@@ -92,10 +160,16 @@ function DevicesScreen({ navigate }) {
             {DEVICE_ROLES.map((r) => <option key={r} value={r}>{t('target.role.' + r)}</option>)}
             <option value="none">{t('device.roleUnknown')}</option>
           </Select>
+          <Select aria-label={t('devices.col.user')} value={userF} onChange={(e) => setUserF(e.target.value)} className="w-auto min-w-[140px]">
+            <option value="all">{t('devices.filter.anyUser')}</option>
+            <option value="with">{t('devices.filter.withUser')}</option>
+            <option value="none">{t('devices.noUser')}</option>
+          </Select>
           <Select value={clientF} onChange={(e) => setClientF(e.target.value)} className="w-auto min-w-[150px]">
             <option value="all">{t('devices.filter.allClients')}</option>
             {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
+          <window.ColumnPicker columns={optionalCols} hidden={hiddenCols} onToggle={toggleCol} labelOf={(c) => t(DEVICE_COLUMN_LABELS[c.key])} />
         </div>
       </Card>
 
@@ -105,20 +179,21 @@ function DevicesScreen({ navigate }) {
         <table className="w-full text-left">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-faint border-b border-line">
-              <th className="font-semibold px-4 py-2.5">{t('devices.col.hostname')}</th>
-              <th className="font-semibold px-3 py-2.5">{t('common.description')}</th>
-              <th className="font-semibold px-3 py-2.5">{t('devices.col.os')}</th>
-              <th className="font-semibold px-3 py-2.5 hidden md:table-cell">{t('devices.col.client')}</th>
-              <th className="font-semibold px-3 py-2.5 hidden md:table-cell">{t('devices.col.site')}</th>
-              <th className="font-semibold px-3 py-2.5 hidden md:table-cell">{t('devices.col.department')}</th>
-              <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">{t('devices.col.tags')}</th>
-              <th className="font-semibold px-3 py-2.5">{t('devices.col.status')}</th>
-              <th className="font-semibold px-4 py-2.5 text-right">{t('devices.col.lastSeen')}</th>
+              {sortTh('hostname', t('devices.col.hostname'), 'px-4')}
+              {shows('description') && sortTh('description', t('common.description'))}
+              {shows('os') && sortTh('os', t('devices.col.os'))}
+              {shows('user') && sortTh('user', t('devices.col.user'), 'px-3 hidden sm:table-cell')}
+              {shows('client') && sortTh('client', t('devices.col.client'), 'px-3 hidden md:table-cell')}
+              {shows('site') && sortTh('site', t('devices.col.site'), 'px-3 hidden md:table-cell')}
+              {shows('department') && sortTh('department', t('devices.col.department'), 'px-3 hidden md:table-cell')}
+              {shows('tags') && <th className="font-semibold px-3 py-2.5 hidden lg:table-cell">{t('devices.col.tags')}</th>}
+              {sortTh('status', t('devices.col.status'))}
+              {sortTh('last_seen', t('devices.col.lastSeen'), 'px-4 text-right')}
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
-              <tr key={i}><td className="px-4 py-3" colSpan={9}><Skeleton className="h-5 w-full" /></td></tr>
+              <tr key={i}><td className="px-4 py-3" colSpan={visibleCount}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
             {!devicesQ.loading && filtered.map((d) => (
               <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
@@ -128,14 +203,15 @@ function DevicesScreen({ navigate }) {
                     <div className="text-[13px] font-medium text-ink truncate group-hover:text-brandhi transition-colors">{d.hostname}</div>
                   </div>
                 </td>
-                <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>
-                <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{d.role && <span className="text-faint text-[11px]">{t('target.role.' + d.role)}</span>}{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : t('presence.inUse')}</span></Tip> : null}</div></td>
-                <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>
-                <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>
-                <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{departmentName(d.group_id)}</td>
-                <td className="px-3 py-3 hidden lg:table-cell">
+                {shows('description') && <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>}
+                {shows('os') && <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{d.role && <span className="text-faint text-[11px]">{t('target.role.' + d.role)}</span>}{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : t('presence.inUse')}</span></Tip> : null}</div></td>}
+                {shows('user') && <td className="px-3 py-3 hidden sm:table-cell text-[12.5px] truncate max-w-[200px]"><LoggedInUser device={d} /></td>}
+                {shows('client') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>}
+                {shows('site') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>}
+                {shows('department') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{departmentName(d.group_id)}</td>}
+                {shows('tags') && <td className="px-3 py-3 hidden lg:table-cell">
                   <div className="flex gap-1 flex-wrap max-w-[200px]">{d.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded-md bg-elevated border border-line text-[10.5px] text-muted px-1.5 py-0.5">{tag}</span>)}</div>
-                </td>
+                </td>}
                 <td className="px-3 py-3"><StatusPill status={d.status} size="sm" /></td>
                 <td className="px-4 py-3 text-right text-[12px] text-muted tabular">{timeAgo(d.last_seen)}</td>
               </tr>
@@ -466,6 +542,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
                   <span title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint">·</span><span className="mono text-faint">{d.arch}</span>
                   <span className="text-faint">·</span><span>{t('device.agentVersion', { version: d.version })}</span><span className="text-faint">·</span>
                   <span>{t('device.lastSeen', { when: timeAgo(d.last_seen) })}</span>
+                  <span className="text-faint">·</span><span className="flex items-center gap-1"><Icon name="user" size={12} className="text-faint" /><LoggedInUser device={d} /></span>
                 </div>
                 {attached.length > 0 && (
                   <div className="mt-2 flex items-start gap-2 rounded-lg border border-brandhi/40 bg-brandhi/10 px-2.5 py-1.5 text-[12px] text-ink">

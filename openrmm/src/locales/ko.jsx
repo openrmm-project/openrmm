@@ -2073,4 +2073,12 @@
   'audit.action.patch.policy.exclude': "장치를 패치 정책에서 제외",
   'audit.action.patch.policy.include': "장치를 패치 정책에 다시 포함",
   'audit.action.device.role': "장치 역할 변경",
+  'devices.col.user': "로그인한 사용자",
+  'devices.noUser': "로그인한 사용자 없음",
+  'devices.userSince': "로그인: {when}",
+  'devices.filter.anyUser': "모든 사용자",
+  'devices.filter.withUser': "사용자가 로그인함",
+  'rep.col.logged_in_user': "로그인한 사용자",
+  'rep.col.last_logged_in_user': "마지막 로그인 사용자",
+  'rep.lastUserSeen': "마지막 확인: {when}",
 };

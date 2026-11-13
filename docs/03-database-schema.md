@@ -254,7 +254,12 @@ reviewed. Since migration 033 an assignment can be narrowed by `os` and `role`
 (empty = any) or be `global`; `policy_exclusions` / `patch_policy_exclusions`
 (policy_id, agent_id) list devices a policy leaves out; `agents.os_role`
 (detected) and `agents.role_override` (an administrator's correction) give a
-device's role.
+device's role. Since migration 034 `agents.logged_in_user` (text, `''` when no
+one is logged in or the agent is older than 0.11) holds the user of the active
+interactive session as the last heartbeat reported it, and
+`agents.logged_in_user_since` when it last changed. Since migration 035
+`agents.last_logged_in_user` keeps the last non-empty user after they log off,
+and `agents.last_logged_in_user_at` is when a heartbeat last reported them.
 
 ### `checks`
 A monitoring check, owned **either** by an agent **or** a policy — exactly one of

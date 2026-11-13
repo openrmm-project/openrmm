@@ -2141,4 +2141,12 @@
   'audit.action.patch.policy.exclude': "Device left out of a patch policy",
   'audit.action.patch.policy.include': "Device put back in a patch policy",
   'audit.action.device.role': "Device role changed",
+  'devices.col.user': "Logged-in user",
+  'devices.noUser': "No user logged in",
+  'devices.userSince': "Logged in {when}",
+  'devices.filter.anyUser': "Any user",
+  'devices.filter.withUser': "A user logged in",
+  'rep.col.logged_in_user': "Logged-in user",
+  'rep.col.last_logged_in_user': "Last logged-in user",
+  'rep.lastUserSeen': "Last seen {when}",
 };

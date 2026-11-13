@@ -223,7 +223,14 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, ch chan [
 	}
 	switch env.Type {
 	case protocol.MsgHeartbeat:
-		_ = s.store.TouchAgent(ctx, agentID)
+		// The logged-in user is device data: cleaned before it is stored.
+		var hb protocol.HeartbeatMsg
+		_ = json.Unmarshal(env.Data, &hb)
+		if hb.LoggedInUser != nil {
+			clean := models.CleanLoggedInUser(*hb.LoggedInUser)
+			hb.LoggedInUser = &clean
+		}
+		_ = s.store.TouchAgentSession(ctx, agentID, hb.LoggedInUser)
 	case protocol.MsgInventory:
 		var inv protocol.InventoryMsg
 		if json.Unmarshal(env.Data, &inv) != nil || len(inv.Data) == 0 || string(inv.Data) == "null" {

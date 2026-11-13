@@ -43,6 +43,11 @@ const REPORT_COLUMNS = {
     { key: 'client', text: (r) => r.client },
     { key: 'site', text: (r) => r.site },
     { key: 'department', text: (r) => r.department },
+    // The last user seen logged in, kept after they log off: who uses the machine.
+    { key: 'last_logged_in_user', text: (r) => r.last_logged_in_user || '',
+      cell: (r) => r.last_logged_in_user
+        ? <span className="mono" title={r.last_logged_in_user_at ? t('rep.lastUserSeen', { when: timeAgo(r.last_logged_in_user_at) }) : undefined}>{r.last_logged_in_user}</span>
+        : <span className="text-faint">—</span> },
   ],
   machines: [
     { key: 'hostname', text: (r) => r.hostname, className: 'text-ink font-medium' },
@@ -51,6 +56,7 @@ const REPORT_COLUMNS = {
     { key: 'client', text: (r) => r.client },
     { key: 'site', text: (r) => r.site },
     { key: 'department', text: (r) => r.department },
+    { key: 'logged_in_user', text: (r) => r.logged_in_user || '', cell: (r) => r.logged_in_user || <span className="text-faint">{t('devices.noUser')}</span> },
     { key: 'last_seen', text: (r) => fmtTime(r.last_seen), cell: (r) => timeAgo(r.last_seen) },
   ],
 };
@@ -58,7 +64,9 @@ const REPORT_COLUMNS = {
 const colLabel = (c) => t('rep.col.' + c.key);
 
 // ColumnPicker is a dropdown of checkboxes to show/hide table columns.
-function ColumnPicker({ columns, hidden, onToggle }) {
+// labelOf names a column; the reports use their own labels, the Devices grid
+// passes its own.
+function ColumnPicker({ columns, hidden, onToggle, labelOf = colLabel }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -84,7 +92,7 @@ function ColumnPicker({ columns, hidden, onToggle }) {
                 <span className={cx('h-4 w-4 rounded border flex items-center justify-center shrink-0', vis ? 'bg-brand border-brand text-white' : 'border-line2')}>
                   {vis && <Icon name="approve" size={12} />}
                 </span>
-                <span className="flex-1 text-left">{colLabel(c)}</span>
+                <span className="flex-1 text-left">{labelOf(c)}</span>
               </button>
             );
           })}
@@ -274,3 +282,4 @@ function ReportsScreen() {
 }
 
 window.ReportsScreen = ReportsScreen;
+window.ColumnPicker = ColumnPicker;

@@ -2128,4 +2128,12 @@
   'audit.action.patch.policy.exclude': "デバイスをパッチポリシーから除外",
   'audit.action.patch.policy.include': "デバイスをパッチポリシーに戻す",
   'audit.action.device.role': "デバイスの役割を変更",
+  'devices.col.user': "ログオン中のユーザー",
+  'devices.noUser': "ログオン中のユーザーなし",
+  'devices.userSince': "ログオン: {when}",
+  'devices.filter.anyUser': "すべてのユーザー",
+  'devices.filter.withUser': "ユーザーがログオン中",
+  'rep.col.logged_in_user': "ログオン中のユーザー",
+  'rep.col.last_logged_in_user': "最後にログオンしたユーザー",
+  'rep.lastUserSeen': "最終確認：{when}",
 };

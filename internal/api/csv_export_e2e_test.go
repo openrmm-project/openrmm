@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,9 +26,30 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 
 	// split: a ';' list separator (pt-BR, de-DE, es-ES Excel) would make a cell of "=2+2".
 	hostile, split, control := "=1+1", "SPLIT;=2+2", "WINDOWS-TEST"
+	// The logged-in user is endpoint text too: the agent reports it.
+	hostileUser, plainUser := "@cmd|' /C calc'!A0", `ACME\maria`
 	for _, host := range []string{hostile, split, control} {
-		if _, err := f.store.CreateAgent(ctx, host, "windows", "amd64", "0.10.0", "hash-"+uuid.NewString(), nil, nil); err != nil {
+		a, err := f.store.CreateAgent(ctx, host, "windows", "amd64", "0.10.0", "hash-"+uuid.NewString(), nil, nil)
+		if err != nil {
 			t.Fatal(err)
+		}
+		user := plainUser
+		if host == hostile {
+			user = hostileUser
+		}
+		if err := f.store.TouchAgentSession(ctx, a.ID, &user); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.store.UpsertInventory(ctx, a.ID, []byte(`{"cpu_model":"Test CPU"}`)); err != nil {
+			t.Fatal(err)
+		}
+		// WINDOWS-TEST's user logs off: the hardware report keeps them as the
+		// last logged-in user.
+		if host == control {
+			loggedOff := ""
+			if err := f.store.TouchAgentSession(ctx, a.ID, &loggedOff); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	freeTarget, idTarget := "@SUM(A1)", uuid.NewString()
@@ -81,6 +103,35 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 	}
 	if !hosts[control] {
 		t.Fatalf("ordinary hostname changed: %v", hosts)
+	}
+	userCol := slices.Index(machines[0], "logged_in_user")
+	if userCol < 0 {
+		t.Fatalf("machines export has no logged_in_user column: %v", machines[0])
+	}
+	users := column(machines, userCol)
+	if !users["'"+hostileUser] || users[hostileUser] || !users[plainUser] {
+		t.Fatalf("logged-in users in the CSV: %v", users)
+	}
+
+	code, hardware := get(exports.Claims{Kind: "inventory", Params: map[string]string{"report_type": "hardware"}, User: f.admin.ID})
+	if code != http.StatusOK || len(hardware) < 4 || hardware[0][0] != "hostname" {
+		t.Fatalf("hardware export=%d rows=%v", code, hardware)
+	}
+	lastCol, atCol := slices.Index(hardware[0], "last_logged_in_user"), slices.Index(hardware[0], "last_logged_in_user_at")
+	if lastCol < 0 || atCol != lastCol+1 {
+		t.Fatalf("hardware export has no last logged-in user columns: %v", hardware[0])
+	}
+	if hw := column(hardware, 0); !hw["'"+hostile] || hw[hostile] {
+		t.Fatalf("hostile hostname reached the hardware CSV unguarded: %v", hw)
+	}
+	lastUsers := column(hardware, lastCol)
+	if !lastUsers["'"+hostileUser] || lastUsers[hostileUser] || !lastUsers[plainUser] {
+		t.Fatalf("last logged-in users in the CSV: %v", lastUsers)
+	}
+	for _, row := range hardware[1:] {
+		if row[0] == control && (row[lastCol] != plainUser || row[atCol] == "") {
+			t.Fatalf("the logged-off user is not the last logged-in user: %v", row)
+		}
 	}
 
 	code, audit := get(exports.Claims{Kind: "audit", Params: map[string]string{"action": "csv.export_test"}, User: f.admin.ID})

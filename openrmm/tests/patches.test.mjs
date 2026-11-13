@@ -55,9 +55,9 @@ test('the catalog shows the approval the server worked out, and offers what it l
 test('the devices list has a Department column', async () => {
   const devices = await readFile(path.join(root, 'src/screens-devices.jsx'), 'utf8');
   const screen = devices.slice(devices.indexOf('function DevicesScreen('), devices.indexOf('function PendingDeviceOperations('));
-  assert.match(screen, /<th[^>]*>\{t\('devices\.col\.department'\)\}<\/th>/);
+  assert.match(screen, /\{shows\('department'\) && sortTh\('department', t\('devices\.col\.department'\)/);
   assert.match(screen, /<td[^>]*>\{departmentName\(d\.group_id\)\}<\/td>/);
-  // The loading rows span the whole table.
-  const columns = (screen.match(/<th className=/g) || []).length;
-  assert.match(screen, new RegExp(`colSpan=\\{${columns}\\}`), `the skeleton row must span ${columns} columns`);
+  // The loading rows span the visible columns, Department included.
+  assert.match(screen, /colSpan=\{visibleCount\}/);
+  assert.match(screen, /DEVICE_OPTIONAL_COLUMNS\.filter\(shows\)/);
 });

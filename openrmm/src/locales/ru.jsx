@@ -2099,4 +2099,12 @@
   'audit.action.patch.policy.exclude': "Устройство исключено из политики обновлений",
   'audit.action.patch.policy.include': "Устройство возвращено в политику обновлений",
   'audit.action.device.role': "Роль устройства изменена",
+  'devices.col.user': "Вошедший пользователь",
+  'devices.noUser': "Нет вошедшего пользователя",
+  'devices.userSince': "Вход выполнен {when}",
+  'devices.filter.anyUser': "Любой пользователь",
+  'devices.filter.withUser': "Есть вошедший пользователь",
+  'rep.col.logged_in_user': "Вошедший пользователь",
+  'rep.col.last_logged_in_user': "Последний вошедший пользователь",
+  'rep.lastUserSeen': "Последний раз замечен {when}",
 };

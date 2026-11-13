@@ -2134,4 +2134,12 @@
   'audit.action.patch.policy.exclude': "Dispositivo deixado de fora de uma política de atualização",
   'audit.action.patch.policy.include': "Dispositivo devolvido a uma política de atualização",
   'audit.action.device.role': "Função do dispositivo alterada",
+  'devices.col.user': "Usuário conectado",
+  'devices.noUser': "Nenhum usuário conectado",
+  'devices.userSince': "Conectado {when}",
+  'devices.filter.anyUser': "Qualquer usuário",
+  'devices.filter.withUser': "Com usuário conectado",
+  'rep.col.logged_in_user': "Usuário conectado",
+  'rep.col.last_logged_in_user': "Último usuário logado",
+  'rep.lastUserSeen': "Visto pela última vez {when}",
 };

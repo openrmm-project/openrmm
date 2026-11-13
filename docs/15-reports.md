@@ -34,8 +34,8 @@ index (`idx_inventory_data`) backs the JSONB lookups.
 | Report | One row per | Columns |
 |--------|-------------|---------|
 | `software` | (package, machine) | name, version, manufacturer, hostname, client, site, department |
-| `hardware` | machine with inventory | hostname, os, arch, manufacturer, model, serial_number, cpu_model, cpu_cores, mem_total_bytes, gpu, storage, storage_bytes, bios, platform, platform_version, kernel_version, ip, mac, client, site, department |
-| `machines` | machine (online or not) | hostname, os, arch, status, agent_version, cpu_model, mem_total_bytes, ip, mac, client, site, department, last_seen, collected_at |
+| `hardware` | machine with inventory | hostname, os, arch, manufacturer, model, serial_number, cpu_model, cpu_cores, mem_total_bytes, gpu, storage, storage_bytes, bios, platform, platform_version, kernel_version, ip, mac, client, site, department, last_logged_in_user, last_logged_in_user_at |
+| `machines` | machine (online or not) | hostname, os, arch, status, agent_version, cpu_model, mem_total_bytes, ip, mac, client, site, department, logged_in_user, last_seen, collected_at |
 
 The UI labels the `hardware` tab **Hardware & System** and the `machines` tab
 **Agents** (the report keys `hardware` / `machines` are unchanged). The Agents
@@ -43,6 +43,12 @@ tab is scoped to fleet-management columns (host, status, agent, client/site/
 department, last seen); the per-machine detail (OS, arch, CPU, RAM, IP, MAC)
 lives on Hardware & System. Both reports still *return* every field over REST —
 only the column set each tab exposes to the picker differs.
+
+Two user columns answer two questions. The machines `logged_in_user` is who is
+logged in **now** (`""` when no one is). The hardware `last_logged_in_user` is
+the last user the agent saw logged in, **kept after they log off**, with
+`last_logged_in_user_at` the last time it saw them: who uses the machine. Both
+need agent 0.11 or later and are empty for older agents.
 
 `software`/`hardware` are based on `inventory` (only machines that have
 reported); `machines` is based on `agents` (LEFT JOIN inventory), so a device

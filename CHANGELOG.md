@@ -48,6 +48,9 @@ tag.
   A device cannot retarget itself: the server keeps the OS it enrolled with
   (a different OS at registration is logged, not applied), and its detected
   role is set once and changed only by an administrator.
+  The patch policy editor's **Assigned to** and exception pickers are
+  searchable, as the policy drawer's are, and also offer single devices; a
+  device assignment shows the device's name instead of its id.
 - **Manage policies / Manage checks** now say what they include: activating and
   deactivating policies, and switching checks on and off (approving AI-proposed
   ones). Checks and tasks created through the API no longer accept

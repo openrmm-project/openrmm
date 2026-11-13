@@ -47,6 +47,9 @@ const smokeDevice = () => ({ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Sm
   last_seen: '2026-01-01T00:00:00Z', ...smokeRole, role: smokeRole.role_override || smokeRole.os_role });
 const policyAssignments = [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1', os: '', role: '' }];
 const policyExclusions = [];
+// The assistant's patch policy, as its searchable pickers change it.
+const patchAssignments = [{ id: 'pasg-1', policy_id: 'patch-ai', scope_type: 'agent', scope_id: 'dev-1', os: '', role: '' }];
+const patchExclusions = [];
 
 const remoteConfig = {
   ai: { provider: 'openai-compatible', base_url: '', model: '', api_key_set: true, configured: true },
@@ -143,7 +146,14 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { policy: aiPolicy, approved_policy: true, approved_tasks: 2, approved_checks: 0 });
       }
       if (pathname === '/api/patch-policies') return json(res, 200, { policies: [aiPatchPolicy] });
-      if (pathname === '/api/patch-policies/patch-ai/assignments') return json(res, 200, { assignments: [{ id: 'pasg-1', policy_id: 'patch-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
+      if (pathname === '/api/patch-policies/patch-ai/assignments') {
+        if (req.method === 'POST') { const item = { id: 'pasg-' + (patchAssignments.length + 1), policy_id: 'patch-ai', ...payload }; patchAssignments.push(item); return json(res, 201, item); }
+        return json(res, 200, { assignments: patchAssignments });
+      }
+      if (pathname === '/api/patch-policies/patch-ai/exclusions') {
+        if (req.method === 'POST') { if (payload?.agent_id !== 'dev-1') return json(res, 404, { error: 'no such device' }); patchExclusions.push({ agent_id: 'dev-1', hostname: 'SMOKE-PC' }); }
+        return json(res, req.method === 'POST' ? 201 : 200, { exclusions: patchExclusions });
+      }
       if (pathname === '/api/patch-policies/patch-ai/review') return json(res, 200, { fingerprint: 'pfp', policy: aiPatchPolicy, assignments: [{ id: 'pasg-1', policy_id: 'patch-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
       if (pathname === '/api/patch-policies/patch-ai/activate' && req.method === 'POST') {
         if (payload?.fingerprint !== 'pfp') return json(res, 409, { error: 'stale' });
@@ -567,6 +577,46 @@ async function policyTargetingBrowserFlow() {
   return true;
 }
 
+async function patchPolicyPickersBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Patch policy pickers E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const type = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const options = () => [...document.querySelectorAll('.max-h-60 button')].map((el) => el.textContent.trim());
+  (await wait(() => button('Patches'))).click();
+  (await wait(() => [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Policies').length > 1
+    && [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Policies').at(-1))).click();
+  (await wait(() => document.body.textContent.includes('AI weekend') && button('Edit'))).click();
+  // A device assignment reads by name, not "agent: <id>".
+  await wait(() => [...document.querySelectorAll('span.flex-1')].some((el) => el.textContent === 'SMOKE-PC'));
+  if (document.body.textContent.includes('agent: dev-1')) throw new Error('A device assignment shows its id');
+  // Assigned to: the search narrows the scopes; nothing matching says so.
+  (await wait(() => button('Add assignment…'))).click();
+  const search = await wait(() => document.activeElement?.tagName === 'INPUT' && document.activeElement);
+  await wait(() => options().includes('Every device (narrow it with OS and role)') && options().includes('SMOKE-PC'));
+  type(search, 'no-such-scope');
+  await wait(() => options().length === 0 && document.body.textContent.includes('No matches'));
+  type(search, 'every');
+  await wait(() => options().join('|') === 'Every device (narrow it with OS and role)');
+  (await wait(() => [...document.querySelectorAll('.max-h-60 button')].find((el) => el.textContent.trim().startsWith('Every device')))).click();
+  (await wait(() => button('Add') && !button('Add').disabled && button('Add'))).click();
+  await wait(() => [...document.querySelectorAll('span.flex-1')].some((el) => el.textContent === 'Every device'));
+  // Exceptions: search the devices and leave one out.
+  (await wait(() => button('Leave out a device…'))).click();
+  type(await wait(() => document.activeElement?.tagName === 'INPUT' && document.activeElement), 'smoke');
+  await wait(() => options().join('|') === 'SMOKE-PC');
+  (await wait(() => [...document.querySelectorAll('.max-h-60 button')].find((el) => el.textContent.trim() === 'SMOKE-PC'))).click();
+  (await wait(() => button('Leave out') && !button('Leave out').disabled && button('Leave out'))).click();
+  await wait(() => document.querySelector('button[aria-label="Put back in the policy"]'));
+  document.documentElement.dataset.patchPickersE2e = 'passed';
+  return true;
+}
+
 async function policyActivationBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -719,6 +769,11 @@ try {
     assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/exclusions')?.payload, { agent_id: 'dev-1' });
     assert.ok(apiRequests.some((r) => r.method === 'DELETE' && r.pathname === '/api/policies/pol-ai/exclusions/dev-1'), 'the device was put back');
     assert.equal(policyExclusions.length, 0);
+    const patchPickersFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: patchPolicyPickersBrowserFlow });
+    assertBrowser(patchPickersFlow, /data-patch-pickers-e2e="passed"/);
+    assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/patch-policies/patch-ai/assignments')?.payload,
+      { scope_type: 'global', scope_id: '', os: '', role: '' }, 'the scope found by search was assigned');
+    assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/patch-policies/patch-ai/exclusions')?.payload, { agent_id: 'dev-1' });
     const activationFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyActivationBrowserFlow });
     assertBrowser(activationFlow, /data-policy-activation-e2e="passed"/);
     const activations = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/activate').map((r) => r.payload?.fingerprint);

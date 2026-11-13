@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -415,5 +417,170 @@ func TestPolicyTargetingThroughTheAPIE2E(t *testing.T) {
 	}
 	if rec := f.do(http.MethodDelete, pbase+"/exclusions/"+agent.ID, ""); rec.Code != http.StatusOK || f.audit("patch.policy.include") == nil {
 		t.Fatalf("patch include: %d", rec.Code)
+	}
+}
+
+// CI-only PostgreSQL: a device left out of a policy is named only to someone
+// who may see that device. A reader confined to one client lists the
+// exceptions, and reads the review of a policy or patch policy, with its own
+// devices only; another client's excluded device appears in neither, by id or
+// by name. Removing a patch policy assignment takes an unrestricted principal,
+// is audited with the scope it had, and leaves the other assignments alone.
+func TestPolicyExceptionsStayInScopeE2E(t *testing.T) {
+	f := newScriptFixture(t)
+	ctx := context.Background()
+	enrol := func(prefix string) (*models.Client, *models.Agent) {
+		t.Helper()
+		client, err := f.store.CreateClient(ctx, prefix+" "+uuid.NewString()[:8])
+		if err != nil {
+			t.Fatal(err)
+		}
+		site, err := f.store.CreateSite(ctx, client.ID, "HQ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent, err := f.store.CreateAgent(ctx, prefix+"-"+uuid.NewString()[:6], "windows", "amd64", "0.11.0", "hash-"+uuid.NewString(), &site.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return client, agent
+	}
+	mine, mineDev := enrol("MINE")
+	theirs, theirDev := enrol("THEIRS")
+	leaks := func(body string) bool {
+		return strings.Contains(body, theirDev.ID) || strings.Contains(body, theirDev.Hostname)
+	}
+	excluded := func(rec *httptest.ResponseRecorder) []string {
+		t.Helper()
+		var out struct {
+			Exclusions []models.PolicyExclusion `json:"exclusions"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("exclusions: %d %s", rec.Code, rec.Body.String())
+		}
+		names := []string{}
+		for _, e := range out.Exclusions {
+			names = append(names, e.Hostname)
+		}
+		return names
+	}
+	both := func(names []string) bool {
+		return len(names) == 2 && slices.Contains(names, mineDev.Hostname) && slices.Contains(names, theirDev.Hostname)
+	}
+
+	// A policy reaching both clients, with a device of each left out.
+	pol, err := f.store.CreatePolicy(ctx, "Both "+uuid.NewString()[:6], "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/policies/" + pol.ID
+	for _, c := range []*models.Client{mine, theirs} {
+		if rec := f.do(http.MethodPost, base+"/assignments", `{"scope_type":"client","scope_id":"`+c.ID+`"}`); rec.Code != http.StatusCreated {
+			t.Fatalf("assign %s: %d %s", c.Name, rec.Code, rec.Body.String())
+		}
+	}
+	for _, a := range []*models.Agent{mineDev, theirDev} {
+		if rec := f.do(http.MethodPost, base+"/exclusions", `{"agent_id":"`+a.ID+`"}`); rec.Code != http.StatusOK {
+			t.Fatalf("exclude %s: %d %s", a.Hostname, rec.Code, rec.Body.String())
+		}
+	}
+	if names := excluded(f.do(http.MethodGet, base+"/exclusions", "")); !both(names) {
+		t.Fatalf("an unrestricted reader sees every exception: %v", names)
+	}
+
+	// The same policy as a patch policy.
+	pp, err := f.store.CreatePatchPolicy(ctx, &models.PatchPolicy{Name: "Both " + uuid.NewString()[:6], Enabled: true, WindowEndMin: 1439})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pbase := "/api/patch-policies/" + pp.ID
+	for _, c := range []*models.Client{mine, theirs} {
+		if rec := f.do(http.MethodPost, pbase+"/assignments", `{"scope_type":"client","scope_id":"`+c.ID+`","role":"workstation"}`); rec.Code != http.StatusCreated {
+			t.Fatalf("patch assign %s: %d %s", c.Name, rec.Code, rec.Body.String())
+		}
+	}
+	for _, a := range []*models.Agent{mineDev, theirDev} {
+		if rec := f.do(http.MethodPost, pbase+"/exclusions", `{"agent_id":"`+a.ID+`"}`); rec.Code != http.StatusOK {
+			t.Fatalf("patch exclude %s: %d %s", a.Hostname, rec.Code, rec.Body.String())
+		}
+	}
+	if names := excluded(f.do(http.MethodGet, pbase+"/exclusions", "")); !both(names) {
+		t.Fatalf("an unrestricted reader sees every patch exception: %v", names)
+	}
+	rec := f.do(http.MethodGet, pbase+"/review", "")
+	var full models.PatchPolicyReview
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &full) != nil || len(full.Exclusions) != 2 || full.Fingerprint == "" {
+		t.Fatalf("unrestricted patch review: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Confined to its own client, a reader sees only its own device left out:
+	// in the exception lists and in both reviews.
+	mineOnly := []models.UserScope{{ScopeType: models.ScopeClient, ScopeID: mine.ID}}
+	restore := f.asUser(t, "", []string{models.PermPoliciesView, models.PermPatchPoliciesManage}, mineOnly)
+	for _, target := range []string{base + "/exclusions", pbase + "/exclusions"} {
+		rec := f.do(http.MethodGet, target, "")
+		if names := excluded(rec); len(names) != 1 || names[0] != mineDev.Hostname || leaks(rec.Body.String()) {
+			t.Fatalf("scoped %s: %v %s", target, names, rec.Body.String())
+		}
+	}
+	rec = f.do(http.MethodGet, base+"/review", "")
+	var review models.PolicyReview
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &review) != nil || len(review.Exclusions) != 1 ||
+		review.Exclusions[0].AgentID != mineDev.ID || review.Fingerprint != "" || leaks(rec.Body.String()) {
+		t.Fatalf("scoped policy review: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = f.do(http.MethodGet, pbase+"/review", "")
+	var patchReview models.PatchPolicyReview
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &patchReview) != nil || len(patchReview.Exclusions) != 1 ||
+		patchReview.Exclusions[0].AgentID != mineDev.ID || patchReview.Fingerprint != "" || leaks(rec.Body.String()) {
+		t.Fatalf("scoped patch review: %d %s", rec.Code, rec.Body.String())
+	}
+	restore()
+
+	// Patch policies are global definitions: the confined reader cannot remove
+	// one of their assignments, not even its own client's.
+	var listed struct {
+		Assignments []models.PatchPolicyAssignment `json:"assignments"`
+	}
+	rec = f.do(http.MethodGet, pbase+"/assignments", "")
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &listed) != nil || len(listed.Assignments) != 2 {
+		t.Fatalf("patch assignments: %d %s", rec.Code, rec.Body.String())
+	}
+	var ours, theirsAssignment models.PatchPolicyAssignment
+	for _, a := range listed.Assignments {
+		if a.ScopeID == mine.ID {
+			ours = a
+		} else {
+			theirsAssignment = a
+		}
+	}
+	restore = f.asUser(t, "", []string{models.PermPatchPoliciesManage}, mineOnly)
+	if rec := f.do(http.MethodDelete, "/api/patch-policies/assignments/"+ours.ID, ""); rec.Code != http.StatusForbidden {
+		t.Fatalf("scoped removal of a patch assignment = %d %s", rec.Code, rec.Body.String())
+	}
+	restore()
+	if e := f.audit("patch.policy.unassign"); e != nil && e.Target == pp.ID {
+		t.Fatalf("a refused removal was audited: %+v", e)
+	}
+
+	// An unrestricted administrator removes one; it is audited with the scope
+	// and filter it had, and the other client's assignment stays.
+	if rec := f.do(http.MethodDelete, "/api/patch-policies/assignments/"+ours.ID, ""); rec.Code != http.StatusOK {
+		t.Fatalf("remove patch assignment: %d %s", rec.Code, rec.Body.String())
+	}
+	e := f.audit("patch.policy.unassign")
+	var detail map[string]string
+	if e == nil || e.Target != pp.ID || json.Unmarshal(e.Detail, &detail) != nil ||
+		detail["scope_type"] != models.ScopeClient || detail["scope_id"] != mine.ID || detail["role"] != "workstation" {
+		t.Fatalf("unassign audit: %+v %v", e, detail)
+	}
+	rec = f.do(http.MethodGet, pbase+"/assignments", "")
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &listed) != nil || len(listed.Assignments) != 1 || listed.Assignments[0].ID != theirsAssignment.ID {
+		t.Fatalf("after removal: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, id := range []string{ours.ID, uuid.NewString()} {
+		if rec := f.do(http.MethodDelete, "/api/patch-policies/assignments/"+id, ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("removing a missing patch assignment = %d", rec.Code)
+		}
 	}
 }

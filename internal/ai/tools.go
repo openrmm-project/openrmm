@@ -71,7 +71,7 @@ func Tools() []Tool {
 	base := []Tool{
 		{Type: "function", Function: FunctionDef{
 			Name:        "list_devices",
-			Description: "List managed devices (agents) with id, hostname, OS, arch and online status. Use this to find the target device id for an action.",
+			Description: "List managed devices (agents) with id, hostname, OS, arch, online status, role and the user logged in interactively (logged_in_user, empty when no one is). Use this to find the target device id for an action, or the machine a user is on.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
@@ -504,10 +504,13 @@ func listDevices(ctx context.Context, tc ToolContext) (any, error) {
 		// Role (workstation or server, empty when unknown) is what policy
 		// assignments filter on.
 		Role string `json:"role"`
+		// LoggedInUser is who is logged in interactively ("" when no one),
+		// so "which machine is Maria on?" has an answer. Device data.
+		LoggedInUser string `json:"logged_in_user"`
 	}
 	out := make([]dev, 0, len(agents))
 	for _, a := range agents {
-		out = append(out, dev{a.ID, a.Hostname, a.OS, a.Arch, a.Status, a.SiteID, a.GroupID, a.Role})
+		out = append(out, dev{a.ID, a.Hostname, a.OS, a.Arch, a.Status, a.SiteID, a.GroupID, a.Role, a.LoggedInUser})
 	}
 	return map[string]any{"devices": out}, nil
 }

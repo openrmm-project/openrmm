@@ -129,6 +129,9 @@ var migrationV32SQL string
 //go:embed migrations/033_policy_targeting.sql
 var migrationV33SQL string
 
+//go:embed migrations/034_logged_in_user.sql
+var migrationV34SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -163,6 +166,7 @@ var migrations = []migration{
 	{version: 31, name: "script_variable_proposals", sql: migrationV31SQL},
 	{version: 32, name: "policy_activation", sql: migrationV32SQL},
 	{version: 33, name: "policy_targeting", sql: migrationV33SQL},
+	{version: 34, name: "logged_in_user", sql: migrationV34SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

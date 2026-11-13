@@ -205,6 +205,7 @@ type MachineRow struct {
 	Client       string     `json:"client"`
 	Site         string     `json:"site"`
 	Department   string     `json:"department"`
+	LoggedInUser string     `json:"logged_in_user"`
 	LastSeen     *time.Time `json:"last_seen"`
 	CollectedAt  *time.Time `json:"collected_at"`
 }
@@ -223,7 +224,7 @@ func (s *Store) MachinesReport(ctx context.Context, f ReportFilter) ([]MachineRo
 		       COALESCE((SELECT string_agg(NULLIF(ni->>'mac',''), ', ')
 		                 FROM jsonb_array_elements(` + netIfaces + `) ni), ''),
 		       COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
-		       a.last_seen, inv.collected_at
+		       a.logged_in_user, a.last_seen, inv.collected_at
 		FROM agents a` + reportJoins + `
 		LEFT JOIN inventory inv ON inv.agent_id = a.id` +
 		where + `
@@ -238,7 +239,7 @@ func (s *Store) MachinesReport(ctx context.Context, f ReportFilter) ([]MachineRo
 		var r MachineRow
 		if err := rows.Scan(&r.Hostname, &r.OS, &r.Arch, &r.Status, &r.AgentVersion,
 			&r.CPUModel, &r.MemTotalByte, &r.IP, &r.MAC, &r.Client, &r.Site, &r.Department,
-			&r.LastSeen, &r.CollectedAt); err != nil {
+			&r.LoggedInUser, &r.LastSeen, &r.CollectedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

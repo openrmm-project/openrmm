@@ -255,10 +255,10 @@ func (s *Server) streamInventoryCSV(w http.ResponseWriter, r *http.Request, clai
 			return
 		}
 		_ = out.Write([]string{"hostname", "os", "arch", "status", "agent_version", "cpu_model",
-			"mem_total_bytes", "ip", "mac", "client", "site", "department", "last_seen", "collected_at"})
+			"mem_total_bytes", "ip", "mac", "client", "site", "department", "logged_in_user", "last_seen", "collected_at"})
 		for _, x := range rows {
 			_ = out.Write([]string{x.Hostname, x.OS, x.Arch, x.Status, x.AgentVersion, x.CPUModel,
-				num(x.MemTotalByte), x.IP, x.MAC, x.Client, x.Site, x.Department,
+				num(x.MemTotalByte), x.IP, x.MAC, x.Client, x.Site, x.Department, x.LoggedInUser,
 				timeCell(x.LastSeen), timeCell(x.CollectedAt)})
 		}
 	default:

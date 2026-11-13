@@ -101,7 +101,7 @@ func scanAgent(row pgx.Row) (*models.Agent, error) {
 	var a models.Agent
 	err := row.Scan(&a.ID, &a.Hostname, &a.Description, &a.Note, &a.OS, &a.Arch, &a.Version, &a.Status,
 		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID, &a.MonitoringScopeSince,
-		&a.OSRole, &a.RoleOverride)
+		&a.OSRole, &a.RoleOverride, &a.LoggedInUser, &a.LoggedInUserSince)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -112,7 +112,7 @@ func scanAgent(row pgx.Row) (*models.Agent, error) {
 	return &a, nil
 }
 
-const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since, os_role, role_override`
+const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since, os_role, role_override, logged_in_user, logged_in_user_since`
 
 // SetAgentMeta updates the operator-editable identification fields: description
 // (shown in the device list) and note (a private observation, detail-only).
@@ -317,6 +317,20 @@ func (s *Store) MarkAgentOffline(ctx context.Context, id string) error {
 // TouchAgent bumps last_seen (heartbeat).
 func (s *Store) TouchAgent(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE agents SET last_seen=now(), status='online' WHERE id=$1 AND revoked_at IS NULL`, id)
+	return err
+}
+
+// TouchAgentSession is TouchAgent for a heartbeat that reports the logged-in
+// user: it records the (already cleaned) name and, when it changed, since
+// when. A nil user — an agent that does not report one — leaves it alone.
+func (s *Store) TouchAgentSession(ctx context.Context, id string, user *string) error {
+	if user == nil {
+		return s.TouchAgent(ctx, id)
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE agents SET last_seen=now(), status='online',
+		logged_in_user_since = CASE WHEN logged_in_user IS DISTINCT FROM $2 THEN now() ELSE logged_in_user_since END,
+		logged_in_user = $2
+		WHERE id=$1 AND revoked_at IS NULL`, id, *user)
 	return err
 }
 

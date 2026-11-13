@@ -35,7 +35,7 @@ index (`idx_inventory_data`) backs the JSONB lookups.
 |--------|-------------|---------|
 | `software` | (package, machine) | name, version, manufacturer, hostname, client, site, department |
 | `hardware` | machine with inventory | hostname, os, arch, manufacturer, model, serial_number, cpu_model, cpu_cores, mem_total_bytes, gpu, storage, storage_bytes, bios, platform, platform_version, kernel_version, ip, mac, client, site, department |
-| `machines` | machine (online or not) | hostname, os, arch, status, agent_version, cpu_model, mem_total_bytes, ip, mac, client, site, department, last_seen, collected_at |
+| `machines` | machine (online or not) | hostname, os, arch, status, agent_version, cpu_model, mem_total_bytes, ip, mac, client, site, department, logged_in_user, last_seen, collected_at |
 
 The UI labels the `hardware` tab **Hardware & System** and the `machines` tab
 **Agents** (the report keys `hardware` / `machines` are unchanged). The Agents

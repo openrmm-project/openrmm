@@ -40,11 +40,18 @@ const aiPatchPolicy = { id: 'patch-ai', name: 'AI weekend', enabled: false, pend
 const aiTask = { id: 'task-ai', agent_id: 'dev-1', name: 'AI cleanup task', shell: 'bash', script: 'find /var/tmp -mtime +30 -delete', schedule_kind: 'interval',
   interval_sec: 3600, run_at_minute: 0, days_of_week: 0, run_at_minutes: [], timezone: 'UTC', enabled: false, proposed_by: 'mcp:claude' };
 
+// The fleet: who is logged in where (Devices ▸ Logged-in user), with a device
+// no one is logged in to and one offline with its last report.
+const fleet = [
+  { id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z', logged_in_user: 'ACME\\zoe', logged_in_user_since: '2026-01-01T00:00:00Z' },
+  { id: 'dev-2', hostname: 'ALPHA-WS', description: '', os: 'windows', arch: 'amd64', version: '0.11.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z', logged_in_user: 'AzureAD\\Ana' },
+  { id: 'dev-3', hostname: 'BETA-SRV', description: '', os: 'windows', arch: 'amd64', version: '0.11.0', status: 'offline', tags: [], last_seen: '2025-12-31T00:00:00Z', logged_in_user: '' },
+];
+
 // Policy targeting (RFC #258): the device's role, and the assistant policy's
 // assignments and exceptions as the console changes them.
 const smokeRole = { os_role: '', role_override: '' };
-const smokeDevice = () => ({ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [],
-  last_seen: '2026-01-01T00:00:00Z', ...smokeRole, role: smokeRole.role_override || smokeRole.os_role });
+const smokeDevice = () => ({ ...fleet[0], os: 'linux', ...smokeRole, role: smokeRole.role_override || smokeRole.os_role });
 const policyAssignments = [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1', os: '', role: '' }];
 const policyExclusions = [];
 
@@ -174,7 +181,7 @@ const server = createServer(async (req, res) => {
         }
         return json(res, 200, remoteConfig);
       }
-      if (pathname === '/api/devices') return json(res, 200, { devices: [{ id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z' }] });
+      if (pathname === '/api/devices') return json(res, 200, { devices: fleet });
       if (pathname === '/api/jobs') return json(res, 200, { jobs: [] });
       if (pathname === '/api/audit') {
         const entries = Number(url.searchParams.get('limit')) >= 50 ? [
@@ -611,6 +618,59 @@ async function policyActivationBrowserFlow() {
   return true;
 }
 
+// Devices ▸ Logged-in user: the column, sorting by it (no user last either
+// way), the user filter, search by user, and hiding the column (remembered).
+async function devicesUserBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Devices user E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const choose = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const type = (element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const rows = () => [...document.querySelectorAll('tbody tr')].filter((tr) => tr.querySelector('td') && !tr.querySelector('[colspan]'));
+  const hosts = () => rows().map((tr) => ['SMOKE-PC', 'ALPHA-WS', 'BETA-SRV'].find((h) => tr.textContent.includes(h))).join(',');
+  try { localStorage.removeItem('rmm-devices-hidden-columns'); } catch (e) {}
+  (await wait(() => button('Devices'))).click();
+  await wait(() => rows().length === 3);
+  const header = await wait(() => [...document.querySelectorAll('th button')].find((el) => el.textContent.trim().startsWith('Logged-in user')));
+  const beta = rows().find((tr) => tr.textContent.includes('BETA-SRV'));
+  if (!beta.textContent.includes('No user logged in')) throw new Error('A device without a session must say so');
+  if (!rows().find((tr) => tr.textContent.includes('AzureAD\\Ana'))) throw new Error('The Entra ID user is shown as AzureAD\\user');
+  header.click();
+  await wait(() => hosts() === 'SMOKE-PC,ALPHA-WS,BETA-SRV'); // ACME\zoe < AzureAD\Ana, empty last
+  if (header.closest('th').getAttribute('aria-sort') !== 'ascending') throw new Error('aria-sort is not set');
+  header.click();
+  await wait(() => hosts() === 'ALPHA-WS,SMOKE-PC,BETA-SRV'); // descending, empty still last
+  const userFilter = await wait(() => document.querySelector('select[aria-label="Logged-in user"]'));
+  choose(userFilter, 'none');
+  await wait(() => hosts() === 'BETA-SRV');
+  choose(userFilter, 'with');
+  await wait(() => hosts() === 'ALPHA-WS,SMOKE-PC');
+  choose(userFilter, 'all');
+  const search = await wait(() => [...document.querySelectorAll('input')].find((el) => /search/i.test(el.placeholder || '')));
+  type(search, 'azuread');
+  await wait(() => hosts() === 'ALPHA-WS');
+  type(search, '');
+  await wait(() => rows().length === 3);
+  // Hide the column; the choice is remembered.
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim().startsWith('Columns')))).click();
+  const toggle = await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Logged-in user' && !el.closest('th')));
+  toggle.click();
+  await wait(() => ![...document.querySelectorAll('th')].some((th) => th.textContent.trim().startsWith('Logged-in user')));
+  if (!(localStorage.getItem('rmm-devices-hidden-columns') || '').includes('user')) throw new Error('The hidden column is not remembered');
+  toggle.click();
+  await wait(() => [...document.querySelectorAll('th')].some((th) => th.textContent.trim().startsWith('Logged-in user')));
+  document.documentElement.dataset.devicesUserE2e = 'passed';
+  return true;
+}
+
 async function auditCsvBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); }
@@ -663,13 +723,13 @@ try {
   if (chrome) {
     assertBrowser(await runChrome(chrome, baseURL + '/'), /Sign in to your instance/);
     assertBrowser(await runChrome(chrome, baseURL + '/authenticated/'), /Fleet health at a glance/);
-    assertBrowser(await runChrome(chrome, baseURL + '/authenticated/?route=Devices'), /1 agent · 1 online/);
+    assertBrowser(await runChrome(chrome, baseURL + '/authenticated/?route=Devices'), /3 agents · 2 online/);
     assertBrowser(await runChrome(chrome, baseURL + '/authenticated/?route=AI%20Chat'), /Start a conversation/);
 
     const mobile = await runMobileChrome(chrome, baseURL + '/authenticated/?route=Open%20navigation');
     assertMobile(mobile, /smoke-admin/);
     assert.match(mobile.stdout, /translate-x-0/);
-    assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=Devices'), /1 agent · 1 online/);
+    assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=Devices'), /3 agents · 2 online/);
     assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=AI%20Chat'), /Start a conversation/);
 
     assertBrowser(await runChrome(chrome, baseURL + '/expired/'), /Sign in to your instance/);
@@ -729,6 +789,8 @@ try {
     const approvedTask = apiRequests.find((r) => r.method === 'PUT' && r.pathname === '/api/tasks/task-ai')?.payload;
     assert.equal(approvedTask?.enabled, true, 'the AI task was switched on through its review');
     assert.equal(approvedTask?.script, 'find /var/tmp -mtime +30 -delete');
+    const usersFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: devicesUserBrowserFlow });
+    assertBrowser(usersFlow, /data-devices-user-e2e="passed"/);
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });
     assertBrowser(csvFlow, /data-audit-csv-e2e="passed"/);
     assert.ok(apiRequests.some((request) => request.pathname === '/api/me' && request.token === 'smoke-token'), 'authenticated API requests must include the bearer token');

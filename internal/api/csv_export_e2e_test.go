@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,8 +26,18 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 
 	// split: a ';' list separator (pt-BR, de-DE, es-ES Excel) would make a cell of "=2+2".
 	hostile, split, control := "=1+1", "SPLIT;=2+2", "WINDOWS-TEST"
+	// The logged-in user is endpoint text too: the agent reports it.
+	hostileUser, plainUser := "@cmd|' /C calc'!A0", `ACME\maria`
 	for _, host := range []string{hostile, split, control} {
-		if _, err := f.store.CreateAgent(ctx, host, "windows", "amd64", "0.10.0", "hash-"+uuid.NewString(), nil, nil); err != nil {
+		a, err := f.store.CreateAgent(ctx, host, "windows", "amd64", "0.10.0", "hash-"+uuid.NewString(), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		user := plainUser
+		if host == hostile {
+			user = hostileUser
+		}
+		if err := f.store.TouchAgentSession(ctx, a.ID, &user); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -81,6 +92,14 @@ func TestStreamedCSVExportsGuardEndpointTextE2E(t *testing.T) {
 	}
 	if !hosts[control] {
 		t.Fatalf("ordinary hostname changed: %v", hosts)
+	}
+	userCol := slices.Index(machines[0], "logged_in_user")
+	if userCol < 0 {
+		t.Fatalf("machines export has no logged_in_user column: %v", machines[0])
+	}
+	users := column(machines, userCol)
+	if !users["'"+hostileUser] || users[hostileUser] || !users[plainUser] {
+		t.Fatalf("logged-in users in the CSV: %v", users)
 	}
 
 	code, audit := get(exports.Claims{Kind: "audit", Params: map[string]string{"action": "csv.export_test"}, User: f.admin.ID})

@@ -2106,4 +2106,10 @@
   'audit.action.patch.policy.exclude': "Gerät aus einer Update-Richtlinie ausgenommen",
   'audit.action.patch.policy.include': "Gerät wieder in eine Update-Richtlinie aufgenommen",
   'audit.action.device.role': "Geräterolle geändert",
+  'devices.col.user': "Angemeldeter Benutzer",
+  'devices.noUser': "Kein Benutzer angemeldet",
+  'devices.userSince': "Angemeldet {when}",
+  'devices.filter.anyUser': "Jeder Benutzer",
+  'devices.filter.withUser': "Ein Benutzer angemeldet",
+  'rep.col.logged_in_user': "Angemeldeter Benutzer",
 };

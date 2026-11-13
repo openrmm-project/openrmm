@@ -185,6 +185,39 @@ func TestDeviceToolsEnumerateOnlyTheCallersScopeIntegration(t *testing.T) {
 	}
 }
 
+// list_devices tells the model who is logged in where ("which machine is
+// Maria on?"), and only for the devices the caller may see.
+func TestListDevicesReportsTheLoggedInUserInScopeIntegration(t *testing.T) {
+	f := newScopeFixture(t)
+	mine, theirs := `ACME\maria`, `OTHER\secret.user`
+	if err := f.st.TouchAgentSession(f.ctx, f.mineAgent, &mine); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.TouchAgentSession(f.ctx, f.theirAgent, &theirs); err != nil {
+		t.Fatal(err)
+	}
+	out := Execute(f.ctx, f.scopedContext(), "list_devices", json.RawMessage(`{}`)).Output
+	var result struct {
+		Devices []struct {
+			ID           string `json:"id"`
+			LoggedInUser string `json:"logged_in_user"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatalf("list_devices output: %v\n%s", err, out)
+	}
+	found := false
+	for _, d := range result.Devices {
+		found = found || (d.ID == f.mineAgent && d.LoggedInUser == mine)
+	}
+	if !found {
+		t.Fatalf("list_devices misses the logged-in user: %s", out)
+	}
+	if strings.Contains(out, "secret.user") {
+		t.Fatalf("list_devices leaked another client's user: %s", out)
+	}
+}
+
 // get_inventory takes an id straight from the model, which is exactly the shape
 // of an IDOR: knowing (or guessing) an id must not be enough.
 func TestGetInventoryRefusesAnOutOfScopeDeviceIntegration(t *testing.T) {

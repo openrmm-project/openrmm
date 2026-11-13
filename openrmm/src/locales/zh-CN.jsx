@@ -2106,4 +2106,10 @@
   'audit.action.patch.policy.exclude': "设备已从补丁策略中排除",
   'audit.action.patch.policy.include': "设备已重新纳入补丁策略",
   'audit.action.device.role': "设备角色已更改",
+  'devices.col.user': "已登录用户",
+  'devices.noUser': "无用户登录",
+  'devices.userSince': "登录于 {when}",
+  'devices.filter.anyUser': "任意用户",
+  'devices.filter.withUser': "有用户登录",
+  'rep.col.logged_in_user': "已登录用户",
 };

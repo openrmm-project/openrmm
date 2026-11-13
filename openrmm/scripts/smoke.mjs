@@ -169,6 +169,18 @@ const server = createServer(async (req, res) => {
         if (req.method === 'POST') { if (payload?.agent_id !== 'dev-1') return json(res, 404, { error: 'no such device' }); patchExclusions.push({ agent_id: 'dev-1', hostname: 'SMOKE-PC' }); }
         return json(res, req.method === 'POST' ? 201 : 200, { exclusions: patchExclusions });
       }
+      if (pathname === '/api/patch-policies/patch-ai/exclusions/dev-1' && req.method === 'DELETE') {
+        const i = patchExclusions.findIndex((e) => e.agent_id === 'dev-1');
+        if (i < 0) return json(res, 404, { error: 'the device is not excluded from this policy' });
+        patchExclusions.splice(i, 1);
+        return json(res, 200, { exclusions: patchExclusions });
+      }
+      if (pathname.startsWith('/api/patch-policies/assignments/') && req.method === 'DELETE') {
+        const i = patchAssignments.findIndex((a) => a.id === pathname.split('/').pop());
+        if (i < 0) return json(res, 404, { error: 'not found' });
+        patchAssignments.splice(i, 1);
+        return json(res, 200, { ok: true });
+      }
       if (pathname === '/api/patch-policies/patch-ai/review') return json(res, 200, { fingerprint: 'pfp', policy: aiPatchPolicy, assignments: [{ id: 'pasg-1', policy_id: 'patch-ai', scope_type: 'agent', scope_id: 'dev-1' }] });
       if (pathname === '/api/patch-policies/patch-ai/activate' && req.method === 'POST') {
         if (payload?.fingerprint !== 'pfp') return json(res, 409, { error: 'stale' });
@@ -630,7 +642,13 @@ async function patchPolicyPickersBrowserFlow() {
   await wait(() => options().join('|') === 'SMOKE-PC');
   (await wait(() => [...document.querySelectorAll('.max-h-60 button')].find((el) => el.textContent.trim() === 'SMOKE-PC'))).click();
   (await wait(() => button('Leave out') && !button('Leave out').disabled && button('Leave out'))).click();
-  await wait(() => document.querySelector('button[aria-label="Put back in the policy"]'));
+  // Put the device back, then remove the assignment just added; the device
+  // assignment stays.
+  (await wait(() => document.querySelector('button[aria-label="Put back in the policy"]'))).click();
+  await wait(() => !document.querySelector('button[aria-label="Put back in the policy"]'));
+  const everyDeviceRow = () => [...document.querySelectorAll('span.flex-1')].find((el) => el.textContent === 'Every device')?.parentElement;
+  (await wait(() => everyDeviceRow()?.querySelector('button'))).click();
+  await wait(() => !everyDeviceRow() && [...document.querySelectorAll('span.flex-1')].some((el) => el.textContent === 'SMOKE-PC'));
   document.documentElement.dataset.patchPickersE2e = 'passed';
   return true;
 }
@@ -897,6 +915,10 @@ try {
     assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/patch-policies/patch-ai/assignments')?.payload,
       { scope_type: 'global', scope_id: '', os: '', role: '' }, 'the scope found by search was assigned');
     assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/patch-policies/patch-ai/exclusions')?.payload, { agent_id: 'dev-1' });
+    assert.ok(apiRequests.some((r) => r.method === 'DELETE' && r.pathname === '/api/patch-policies/patch-ai/exclusions/dev-1'), 'the device was put back in the patch policy');
+    assert.ok(apiRequests.some((r) => r.method === 'DELETE' && r.pathname === '/api/patch-policies/assignments/pasg-2'), 'the assignment was removed');
+    assert.equal(patchExclusions.length, 0);
+    assert.deepEqual(patchAssignments.map((a) => a.id), ['pasg-1'], 'only the removed assignment is gone');
     const activationFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyActivationBrowserFlow });
     assertBrowser(activationFlow, /data-policy-activation-e2e="passed"/);
     const activations = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/activate').map((r) => r.payload?.fingerprint);

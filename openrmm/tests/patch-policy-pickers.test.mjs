@@ -11,8 +11,8 @@ import { transformSync } from 'esbuild';
 const src = await readFile(new URL('../src/screens-patches.jsx', import.meta.url), 'utf8');
 const code = src.slice(src.indexOf('function PolicyAssignments('), src.indexOf('window.PatchesScreen = PatchesScreen;'));
 
-function harness() {
-  const states = [], calls = []; let cursor = 0;
+function harness({ fail = [] } = {}) {
+  const states = [], calls = [], emitted = []; let cursor = 0;
   const data = {
     'patch-assign': { assignments: [{ id: 'a1', scope_type: 'agent', scope_id: 'dev-1', os: '', role: '' }, { id: 'a2', scope_type: 'client', scope_id: 'c1', os: 'windows', role: 'server' }] },
     clients: { clients: [{ id: 'c1', name: 'Acme' }, { id: 'c2', name: 'Globex' }] },
@@ -27,9 +27,9 @@ function harness() {
     useQuery: (key) => ({ data: data[key[0]] }),
     useDeviceMap: () => ({ 'dev-1': { id: 'dev-1', hostname: 'SMOKE-PC' }, 'dev-2': { id: 'dev-2', hostname: 'ALPHA-WS' }, 'dev-3': { id: 'dev-3', hostname: 'BETA-SRV' } }),
     t: (key, vars) => (vars ? key + ' ' + JSON.stringify(vars) : key),
-    window: { dataBus: { emit() {} } },
+    window: { dataBus: { emit(name) { emitted.push(name); } } },
     api: Object.fromEntries(['listPatchAssignments', 'listClients', 'listSites', 'listPatchPolicyExclusions', 'addPatchAssignment', 'addPatchPolicyExclusion', 'removePatchPolicyExclusion', 'deletePatchAssignment']
-      .map((name) => [name, async (...args) => { calls.push({ name, args: JSON.parse(JSON.stringify(args)) }); return {}; }])),
+      .map((name) => [name, async (...args) => { calls.push({ name, args: JSON.parse(JSON.stringify(args)) }); if (fail.includes(name)) throw new Error('refused'); return {}; }])),
     ...Object.fromEntries(['Field', 'Icon', 'Button', 'Select', 'Combobox', 'TargetChips', 'TargetSelects'].map((name) => [name, name])),
   };
   vm.createContext(sandbox);
@@ -39,7 +39,7 @@ function harness() {
   const find = (node, predicate, out = []) => { if (!node || typeof node !== 'object') return out; if (predicate(node)) out.push(node); (node.children || []).flat(Infinity).forEach((child) => find(child, predicate, out)); return out; };
   const text = (node) => (typeof node === 'string' ? node : (node?.children || []).flat(Infinity).map(text).join(''));
   render();
-  return { calls, render, find: (predicate) => find(tree, predicate), text: () => text(tree) };
+  return { calls, emitted, render, find: (predicate) => find(tree, predicate), text: () => text(tree) };
 }
 
 test('both patch policy pickers are searchable and offer every scope a patch policy takes', () => {
@@ -73,4 +73,26 @@ test('a device assignment reads by name and the pickers send what was chosen', a
   devices.props.onChange('dev-3'); ui.render();
   await ui.find((n) => n.type === 'Button' && n.children.flat(Infinity).includes('pol.exclude'))[0].props.onClick();
   assert.deepEqual(ui.calls.find((c) => c.name === 'addPatchPolicyExclusion')?.args, ['pp-1', 'dev-3']);
+});
+
+// The rows' own buttons: an excluded device is put back, an assignment is
+// removed, each by id, and the lists reload. A refusal is shown, and nothing
+// reloads as though it had worked.
+test('a device is put back and an assignment removed, and a refusal is shown', async () => {
+  const ui = harness();
+  const putBack = ui.find((n) => n.type === 'button' && n.props['aria-label'] === 'pol.includeBack');
+  assert.equal(putBack.length, 1, 'one button per excluded device');
+  await putBack[0].props.onClick();
+  assert.deepEqual(ui.calls.find((c) => c.name === 'removePatchPolicyExclusion')?.args, ['pp-1', 'dev-2']);
+  const removers = ui.find((n) => n.type === 'button' && !n.props['aria-label']);
+  assert.equal(removers.length, 2, 'one button per assignment');
+  await removers[1].props.onClick();
+  assert.deepEqual(ui.calls.find((c) => c.name === 'deletePatchAssignment')?.args, ['a2']);
+  assert.deepEqual(ui.emitted, ['patch-assign', 'patch-assign']);
+
+  const refused = harness({ fail: ['removePatchPolicyExclusion', 'deletePatchAssignment'] });
+  await refused.find((n) => n.type === 'button' && n.props['aria-label'] === 'pol.includeBack')[0].props.onClick();
+  await refused.find((n) => n.type === 'button' && !n.props['aria-label'])[0].props.onClick();
+  assert.deepEqual(refused.calls.filter((c) => c.name === 'toast.error').map((c) => c.args), [['common.failed', 'refused'], ['common.failed', 'refused']]);
+  assert.deepEqual(refused.emitted, []);
 });

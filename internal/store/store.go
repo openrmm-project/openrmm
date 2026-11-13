@@ -320,14 +320,35 @@ func (s *Store) TouchAgent(ctx context.Context, id string) error {
 	return err
 }
 
+// ErrAgentOSChanged reports a re-registration that named a different OS than
+// the device enrolled with. The connection goes on; the OS on record is kept.
+var ErrAgentOSChanged = errors.New("the device reported a different OS than it enrolled with; the enrolled OS is kept")
+
 // RefreshAgentInfo updates the metadata an agent reports at (re-)registration,
-// so a binary upgrade is reflected (version/hostname/os/arch otherwise stay
+// so a binary upgrade is reflected (version/hostname/arch otherwise stay
 // frozen at first enrollment).
+//
+// The OS is not refreshed: an agent binary is built for one OS and reports it
+// unchanged for life, and policy assignments filter on it, so a device that
+// suddenly names another OS is not believed — it could otherwise move itself
+// into the policies (scripts, script variable values) meant for that OS. Only
+// an OS never recorded is filled in. ErrAgentOSChanged tells the caller.
 func (s *Store) RefreshAgentInfo(ctx context.Context, id, hostname, os, arch, version string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE agents SET hostname=$2, os=$3, arch=$4, version=$5, last_seen=now() WHERE id=$1 AND revoked_at IS NULL`,
-		id, hostname, os, arch, version)
-	return err
+	var kept string
+	err := s.pool.QueryRow(ctx,
+		`UPDATE agents SET hostname=$2, os=CASE WHEN os = '' THEN $3 ELSE os END, arch=$4, version=$5, last_seen=now()
+		 WHERE id=$1 AND revoked_at IS NULL RETURNING os`,
+		id, hostname, os, arch, version).Scan(&kept)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if kept != os {
+		return ErrAgentOSChanged
+	}
+	return nil
 }
 
 // RevokeAgent invalidates the device credential while preserving the endpoint's
@@ -694,10 +715,20 @@ func (s *Store) UpsertInventory(ctx context.Context, agentID string, data []byte
 	if err != nil {
 		return err
 	}
-	// The detected role follows the latest inventory (policy targeting); an
-	// administrator's override is kept apart and wins over it.
-	if role, ok := detectedRoleFromInventory(data); ok {
-		_, err = s.pool.Exec(ctx, `UPDATE agents SET os_role=$2 WHERE id=$1 AND os_role IS DISTINCT FROM $2`, agentID, role)
+	// The detected role (policy targeting) is set once, from the OS the device
+	// enrolled with and the first snapshot that implies a role; an
+	// administrator's override is kept apart and wins over it. Later
+	// snapshots do not change it, so a device cannot move itself between
+	// workstation and server policies by reporting another product type.
+	var enrolledOS string
+	if err := s.pool.QueryRow(ctx, `SELECT os FROM agents WHERE id=$1`, agentID).Scan(&enrolledOS); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if role := detectedRole(enrolledOS, data); role != "" {
+		_, err = s.pool.Exec(ctx, `UPDATE agents SET os_role=$2 WHERE id=$1 AND os_role = ''`, agentID, role)
 	}
 	return err
 }

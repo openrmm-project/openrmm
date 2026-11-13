@@ -133,18 +133,19 @@ func (s *Store) SetAgentRoleOverride(ctx context.Context, agentID, role string) 
 	return s.GetAgent(ctx, agentID)
 }
 
-// detectedRoleFromInventory derives the role an inventory snapshot implies.
-// ok is false when the snapshot says nothing about the OS.
-func detectedRoleFromInventory(data []byte) (role string, ok bool) {
+// detectedRole derives the role an inventory snapshot implies for a device of
+// the OS it enrolled with. The snapshot's own "os" is not used: it is what the
+// device says, while the enrolled OS is what assignments filter on. "" means
+// the snapshot implies no role (Linux, or nothing to go on).
+func detectedRole(enrolledOS string, data []byte) string {
 	var inv struct {
-		OS             string `json:"os"`
 		Platform       string `json:"platform"`
 		PlatformFamily string `json:"platform_family"`
 	}
-	if err := json.Unmarshal(data, &inv); err != nil || inv.OS == "" {
-		return "", false
+	if enrolledOS == "" || json.Unmarshal(data, &inv) != nil {
+		return ""
 	}
-	return models.DetectRole(inv.OS, inv.Platform, inv.PlatformFamily), true
+	return models.DetectRole(enrolledOS, inv.Platform, inv.PlatformFamily)
 }
 
 // validateAssignmentTarget checks an assignment's filters and global scope.

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"sort"
@@ -280,12 +281,13 @@ func TestPatchPolicyTargetingAndRoleDetectionIntegration(t *testing.T) {
 	if covers(f.winWS) {
 		t.Fatal("an overridden server is still covered as a workstation")
 	}
-	// New inventory updates the detected role and keeps the override.
+	// A later snapshot claiming another product type does not change the
+	// detected role, and the override stays.
 	if err := f.st.UpsertInventory(f.ctx, f.winWS, []byte(`{"os":"windows","platform":"Microsoft Windows Server 2025 Standard","platform_family":"Server"}`)); err != nil {
 		t.Fatal(err)
 	}
 	a, err := f.st.GetAgent(f.ctx, f.winWS)
-	if err != nil || a.OSRole != models.RoleServer || a.RoleOverride != models.RoleServer {
+	if err != nil || a.OSRole != models.RoleWorkstation || a.RoleOverride != models.RoleServer {
 		t.Fatalf("after a server inventory: %+v %v", a, err)
 	}
 	if _, err := f.st.SetAgentRoleOverride(f.ctx, f.winWS, "kiosk"); err == nil {
@@ -355,4 +357,90 @@ func TestPolicyTargetingMigrationIntegration(t *testing.T) {
 		t.Fatalf("the legacy assignment reaches %v", reached)
 	}
 	assertCurrentMigrationState(t, st)
+}
+
+// Assignments filter on a device's OS and role, so a device must not be able
+// to change them by what it reports: re-registering with another OS keeps the
+// enrolled one, and a later inventory claiming another product type (or
+// another OS) leaves the detected role alone. Only an administrator's override
+// moves a device between roles.
+func TestDeviceCannotRetargetItselfIntegration(t *testing.T) {
+	f := newFleet(t, "device_trust")
+	pol, err := f.st.CreatePolicy(f.ctx, "Windows servers", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.CreateTask(f.ctx, &models.Task{PolicyID: &pol.ID, Name: "Backup with a global secret", Shell: "powershell", Script: "exit 0",
+		ScheduleKind: models.ScheduleInterval, IntervalSec: 3600, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	check, err := f.st.CreateCheck(f.ctx, memoryCheck(pol.ID, true, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.st.AssignPolicy(f.ctx, pol.ID, models.ScopeGlobal, models.GlobalScopeID, models.TargetOSWindows, models.RoleServer); err != nil {
+		t.Fatal(err)
+	}
+	want := sorted(f.winSrv, f.otherClientServer)
+	if got := f.reached(t, pol.ID, check.ID); !slices.Equal(got, want) {
+		t.Fatalf("every Windows server: %v, want %v", got, want)
+	}
+
+	// A Linux machine re-registers as Windows and reports a Windows Server
+	// inventory; a Windows workstation reports itself a server.
+	if err := f.st.RefreshAgentInfo(f.ctx, f.lin, "LIN-1", "windows", "amd64", "0.11.1"); !errors.Is(err, ErrAgentOSChanged) {
+		t.Fatalf("an OS change was not reported: %v", err)
+	}
+	server := []byte(`{"os":"windows","platform":"Microsoft Windows Server 2022 Standard","platform_family":"Server"}`)
+	for _, id := range []string{f.lin, f.winWS} {
+		if err := f.st.UpsertInventory(f.ctx, id, server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := f.reached(t, pol.ID, check.ID); !slices.Equal(got, want) {
+		t.Fatalf("a device retargeted itself: %v, want %v", got, want)
+	}
+	lin, err := f.st.GetAgent(f.ctx, f.lin)
+	if err != nil || lin.OS != "linux" || lin.Version != "0.11.1" || lin.Role != "" {
+		t.Fatalf("Linux device after the claims: os=%q version=%q role=%q %v", lin.OS, lin.Version, lin.Role, err)
+	}
+	ws, err := f.st.GetAgent(f.ctx, f.winWS)
+	if err != nil || ws.OSRole != models.RoleWorkstation {
+		t.Fatalf("workstation after claiming server: %+v %v", ws, err)
+	}
+
+	// The same OS is not an error, and an OS never recorded is filled in.
+	if err := f.st.RefreshAgentInfo(f.ctx, f.winWS, "WS-1", "windows", "amd64", "0.11.1"); err != nil {
+		t.Fatalf("same OS: %v", err)
+	}
+	blank, err := f.st.CreateAgent(f.ctx, "BLANK", "", "amd64", "0.11.0", "tok-"+uuid.NewString(), &f.site, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.RefreshAgentInfo(f.ctx, blank.ID, "BLANK", "windows", "amd64", "0.11.0"); err != nil {
+		t.Fatalf("filling in an OS: %v", err)
+	}
+	// A role is detected once, from the enrolled OS, and only an override moves it.
+	if err := f.st.UpsertInventory(f.ctx, blank.ID, []byte(`{"os":"windows","platform":"Microsoft Windows 11 Pro"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.UpsertInventory(f.ctx, blank.ID, server); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := f.st.GetAgent(f.ctx, blank.ID); err != nil || a.OS != "windows" || a.Role != models.RoleWorkstation {
+		t.Fatalf("filled-in device: os=%q role=%q %v", a.OS, a.Role, err)
+	}
+	if _, err := f.st.SetAgentRoleOverride(f.ctx, f.winWS, models.RoleServer); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.reached(t, pol.ID, check.ID); !slices.Equal(got, sorted(f.winSrv, f.otherClientServer, f.winWS)) {
+		t.Fatalf("the administrator's override did not apply: %v", got)
+	}
+	// A revoked device's registration changes nothing and is not an error.
+	if err := f.st.RevokeAgent(f.ctx, f.mac); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.RefreshAgentInfo(f.ctx, f.mac, "MAC-1", "windows", "amd64", "0.11.1"); err != nil {
+		t.Fatalf("revoked device: %v", err)
+	}
 }

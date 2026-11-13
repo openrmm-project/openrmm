@@ -45,6 +45,9 @@ tag.
   device. One shared definition of reach now drives every resolution query.
   AI proposals, the activation review and its fingerprint carry the filters and
   exceptions. Migration 033; agent 0.11 reports the Windows product type.
+  A device cannot retarget itself: the server keeps the OS it enrolled with
+  (a different OS at registration is logged, not applied), and its detected
+  role is set once and changed only by an administrator.
 - **Manage policies / Manage checks** now say what they include: activating and
   deactivating policies, and switching checks on and off (approving AI-proposed
   ones). Checks and tasks created through the API no longer accept

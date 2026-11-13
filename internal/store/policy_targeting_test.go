@@ -7,22 +7,23 @@ import (
 	"github.com/p1ngu/rmm/internal/models"
 )
 
-func TestDetectedRoleFromInventory(t *testing.T) {
+func TestDetectedRole(t *testing.T) {
 	for _, tc := range []struct {
-		data, want string
-		ok         bool
+		os, data, want string
 	}{
-		{`{"os":"windows","platform":"Microsoft Windows Server 2022 Standard","platform_family":"Server"}`, models.RoleServer, true},
-		{`{"os":"windows","platform":"Microsoft Windows 11 Pro"}`, models.RoleWorkstation, true},
-		{`{"os":"darwin"}`, models.RoleWorkstation, true},
-		{`{"os":"linux","platform":"ubuntu"}`, "", true},
-		// A snapshot that says nothing about the OS leaves the role alone.
-		{`{"hostname":"x"}`, "", false},
-		{`not json`, "", false},
+		{"windows", `{"os":"windows","platform":"Microsoft Windows Server 2022 Standard","platform_family":"Server"}`, models.RoleServer},
+		{"windows", `{"os":"windows","platform":"Microsoft Windows 11 Pro"}`, models.RoleWorkstation},
+		{"darwin", `{"os":"darwin"}`, models.RoleWorkstation},
+		{"linux", `{"os":"linux","platform":"ubuntu"}`, ""},
+		// The enrolled OS decides, not the one the snapshot claims: a Linux
+		// device saying it is Windows Server gets no role.
+		{"linux", `{"os":"windows","platform":"Microsoft Windows Server 2022","platform_family":"Server"}`, ""},
+		{"windows", `{"hostname":"x"}`, ""},
+		{"", `{"os":"windows","platform_family":"Server"}`, ""},
+		{"windows", `not json`, ""},
 	} {
-		role, ok := detectedRoleFromInventory([]byte(tc.data))
-		if role != tc.want || ok != tc.ok {
-			t.Errorf("%s -> %q %v, want %q %v", tc.data, role, ok, tc.want, tc.ok)
+		if role := detectedRole(tc.os, []byte(tc.data)); role != tc.want {
+			t.Errorf("%s %s -> %q, want %q", tc.os, tc.data, role, tc.want)
 		}
 	}
 }

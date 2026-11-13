@@ -223,8 +223,21 @@ administrator sets one. Any device's role can be corrected on its page —
 a Mac that serves, a Linux desktop — with `PUT /api/devices/{id}/role`
 (`devices.manage` and an unrestricted principal, since the role decides which
 fleet-wide policies reach the device; audited as `device.role`); the correction wins over
-detection and the inventory keeps refreshing the detected one beside it. The
-Devices list filters by role, including the devices with none.
+detection. The Devices list filters by role, including the devices with none.
+
+**What a device can and cannot change.** The OS an assignment filters on is
+the one the device enrolled with: a later registration naming another OS is
+not believed (the server keeps the enrolled OS and logs `agent: kept the
+enrolled OS`). The detected role is set once, from the enrolled OS and the
+first inventory that implies one, and later inventories do not change it —
+only the administrator's correction does. So a device already enrolled cannot
+move itself into the policies meant for another OS or role, and with them
+their scripts and the script variable values they carry. Enrollment itself is
+still the device's word: whoever holds an enrollment token can enroll a
+machine that claims any OS. Filters choose *which kind* of device gets a
+policy; they are not an access boundary. Keep a secret for one kind of device
+in the client, site, department or device scope of those devices rather than
+in a global value, and correct the role of devices whose policies matter.
 
 **Exceptions** leave chosen devices out of a policy whichever assignment
 reaches them (`GET/POST /api/policies/{id}/exclusions`,

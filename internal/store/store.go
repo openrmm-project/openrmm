@@ -100,17 +100,19 @@ func (s *Store) SetAgentSite(ctx context.Context, id string, siteID *string) err
 func scanAgent(row pgx.Row) (*models.Agent, error) {
 	var a models.Agent
 	err := row.Scan(&a.ID, &a.Hostname, &a.Description, &a.Note, &a.OS, &a.Arch, &a.Version, &a.Status,
-		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID, &a.MonitoringScopeSince)
+		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID, &a.MonitoringScopeSince,
+		&a.OSRole, &a.RoleOverride)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	a.Role = models.EffectiveRole(a.OSRole, a.RoleOverride)
 	return &a, nil
 }
 
-const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since`
+const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since, os_role, role_override`
 
 // SetAgentMeta updates the operator-editable identification fields: description
 // (shown in the device list) and note (a private observation, detail-only).
@@ -318,14 +320,35 @@ func (s *Store) TouchAgent(ctx context.Context, id string) error {
 	return err
 }
 
+// ErrAgentOSChanged reports a re-registration that named a different OS than
+// the device enrolled with. The connection goes on; the OS on record is kept.
+var ErrAgentOSChanged = errors.New("the device reported a different OS than it enrolled with; the enrolled OS is kept")
+
 // RefreshAgentInfo updates the metadata an agent reports at (re-)registration,
-// so a binary upgrade is reflected (version/hostname/os/arch otherwise stay
+// so a binary upgrade is reflected (version/hostname/arch otherwise stay
 // frozen at first enrollment).
+//
+// The OS is not refreshed: an agent binary is built for one OS and reports it
+// unchanged for life, and policy assignments filter on it, so a device that
+// suddenly names another OS is not believed — it could otherwise move itself
+// into the policies (scripts, script variable values) meant for that OS. Only
+// an OS never recorded is filled in. ErrAgentOSChanged tells the caller.
 func (s *Store) RefreshAgentInfo(ctx context.Context, id, hostname, os, arch, version string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE agents SET hostname=$2, os=$3, arch=$4, version=$5, last_seen=now() WHERE id=$1 AND revoked_at IS NULL`,
-		id, hostname, os, arch, version)
-	return err
+	var kept string
+	err := s.pool.QueryRow(ctx,
+		`UPDATE agents SET hostname=$2, os=CASE WHEN os = '' THEN $3 ELSE os END, arch=$4, version=$5, last_seen=now()
+		 WHERE id=$1 AND revoked_at IS NULL RETURNING os`,
+		id, hostname, os, arch, version).Scan(&kept)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if kept != os {
+		return ErrAgentOSChanged
+	}
+	return nil
 }
 
 // RevokeAgent invalidates the device credential while preserving the endpoint's
@@ -689,6 +712,24 @@ func (s *Store) UpsertInventory(ctx context.Context, agentID string, data []byte
 		`INSERT INTO inventory (agent_id, data, collected_at) VALUES ($1,$2,now())
 		 ON CONFLICT (agent_id) DO UPDATE SET data=EXCLUDED.data, collected_at=now()`,
 		agentID, data)
+	if err != nil {
+		return err
+	}
+	// The detected role (policy targeting) is set once, from the OS the device
+	// enrolled with and the first snapshot that implies a role; an
+	// administrator's override is kept apart and wins over it. Later
+	// snapshots do not change it, so a device cannot move itself between
+	// workstation and server policies by reporting another product type.
+	var enrolledOS string
+	if err := s.pool.QueryRow(ctx, `SELECT os FROM agents WHERE id=$1`, agentID).Scan(&enrolledOS); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if role := detectedRole(enrolledOS, data); role != "" {
+		_, err = s.pool.Exec(ctx, `UPDATE agents SET os_role=$2 WHERE id=$1 AND os_role = ''`, agentID, role)
+	}
 	return err
 }
 

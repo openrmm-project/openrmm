@@ -182,7 +182,11 @@ func (s *Server) registerAgent(ctx context.Context, reg *protocol.RegisterReq) (
 	if err != nil || !valid {
 		return "", "", "", errors.New("invalid agent token")
 	}
-	_ = s.store.RefreshAgentInfo(ctx, reg.AgentID, reg.Hostname, reg.OS, reg.Arch, reg.Version)
+	// The OS on record is the enrolled one; a device naming another is not
+	// believed (policies filter on the OS) and is worth an operator's look.
+	if err := s.store.RefreshAgentInfo(ctx, reg.AgentID, reg.Hostname, reg.OS, reg.Arch, reg.Version); errors.Is(err, store.ErrAgentOSChanged) {
+		log.Printf("agent: kept the enrolled OS agent=%s reported=%.32q", reg.AgentID, reg.OS)
+	}
 	cancelCredentialRotationID, err = s.store.PendingAgentCredentialRotationCancellation(ctx, reg.AgentID)
 	if errors.Is(err, store.ErrNotFound) {
 		cancelCredentialRotationID = ""

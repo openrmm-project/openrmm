@@ -204,6 +204,56 @@ target. The forms are the ones the Checks and Scheduled tasks screens use.
 Changing a policy's contents takes `checks.manage` / `tasks.manage`; renaming the
 policy itself takes `policies.manage`.
 
+### Targeting by OS and device role, and exceptions
+
+An assignment can be narrowed to the devices of its scope that run one OS
+(`os`: `windows`, `macos`, `linux`) and/or play one role (`role`:
+`workstation`, `server`); empty means any, which is how every assignment
+behaved before (migration 033). One policy can carry several assignments with
+different filters — "Client A · Windows · servers" and "Client B · Linux" — and
+a **global** assignment (`scope_type: global`) reaches every matching device of
+the fleet. Making or removing a global assignment takes an unrestricted
+principal. Policies **add up**: a Windows server in Client A that is reached by
+the client-wide "Base" policy and by the "Servers" policy gets both.
+
+A device's role is detected from its inventory: Windows from its product type
+(agent 0.11+, `platform_family`) or, for older agents, its edition name
+("Windows Server …"); a Mac is a workstation; Linux has no role until an
+administrator sets one. Any device's role can be corrected on its page —
+a Mac that serves, a Linux desktop — with `PUT /api/devices/{id}/role`
+(`devices.manage` and an unrestricted principal, since the role decides which
+fleet-wide policies reach the device; audited as `device.role`); the correction wins over
+detection. The Devices list filters by role, including the devices with none.
+
+**What a device can and cannot change.** The OS an assignment filters on is
+the one the device enrolled with: a later registration naming another OS is
+not believed (the server keeps the enrolled OS and logs `agent: kept the
+enrolled OS`). The detected role is set once, from the enrolled OS and the
+first inventory that implies one, and later inventories do not change it —
+only the administrator's correction does. So a device already enrolled cannot
+move itself into the policies meant for another OS or role, and with them
+their scripts and the script variable values they carry. Enrollment itself is
+still the device's word: whoever holds an enrollment token can enroll a
+machine that claims any OS. Filters choose *which kind* of device gets a
+policy; they are not an access boundary. Keep a secret for one kind of device
+in the client, site, department or device scope of those devices rather than
+in a global value, and correct the role of devices whose policies matter.
+
+**Exceptions** leave chosen devices out of a policy whichever assignment
+reaches them (`GET/POST /api/policies/{id}/exclusions`,
+`DELETE /api/policies/{id}/exclusions/{agentID}`, `policies.manage`, audited as
+`policy.exclude` / `policy.include`). The Exceptions tab of the policy drawer
+lists them; patch policies have the same in their form.
+
+Every query that decides what reaches a device — effective tasks and checks,
+the check scheduler, "run now", check coverage, the governing server rule, the
+inapplicable-alert sweep and patch policy resolution — uses one SQL definition
+of reach (scope, switch, filters, exceptions), so they cannot disagree. Server
+alert rules keep their precedence (the broadest scope decides; a global rule
+holds for every device), and at the same level an assignment narrowed by OS or
+role outranks one that is not. The activation review shows each assignment's
+filters and the exceptions, and seals both in its fingerprint.
+
 ### Switching a policy on and off
 
 A policy has its own switch (`policies.enabled`, migration 032). Switched off,

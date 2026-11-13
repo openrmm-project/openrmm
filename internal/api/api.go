@@ -280,6 +280,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermissionAny(models.PermDevicesRemoteShare, models.PermUsersManage)).Delete("/remote-shares/{id}", s.closeRemoteShare)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}", s.updateDeviceMeta)
 		r.With(s.requirePermission(models.PermDevicesManage)).Patch("/devices/{id}/remote-ids", s.setDeviceRemoteIDs)
+		r.With(s.requirePermission(models.PermDevicesManage)).Put("/devices/{id}/role", s.setDeviceRole)
 		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/revoke", s.revokeDevice)
 		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/rotate-credential", s.rotateDeviceCredential)
 		r.With(s.requirePermission(models.PermDevicesDelete)).Post("/devices/{id}/cancel-credential-rotation", s.cancelDeviceCredentialRotation)
@@ -343,6 +344,9 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/assignments", s.createPolicyAssignment)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/assignments/{aid}", s.deletePolicyAssignment)
 		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies/{id}/review", s.reviewPolicy)
+		r.With(s.requirePermission(models.PermPoliciesView)).Get("/policies/{id}/exclusions", s.listPolicyExclusions)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/exclusions", s.addPolicyExclusion)
+		r.With(s.requirePermission(models.PermPoliciesManage)).Delete("/policies/{id}/exclusions/{agentID}", s.removePolicyExclusion)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/activate", s.activatePolicy)
 		r.With(s.requirePermission(models.PermPoliciesManage)).Post("/policies/{id}/deactivate", s.deactivatePolicy)
 
@@ -384,6 +388,9 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies/{id}/assignments", s.addPatchPolicyAssignment)
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Delete("/patch-policies/assignments/{aid}", s.deletePatchPolicyAssignment)
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Get("/patch-policies/{id}/review", s.reviewPatchPolicy)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Get("/patch-policies/{id}/exclusions", s.listPatchPolicyExclusions)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies/{id}/exclusions", s.addPatchPolicyExclusion)
+		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Delete("/patch-policies/{id}/exclusions/{agentID}", s.removePatchPolicyExclusion)
 		r.With(s.requirePermission(models.PermPatchPoliciesManage)).Post("/patch-policies/{id}/activate", s.activatePatchPolicy)
 
 		r.With(s.requirePermission(models.PermReportsView)).Get("/reports/software", s.reportSoftware)

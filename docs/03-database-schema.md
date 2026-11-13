@@ -250,7 +250,11 @@ A **policy** (id, name, description) bundles checks and tasks.
 whose scope covers it (its own id, its department, its site, or its client) —
 provided the policy is switched on: `enabled` (migration 032, default true)
 gates every resolution, and `approved_at` records when an AI proposal was
-reviewed.
+reviewed. Since migration 033 an assignment can be narrowed by `os` and `role`
+(empty = any) or be `global`; `policy_exclusions` / `patch_policy_exclusions`
+(policy_id, agent_id) list devices a policy leaves out; `agents.os_role`
+(detected) and `agents.role_override` (an administrator's correction) give a
+device's role.
 
 ### `checks`
 A monitoring check, owned **either** by an agent **or** a policy — exactly one of

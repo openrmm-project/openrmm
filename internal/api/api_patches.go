@@ -355,6 +355,13 @@ func (s *Server) reviewPatchPolicy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		review.Assignments, review.Fingerprint = visible, ""
+		excluded := review.Exclusions[:0]
+		for _, e := range review.Exclusions {
+			if s.agentAllowed(r, e.AgentID) {
+				excluded = append(excluded, e)
+			}
+		}
+		review.Exclusions = excluded
 	}
 	writeJSON(w, http.StatusOK, review)
 }
@@ -428,25 +435,23 @@ func (s *Server) addPatchPolicyAssignment(w http.ResponseWriter, r *http.Request
 	if !s.requirePatchPolicy(w, r, policyID, true) {
 		return
 	}
-	var in struct {
-		ScopeType string `json:"scope_type"`
-		ScopeID   string `json:"scope_id"`
-	}
-	if err := decode(r, &in); err != nil || in.ScopeType == "" || in.ScopeID == "" {
+	var in assignmentTarget
+	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, "scope_type and scope_id are required")
 		return
 	}
-	if !oneOf(in.ScopeType, models.ScopeClient, models.ScopeSite, models.ScopeAgent) {
-		writeErr(w, http.StatusBadRequest, "invalid patch policy scope_type")
+	if !s.requireAssignmentTarget(w, r, &in, models.ScopeClient, models.ScopeSite, models.ScopeAgent) {
 		return
 	}
-	if !s.requireScope(w, r, in.ScopeType, in.ScopeID) {
+	if err := s.store.AddPatchPolicyAssignment(r.Context(), policyID, in.ScopeType, in.ScopeID, in.OS, in.Role); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.store.AddPatchPolicyAssignment(r.Context(), policyID, in.ScopeType, in.ScopeID); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+	name := ""
+	if p, err := s.store.GetPatchPolicy(r.Context(), policyID); err == nil {
+		name = p.Name
 	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.policy.assign", policyID, targetAuditDetail(name, in))
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
 }
 
@@ -457,12 +462,14 @@ func (s *Server) deletePatchPolicyAssignment(w http.ResponseWriter, r *http.Requ
 		writeErr(w, httpStatusFor(err), err.Error())
 		return
 	}
-	if !s.requirePatchPolicy(w, r, a.PolicyID, true) || !s.requireScope(w, r, a.ScopeType, a.ScopeID) {
+	if !s.requirePatchPolicy(w, r, a.PolicyID, true) || !s.requireAssignmentScope(w, r, a.ScopeType, a.ScopeID) {
 		return
 	}
 	if err := s.store.DeletePatchPolicyAssignment(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.policy.unassign", a.PolicyID,
+		targetAuditDetail("", assignmentTarget{ScopeType: a.ScopeType, ScopeID: a.ScopeID, OS: a.OS, Role: a.Role}))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

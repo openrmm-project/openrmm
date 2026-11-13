@@ -191,3 +191,45 @@ func TestProposedTaskAndCheckBuildersAreAlwaysSwitchedOff(t *testing.T) {
 }
 
 func ptr(v float64) *float64 { return &v }
+
+// Assignments carry OS and role filters, or cover every device; exclusions
+// name devices. All of it is validated before anything is written (no store
+// is reachable in this test).
+func TestPolicyProposalTargetingIsValidatedBeforeWriting(t *testing.T) {
+	ctx := context.Background()
+	scopes, err := proposalScopes(ctx, ToolContext{}, []proposedScope{
+		{ScopeType: "global", OS: "windows", Role: "server"},
+		{ScopeType: "global", ScopeID: "ignored", OS: "windows", Role: "server"},
+		{ScopeType: "global", OS: "linux"},
+	}, models.ScopeClient)
+	if err != nil || len(scopes) != 2 || scopes[0].ScopeID != models.GlobalScopeID {
+		t.Fatalf("global scopes: %+v %v", scopes, err)
+	}
+	for name, in := range map[string]proposedScope{
+		"unknown os":   {ScopeType: "global", OS: "darwin"},
+		"unknown role": {ScopeType: "global", Role: "kiosk"},
+		"upper case":   {ScopeType: "global", OS: "Windows"},
+	} {
+		if _, err := proposalScopes(ctx, ToolContext{}, []proposedScope{in}, models.ScopeClient); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	tooMany := make([]string, maxProposalExclusions+1)
+	if _, err := proposalExclusions(ctx, ToolContext{}, tooMany); err == nil || !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("too many exclusions: %v", err)
+	}
+	if _, err := proposalExclusions(ctx, ToolContext{}, []string{"PC-01"}); err == nil || !strings.Contains(err.Error(), "not a device id") {
+		t.Fatalf("a hostname as exclusion: %v", err)
+	}
+	for _, tool := range ToolsForPermissions(map[string]bool{models.PermPoliciesManage: true, models.PermPatchPoliciesManage: true}) {
+		if tool.Function.Name != "propose_policy" && tool.Function.Name != "propose_patch_policy" {
+			continue
+		}
+		schema := string(tool.Function.Parameters)
+		for _, want := range []string{`"exclude_devices"`, `"os"`, `"role"`, `"global"`} {
+			if !strings.Contains(schema, want) {
+				t.Errorf("%s schema lacks %s", tool.Function.Name, want)
+			}
+		}
+	}
+}

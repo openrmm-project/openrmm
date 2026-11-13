@@ -24,6 +24,7 @@ type PolicyReview struct {
 	Assignments   []PolicyAssignment `json:"assignments"`
 	Tasks         []Task             `json:"tasks"`
 	Checks        []Check            `json:"checks"`
+	Exclusions    []PolicyExclusion  `json:"exclusions"`
 	PendingTasks  int                `json:"pending_tasks"`
 	PendingChecks int                `json:"pending_checks"`
 	Fingerprint   string             `json:"fingerprint"`
@@ -34,6 +35,7 @@ type PolicyReview struct {
 type PatchPolicyReview struct {
 	Policy      PatchPolicy             `json:"policy"`
 	Assignments []PatchPolicyAssignment `json:"assignments"`
+	Exclusions  []PolicyExclusion       `json:"exclusions"`
 	Fingerprint string                  `json:"fingerprint"`
 }
 
@@ -87,7 +89,8 @@ func (r *PolicyReview) Seal() {
 		Scopes                                        []string
 		Tasks                                         []task
 		Checks                                        []check
-	}{p.ID, p.Name, p.Description, p.ProposedBy, p.ApprovedBy, p.Enabled, policyScopes(r.Assignments), tasks, checks})
+		Excluded                                      []string
+	}{p.ID, p.Name, p.Description, p.ProposedBy, p.ApprovedBy, p.Enabled, policyScopes(r.Assignments), tasks, checks, excludedAgents(r.Exclusions)})
 }
 
 // Seal computes the patch policy review's fingerprint from its content.
@@ -95,7 +98,7 @@ func (r *PatchPolicyReview) Seal() {
 	p := r.Policy
 	scopes := make([]string, 0, len(r.Assignments))
 	for _, a := range r.Assignments {
-		scopes = append(scopes, a.ScopeType+":"+a.ScopeID)
+		scopes = append(scopes, a.ScopeType+":"+a.ScopeID+":"+a.OS+":"+a.Role)
 	}
 	sort.Strings(scopes)
 	r.Fingerprint = fingerprint(struct {
@@ -105,14 +108,26 @@ func (r *PatchPolicyReview) Seal() {
 		AutoApproveAgeDays, WindowStart, WindowEnd         int
 		WindowDays                                         []int
 		Scopes                                             []string
+		Excluded                                           []string
 	}{p.ID, p.Name, p.Timezone, p.Reboot, p.ProposedBy, p.ApprovedBy, p.Enabled, p.AutoApprove, p.Exclusions,
-		p.AutoApproveAgeDays, p.WindowStartMin, p.WindowEndMin, p.WindowDays, scopes})
+		p.AutoApproveAgeDays, p.WindowStartMin, p.WindowEndMin, p.WindowDays, scopes, excludedAgents(r.Exclusions)})
 }
 
+// policyScopes and excludedAgents are the order-free forms the fingerprint
+// seals: each assignment with its filters, and the devices left out.
 func policyScopes(as []PolicyAssignment) []string {
 	out := make([]string, 0, len(as))
 	for _, a := range as {
-		out = append(out, a.ScopeType+":"+a.ScopeID)
+		out = append(out, a.ScopeType+":"+a.ScopeID+":"+a.OS+":"+a.Role)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func excludedAgents(es []PolicyExclusion) []string {
+	out := make([]string, 0, len(es))
+	for _, e := range es {
+		out = append(out, e.AgentID)
 	}
 	sort.Strings(out)
 	return out

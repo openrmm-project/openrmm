@@ -156,6 +156,13 @@ type Agent struct {
 	// EnrollTokenID is the install token that admitted the device, so the
 	// devices a leaked mass-deployment token enrolled can be found and removed.
 	EnrollTokenID *string `json:"enroll_token_id,omitempty"`
+	// OSRole is the role detected from the device's inventory (Windows product
+	// type or edition name; macOS is a workstation; Linux has none).
+	// RoleOverride is an administrator's correction and wins over it. Role is
+	// the one in effect; policy assignments filter on it.
+	OSRole       string `json:"os_role"`
+	RoleOverride string `json:"role_override"`
+	Role         string `json:"role"`
 }
 
 // Job is a unit of work targeted at an agent (currently: run a script).

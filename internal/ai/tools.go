@@ -179,14 +179,17 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "propose_policy",
-			Description: "Propose a policy in ONE call: its name, where it applies (clients, sites, departments or devices), and the scheduled tasks and monitoring checks or server alert rules it carries (same fields as propose_task and propose_check). EVERYTHING IS CREATED SWITCHED OFF: nothing in it applies to any device until a person reviews all of it in Policies and activates it with one confirmation. Get ids from list_org and list_devices. Tasks need the tasks.manage permission and checks checks.manage. Only unrestricted administrators may create policies. You cannot assign or activate an existing policy, and there is no tool to do so.",
+			Description: "Propose a policy in ONE call: its name, where it applies (clients, sites, departments or devices), and the scheduled tasks and monitoring checks or server alert rules it carries (same fields as propose_task and propose_check). EVERYTHING IS CREATED SWITCHED OFF: nothing in it applies to any device until a person reviews all of it in Policies and activates it with one confirmation. Get ids from list_org and list_devices. An assignment can be narrowed to one OS (windows, macos, linux) and/or one role (workstation, server) of its scope, or cover every device (global); exclude_devices leaves chosen devices out. Policies add up: a device gets every policy that reaches it. Tasks need the tasks.manage permission and checks checks.manage. Only unrestricted administrators may create policies. You cannot assign or activate an existing policy, and there is no tool to do so.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"name":{"type":"string","description":"policy name"},
 				"description":{"type":"string","description":"what this policy is for"},
-				"assignments":{"type":"array","maxItems":25,"description":"where the policy will apply once activated","items":{"type":"object","properties":{
-					"scope_type":{"type":"string","enum":["client","site","group","agent"],"description":"group is a department"},
-					"scope_id":{"type":"string"}
-				},"required":["scope_type","scope_id"],"additionalProperties":false}},
+				"assignments":{"type":"array","maxItems":25,"description":"where the policy will apply once activated; os and role narrow an assignment to the matching devices of its scope","items":{"type":"object","properties":{
+					"scope_type":{"type":"string","enum":["global","client","site","group","agent"],"description":"group is a department; global is every device"},
+					"scope_id":{"type":"string","description":"omit for global"},
+					"os":{"type":"string","enum":["","windows","macos","linux"],"description":"only devices of this OS; empty = any"},
+					"role":{"type":"string","enum":["","workstation","server"],"description":"only devices of this role (list_devices shows it); empty = any"}
+				},"required":["scope_type"],"additionalProperties":false}},
+				"exclude_devices":{"type":"array","maxItems":100,"items":{"type":"string"},"description":"device ids the policy leaves out even where an assignment reaches them"},
 				"tasks":{"type":"array","maxItems":25,"items":{"type":"object","properties":{
 						"name":{"type":"string","description":"short name for the task"},
 						"shell":{"type":"string","enum":["bash","sh","powershell","cmd","python"]},
@@ -242,7 +245,7 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "propose_patch_policy",
-			Description: "Propose a patch policy: which classifications to auto-approve and after how many days, exclusions, the maintenance window (weekdays and minutes of the day in an IANA time zone), reboot behaviour, and the clients, sites or devices it covers. It is CREATED SWITCHED OFF: it approves, installs and reboots nothing until a person reviews it in Patches > Policies and activates it. Only unrestricted administrators may create one. Ask for the time zone rather than guess.",
+			Description: "Propose a patch policy: which classifications to auto-approve and after how many days, exclusions, the maintenance window (weekdays and minutes of the day in an IANA time zone), reboot behaviour, and the clients, sites or devices it covers (each assignment can be narrowed to one OS and/or role, or cover every device; exclude_devices leaves chosen devices out). It is CREATED SWITCHED OFF: it approves, installs and reboots nothing until a person reviews it in Patches > Policies and activates it. Only unrestricted administrators may create one. Ask for the time zone rather than guess.",
 			Parameters: json.RawMessage(`{"type":"object","properties":{
 				"name":{"type":"string"},
 				"auto_approve":{"type":"array","items":{"type":"string","enum":["security","critical","important","moderate","optional","other"]},"description":"classifications approved automatically once old enough; empty = approve nothing automatically"},
@@ -254,9 +257,12 @@ func Tools() []Tool {
 				"timezone":{"type":"string","description":"IANA zone of the window, default UTC"},
 				"reboot":{"type":"string","enum":["never","if_required","always"],"description":"default if_required"},
 				"assignments":{"type":"array","maxItems":25,"items":{"type":"object","properties":{
-					"scope_type":{"type":"string","enum":["client","site","agent"]},
-					"scope_id":{"type":"string"}
-				},"required":["scope_type","scope_id"],"additionalProperties":false}}
+					"scope_type":{"type":"string","enum":["global","client","site","agent"],"description":"global is every device"},
+					"scope_id":{"type":"string","description":"omit for global"},
+					"os":{"type":"string","enum":["","windows","macos","linux"],"description":"only devices of this OS; empty = any"},
+					"role":{"type":"string","enum":["","workstation","server"],"description":"only devices of this role; empty = any"}
+				},"required":["scope_type"],"additionalProperties":false}},
+				"exclude_devices":{"type":"array","maxItems":100,"items":{"type":"string"},"description":"device ids the patch policy leaves out"}
 			},"required":["name"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
@@ -495,10 +501,13 @@ func listDevices(ctx context.Context, tc ToolContext) (any, error) {
 		Status   string  `json:"status"`
 		SiteID   *string `json:"site_id,omitempty"`
 		GroupID  *string `json:"group_id,omitempty"`
+		// Role (workstation or server, empty when unknown) is what policy
+		// assignments filter on.
+		Role string `json:"role"`
 	}
 	out := make([]dev, 0, len(agents))
 	for _, a := range agents {
-		out = append(out, dev{a.ID, a.Hostname, a.OS, a.Arch, a.Status, a.SiteID, a.GroupID})
+		out = append(out, dev{a.ID, a.Hostname, a.OS, a.Arch, a.Status, a.SiteID, a.GroupID, a.Role})
 	}
 	return map[string]any{"devices": out}, nil
 }

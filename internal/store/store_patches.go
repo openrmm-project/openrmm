@@ -637,7 +637,8 @@ func (s *Store) PatchPolicyAllowedForUser(ctx context.Context, userID, policyID 
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
 		SELECT 1 FROM patch_policy_assignments pa
 		JOIN agents a ON (
-		  (pa.scope_type='agent' AND pa.scope_id=a.id)
+		  (pa.scope_type='global')
+		  OR (pa.scope_type='agent' AND pa.scope_id=a.id)
 		  OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
 		  OR (pa.scope_type='client' AND pa.scope_id=(SELECT si.client_id FROM sites si WHERE si.id=a.site_id)))
 		WHERE pa.policy_id=$2 AND (
@@ -671,8 +672,8 @@ func (s *Store) PatchPolicyManageAllowedForUser(ctx context.Context, userID, pol
 }
 
 func (s *Store) ListPatchPolicyAssignments(ctx context.Context, policyID string) ([]models.PatchPolicyAssignment, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, policy_id, scope_type, scope_id, created_at
-		FROM patch_policy_assignments WHERE policy_id=$1`, policyID)
+	rows, err := s.pool.Query(ctx, `SELECT `+assignmentCols+`
+		FROM patch_policy_assignments WHERE policy_id=$1 ORDER BY created_at, id`, policyID)
 	if err != nil {
 		return nil, err
 	}
@@ -680,7 +681,7 @@ func (s *Store) ListPatchPolicyAssignments(ctx context.Context, policyID string)
 	var out []models.PatchPolicyAssignment
 	for rows.Next() {
 		var a models.PatchPolicyAssignment
-		if err := rows.Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.OS, &a.Role, &a.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -690,9 +691,9 @@ func (s *Store) ListPatchPolicyAssignments(ctx context.Context, policyID string)
 
 func (s *Store) GetPatchPolicyAssignment(ctx context.Context, id string) (*models.PatchPolicyAssignment, error) {
 	var a models.PatchPolicyAssignment
-	err := s.pool.QueryRow(ctx, `SELECT id, policy_id, scope_type, scope_id, created_at
+	err := s.pool.QueryRow(ctx, `SELECT `+assignmentCols+`
 		FROM patch_policy_assignments WHERE id=$1`, id).
-		Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.CreatedAt)
+		Scan(&a.ID, &a.PolicyID, &a.ScopeType, &a.ScopeID, &a.OS, &a.Role, &a.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -702,9 +703,15 @@ func (s *Store) GetPatchPolicyAssignment(ctx context.Context, id string) (*model
 	return &a, nil
 }
 
-func (s *Store) AddPatchPolicyAssignment(ctx context.Context, policyID, scopeType, scopeID string) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO patch_policy_assignments (id,policy_id,scope_type,scope_id)
-		VALUES ($1,$2,$3,$4)`, newID(), policyID, scopeType, scopeID)
+// AddPatchPolicyAssignment binds a patch policy to a scope; the optional
+// (os, role) narrow it to the matching devices.
+func (s *Store) AddPatchPolicyAssignment(ctx context.Context, policyID, scopeType, scopeID string, filters ...string) error {
+	os, role := targetFilters(filters)
+	if err := validateAssignmentTarget(scopeType, scopeID, os, role); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO patch_policy_assignments (id,policy_id,scope_type,scope_id,os,role)
+		VALUES ($1,$2,$3,$4,$5,$6)`, newID(), policyID, scopeType, scopeID, os, role)
 	return err
 }
 
@@ -713,16 +720,13 @@ func (s *Store) DeletePatchPolicyAssignment(ctx context.Context, id string) erro
 	return err
 }
 
-// PatchPoliciesForAgent resolves the enabled policies covering an agent (by its
-// own id, its site, or its client) — mirrors ChecksForAgent.
+// PatchPoliciesForAgent resolves the switched-on patch policies that reach an
+// agent: an assignment's scope covers it and its OS and role match, and the
+// policy does not exclude it (patchPolicyReachesSQL).
 func (s *Store) PatchPoliciesForAgent(ctx context.Context, agentID string) ([]models.PatchPolicy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT `+patchPolicyCols+` FROM patch_policies pp
-		WHERE pp.enabled AND EXISTS (
-		  SELECT 1 FROM patch_policy_assignments pa WHERE pa.policy_id=pp.id AND (
-		    (pa.scope_type='agent'  AND pa.scope_id=$1) OR
-		    (pa.scope_type='site'   AND pa.scope_id=(SELECT site_id FROM agents WHERE id=$1)) OR
-		    (pa.scope_type='client' AND pa.scope_id=(SELECT s.client_id FROM agents a JOIN sites s ON s.id=a.site_id WHERE a.id=$1))
-		  ))`, agentID)
+	rows, err := s.pool.Query(ctx, `SELECT `+patchPolicyCols+` FROM patch_policies pp
+		WHERE pp.enabled AND EXISTS (SELECT 1 FROM agents dev WHERE dev.id = $1 AND `+patchPolicyReachesSQL("pp", "dev")+`)
+		ORDER BY pp.name`, agentID)
 	if err != nil {
 		return nil, err
 	}

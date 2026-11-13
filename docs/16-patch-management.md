@@ -109,6 +109,15 @@ decision about what enters the fleet, and an assistant that could approve and th
 install would make the bound above circular. Operators approve through the scoped
 human API/UI or preconfigured policy automation.
 
+### Targeting and exceptions
+
+Patch policy assignments take the same `os` and `role` filters and the global
+scope as policies (docs/10), and a patch policy can leave chosen devices out
+(`GET/POST /api/patch-policies/{id}/exclusions`,
+`DELETE /api/patch-policies/{id}/exclusions/{agentID}`, audited as
+`patch.policy.exclude` / `patch.policy.include`). `PatchPoliciesForAgent`
+resolves them with the same reach definition as policies.
+
 ### Patch policies proposed by AI Chat and MCP
 
 `propose_patch_policy` (with `patches.policies.manage`, unrestricted principals

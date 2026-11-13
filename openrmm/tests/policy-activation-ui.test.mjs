@@ -12,7 +12,8 @@ const rmm = await readFile(new URL('../src/screens-rmm.jsx', import.meta.url), '
 const patches = await readFile(new URL('../src/screens-patches.jsx', import.meta.url), 'utf8');
 const slice = (src, from, to) => src.slice(src.indexOf(from), src.indexOf(to));
 const COMPONENTS = ['Card', 'Modal', 'Drawer', 'Field', 'Input', 'Button', 'Select', 'Toggle', 'ConfirmDialog', 'Icon', 'CodeBlock', 'Skeleton',
-  'EmptyState', 'Page', 'PageHeader', 'OsIcon', 'TaskEditor', 'ReviewModal', 'ReviewSection', 'ReviewRow', 'TaskReview', 'CheckReview', 'ProposalBadge'];
+  'EmptyState', 'Page', 'PageHeader', 'OsIcon', 'TaskEditor', 'ReviewModal', 'ReviewSection', 'ReviewRow', 'TaskReview', 'CheckReview', 'ProposalBadge',
+  'TargetChips', 'TargetSelects'];
 
 function harness(code, component, props, responses, data = {}) {
   const states = []; const calls = []; const toasts = []; let cursor = 0; let effectCursor = 0; let tree;
@@ -119,4 +120,32 @@ test('activating a patch policy reviews its settings and scopes, then sends the 
 test('a pending patch policy cannot be switched on from its edit form', () => {
   const form = slice(patches, 'function PolicyModal(', 'function PolicyAssignments(');
   assert.match(form, /policy\.pending\s*\?\s*<p role="note"[^]*patchpol\.pendingHint[^]*:\s*<label[^]*<Toggle checked=\{enabled\}/);
+});
+
+// What switching a policy on puts into effect includes how it is narrowed: the
+// OS and role filter of each assignment and the devices left out, by name
+// (by id when the name is unknown). A review with no exception says nothing
+// about exceptions.
+test('both reviews show the assignment filters and the devices left out', async () => {
+  const left = [{ agent_id: 'd1', hostname: 'ALPHA-WS' }, { agent_id: 'd2', hostname: '' }];
+  const policyUI = harness(slice(rmm2, 'function PolicyActivation(', 'function PolicyCard('), 'PolicyActivation',
+    { policy: review.policy, scopeName: () => 'Acme', onClose() {} },
+    { reviewPolicy: { ...review, assignments: [{ id: 'a1', scope_type: 'client', scope_id: 'c1', os: 'windows', role: 'server' }], exclusions: left } });
+  const patchPolicy = { id: 'pp1', name: 'AI weekend', enabled: false, pending: true, proposed_by: 'mcp:claude' };
+  const patchUI = harness(slice(patches, 'function PatchPolicyActivation(', 'function PolicyModal('), 'PatchPolicyActivation', { policy: patchPolicy, onClose() {} }, {
+    reviewPatchPolicy: { fingerprint: 'pfp', policy: { ...patchPolicy, auto_approve: [], window_days: [0], window_start_min: 0, window_end_min: 60, reboot: 'never', exclusions: [] },
+      assignments: [{ id: 'x', scope_type: 'client', scope_id: 'c1', os: 'linux', role: 'workstation' }], exclusions: left },
+  }, { clients: { clients: [{ id: 'c1', name: 'Acme' }] } });
+  for (const [ui, os, role] of [[policyUI, 'windows', 'server'], [patchUI, 'linux', 'workstation']]) {
+    await ui.settle();
+    const chips = ui.find((n) => n.type === 'TargetChips').map((n) => ({ os: n.props.os, role: n.props.role }));
+    assert.deepEqual(chips, [{ os, role }], 'the assignment carries its filters');
+    const section = ui.find((n) => n.type === 'ReviewSection' && n.props.title === 'pol.reviewExclusions');
+    assert.equal(section.length, 1, 'the exceptions have their own section');
+    assert.ok(JSON.stringify(section[0]).includes('ALPHA-WS, d2'), 'named by hostname, else by id');
+  }
+  const plain = harness(slice(rmm2, 'function PolicyActivation(', 'function PolicyCard('), 'PolicyActivation',
+    { policy: review.policy, scopeName: () => 'Acme', onClose() {} }, { reviewPolicy: { ...review, exclusions: [] } });
+  await plain.settle();
+  assert.equal(plain.find((n) => n.type === 'ReviewSection' && n.props.title === 'pol.reviewExclusions').length, 0);
 });

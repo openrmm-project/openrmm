@@ -1176,14 +1176,7 @@ func (s *Store) ResolveInapplicableCheckAlerts(ctx context.Context, now time.Tim
 			JOIN agents a ON a.id=al.agent_id AND a.revoked_at IS NULL
 			LEFT JOIN sites si ON si.id=a.site_id
 			WHERE c.id=al.source_id AND c.enabled AND NOT (c.type=ANY($2::text[])) AND `+serviceCheckPlatformSQL+` AND (
-				c.agent_id=a.id OR c.policy_id IN (
-					SELECT pa.policy_id FROM policy_assignments pa
-					WHERE pa.policy_id IN `+activePoliciesSQL+` AND (
-					      (pa.scope_type='agent' AND pa.scope_id=a.id)
-					   OR (pa.scope_type='group' AND pa.scope_id=a.group_id)
-					   OR (pa.scope_type='site' AND pa.scope_id=a.site_id)
-					   OR (pa.scope_type='client' AND pa.scope_id=si.client_id))
-				)
+				c.agent_id=a.id OR c.policy_id IN `+policiesReachingSQL("a")+`
 			)
 		)
 		RETURNING `+alertCols, now, models.ServerRuleTypes)

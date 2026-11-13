@@ -50,6 +50,11 @@ available only through explicit lab mode.
 The reference agent sends a heartbeat every 20s and inventory every 5min (and
 once on connect).
 
+At each registration the server refreshes the hostname, architecture and
+version the agent reports, but keeps the OS the device enrolled with (an OS
+never recorded is filled in): policy assignments filter on it, so a device
+naming another OS is not believed ([10](10-monitoring-policies.md#targeting-by-os-and-device-role-and-exceptions)).
+
 ### Inventory diagnostics
 
 An online agent has an authenticated control connection; that does not confirm

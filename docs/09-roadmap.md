@@ -1,6 +1,6 @@
 # 09 — Roadmap
 
-Phased plan toward a complete RMM, and where it stands at v0.10.0. Phases 0–4 are
+Phased plan toward a complete RMM, and where it stands at v0.11.0. Phases 0–4 are
 **done**; what remains is listed under each phase and at the end.
 
 ## ✅ Phase 0 — Skeleton (done)
@@ -20,11 +20,14 @@ circuit breaker and a global pause ([23-ai-autonomy](23-ai-autonomy.md)).
   permissions; API tokens. Plus **TOTP 2FA** and **per-user access scope**
   (Company/Site/Department/device), enforced on read + write paths and on the
   AI/MCP surface.
-- **Script library** + run-on-device.
+- **Script library** + run-on-device, with **scoped variables and encrypted
+  secrets** read at run time ([25](25-script-variables.md)).
 - **Monitoring checks** (diskspace, memory, cpuload, ping, winservice, linuxservice, macservice, script)
   with thresholds, history, and a server-driven scheduler.
 - **Scheduled tasks** (interval/daily/weekly) dispatched as pre-approved automation.
-- **Policies** assigned to client/site/department/agent; agents inherit checks/tasks.
+- **Policies** assigned to client/site/department/agent or every device, narrowed
+  by OS and device role, with per-device exceptions and an on/off switch; agents
+  inherit checks/tasks ([10](10-monitoring-policies.md)).
 - **Alerts** with auto-raise/auto-resolve, dedup, ack/resolve, offline detection.
 - **Rich inventory** via gopsutil (CPU, memory, disks, platform, uptime).
 - **Agent as a system service** (install/uninstall via kardianos/service).
@@ -90,7 +93,8 @@ service restart on Windows). Publish with `make agent-dist`; tune with
 A first-class patch subsystem: **missing-patch inventory** (Windows KBs, Linux
 advisories/CVEs), a **catalog with per-patch approval + classification**,
 **patch policies** (maintenance windows, auto-approve security after N days,
-exclusions), **post-patch reboot orchestration**, and **compliance reporting** —
+KB exclusions, OS/role filters and device exceptions), Pending/Approved/Declined
+catalog lists, **post-patch reboot orchestration**, and **compliance reporting** —
 all behind the existing approval/scope/audit guardrails, with a Patches tab, a
 device-drawer Patches view and a read-only `list_patches` AI tool. Requires agent
 ≥ 0.4.2. Design + per-OS notes in [16-patch-management](16-patch-management.md).
@@ -115,9 +119,10 @@ device-drawer Patches view and a read-only `list_patches` AI tool. Requires agen
   `export_audit` for the assistant.
 
 ## ✅ AI proposals beyond scripts (done)
-The assistant and MCP clients propose **configuration** (tasks, checks,
-policies — created disabled) and **moves or deletions of devices**; a person
-approves each one. Fleet and audit tools count in the database and hand back
+The assistant and MCP clients propose **configuration** (tasks, checks, whole
+policies and patch policies with their scopes, library scripts and script
+variables — created switched off) and **moves or deletions of devices**; a person
+approves each one, a whole policy through one reviewed activation. Fleet and audit tools count in the database and hand back
 download links instead of reading rows into the model.
 
 ## ✅ Console in nine languages (done)

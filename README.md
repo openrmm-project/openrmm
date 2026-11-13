@@ -43,9 +43,11 @@ OpenRMM is an open-source, self-hosted RMM built around three choices:
   client on the device's id, read on demand; off by default) — all behind one
   interface. Swap freely.
 - **BYO AI model** — any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, …).
-- **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library,
-  monitoring checks + alerts, scheduled tasks, and inherited policies. The agent
-  installs as a system service and reports rich inventory.
+- **Classic RMM, too** — Client→Site→Agent hierarchy, RBAC users, script library
+  with scoped variables and encrypted secrets, monitoring checks + alerts,
+  scheduled tasks, and inherited policies you can switch on and off and target by
+  OS and device role, with per-device exceptions. The agent installs as a system
+  service and reports rich inventory, including who is logged in.
 - **Access control** — built-in `admin`/`tech`/`readonly` roles plus custom roles,
   optional **TOTP 2FA**, **single sign-on** through any OpenID Connect provider
   (with MFA requirements checked on the provider's signed claims), and

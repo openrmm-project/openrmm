@@ -6,22 +6,18 @@ tag.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-13
+
 ### Added
 
-- **Approved and declined patch lists:** the Patches ▸ Catalog tab lists All,
-  Pending, Approved or Declined patches, with each patch's approval and where
-  its devices are (waiting, installing, failed, installed, declined).
-  `GET /api/patches` returns the same counts and accepts
-  `?approval=pending|approved|declined`.
-- **Department column** in the Devices list.
 - **Scoped script variables and encrypted secrets** ([guide](docs/25-script-variables.md)):
   manage reusable values in Scripts with a separate permission, inherit overrides
   from client/site/department/device scopes, and bind names to saved scripts.
   Agent 0.11.0+ receives built-in RMM context and variable values as environment
   data. Secrets are write-only in the API and masked before agent result storage
   and server job history; variable declarations are bound to AI release hashes.
-  Includes scheduled library tasks, refuses unsafe CMD variable expansion, and adds nine-language
-  console copy and unit/integration/browser regression tests. Names preserve the
+  Scheduled library tasks receive them too; CMD scripts never do, since CMD's
+  percent expansion would turn a value into command syntax. Names preserve the
   user's letter case, names and values have no field-specific length cap, and
   short secrets are accepted and masked. Scope overrides are optional. Names an
   interpreter or loader reads (`PSModulePath`, `COR_*`, `DOTNET_*`, `PYTHON*`,
@@ -71,10 +67,6 @@ tag.
   export and the device API add the last user seen logged in
   (`last_logged_in_user`, `last_logged_in_user_at`), kept after they log off,
   so the report says who uses each machine. Migration 035.
-- **Manage policies / Manage checks** now say what they include: activating and
-  deactivating policies, and switching checks on and off (approving AI-proposed
-  ones). Checks and tasks created through the API no longer accept
-  client-supplied `proposed_by` / `approved_by`.
 - **AI proposals of script variables and library scripts:** AI Chat and MCP can
   list variable names (`list_script_variables`), propose a variable definition
   (`propose_script_variable`) and propose a library script
@@ -82,6 +74,17 @@ tag.
   to approve them in Scripts: a proposed variable takes no value and binds to
   nothing, a proposed script cannot run, be scheduled or be released for AI
   autonomy. The model never sees or sets a variable value.
+- **Approved and declined patch lists:** the Patches ▸ Catalog tab lists All,
+  Pending, Approved or Declined patches, with each patch's approval and where
+  its devices are (waiting, installing, failed, installed, declined).
+  `GET /api/patches` returns the same counts and accepts
+  `?approval=pending|approved|declined`.
+- **Department column** in the Devices list, one of its optional, sortable
+  columns.
+- **Manage policies / Manage checks** now say what they include: activating and
+  deactivating policies, and switching checks on and off (approving AI-proposed
+  ones). Checks and tasks created through the API no longer accept
+  client-supplied `proposed_by` / `approved_by`.
 
 ### Changed
 
@@ -107,6 +110,42 @@ tag.
   showing its id.
 - **Untranslated audit actions:** patch declines, alert silencing and every
   guest-access action now have labels in all nine languages.
+
+### Security
+
+- **Go 1.26.11** (server, agent and sidecar builds, and the Docker build image):
+  fixes [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) in `net/http` of
+  Go 1.26.10.
+- **A device cannot retarget itself.** Policy filters use the OS a device
+  enrolled with and a role only an administrator changes, so a compromised
+  agent reporting another OS or edition does not move itself into or out of a
+  policy (see Target policies above).
+
+### Upgrade notes
+
+- This release adds database migrations 029 to 035: script variables (029–031),
+  policy activation (032), policy targeting (033), and the logged-in and last
+  logged-in user (034, 035).
+- Script variables need agent **0.11.0**: a job whose script binds variables is
+  refused for an older agent, which keeps running ordinary scripts. Only the
+  built-in **administrator** role holds the new `scripts.variables` permission;
+  add it to custom roles that should manage variables. CMD scripts never
+  receive variables; use PowerShell.
+- Existing policies stay switched on (migration 032). An AI-proposed policy
+  that already had an assignment counts as reviewed; an unassigned one waits,
+  switched off, for a person to review and activate it.
+- Existing assignments keep reaching every device of their scope: an empty OS
+  and role filter means any (migration 033). Roles are detected from the
+  inventory the devices already reported; Linux devices have no role until an
+  administrator sets one, so a role-filtered assignment skips them until then.
+  Changing a device's role takes an unrestricted principal.
+- The logged-in user and the Windows product type need agent **0.11.0**; older
+  agents leave the user empty and Windows roles fall back to the edition name.
+  Migration 035 fills in the last logged-in user from who was logged in at the
+  upgrade.
+- Checks and tasks created through the API no longer accept client-supplied
+  `proposed_by` / `approved_by`.
+
 
 ## [0.10.0] - 2026-11-10
 

@@ -159,6 +159,8 @@ Units of work targeted at an agent.
 | autonomy | text | `''`, `query` or `preapproved`: why it ran without approval at the time ([23](23-ai-autonomy.md)) |
 | script_id | uuid FK → scripts | the library script a parameterised or released run came from; `ON DELETE SET NULL` |
 | params | jsonb | the declared parameters it carried, sent to the agent as environment variables |
+| variables | jsonb | the script variable names it may receive, snapshotted when the job is created (migration 029), so a later script edit does not change an approved job |
+| secret_redactions | text | ciphertext of the secret values actually sent, used only to mask the result; never returned by the API |
 
 ### `inventory`
 Latest snapshot per agent (`agent_id` PK, `data` jsonb, `collected_at`).
@@ -230,6 +232,22 @@ runs ([23](23-ai-autonomy.md)).
 AI Chat or MCP proposed: while `proposed_by` is set and `approved_by` is empty it
 cannot run, be scheduled or be released. `script_variables` carries the same
 three columns with the same meaning ([25](25-script-variables.md#ai-chat-and-mcp)).
+`variables` (jsonb, migration 029) lists the script variable names the script
+may receive; a name it does not list is never sent to it.
+
+### `script_variables` / `script_variable_values`
+Named values a library script reads at run time ([25](25-script-variables.md)),
+added by migrations 029–031. `script_variables`: `id`, `name`, `description`,
+`secret`, `created_at`, `updated_at`, and the `proposed_by` / `approved_by` /
+`approved_at` of an AI proposal. A name is a shell identifier (any letter
+case) that does not start with `RMM_` or `OPENRMM_`, and it is unique ignoring
+ASCII case, since Windows environment names are (migration 030).
+`script_variable_values` holds one value per scope: (`variable_id`,
+`scope_type`, `scope_id`) is the key, `scope_type` is `global` (empty
+`scope_id`), `client`, `site`, `group` or `agent`, and the most specific scope
+covering a device wins. The `value` of a secret variable is encrypted with the
+settings key (AES-GCM) and is never written back to an API response, an audit
+row or a job's stored output.
 
 ### `script_categories`
 The catalogue of category names (`id`, `name`, `created_at`), added by migration

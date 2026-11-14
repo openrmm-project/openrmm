@@ -152,7 +152,7 @@ acknowledges that confirmation.
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | GET | `/api/jobs?agent_id=&limit=` | `jobs.view` | List jobs (newest first) |
-| POST | `/api/jobs` | `jobs.create` | Create/propose an approval-gated job |
+| POST | `/api/jobs` | `jobs.create` | Create/propose an approval-gated job: `{agent_id, shell, script, description, require_approval}`. An optional `variables` list of script variable names gives the job their values for the device at dispatch, as a library run gets them; it takes `scripts.manage` and `scripts.variables` on an unrestricted principal (what binding them to a saved script takes), refuses CMD and unknown names, and, like any job, waits for approval unless `require_approval: false` comes from a caller who may skip it ([25](25-script-variables.md#api)) |
 | POST | `/api/jobs/bulk` | `jobs.create` | Mass deployment — one script to many devices, approval-gated |
 | GET | `/api/jobs/{id}` | `jobs.view` | One job (with result) |
 | POST | `/api/jobs/{id}/approve` | `jobs.manage` | Approve → dispatch |
@@ -436,7 +436,7 @@ Two profiles; details in [20-email-notifications](20-email-notifications.md).
 | POST | `/api/script-categories` | `scripts.manage` | Register a category (`{name}`) so it exists before any script is filed under it. 409 when the name is taken, compared without case. Audited as `script.category.create` |
 | PUT | `/api/script-categories/{name}` | `scripts.manage` | Rename the category and every script filed under it (`{name:"new"}`). Onto a name in use this **merges** the two. 404 when no such category. Audited as `script.category.rename` |
 | DELETE | `/api/script-categories/{name}` | `scripts.manage` | Remove the category and return its scripts to uncategorized. The scripts are kept. Audited as `script.category.delete` |
-| POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval, params}` → approval-gated job. `require_approval:false` is honored only when the instance allows it (`jobs.allow_unapproved`) and the caller also has `jobs.manage` and `settings.manage`. A script with parameters needs `params` (checked against its declaration) and always waits for approval. |
+| POST | `/api/devices/{id}/run-script` | `jobs.create` | `{script_id, require_approval, params}` → approval-gated job. `require_approval:false` is honored only when the instance allows it (`jobs.allow_unapproved`) and the caller also has `jobs.manage` and `settings.manage`. A script with parameters needs `params` (checked against its declaration). A run with parameters or script variables follows the same approval rule as any run. |
 
 ## Checks & results
 

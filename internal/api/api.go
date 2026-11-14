@@ -1534,6 +1534,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		Script          string `json:"script"`
 		Description     string `json:"description"`
 		RequireApproval *bool  `json:"require_approval"`
+		// Variables are script variable names the job receives, as a library
+		// run's do. Only a caller who could bind them to a saved script may ask.
+		Variables []string `json:"variables"`
 	}
 	if err := decode(r, &in); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -1542,6 +1545,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgent(w, r, in.AgentID) {
 		return
 	}
+	if in.Shell == "" {
+		in.Shell = models.ShellBash
+	}
 	// Approval is mandatory unless the instance allows skipping it and this
 	// caller may (mayRunUnapproved). jobs.create alone only creates
 	// approval-gated jobs.
@@ -1549,10 +1555,41 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if in.RequireApproval != nil && !*in.RequireApproval && s.mayRunUnapproved(r) {
 		require = false
 	}
-	if in.Shell == "" {
-		in.Shell = models.ShellBash
+	if len(in.Variables) > 0 {
+		s.createJobWithVariables(w, r, in.AgentID, in.Shell, in.Script, in.Description, in.Variables, require)
+		return
 	}
 	job, err := s.jobs.Propose(r.Context(), in.AgentID, in.Shell, in.Script, in.Description, actorOf(r), require)
+	if err != nil {
+		writeErr(w, httpStatusFor(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, job)
+}
+
+// createJobWithVariables creates an ad hoc job that receives script variables.
+// Binding a name to a saved script takes scripts.manage and scripts.variables
+// on an unrestricted principal (the library is global), and a saved script's
+// run then hands its values to whoever may run it. An ad hoc job asking for the
+// same names takes exactly that, so it gives nobody a value they could not
+// already route to a device; jobs.create alone never reads a variable. It waits
+// for approval like any job, unless require is false: the instance allows
+// skipping approval and this caller may (mayRunUnapproved), as for a library
+// run with variables.
+func (s *Server) createJobWithVariables(w http.ResponseWriter, r *http.Request, agentID, shell, script, description string, variables []string, require bool) {
+	if !hasPermission(r, models.PermScriptsManage) || !hasPermission(r, models.PermScriptsVariables) {
+		writeErr(w, http.StatusForbidden, "passing script variables to a job requires scripts.manage and scripts.variables")
+		return
+	}
+	if !s.requireUnrestricted(w, r, "script variable bindings") {
+		return
+	}
+	names, err := s.prepareScriptVariables(r, shell, variables)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	job, err := s.jobs.ProposeWithVariables(r.Context(), agentID, shell, script, description, actorOf(r), names, require)
 	if err != nil {
 		writeErr(w, httpStatusFor(err), err.Error())
 		return

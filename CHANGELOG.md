@@ -6,6 +6,40 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Script variables on one-off jobs, for those who may bind them.** A device's
+  **Run script** tab shows a **Script variables** picker to anyone with
+  **Manage scripts** and **Manage script variables** on an unrestricted user
+  (what binding a variable to a saved script takes): an edited copy of a library
+  script keeps its variables, and a script typed from scratch takes the ones
+  picked. Job cards now show which script variables a job receives (never
+  their values) and mark a one-off script as such, whatever its description
+  says. `POST /api/jobs` takes
+  the same `variables` list; anyone without those permissions is refused, and
+  AI Chat and MCP cannot ask for variables.
+
+### Changed
+
+- **Runs with script variables or parameters follow the instance's approval
+  setting.** They used to wait for approval even where the instance allows jobs
+  without it (Settings ▸ Configuration ▸ Jobs). Now a person holding **Manage jobs** and **Manage
+  configuration** may choose **Run immediately** for them too, on a device's Run
+  script tab, as for any job. Off by default; AI Chat, MCP and bulk deployments
+  still always wait for approval.
+
+### Fixed
+
+- **Script variables no longer drop silently when a saved script runs from a
+  device.** The device page's **Run script ▸ From library** copied the script's
+  text into a one-off job, so its script variables and parameters never reached
+  the device and only the built-in `RMM_*` context arrived. A saved script with
+  variables or parameters picked there now runs as itself, by id, asking for its
+  parameters; once its text is edited, the form says what goes with the copy and
+  offers to undo the edits. In Scripts, **Run on device** waits until
+  unsaved changes are saved, since a run uses the saved script, and
+  **Deploy to many devices** says that only its text is sent.
+
 ## [0.11.0] - 2026-11-13
 
 ### Added

@@ -404,7 +404,9 @@ function BulkDeployModal({ open, onClose, devices, sites, clients, navigate }) {
           <div className="space-y-3">
             <Field label={t('deploy.shell')}><Select value={shell} onChange={(e) => setShell(e.target.value)}><option value="bash">bash</option><option value="sh">sh</option><option value="powershell">powershell</option><option value="cmd">cmd</option><option value="python">python</option></Select></Field>
             <Field label={t('common.description')}><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('deploy.descPlaceholder')} /></Field>
-            <Field label={t('deploy.script')}><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={150} placeholder={t('deploy.scriptPlaceholder')} /></Field>
+            {/* A deployment sends this text only: no saved script's variables or
+                parameters go with it, and only the built-in RMM_* context arrives. */}
+            <Field label={t('deploy.script')} hint={t('deploy.noVariablesHint')}><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={150} placeholder={t('deploy.scriptPlaceholder')} /></Field>
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 pt-3 border-t border-line/60">
@@ -1960,13 +1962,36 @@ function RunScriptForm({ device, onCreated }) {
   // with the sample as text made every new script begin with deleting it.
   const [script, setScript] = useState('');
   const sample = { powershell: 'Get-Service | Where-Object Status -eq "Running" | Select-Object -First 10', cmd: 'ipconfig /all', python: 'import platform\nprint(platform.platform())' }[shell] || 'uptime\ndf -h /'; // i18n-ignore: sample scripts
-  const clear = () => { setScript(''); setDesc(''); setShell(defShell); };
+  // The saved script the editor was filled from. Its script variables and
+  // parameters reach the device only when the saved script itself runs (by id):
+  // a copy of its text carries no binding, and only the built-in RMM_* context
+  // would arrive. So while the editor still holds that script, unedited, the job
+  // runs it by id; once edited, the form says what no longer goes with it.
+  const [lib, setLib] = useState(null);
+  const [values, setValues] = useState({});
+  const declared = lib?.params || [];
+  const bound = !!lib && ((lib.variables || []).length > 0 || declared.length > 0);
+  const byId = bound && script === lib.body && shell === lib.shell;
+  const edited = bound && !byId;
+  const missing = byId && declared.some((p) => !values[p.name]);
+  // Someone who may bind script variables to a saved script (scripts.manage
+  // and scripts.variables; the server also requires an unrestricted principal)
+  // may give a one-off job the same names: it routes no value they could not
+  // already route. For anyone else, an edited copy carries none.
+  const canBind = can('scripts.manage') && can('scripts.variables');
+  const varsQ = useQuery(['script-variables'], () => canBind ? api.listScriptVariables() : Promise.resolve({ variables: [] }), { invalidateOn: ['scripts'] });
+  const [vars, setVars] = useState([]);
+  const adHocVars = canBind && !byId && shell !== 'cmd' ? vars : [];
+  const pickable = (varsQ.data?.variables || []).filter((v) => !v.pending && !vars.includes(v.name)).map((v) => ({ value: v.name, label: v.name }));
+  const clear = () => { setScript(''); setDesc(''); setShell(defShell); setLib(null); setValues({}); setVars([]); };
   const [busy, setBusy] = useState(false);
   const [runNow, setRunNow] = useState(false);
   const scriptsQ = useQuery(['scripts-pick'], () => can('scripts.view') ? api.listScripts() : Promise.resolve({ scripts: [] }), { invalidateOn: ['scripts'] });
   const cfgQ = useQuery(['config'], () => api.getConfig(), {});
   // Settings ▸ Configuration ▸ Jobs; an older server sends only the server field.
   const cfgJobs = cfgQ.data?.jobs;
+  // Skipping approval is for those the instance lets do it, whatever the job
+  // carries: the server checks the same setting and permissions.
   const canDirect = can('jobs.manage') && can('settings.manage') && !!(cfgJobs ? cfgJobs.allow_unapproved : cfgQ.data?.server?.allow_unapproved_jobs);
   const direct = canDirect && runNow;
 
@@ -1975,7 +2000,8 @@ function RunScriptForm({ device, onCreated }) {
   const submit = async () => {
     setBusy(true);
     try {
-      await api.createJob({ agent_id: device.id, shell, script, description: desc || t('run.defaultDesc'), require_approval: !direct });
+      if (byId) await api.runLibraryScript(device.id, lib.id, values, { direct });
+      else await api.createJob({ agent_id: device.id, shell, script, description: desc || t('run.defaultDesc'), require_approval: !direct, ...(adHocVars.length ? { variables: adHocVars } : {}) });
       if (direct) toast.success(t('run.dispatched'), t('run.runningOn', { host: device.hostname }));
       else toast.success(t('run.created'), t('run.queued'));
       onCreated();
@@ -2004,15 +2030,19 @@ function RunScriptForm({ device, onCreated }) {
         {/* Inserts a copy and springs back to the placeholder. Leaving the chosen
             name selected read as "this job is bound to that library script", so
             an operator writing something ad-hoc looked for a way to deselect —
-            when the editor below was theirs to type in all along. Nothing about
-            the job references the library: only shell, script and description
-            are submitted. */}
+            when the editor below was theirs to type in all along. A script
+            without variables or parameters is submitted as its text; one with
+            them runs by id while unedited (see lib above). */}
         <Field label={t('run.fromLibrary')} className="flex-1" hint={t('run.fromLibraryHint')}>
           <Select value="" onChange={(e) => {
             const s = (scriptsQ.data?.scripts || []).find((x) => x.id === e.target.value);
             if (!s) return;
-            setScript(s.body); setShell(s.shell); setDesc(s.name);
-            toast.info(t('run.loaded', { name: s.name }), t('run.loadedHint'));
+            setScript(s.body); setShell(s.shell); setDesc(s.name); setLib(s);
+            // An edited copy keeps the script's names for whoever may pass them.
+            setVars(canBind ? (s.variables || []) : []);
+            setValues(Object.fromEntries((s.params || []).map((p) => [p.name, p.kind === 'enum' ? (p.values || [])[0] || '' : ''])));
+            const carries = (s.variables || []).length > 0 || (s.params || []).length > 0;
+            toast.info(t('run.loaded', { name: s.name }), carries ? t('run.loadedBoundHint') : t('run.loadedHint'));
           }}>
             <option value="">{t('run.startFrom')}</option>
             {(scriptsQ.data?.scripts || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -2021,9 +2051,42 @@ function RunScriptForm({ device, onCreated }) {
       </div>
       <Field label={t('common.description')}><Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('run.whatDoes')} /></Field>
       <Field label={t('deploy.script')}><CodeEditor value={script} onChange={setScript} shell={shell} minHeight={220} placeholder={sample} /></Field>
+      {byId && (
+        <div className="rounded-xl border border-line bg-elevated/50 px-3.5 py-3 space-y-3" data-run="library">
+          <div className="flex items-start gap-2 text-[12.5px] text-ink"><Icon name="info" size={15} className="mt-0.5 shrink-0 text-brandhi" /><span>{t('run.libraryBound', { name: lib.name })}</span></div>
+          {declared.map((p) => (
+            <Field key={p.name} label={p.name} hint={p.description || undefined}>
+              {p.kind === 'enum'
+                ? <Select value={values[p.name]} onChange={(e) => setValues((v) => ({ ...v, [p.name]: e.target.value }))}>{(p.values || []).map((v) => <option key={v} value={v}>{v}</option>)}</Select>
+                : <Input className="mono" value={values[p.name]} onChange={(e) => setValues((v) => ({ ...v, [p.name]: e.target.value }))} placeholder={p.pattern} />}
+            </Field>
+          ))}
+        </div>
+      )}
+      {edited && (
+        <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-warn/25 bg-warnsoft px-3.5 py-3" data-run="edited">
+          <Icon name="alert" size={15} className="shrink-0 text-warn" />
+          <span className="flex-1 min-w-[220px] text-[12.5px] text-ink">{canBind
+            ? t('run.libraryEditedVars', { name: lib.name }) + (declared.length ? ' ' + t('run.libraryEditedParams') : '')
+            : t('run.libraryEdited', { name: lib.name })}</span>
+          <Button size="sm" variant="secondary" onClick={() => { setScript(lib.body); setShell(lib.shell); setVars(canBind ? (lib.variables || []) : []); }}>{t('run.undoEdits')}</Button>
+        </div>
+      )}
+      {canBind && !byId && (
+        <Field label={t('vars.variables')} hint={shell === 'cmd' ? undefined : t('run.varsHint')}>
+          {shell === 'cmd'
+            ? <div className="text-[12px] text-warn">{t('vars.cmdUnsupported')}</div>
+            : <div className="space-y-2" data-run="variables">
+                <div aria-label={t('vars.selected')} className="flex flex-wrap gap-1.5">{vars.length === 0
+                  ? <span className="text-[12px] text-faint">{t('vars.noneSelected')}</span>
+                  : vars.map((name) => <span key={name} className="inline-flex items-center gap-1 rounded-md border border-line bg-elevated px-1.5 py-0.5 text-[11.5px]"><code>{name}</code><button type="button" aria-label={t('action.remove') + ': ' + name} onClick={() => setVars((v) => v.filter((x) => x !== name))} className="text-faint hover:text-ink">×</button></span>)}</div>
+                <Combobox value="" onChange={(name) => name && setVars((v) => (v.includes(name) ? v : [...v, name]))} options={pickable} placeholder={t('run.addVariable')} />
+              </div>}
+        </Field>
+      )}
       <div className="flex justify-end gap-2">
         {(script || desc) && <Button variant="ghost" icon="close" onClick={clear} disabled={busy}>{t('run.clear')}</Button>}
-        <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim()}>{direct ? t('run.runNowOn', { host: device.hostname }) : t('run.createGated')}</Button>
+        <Button variant="primary" icon="plus" loading={busy} onClick={submit} disabled={!script.trim() || missing}>{direct ? t('run.runNowOn', { host: device.hostname }) : t('run.createGated')}</Button>
       </div>
     </div>
   );

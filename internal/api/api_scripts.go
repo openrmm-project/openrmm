@@ -379,29 +379,30 @@ func (s *Server) runLibraryScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, store.ErrScriptPending.Error())
 		return
 	}
-	// A script with declared parameters takes values only from their accepted
-	// sets, delivered as environment variables. It always waits for approval:
-	// the values are part of what the approver is agreeing to.
-	if len(sc.Params) > 0 || len(in.Params) > 0 || len(sc.Variables) > 0 {
-		params, err := autonomy.ValidateParamValues(sc.Params, in.Params)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		job, err := s.jobs.ProposeScriptWithParams(r.Context(), chi.URLParam(r, "id"), sc, params, "library: "+sc.Name, actorOf(r))
-		if err != nil {
-			writeErr(w, httpStatusFor(err), err.Error())
-			return
-		}
-		writeJSON(w, http.StatusCreated, job)
-		return
-	}
 	// Approval is mandatory unless the instance allows skipping it and this
 	// caller may (mayRunUnapproved). jobs.create alone only creates
 	// approval-gated jobs.
 	require := true
 	if in.RequireApproval != nil && !*in.RequireApproval && s.mayRunUnapproved(r) {
 		require = false
+	}
+	// A script with declared parameters takes values only from their accepted
+	// sets, delivered as environment variables, as its script variables are.
+	// The values are part of what an approver agrees to, so it waits for
+	// approval like any job, unless the caller may skip it (as above).
+	if len(sc.Params) > 0 || len(in.Params) > 0 || len(sc.Variables) > 0 {
+		params, err := autonomy.ValidateParamValues(sc.Params, in.Params)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		job, err := s.jobs.RunScriptWithParams(r.Context(), chi.URLParam(r, "id"), sc, params, "library: "+sc.Name, actorOf(r), require)
+		if err != nil {
+			writeErr(w, httpStatusFor(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusCreated, job)
+		return
 	}
 	job, err := s.jobs.Propose(r.Context(), chi.URLParam(r, "id"), sc.Shell, sc.Body, "library: "+sc.Name, actorOf(r), require)
 	if err != nil {

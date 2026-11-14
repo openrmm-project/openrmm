@@ -128,6 +128,7 @@ function JobCard({ job, device, defaultOpen, focused }) {
         <div className="px-4 pb-4 space-y-3 animate-fade-in">
           <CodeBlock code={job.script} shell={job.shell} dryRun={isAwaiting} maxHeight={280} />
           {job.params && Object.keys(job.params).length > 0 && <JobParams params={job.params} />}
+          {(job.variables || []).length > 0 && <JobVariables names={job.variables} oneOff={!job.script_id} />}
           {done && (job.stdout || job.stderr) && <OutputBlock stdout={job.stdout} stderr={job.stderr} exitCode={job.exit_code} />}
 
           {isAwaiting && (
@@ -489,3 +490,21 @@ function JobParams({ params }) {
   );
 }
 window.JobParams = JobParams;
+
+// The script variables a job receives: the names only. Their values, resolved
+// for the device when the job is sent, never come back to the console, so the
+// approver reads which names this code gets, never what they hold. Whether the
+// code is a saved library script comes from the server (script_id), never from
+// the description its creator typed, which could read "library: …" for a
+// one-off script.
+function JobVariables({ names, oneOff }) {
+  return (
+    <div className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[12px]" data-job="variables">
+      <div className="text-faint mb-1">{t('jobs.variables')}</div>
+      <div className="flex flex-wrap gap-1.5">{names.map((name) => <code key={name} className="rounded-md border border-line bg-elevated px-1.5 py-0.5 text-[11.5px] text-ink">{name}</code>)}</div>
+      {oneOff && <div className="text-warn mt-1.5 flex items-start gap-1.5" data-job="one-off"><Icon name="alert" size={12} className="mt-0.5 shrink-0" />{t('jobs.variablesOneOff')}</div>}
+      <div className="text-faint mt-1">{t('jobs.variablesHint')}</div>
+    </div>
+  );
+}
+window.JobVariables = JobVariables;

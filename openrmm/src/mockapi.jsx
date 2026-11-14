@@ -448,8 +448,10 @@ const api = {
   // it (docs/23-ai-autonomy.md). The server applies its own rules either way.
   setScriptAIRelease(id, release, contentHash) { return POST('/api/scripts/' + id + '/ai-release', { release: !!release, ...(release ? { content_hash: contentHash } : {}) }); },
   // A library script with declared parameters, run by a person: the values go
-  // with the script id and are checked against the declaration.
-  runLibraryScript(agentId, scriptId, params) { return POST('/api/devices/' + agentId + '/run-script', { script_id: scriptId, params }); },
+  // with the script id and are checked against the declaration. direct asks to
+  // skip approval, which the server grants only when the instance allows it and
+  // the caller holds jobs.manage and settings.manage.
+  runLibraryScript(agentId, scriptId, params, { direct } = {}) { return POST('/api/devices/' + agentId + '/run-script', { script_id: scriptId, params, ...(direct ? { require_approval: false } : {}) }); },
   deleteScript(id) { return DELETE('/api/scripts/' + id); },
   // Categories are not rows: they exist while scripts name them. Listing them is
   // what lets the editor offer what already exists instead of asking for free

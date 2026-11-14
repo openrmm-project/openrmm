@@ -306,6 +306,11 @@ function ScriptEditor({ script, onClose, categories = [] }) {
   // What the release is bound to: an edit here withdraws it on save, so the
   // drawer says so before the operator saves rather than after.
   const contentChanged = !!script && (shell !== script.shell || body !== script.body || JSON.stringify(params) !== JSON.stringify(script.params || []) || JSON.stringify(variables) !== JSON.stringify(script.variables || []));
+  // A run is of the SAVED script: by id when it has variables or parameters
+  // (the server reads them from what is stored), as its stored text otherwise.
+  // With unsaved changes, what would run is not what the editor shows — a
+  // variable just ticked would not go with it — so the run waits for a save.
+  const runBlocked = contentChanged && !readOnly;
 
   const save = async () => {
     setBusy(true);
@@ -329,9 +334,9 @@ function ScriptEditor({ script, onClose, categories = [] }) {
     <Drawer open onClose={onClose} width="max-w-[760px]">
       <div className="px-5 py-4 border-b border-line flex items-center gap-3">
         <div className="h-9 w-9 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="script" size={17} /></div>
-        <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : t('scripts.new')}</div><div className="text-[12px] text-faint">{readOnly ? t('script.readOnly') : t('script.editing')}</div></div>
+        <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{script ? script.name : t('scripts.new')}</div><div className="text-[12px] text-faint">{readOnly ? t('script.readOnly') : runBlocked && can('jobs.create') && !pending ? t('script.saveBeforeRun') : t('script.editing')}</div></div>
         {pending && !readOnly && <Button variant="primary" icon="check" onClick={() => setReviewing(true)}>{t('proposal.approve')}</Button>}
-        {can('jobs.create') && script && !pending && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)}>{t('script.runOnDevice')}</Button>}
+        {can('jobs.create') && script && !pending && <Button variant="secondary" icon="play" onClick={() => setRunOpen(true)} disabled={runBlocked} title={runBlocked ? t('script.saveBeforeRun') : undefined}>{t('script.runOnDevice')}</Button>}
         <button onClick={onClose} className="text-faint hover:text-ink p-1"><Icon name="close" size={18} /></button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-area p-5 space-y-4">
@@ -376,7 +381,7 @@ function ScriptEditor({ script, onClose, categories = [] }) {
           <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>{t('action.cancel')}</Button><Button variant="primary" loading={busy} onClick={save} disabled={!name || !body || (shell === 'cmd' && variables.length > 0)}>{script ? t('script.save') : t('script.create')}</Button></div>
         </div>
       )}
-      {runOpen && <RunOnDevice script={{ id: script?.id, name, shell, body, params: script?.params || [], variables: script?.variables || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
+      {runOpen && <RunOnDevice script={{ id: script.id, name: script.name, shell: script.shell, body: script.body, params: script.params || [], variables: script.variables || [] }} devMap={devMap} onClose={() => setRunOpen(false)} onDone={onClose} />}
       <ReviewModal open={reviewing} onClose={() => setReviewing(false)} busy={approving} onConfirm={approve}
         title={script && t('review.scriptTitle', { name: script.name })} intro={t('review.scriptIntro')} confirmLabel={t('proposal.approve')}>
         {script && (

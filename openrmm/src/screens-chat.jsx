@@ -356,6 +356,7 @@ function ProposedJob({ jobId, navigate }) {
         {auto && j.approved_by && <div className="text-[11.5px] text-brandhi">{t('chat.autonomyBasis', { basis: j.approved_by })}</div>}
         <CodeBlock code={j.script} shell={j.shell} dryRun={isAwaiting} maxHeight={200} />
         {j.params && Object.keys(j.params).length > 0 && window.JobParams && <window.JobParams params={j.params} />}
+        {(j.variables || []).length > 0 && window.JobVariables && <window.JobVariables names={j.variables} oneOff={!j.script_id} />}
         {done && (j.stdout || j.stderr) && <OutputBlock stdout={j.stdout} stderr={j.stderr} exitCode={j.exit_code} />}
         {isAwaiting && (
           <div className="flex items-center justify-between gap-2">

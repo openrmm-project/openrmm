@@ -4,9 +4,25 @@ Script variables let one library script install products for different customers
 without storing each customer's key in its source. This feature requires a server
 and agent built with variable support (agent **0.11.0 or later**). It is separate
 from interactive `OPENRMM_PARAM_*` parameters, whose values remain visible on jobs.
-Do not use interactive parameters for credentials. Copying library text into an
-ad hoc editor or a raw bulk deployment does not carry its vault bindings: use a
-saved library run or a scheduled library task for scripts that require variables.
+Do not use interactive parameters for credentials. Variables reach a device
+when the saved script itself runs: from **Scripts ▸ Run on device**, from a
+device's **Run script ▸ From library** while the script is unedited (the form
+says it runs the saved script), or as a scheduled library task. **Run on device**
+waits until unsaved changes in the editor are saved.
+
+A one-off job from a device's **Run script** tab can also receive variables, but
+only from someone who could bind them to a saved script: **Manage scripts** and
+**Manage script variables** on an unrestricted user. For them, the tab shows a
+**Script variables** picker; an edited copy of a library script keeps its names
+there, and a script typed from scratch takes the ones picked. Such a job waits
+for approval like any job, and the job card shows the approver which names it
+receives, never their values, and marks it as a one-off script (from the
+server's record, not its description, so it cannot pass for a saved library
+script). Where the instance allows jobs without approval (Settings ▸ Configuration ▸ Jobs), a
+person holding **Manage jobs** and **Manage configuration** may choose **Run
+immediately**, with variables or a saved script's parameters as for any job. For anyone else, an edited copy, a pasted script and **Deploy
+to many devices** carry no variables, and the console says so. Parameters
+(`OPENRMM_PARAM_*`) only go with the saved script.
 
 ## Configure and run
 
@@ -22,9 +38,11 @@ saved library run or a scheduled library task for scripts that require variables
 4. Edit the library script and select the variables it may receive. The definition
    stores names only. Variable values are resolved for its target device at dispatch,
    including a delayed human-approved job or a scheduled library task.
-5. Run the saved library script by ID. A script with variables uses the approval
-   path, just like a parameterized script. Existing explicitly released AI actions
-   keep their separate autonomy checks; changing the declarations withdraws a release.
+5. Run the saved library script by ID. A run with variables or parameters waits
+   for approval, unless the instance allows jobs without approval and the person
+   holds `jobs.manage` and `settings.manage` and asks to skip it, as for any job.
+   AI Chat and MCP never skip it. Existing explicitly released AI actions keep
+   their separate autonomy checks; changing the declarations withdraws a release.
 
 Names start with an ASCII letter or underscore and contain ASCII letters, digits
 and underscores. Your choice of upper/lowercase is preserved: `customerKey` is a
@@ -153,6 +171,17 @@ Create/update a library script with `variables: ["HUNTRESS_ACCOUNT_KEY"]`. Send 
 empty array to detach all names. Omitting `variables` on update preserves its
 current declaration. Run it via `POST /api/devices/{id}/run-script` with
 `{ "script_id": "..." }`; callers never submit vault values with a run.
+
+An ad hoc job asks for names with `POST /api/jobs` and
+`{"agent_id": "...", "shell": "powershell", "script": "...", "variables": ["HUNTRESS_ACCOUNT_KEY"]}`.
+It needs `jobs.create`, `scripts.manage` and `scripts.variables` and an
+unrestricted principal (`403` otherwise), refuses CMD and unknown or proposed
+names (`400`), checks that the agent is 0.11.0 or later and that every name has a
+value for the device, and is created awaiting approval unless
+`require_approval: false` comes from a caller who may skip approval (the
+instance allows it, and `jobs.manage` and `settings.manage`), in which case it is
+sent at once. The job stores the names, never a value, and its
+`job.propose` audit entry lists them. AI Chat and MCP cannot ask for variables.
 
 ## AI Chat and MCP
 

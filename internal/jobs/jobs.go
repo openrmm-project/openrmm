@@ -182,6 +182,15 @@ func (s *Service) ProposeQuery(ctx context.Context, agentID string, req protocol
 // with declared parameters: what the AI does with a released script when its
 // role may not run releases on its own.
 func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, sc *models.Script, params map[string]string, description, createdBy string) (*models.Job, error) {
+	return s.RunScriptWithParams(ctx, agentID, sc, params, description, createdBy, true)
+}
+
+// RunScriptWithParams creates a run of a library script with declared
+// parameters and/or script variables. With requireApproval false it is sent at
+// once, as an ad hoc job that skips approval is: the API passes false only for a
+// person it lets skip approval (the instance allows it and they hold jobs.manage
+// and settings.manage); the AI's tools always pass true.
+func (s *Service) RunScriptWithParams(ctx context.Context, agentID string, sc *models.Script, params map[string]string, description, createdBy string, requireApproval bool) (*models.Job, error) {
 	if sc != nil && sc.Pending {
 		return nil, ErrScriptPending
 	}
@@ -206,15 +215,22 @@ func (s *Service) ProposeScriptWithParams(ctx context.Context, agentID string, s
 		}
 	}
 	scriptID := sc.ID
+	status := models.JobAwaitingApproval
+	if !requireApproval {
+		status = models.JobPending
+	}
 	j, err := s.store.CreateJob(ctx, &models.Job{
 		AgentID: agentID, Type: models.JobRunScript, Description: description, Shell: sc.Shell, Script: sc.Body,
-		Status: models.JobAwaitingApproval, RequiresApproval: true, CreatedBy: createdBy,
+		Status: status, RequiresApproval: requireApproval, CreatedBy: createdBy,
 		ScriptID: &scriptID, Params: params, Variables: sc.Variables,
 	})
 	if err != nil {
 		return nil, err
 	}
-	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": a.Hostname, "shell": sc.Shell, "script_id": sc.ID, "requires_approval": true})
+	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": a.Hostname, "shell": sc.Shell, "script_id": sc.ID, "requires_approval": requireApproval})
+	if !requireApproval {
+		s.dispatch(ctx, j)
+	}
 	return s.store.GetJob(ctx, j.ID)
 }
 
@@ -347,6 +363,53 @@ func (s *Service) Propose(ctx context.Context, agentID, shell, script, descripti
 		return nil, err
 	}
 	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": s.hostname(ctx, agentID), "shell": shell, "requires_approval": requireApproval})
+	if !requireApproval {
+		s.dispatch(ctx, j)
+	}
+	return s.store.GetJob(ctx, j.ID)
+}
+
+// ProposeWithVariables creates an ad hoc job that receives the named script
+// variables at dispatch, resolved for its device like a library run's. The API
+// calls it only for a caller who could bind the same names to a saved script
+// (scripts.manage, scripts.variables, unrestricted) and has already normalised
+// them against the definitions. It waits for approval — the approver reads the
+// script and the names it receives — unless requireApproval is false, which the
+// API passes only for a person it lets skip approval.
+func (s *Service) ProposeWithVariables(ctx context.Context, agentID, shell, script, description, createdBy string, variables []string, requireApproval bool) (*models.Job, error) {
+	if len(variables) == 0 {
+		return s.Propose(ctx, agentID, shell, script, description, createdBy, requireApproval)
+	}
+	if !models.SupportedShell(shell) {
+		return nil, fmt.Errorf("unsupported shell %q", shell)
+	}
+	a, err := s.usableAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := agentCanRunShell(a, shell); err != nil {
+		return nil, err
+	}
+	// The agent must read the vars field, and every name must resolve for this
+	// device now, so a job that could only fail at dispatch is refused here.
+	if err := s.checkScriptVars(a, &models.Script{Shell: shell, Variables: variables}); err != nil {
+		return nil, err
+	}
+	if _, _, err := s.resolveScriptVars(ctx, a.ID, variables); err != nil {
+		return nil, err
+	}
+	status := models.JobAwaitingApproval
+	if !requireApproval {
+		status = models.JobPending
+	}
+	j, err := s.store.CreateJob(ctx, &models.Job{
+		AgentID: agentID, Type: models.JobRunScript, Description: description, Shell: shell, Script: script,
+		Status: status, RequiresApproval: requireApproval, CreatedBy: createdBy, Variables: variables,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, createdBy, "job.propose", j.ID, map[string]any{"agent": agentID, "host": a.Hostname, "shell": shell, "variables": variables, "requires_approval": requireApproval})
 	if !requireApproval {
 		s.dispatch(ctx, j)
 	}

@@ -498,6 +498,55 @@ async function scriptVariablesBrowserFlow() {
   document.documentElement.dataset.scriptVariablesE2e = 'passed'; return true;
 }
 
+// The device page's Run script tab, filled from a saved script with script
+// variables (the previous flow bound customerKey to it): unedited, the job runs
+// the saved script by id, so the variables go with it; an edit turns it into a
+// copy, which the form calls out, and Undo edits brings the run by id back. The
+// smoke user may bind variables, so the edited copy keeps the script's names
+// and goes as a one-off job that asks for them.
+async function deviceLibraryRunBrowserFlow() {
+  const wait = async (fn) => {
+    for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Device library run E2E timed out: ' + fn.toString());
+  };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const change = (element, value) => {
+    const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+    element.dispatchEvent(new Event('input', { bubbles: true })); element.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const bound = () => document.querySelector('[data-run="library"]');
+  const edited = () => document.querySelector('[data-run="edited"]');
+  (await wait(() => button('Devices'))).click();
+  (await wait(() => [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('SMOKE-PC')))).click();
+  (await wait(() => button('Run script'))).click();
+  const library = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'script-e2e')));
+  change(library, 'script-e2e');
+  await wait(() => bound()?.textContent.includes('Variable installer'));
+  const editor = await wait(() => [...document.querySelectorAll('textarea')].find((el) => el.value.includes('customerKey')));
+  change(editor, editor.value + '\necho edited');
+  await wait(() => edited() && !bound());
+  if (!edited().textContent.includes('Variable installer')) throw new Error('The edited notice does not name the script');
+  // The smoke user may bind variables: the edited copy keeps the script's names.
+  if (!document.querySelector('[data-run="variables"]')?.textContent.includes('customerKey')) throw new Error('An edited copy lost its variables for a binder');
+  (await wait(() => button('Undo edits'))).click();
+  await wait(() => bound() && !edited());
+  const create = 'Create approval-gated job';
+  // First the edited copy, as a one-off job with the variable; then the saved script, by id.
+  const again = await wait(() => [...document.querySelectorAll('textarea')].find((el) => el.value.includes('customerKey')));
+  change(again, again.value + '\necho edited');
+  await wait(() => edited());
+  (await wait(() => button(create) && !button(create).disabled && button(create))).click();
+  await wait(() => !edited());
+  (await wait(() => button('Run script'))).click();
+  const library2 = await wait(() => [...document.querySelectorAll('select')].find((el) => [...el.options].some((o) => o.value === 'script-e2e')));
+  change(library2, 'script-e2e');
+  await wait(() => bound());
+  (await wait(() => button(create) && !button(create).disabled && button(create))).click();
+  await wait(() => !bound());
+  document.documentElement.dataset.deviceLibraryRunE2e = 'passed'; return true;
+}
+
 async function servicesAndRemoteSettingsBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -906,6 +955,15 @@ try {
     assert.ok(apiRequests.some((r) => r.method === 'POST' && r.pathname === '/api/scripts/script-proposal/approve'), 'proposed script approved');
     const variableJob = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
     assert.deepEqual(variableJob?.payload, { script_id: 'script-e2e', params: {} });
+    const libraryRunFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: deviceLibraryRunBrowserFlow });
+    assertBrowser(libraryRunFlow, /data-device-library-run-e2e="passed"/);
+    const libraryRuns = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/run-script');
+    assert.equal(libraryRuns.length, 2, 'the device page ran the saved script by id');
+    assert.deepEqual(libraryRuns[1].payload, { script_id: 'script-e2e', params: {} });
+    const copies = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/jobs' && String(r.payload?.script || '').includes('customerKey'));
+    assert.equal(copies.length, 1, 'only the edited copy went as a one-off job');
+    assert.ok(copies[0].payload.script.includes('echo edited'));
+    assert.deepEqual(copies[0].payload.variables, ['customerKey'], 'the edited copy asked for the script variable');
     const targetingFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyTargetingBrowserFlow });
     assertBrowser(targetingFlow, /data-policy-targeting-e2e="passed"/);
     assert.deepEqual(apiRequests.filter((r) => r.method === 'PUT' && r.pathname === '/api/devices/dev-1/role').map((r) => r.payload), [{ role: 'server' }, { role: '' }]);

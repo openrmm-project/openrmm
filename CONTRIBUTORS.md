@@ -11,3 +11,5 @@ Add yourself in the pull request that signs it, in the form:
 ---
 
 - Miquéias Gonçalves (GitHub: @P1N-GU) — project owner
+
+- Kevin Zimmermann (GitHub: @Kevin-Nexio) — signed 2026-11-20

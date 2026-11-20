@@ -1,5 +1,27 @@
 /* Japanese — MACHINE-DRAFTED, NOT REVIEWED. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['ja'] = {
+  'audit.action.config.mail.templates.update': 'アラートメールのテンプレートを更新',
+  // Alert email templates
+  "mailtpl.title": "アラートメールのテンプレート",
+  "mailtpl.scope": "このインスタンスのすべてのチェックおよび接続アラートと復旧メールに適用します。送信待ちのメールは変更されません。",
+  "mailtpl.device": "{{device}} に表示するデバイス名",
+  "mailtpl.fallback": "説明が空の場合はホスト名、それも空の場合はデバイス ID を使用します。",
+  "mailtpl.description": "説明",
+  "mailtpl.hostname": "ホスト名",
+  "mailtpl.both": "説明（ホスト名）",
+  "mailtpl.kind": "メッセージの種類",
+  "mailtpl.alert": "アラート",
+  "mailtpl.recovery": "復旧",
+  "mailtpl.subject": "件名",
+  "mailtpl.body": "本文（プレーンテキスト）",
+  "mailtpl.variables": "件名または本文をクリックし、変数をクリックして挿入します。変数は各アラートの情報に置き換えられます。",
+  "mailtpl.preview": "プレビュー",
+  "mailtpl.reset": "初期値に戻す",
+  "mailtpl.saved": "テンプレートを保存しました",
+  "mailtpl.send": "自分のメールに例を送信",
+  "mailtpl.testHint": "保存済みの設定を使い、アカウントのメールアドレスに送信します。初期値に戻した後は保存が必要です。",
+  "mailtpl.example": "サンプルデータのみです。プレビューは変更を保存せず、メールも送信しません。",
+
   'nav.dashboard': 'ダッシュボード',
   'nav.chat': 'AI チャット',
   'nav.alerts': 'アラート',

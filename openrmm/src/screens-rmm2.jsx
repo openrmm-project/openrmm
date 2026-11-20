@@ -2842,7 +2842,101 @@ function SupportPanel() {
 }
 
 function SMTPPanel() {
-  return <SMTPProfilePanel />;
+  return <div className="space-y-4"><SMTPProfilePanel /><AlertTemplatePanel /></div>;
+}
+
+function AlertTemplatePanel() {
+  const toast = useToast();
+  const q = useQuery(['mail-templates'], () => api.getAlertTemplates());
+  const [form, setForm] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [event, setEvent] = useState('alert');
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [mailField, setMailField] = useState('subject');
+  const subjectRef = useRef(null), bodyRef = useRef(null), revision = useRef(0);
+  useEffect(() => {
+    if (q.data && form === null) { setForm(q.data.config); setSaved(q.data.config); setPreview(null); revision.current++; }
+  }, [q.data]);
+  const change = (next) => { revision.current++; setForm(next); setPreview(null); };
+  const edit = (field, value) => change({ ...form, [event]: { ...form[event], [field]: value } });
+  const insert = (variable) => {
+    const el = (mailField === 'subject' ? subjectRef : bodyRef).current;
+    const value = form[event][mailField];
+    const start = el?.selectionStart ?? value.length, end = el?.selectionEnd ?? start;
+    edit(mailField, value.slice(0, start) + '{{' + variable + '}}' + value.slice(end));
+    el?.focus();
+  };
+  const showPreview = async () => {
+    const current = revision.current;
+    setBusy(true);
+    try {
+      const result = await api.previewAlertTemplates(form, event);
+      if (revision.current === current) setPreview(result);
+    } catch (e) { toast.error(t('mailtpl.preview'), e.message); }
+    finally { setBusy(false); }
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const result = await api.updateAlertTemplates(form);
+      setForm(result); setSaved(result);
+      toast.success(t('mailtpl.saved'));
+    } catch (e) { toast.error(t('mail.saveFailed'), e.message); }
+    finally { setBusy(false); }
+  };
+  const send = async () => {
+    setBusy(true);
+    try {
+      const result = await api.testAlertSMTP('', event);
+      toast.success(t('mail.testSent'), t('mail.deliveredTo', { to: result.to }));
+    } catch (e) { toast.error(t('mail.testFailed'), e.message); }
+    finally { setBusy(false); }
+  };
+  if (q.error) return <Card className="p-4"><p role="alert">{q.error.message}</p><Button onClick={() => q.refetch()}>{t('action.retry')}</Button></Card>;
+  if (!form) return <Skeleton className="h-72 w-full rounded-2xl" />;
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved);
+  return <Card className="p-4">
+    <h2 className="text-[14px] font-semibold text-ink">{t('mailtpl.title')}</h2>
+    <p className="text-[12px] text-muted mt-1 mb-4">{t('mailtpl.scope')}</p>
+    <fieldset disabled={busy} className="space-y-4">
+      <Field label={t('mailtpl.device')} hint={t('mailtpl.fallback')}>
+        <Select aria-label={t('mailtpl.device')} value={form.device_name} onChange={(e) => change({ ...form, device_name: e.target.value })}>
+          <option value="description">{t('mailtpl.description')}</option>
+          <option value="hostname">{t('mailtpl.hostname')}</option>
+          <option value="both">{t('mailtpl.both')}</option>
+        </Select>
+      </Field>
+      <Field label={t('mailtpl.kind')}>
+        <Select aria-label={t('mailtpl.kind')} value={event} onChange={(e) => { revision.current++; setEvent(e.target.value); setPreview(null); }}>
+          <option value="alert">{t('mailtpl.alert')}</option>
+          <option value="recovery">{t('mailtpl.recovery')}</option>
+        </Select>
+      </Field>
+      <Field label={t('mailtpl.subject')}>
+        <input ref={subjectRef} className={inputCls} aria-label={t('mailtpl.subject')} value={form[event].subject} maxLength={512} onFocus={() => setMailField('subject')} onChange={(e) => edit('subject', e.target.value)} />
+      </Field>
+      <Field label={t('mailtpl.body')}>
+        <textarea ref={bodyRef} className={cx(inputCls, 'mono min-h-[220px]')} aria-label={t('mailtpl.body')} value={form[event].body} maxLength={16384} onFocus={() => setMailField('body')} onChange={(e) => edit('body', e.target.value)} rows={9} />
+      </Field>
+      <div><p className="text-[12px] text-muted mb-2">{t('mailtpl.variables')}</p>
+        <div className="flex gap-2 flex-wrap">{q.data.variables.map((v) => <Button key={v} variant="ghost" onClick={() => insert(v)}>{'{{' + v + '}}'}</Button>)}</div>
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" onClick={showPreview}>{t('mailtpl.preview')}</Button>
+        <Button variant="ghost" onClick={() => change(q.data.defaults)}>{t('mailtpl.reset')}</Button>
+        <Button variant="primary" disabled={!dirty || busy} onClick={save}>{t('mail.save')}</Button>
+        <Button variant="secondary" disabled={dirty || busy} title={dirty ? t('mail.saveFirst') : undefined} onClick={send}>{t('mailtpl.send')}</Button>
+      </div>
+      <p className="text-[11.5px] text-muted">{dirty ? t('mail.saveFirst') : t('mailtpl.testHint')}</p>
+    </fieldset>
+    {preview && <div className="mt-4 rounded-lg border border-line bg-elevated/40 p-4" aria-live="polite">
+      <h3 className="text-[13px] font-semibold mb-2">{t('mailtpl.preview')}</h3>
+      <p className="text-[11.5px] text-muted mb-3">{t('mailtpl.example')}</p>
+      <div className="font-semibold break-words">{preview.subject}</div>
+      <pre className="whitespace-pre-wrap break-words text-[12px] mt-3">{preview.body}</pre>
+    </div>}
+  </Card>;
 }
 
 function SMTPProfilePanel() {
@@ -2892,7 +2986,7 @@ function SMTPProfilePanel() {
   if (!c || !form) return <div className="grid md:grid-cols-2 gap-4">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-72 w-full rounded-2xl" />)}</div>;
   const dirty = form.host !== (c.host || '') || form.from !== (c.from || '') || form.tls_mode !== (c.tls_mode || 'starttls')
     || Number(form.port) !== c.port || form.username !== (c.username || '') || form.password !== ''
-    || form.from_name !== (c.from_name || 'OpenRMM') || form.skip_verify !== !!c.skip_verify;
+    || form.from_name !== (c.from_name || '') || form.skip_verify !== !!c.skip_verify;
 
   return (
     <div className="grid md:grid-cols-2 gap-4">

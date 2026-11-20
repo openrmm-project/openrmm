@@ -1,5 +1,27 @@
 /* Malay — full key coverage; linguistic review by a native speaker pending. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['ms'] = {
+  'audit.action.config.mail.templates.update': 'Templat mesej amaran dikemas kini',
+  // Alert email templates
+  "mailtpl.title": "Templat mesej amaran",
+  "mailtpl.scope": "Digunakan untuk semua e-mel amaran pemeriksaan dan sambungan pada tika ini, termasuk pemulihan. Mesej yang sudah beratur tidak berubah.",
+  "mailtpl.device": "Nama peranti dalam {{device}}",
+  "mailtpl.fallback": "Jika penerangan kosong, nama hos digunakan, kemudian ID peranti.",
+  "mailtpl.description": "Penerangan",
+  "mailtpl.hostname": "Nama hos",
+  "mailtpl.both": "Penerangan (nama hos)",
+  "mailtpl.kind": "Jenis mesej",
+  "mailtpl.alert": "Amaran",
+  "mailtpl.recovery": "Pemulihan",
+  "mailtpl.subject": "Subjek",
+  "mailtpl.body": "Mesej (teks biasa)",
+  "mailtpl.variables": "Klik subjek atau mesej, kemudian klik pemboleh ubah untuk memasukkannya. Pemboleh ubah diganti dengan maklumat setiap amaran.",
+  "mailtpl.preview": "Pratonton",
+  "mailtpl.reset": "Pulihkan lalai",
+  "mailtpl.saved": "Templat mesej disimpan",
+  "mailtpl.send": "Hantar contoh ke e-mel saya",
+  "mailtpl.testHint": "Contoh menggunakan tetapan yang disimpan dan alamat e-mel akaun anda. Simpan selepas memulihkan lalai.",
+  "mailtpl.example": "Data contoh sahaja. Pratonton tidak menyimpan perubahan atau menghantar e-mel.",
+
   'nav.dashboard': "Papan pemuka",
   'nav.chat': "Sembang AI",
   'nav.alerts': "Amaran",

@@ -532,3 +532,19 @@ test('AI release approval carries the hash of the reviewed script', async () => 
   await api.setScriptAIRelease('script-1', false);
   assert.deepEqual(JSON.parse(last().body), { release: false });
 });
+
+test('template preview does not invalidate drafts and the example sends a selected kind', async () => {
+  const { api, last, sandbox } = await loadApi();
+  let invalidations = 0;
+  sandbox.dataBus.sub(() => invalidations++);
+  const config = { device_name: 'hostname', alert: { subject: '{{device}}', body: '{{details}}' } };
+  await api.previewAlertTemplates(config, 'alert');
+  assert.equal(last().url, 'https://console.test/api/config/mail/templates/preview');
+  assert.deepEqual(JSON.parse(last().body), { config, event: 'alert' });
+  assert.equal(invalidations, 0);
+  await api.updateAlertTemplates(config);
+  assert.equal(invalidations, 1);
+  assert.equal(last().method, 'PUT');
+  await api.testAlertSMTP('', 'recovery');
+  assert.deepEqual(JSON.parse(last().body), { to: '', template_event: 'recovery' });
+});

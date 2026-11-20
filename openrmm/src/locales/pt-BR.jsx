@@ -6,6 +6,28 @@
  * tasks. Translating it would create two Portuguese words for two different
  * English ones, crossed over. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['pt-BR'] = {
+  'audit.action.config.mail.templates.update': 'Modelos de alertas atualizados',
+  // Alert email templates
+  "mailtpl.title": "Modelos de mensagens de alerta",
+  "mailtpl.scope": "Aplica-se a todos os e-mails de alertas de verificações e conexão desta instância, incluindo recuperações. As mensagens já na fila não mudam.",
+  "mailtpl.device": "Nome do dispositivo em {{device}}",
+  "mailtpl.fallback": "Se a descrição estiver vazia, usa o nome do host e depois o ID do dispositivo.",
+  "mailtpl.description": "Descrição",
+  "mailtpl.hostname": "Nome do host",
+  "mailtpl.both": "Descrição (nome do host)",
+  "mailtpl.kind": "Tipo de mensagem",
+  "mailtpl.alert": "Alerta",
+  "mailtpl.recovery": "Recuperação",
+  "mailtpl.subject": "Assunto",
+  "mailtpl.body": "Mensagem (texto simples)",
+  "mailtpl.variables": "Clique no assunto ou na mensagem e depois em uma variável para inseri-la. As variáveis são substituídas pelos dados de cada alerta.",
+  "mailtpl.preview": "Prévia",
+  "mailtpl.reset": "Restaurar padrões",
+  "mailtpl.saved": "Modelos de mensagens salvos",
+  "mailtpl.send": "Enviar exemplo ao meu e-mail",
+  "mailtpl.testHint": "O exemplo usa as configurações salvas e o e-mail da sua conta. É necessário salvar após restaurar os padrões.",
+  "mailtpl.example": "Apenas dados de exemplo. A prévia não salva alterações nem envia e-mails.",
+
   'nav.dashboard': 'Painel',
   'nav.chat': 'Chat com IA',
   'nav.alerts': 'Alertas',

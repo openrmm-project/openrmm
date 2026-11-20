@@ -1,5 +1,27 @@
 /* Simplified Chinese — MACHINE-DRAFTED, NOT REVIEWED. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['zh-CN'] = {
+  'audit.action.config.mail.templates.update': '已更新告警邮件模板',
+  // Alert email templates
+  "mailtpl.title": "告警邮件模板",
+  "mailtpl.scope": "适用于此实例的所有检查和连接告警邮件，包括恢复通知。已排队的邮件内容不会改变。",
+  "mailtpl.device": "{{device}} 中的设备名称",
+  "mailtpl.fallback": "描述为空时使用主机名，主机名也为空时使用设备 ID。",
+  "mailtpl.description": "描述",
+  "mailtpl.hostname": "主机名",
+  "mailtpl.both": "描述（主机名）",
+  "mailtpl.kind": "消息类型",
+  "mailtpl.alert": "告警",
+  "mailtpl.recovery": "恢复",
+  "mailtpl.subject": "主题",
+  "mailtpl.body": "消息（纯文本）",
+  "mailtpl.variables": "先点击主题或消息，再点击变量以插入。变量会替换为每条告警的实际信息。",
+  "mailtpl.preview": "预览",
+  "mailtpl.reset": "恢复默认值",
+  "mailtpl.saved": "邮件模板已保存",
+  "mailtpl.send": "发送示例到我的邮箱",
+  "mailtpl.testHint": "示例使用已保存的设置，并发送到你的账户邮箱。恢复默认值后需要保存。",
+  "mailtpl.example": "仅显示示例数据。预览不会保存更改或发送邮件。",
+
   'nav.dashboard': '仪表板',
   'nav.chat': 'AI 聊天',
   'nav.alerts': '告警',

@@ -51,7 +51,7 @@ function apiError(status, message) { const e = new Error(message); e.status = st
 /* ------------------------------- transport ------------------------------- */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function request(method, path, body, attempt = 0) {
+async function request(method, path, body, attempt = 0, invalidate = true) {
   const hadSession = !!session?.token;
   const headers = { 'Content-Type': 'application/json' };
   if (session && session.token) headers.Authorization = 'Bearer ' + session.token;
@@ -68,7 +68,7 @@ async function request(method, path, body, attempt = 0) {
     const ra = parseFloat(res.headers.get('Retry-After'));
     const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 350 * (attempt + 1) + Math.random() * 250;
     await sleep(Math.min(wait, 4000));
-    return request(method, path, body, attempt + 1);
+    return request(method, path, body, attempt + 1, invalidate);
   }
   if (res.status === 401) {
     setSession(null);
@@ -94,7 +94,7 @@ async function request(method, path, body, attempt = 0) {
     out = text ? JSON.parse(text) : undefined;
   }
   // Any mutation invalidates all live queries so the UI refreshes immediately.
-  if (method !== 'GET') bus.emit('*');
+  if (method !== 'GET' && invalidate) bus.emit('*');
   return out;
 }
 // guestCall is the transport for someone a technician invited: no account, no
@@ -421,7 +421,10 @@ const api = {
   testSMTP(to) { return POST('/api/config/smtp/test', { to }); },
   getAlertSMTPConfig() { return GET('/api/config/smtp/alerts'); },
   updateAlertSMTPConfig(body) { return PUT('/api/config/smtp/alerts', body); },
-  testAlertSMTP(to) { return POST('/api/config/smtp/alerts/test', { to }); },
+  testAlertSMTP(to, templateEvent) { return POST('/api/config/smtp/alerts/test', { to, template_event: templateEvent }); },
+  getAlertTemplates() { return GET('/api/config/mail/templates'); },
+  updateAlertTemplates(body) { return PUT('/api/config/mail/templates', body); },
+  previewAlertTemplates(config, event) { return request('POST', '/api/config/mail/templates/preview', { config, event }, 0, false); },
 
   /* ---- roles & permissions ---- */
   listRoles() { return GET('/api/roles'); },

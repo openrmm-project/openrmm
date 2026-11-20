@@ -6,6 +6,19 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- Editable alert and recovery email subjects and plain-text bodies in Alert email
+  settings, with hostname/description selection, draft previews and saved-template
+  sample delivery. Hostname remains the default; existing recipient scope and
+  deduplication rules are preserved.
+
+### Fixed
+
+- Notification links can use `RMM_CONSOLE_PUBLIC_URL` on split-ingress deployments,
+  instead of sending operators to the agents origin. An unset value retains the
+  existing `RMM_PUBLIC_URL` fallback.
+
 ## [0.11.4] - 2026-11-17
 
 ### Fixed

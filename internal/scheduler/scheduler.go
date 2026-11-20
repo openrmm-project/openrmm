@@ -842,19 +842,25 @@ func (s *Scheduler) queueAlertNotification(ctx context.Context, alert *models.Al
 		}
 	}
 	if s.notifier != nil {
+		// Old alerts retain their original access scope. Never copy a device's
+		// description from a newer scope into mail for the old recipients.
+		var description string
+		if agent, err := s.store.GetAgent(ctx, agentID); err == nil {
+			description = alertDeviceDescription(alert, agent)
+		}
 		var event notify.Event
 		if alert.NotificationKind == models.AlertEventResolved {
 			eventType := store.NotifyCheckRecovered
 			if alert.SourceType == models.AlertSourceAgent {
 				eventType = store.NotifyAgentRecovered
 			}
-			event = notify.AlertResolvedEvent(eventType, agentID, hostname, alert.ID, detail, s.consoleURL)
+			event = notify.AlertResolvedEvent(eventType, agentID, hostname, description, alert.ID, detail, s.consoleURL)
 		} else {
 			eventType := store.NotifyCheckFailed
 			if alert.SourceType == models.AlertSourceAgent {
 				eventType = store.NotifyAgentOffline
 			}
-			event = notify.AlertOpenedEvent(eventType, agentID, hostname, alert.ID, detail, s.consoleURL)
+			event = notify.AlertOpenedEvent(eventType, agentID, hostname, description, alert.ID, detail, s.consoleURL)
 		}
 		event.DedupeKey = fmt.Sprintf("alert:%s:%d", alert.ID, alert.NotificationSeq)
 		if err := s.notifier.Queue(ctx, event); err != nil {
@@ -862,6 +868,15 @@ func (s *Scheduler) queueAlertNotification(ctx context.Context, alert *models.Al
 		}
 	}
 	return s.store.MarkAlertNotificationQueued(ctx, alert.ID, alert.NotificationSeq, time.Now())
+}
+
+func alertDeviceDescription(alert *models.Alert, agent *models.Agent) string {
+	if alert == nil || agent == nil || alert.AgentSnapshotID == nil ||
+		*alert.AgentSnapshotID != agent.ID || alert.FirstSeenAt.IsZero() ||
+		agent.MonitoringScopeSince.IsZero() || agent.MonitoringScopeSince.After(alert.FirstSeenAt) {
+		return ""
+	}
+	return agent.Description
 }
 
 func (s *Scheduler) deliverPendingAlertNotifications(ctx context.Context) {

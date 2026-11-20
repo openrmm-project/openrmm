@@ -1,5 +1,27 @@
 /* Spanish. Reviewed. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['es'] = {
+  'audit.action.config.mail.templates.update': 'Plantillas de alertas actualizadas',
+  // Alert email templates
+  "mailtpl.title": "Plantillas de alertas",
+  "mailtpl.scope": "Se aplica a todos los correos de alertas de comprobaciones y conexión de esta instancia, incluidas las recuperaciones. Los mensajes ya en cola no cambian.",
+  "mailtpl.device": "Nombre del dispositivo en {{device}}",
+  "mailtpl.fallback": "Si la descripción está vacía, se usa el nombre de host y después el ID del dispositivo.",
+  "mailtpl.description": "Descripción",
+  "mailtpl.hostname": "Nombre de host",
+  "mailtpl.both": "Descripción (nombre de host)",
+  "mailtpl.kind": "Tipo de mensaje",
+  "mailtpl.alert": "Alerta",
+  "mailtpl.recovery": "Recuperación",
+  "mailtpl.subject": "Asunto",
+  "mailtpl.body": "Mensaje (texto sin formato)",
+  "mailtpl.variables": "Haz clic en el asunto o mensaje y luego en una variable para insertarla. Se sustituirá por los datos de cada alerta.",
+  "mailtpl.preview": "Vista previa",
+  "mailtpl.reset": "Restaurar valores predeterminados",
+  "mailtpl.saved": "Plantillas guardadas",
+  "mailtpl.send": "Enviar ejemplo a mi correo",
+  "mailtpl.testHint": "El ejemplo usa los ajustes guardados y el correo de tu cuenta. Debes guardar después de restaurar los valores predeterminados.",
+  "mailtpl.example": "Solo datos de ejemplo. La vista previa no guarda cambios ni envía correos.",
+
   'nav.dashboard': 'Panel',
   'nav.chat': 'Chat con IA',
   'nav.alerts': 'Alertas',

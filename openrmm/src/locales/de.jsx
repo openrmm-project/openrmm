@@ -1,5 +1,27 @@
 /* German — MACHINE-DRAFTED, NOT REVIEWED. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['de'] = {
+  'audit.action.config.mail.templates.update': 'Vorlagen für Alarmmeldungen aktualisiert',
+  // Alert email templates
+  "mailtpl.title": "Vorlagen für Alarmmeldungen",
+  "mailtpl.scope": "Gilt für alle Prüf- und Verbindungsalarme dieser Instanz, einschliesslich Entwarnungen. Bereits eingereihte Nachrichten bleiben unverändert.",
+  "mailtpl.device": "Gerätename in {{device}}",
+  "mailtpl.fallback": "Bei leerer Beschreibung wird der Hostname verwendet, danach die Geräte-ID.",
+  "mailtpl.description": "Beschreibung",
+  "mailtpl.hostname": "Hostname",
+  "mailtpl.both": "Beschreibung (Hostname)",
+  "mailtpl.kind": "Nachrichtentyp",
+  "mailtpl.alert": "Alarm",
+  "mailtpl.recovery": "Entwarnung",
+  "mailtpl.subject": "Betreff",
+  "mailtpl.body": "Nachricht (Klartext)",
+  "mailtpl.variables": "Klicke auf Betreff oder Nachricht und dann auf eine Variable. Die Variablen werden durch die Angaben zum jeweiligen Alarm ersetzt.",
+  "mailtpl.preview": "Vorschau",
+  "mailtpl.reset": "Standardwerte wiederherstellen",
+  "mailtpl.saved": "Nachrichtenvorlagen gespeichert",
+  "mailtpl.send": "Beispiel an meine E-Mail senden",
+  "mailtpl.testHint": "Das Beispiel verwendet die gespeicherten Einstellungen und deine Konto-E-Mail. Wiederhergestellte Standardwerte müssen gespeichert werden.",
+  "mailtpl.example": "Nur Beispieldaten. Die Vorschau speichert nichts und sendet keine E-Mail.",
+
   'nav.dashboard': 'Übersicht',
   'nav.chat': 'KI-Chat',
   'nav.alerts': 'Warnungen',

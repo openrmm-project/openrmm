@@ -156,7 +156,8 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 			return
 		}
 		var in struct {
-			To string `json:"to"`
+			To            string `json:"to"`
+			TemplateEvent string `json:"template_event"`
 		}
 		_ = decode(r, &in)
 		to := strings.TrimSpace(in.To)
@@ -216,7 +217,25 @@ func (s *Server) testSMTPConfig(profile string) http.HandlerFunc {
 			what = "Alert notifications leave through this transport."
 		}
 		body := "This is a test message from OpenRMM.\n\n" + what + "\n"
-		if err := notify.Send(cfg, notify.Message{To: to, Subject: "[OpenRMM] Test message", Body: body}); err != nil {
+		message := notify.Message{To: to, Subject: "[OpenRMM] Test message", Body: body}
+		if in.TemplateEvent != "" {
+			if profile != settings.ProfileAlerts {
+				writeErr(w, http.StatusBadRequest, "templates are for alert mail only")
+				return
+			}
+			templates, err := notify.LoadAlertTemplates(r.Context(), s.store)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			message, err = notify.RenderAlertTemplate(templates, in.TemplateEvent, notify.SampleAlertTemplateData(in.TemplateEvent, s.cfg.NotificationConsoleURL()))
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			message.To, message.Subject = to, "[TEST] "+message.Subject
+		}
+		if err := notify.Send(cfg, message); err != nil {
 			// The SMTP server's own words are the most useful thing we can show, and
 			// this endpoint is already restricted to operators who can edit settings.
 			writeErr(w, http.StatusBadGateway, err.Error())

@@ -1,5 +1,27 @@
 /* Russian — full key coverage; linguistic review by a native speaker pending. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['ru'] = {
+  'audit.action.config.mail.templates.update': 'Обновлены шаблоны уведомлений',
+  // Alert email templates
+  "mailtpl.title": "Шаблоны уведомлений",
+  "mailtpl.scope": "Применяется ко всем письмам о проверках и подключении в этом экземпляре, включая восстановление. Уже поставленные в очередь письма не меняются.",
+  "mailtpl.device": "Имя устройства в {{device}}",
+  "mailtpl.fallback": "Если описание пустое, используется имя хоста, затем ID устройства.",
+  "mailtpl.description": "Описание",
+  "mailtpl.hostname": "Имя хоста",
+  "mailtpl.both": "Описание (имя хоста)",
+  "mailtpl.kind": "Тип сообщения",
+  "mailtpl.alert": "Тревога",
+  "mailtpl.recovery": "Восстановление",
+  "mailtpl.subject": "Тема",
+  "mailtpl.body": "Сообщение (обычный текст)",
+  "mailtpl.variables": "Нажмите на тему или сообщение, затем на переменную для вставки. Переменные заменяются данными конкретного уведомления.",
+  "mailtpl.preview": "Предпросмотр",
+  "mailtpl.reset": "Восстановить значения по умолчанию",
+  "mailtpl.saved": "Шаблоны сохранены",
+  "mailtpl.send": "Отправить пример на мою почту",
+  "mailtpl.testHint": "Пример использует сохранённые настройки и адрес вашей учётной записи. После сброса настроек нужно нажать сохранение.",
+  "mailtpl.example": "Только пример данных. Предпросмотр не сохраняет изменения и не отправляет письма.",
+
   'nav.dashboard': "Панель управления",
   'nav.chat': "Чат с ИИ",
   'nav.alerts': "Оповещения",

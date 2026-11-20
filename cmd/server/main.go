@@ -142,11 +142,11 @@ func main() {
 	// transport: with no alerts server configured, alert mail is off.
 	notifier := notify.New(st, func(ctx context.Context) (notify.Config, string, error) {
 		smtpCfg, err := settings.AlertSMTPConfig(ctx, st, cfg)
-		return smtpCfg, cfg.PublicURL, err
+		return smtpCfg, cfg.NotificationConsoleURL(), err
 	})
 	jobSvc.WithNotifier(notifier)
 	sched := scheduler.New(st, h, jobSvc, patchSvc).
-		WithNotifier(notifier, cfg.PublicURL).
+		WithNotifier(notifier, cfg.NotificationConsoleURL()).
 		WithServerVersion(version).
 		WithRetention(cfg.AlertRetentionDays, cfg.CheckResultRetentionDays, cfg.NotificationRetentionDays).
 		WithAuditRetention(cfg.AuditRetentionDays)

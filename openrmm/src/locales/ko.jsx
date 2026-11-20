@@ -1,5 +1,27 @@
 /* Korean — full key coverage; linguistic review by a native speaker pending. */
 (window.LOCALE_STRINGS = window.LOCALE_STRINGS || {})['ko'] = {
+  'audit.action.config.mail.templates.update': '알림 메일 템플릿 업데이트됨',
+  // Alert email templates
+  "mailtpl.title": "알림 메일 템플릿",
+  "mailtpl.scope": "이 인스턴스의 모든 검사 및 연결 알림과 복구 메일에 적용됩니다. 이미 대기열에 있는 메일은 변경되지 않습니다.",
+  "mailtpl.device": "{{device}}에 표시할 장치 이름",
+  "mailtpl.fallback": "설명이 비어 있으면 호스트 이름을, 그것도 없으면 장치 ID를 사용합니다.",
+  "mailtpl.description": "설명",
+  "mailtpl.hostname": "호스트 이름",
+  "mailtpl.both": "설명 (호스트 이름)",
+  "mailtpl.kind": "메시지 유형",
+  "mailtpl.alert": "알림",
+  "mailtpl.recovery": "복구",
+  "mailtpl.subject": "제목",
+  "mailtpl.body": "메시지 (일반 텍스트)",
+  "mailtpl.variables": "제목 또는 메시지를 클릭한 다음 변수를 클릭해 삽입하세요. 변수는 각 알림의 정보로 바뀝니다.",
+  "mailtpl.preview": "미리 보기",
+  "mailtpl.reset": "기본값 복원",
+  "mailtpl.saved": "메시지 템플릿 저장됨",
+  "mailtpl.send": "내 이메일로 예시 보내기",
+  "mailtpl.testHint": "저장된 설정을 사용해 계정 이메일로 보냅니다. 기본값을 복원한 후에는 저장해야 합니다.",
+  "mailtpl.example": "예시 데이터만 표시합니다. 미리 보기는 변경 사항을 저장하거나 메일을 보내지 않습니다.",
+
   'nav.dashboard': "대시보드",
   'nav.chat': "AI 채팅",
   'nav.alerts': "알림",

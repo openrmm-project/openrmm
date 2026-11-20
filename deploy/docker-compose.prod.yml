@@ -124,6 +124,7 @@ services:
     environment:
       RMM_HTTP_ADDR: ":8080"
       RMM_PUBLIC_URL: ${RMM_PUBLIC_URL:?set the public HTTPS agents URL}
+      RMM_CONSOLE_PUBLIC_URL: ${RMM_CONSOLE_PUBLIC_URL:-}
       RMM_MCP_PUBLIC_URL: ${RMM_MCP_PUBLIC_URL:-}
       # The key /dl is signed with. The console puts it in the install command;
       # without it every HTTPS enrollment copied from the console is refused.

@@ -94,6 +94,7 @@ Edit only non-secret values and secret-file paths in `deploy/.env`:
 
 ```dotenv
 RMM_PUBLIC_URL=https://agents.rmm.example.com
+RMM_CONSOLE_PUBLIC_URL=https://rmm.example.com
 RMM_MCP_PUBLIC_URL=https://mcp.rmm.example.com
 RMM_MCP_OAUTH_ENABLED=false
 OPENRMM_BASE_PATH=/
@@ -121,6 +122,9 @@ administrator saves that setting, the saved value wins. Leave it `false`.
 The frontend is built for this path, nginx serves it there, and nginx generates
 `${OPENRMM_BASE_PATH}config.js` at runtime with
 `window.__API_BASE__ = location.origin`.
+
+`RMM_CONSOLE_PUBLIC_URL` is the browser console origin used in notification links.
+If unset, notification links retain the `RMM_PUBLIC_URL` fallback.
 
 `RMM_PUBLIC_URL` is the HTTPS agents origin. `RMM_MCP_PUBLIC_URL` is the HTTPS MCP
 origin and is mandatory when OAuth is enabled. Neither is the raw app address.

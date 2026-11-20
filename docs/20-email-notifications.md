@@ -105,6 +105,16 @@ on every 30s tick:
   no sender" — the last being the half-filled alerts profile that would otherwise
   stop every alert in complete silence. Recovery is logged once too.
 
+## Links to the console
+
+On split-ingress deployments, set `RMM_CONSOLE_PUBLIC_URL` to the browser console
+origin (for example, `https://rmm.example.com`). Alert and recovery messages,
+job-failure messages, and the shared-service footer use this address. Keep
+`RMM_PUBLIC_URL` set to the agents origin used for enrollment. When the console
+URL is unset, notification links fall back to `RMM_PUBLIC_URL` for compatibility
+with single-origin installations. Restart the server after changing this setting.
+This setting does not change OIDC, MCP, or account/password-reset URLs.
+
 ## Configuration
 
 The two transports are configured in two different places, and the split is the

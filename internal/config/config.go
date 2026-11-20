@@ -21,6 +21,8 @@ type Config struct {
 	// for enrollment commands. Installed agents derive relay URLs from the
 	// WebSocket origin passed as their -server setting.
 	PublicURL string
+	// ConsolePublicURL is the browser origin used in notification links.
+	ConsolePublicURL string
 	// MCPPublicURL is the externally reachable OAuth issuer/resource origin.
 	// It is intentionally separate from PublicURL in split-ingress deployments.
 	MCPPublicURL string
@@ -319,6 +321,7 @@ func Load() (*Config, error) {
 	c := &Config{
 		HTTPAddr:                   env("RMM_HTTP_ADDR", ":8080"),
 		PublicURL:                  env("RMM_PUBLIC_URL", "http://localhost:8080"),
+		ConsolePublicURL:           strings.TrimRight(os.Getenv("RMM_CONSOLE_PUBLIC_URL"), "/"),
 		MCPPublicURL:               strings.TrimRight(os.Getenv("RMM_MCP_PUBLIC_URL"), "/"),
 		DatabaseURL:                databaseURL,
 		AdminToken:                 adminToken,
@@ -505,4 +508,13 @@ func parseUpdatePublicKeys(raw string) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+// NotificationConsoleURL keeps single-origin installations compatible while
+// letting split-ingress deployments link to the browser console.
+func (c *Config) NotificationConsoleURL() string {
+	if c.ConsolePublicURL != "" {
+		return c.ConsolePublicURL
+	}
+	return c.PublicURL
 }

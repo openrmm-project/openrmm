@@ -6,6 +6,12 @@ tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- Notification links can use `RMM_CONSOLE_PUBLIC_URL` on split-ingress deployments,
+  instead of sending operators to the agents origin. An unset value retains the
+  existing `RMM_PUBLIC_URL` fallback.
+
 ## [0.11.4] - 2026-11-17
 
 ### Fixed

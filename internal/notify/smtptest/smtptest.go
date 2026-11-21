@@ -5,7 +5,10 @@ package smtptest
 
 import (
 	"bufio"
+	"io"
+	"mime/quotedprintable"
 	"net"
+	"net/mail"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +19,24 @@ type Message struct {
 	From string
 	To   []string
 	Data string // headers and body, as sent
+}
+
+// Text returns the decoded text of a captured message.
+func (m Message) Text(t testing.TB) string {
+	t.Helper()
+	msg, err := mail.ReadMessage(strings.NewReader(m.Data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := msg.Body
+	if strings.EqualFold(msg.Header.Get("Content-Transfer-Encoding"), "quoted-printable") {
+		body = quotedprintable.NewReader(body)
+	}
+	text, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(text)
 }
 
 // Server is a running fake SMTP server on 127.0.0.1.

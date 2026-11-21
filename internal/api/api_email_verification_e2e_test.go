@@ -68,9 +68,10 @@ func TestAlertRecipientConfirmationFlowIntegration(t *testing.T) {
 	if msgs[0].To[0] != "ana@example.test" || msgs[0].From != "alerts@notify.openrmm.test" {
 		t.Fatalf("confirmation went %v from %s", msgs[0].To, msgs[0].From)
 	}
-	m := verifyLinkRE.FindStringSubmatch(msgs[0].Data)
-	if m == nil || !strings.Contains(msgs[0].Data, "https://acme.openrmm.test/?verify-email=") {
-		t.Fatalf("no confirmation link in %q", msgs[0].Data)
+	body := msgs[0].Text(t)
+	m := verifyLinkRE.FindStringSubmatch(body)
+	if m == nil || !strings.Contains(body, "https://acme.openrmm.test/?verify-email=") {
+		t.Fatal("confirmation email has no verification link")
 	}
 
 	// Not confirmed yet: the user's settings say so.

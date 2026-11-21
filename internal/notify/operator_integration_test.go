@@ -37,8 +37,8 @@ func TestOperatorServiceDeliversOnlyToConfirmedRecipientsIntegration(t *testing.
 	if len(msgs) != 1 || msgs[0].To[0] != "confirmed@example.test" {
 		t.Fatalf("delivered %+v, want only the confirmed recipient", msgs)
 	}
-	if !strings.Contains(msgs[0].Data, "acme.openrmm.io") || !strings.Contains(msgs[0].Data, "comes from that instance") {
-		t.Errorf("the alert lacks the instance footer: %q", msgs[0].Data)
+	if text := msgs[0].Text(t); !strings.Contains(text, "acme.openrmm.io") || !strings.Contains(text, "comes from that instance") {
+		t.Error("the alert lacks the instance footer")
 	}
 	// The unconfirmed one is given up on, not retried forever.
 	again, err := st.ClaimPendingNotificationsLeased(ctx, 10, time.Minute)

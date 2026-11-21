@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,11 +32,15 @@ var sidecarRefresh sync.Mutex
 // and nothing here changes.
 func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	relay, ticket := a.relayForStart(rs)
+	if relay == "" {
+		log.Print("remote: invalid configured relay origin")
+		return
+	}
 	allowFiles := rs.AllowFiles == nil || *rs.AllowFiles
 	bin, err := a.ensureSidecar()
 	if err != nil {
 		log.Printf("remote: sidecar unavailable: %v", err)
-		a.reportRemoteFailure(relay, ticket, fmt.Sprintf("this endpoint could not prepare the remote module: %v", err))
+		a.reportRemoteFailure(rs, fmt.Sprintf("this endpoint could not prepare the remote module: %v", err))
 		return
 	}
 	// Kind "files" runs the sidecar in file-transfer-only mode (no screen
@@ -74,7 +77,7 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 	}
 	if err := launchSidecar(bin, relay, ticket, extra...); err != nil {
 		log.Printf("remote: failed to start sidecar: %v", err)
-		a.reportRemoteFailure(relay, ticket, fmt.Sprintf("this endpoint could not start the remote module: %v", err))
+		a.reportRemoteFailure(rs, fmt.Sprintf("this endpoint could not start the remote module: %v", err))
 	}
 }
 
@@ -84,7 +87,8 @@ func (a *agent) startRemoteSession(rs protocol.RemoteStartMsg) {
 // canvas until the pairing times out — with nothing to act on. Taking the
 // sidecar's place on the relay for one message turns that into a stated reason.
 // Best effort by design: a failure to report must not mask the original one.
-func (a *agent) reportRemoteFailure(relay, ticket, text string) {
+func (a *agent) reportRemoteFailure(rs protocol.RemoteStartMsg, text string) {
+	relay, ticket := a.relayForStart(rs)
 	if relay == "" {
 		return
 	}
@@ -109,59 +113,32 @@ func (a *agent) reportRemoteFailure(relay, ticket, text string) {
 }
 
 func (a *agent) relayForStart(rs protocol.RemoteStartMsg) (relay, ticket string) {
-	if rs.AgentTicket != "" {
-		return a.relayURL(rs.SessionID), rs.AgentTicket
+	if rs.AgentTicket == "" && rs.Token != "" {
+		return a.legacyRelayURL(rs.Token), ""
 	}
-	if rs.Token == "" {
-		return a.relayURL(rs.SessionID), ""
-	}
-	// A pre-ticket server names the relay itself. The screen and the elevated
-	// shell go wherever this URL points, so it must be this agent's own server:
-	// a relay on any other host is ignored for the one derived from it.
-	if rs.RelayURL != "" {
-		if a.onOwnServer(rs.RelayURL) {
-			return rs.RelayURL, ""
-		}
-		log.Printf("remote: ignoring a relay URL that is not on this agent's server")
-	}
-	return a.legacyRelayURL(rs.Token), ""
+	return a.relayURL(rs.SessionID), rs.AgentTicket
 }
 
-// onOwnServer reports whether raw is a WebSocket URL on the host (and port)
-// this agent connects to for /ws/agent, with the same scheme.
-func (a *agent) onOwnServer(raw string) bool {
-	own, err := url.Parse(a.wsURL)
-	if err != nil {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || (u.Scheme != "ws" && u.Scheme != "wss") {
-		return false
-	}
-	return strings.EqualFold(u.Scheme, own.Scheme) && strings.EqualFold(u.Host, own.Host)
-}
-
-// relayURL points the sidecar at the relay on the SAME host the agent dials for
-// /ws/agent. The session id is an identifier only; the ticket is sent in the
-// WebSocket handshake instead of the URL.
+// relayURL puts the session identifier in the URL. The ticket is sent in the
+// WebSocket handshake.
 func (a *agent) relayURL(sessionID string) string {
-	u, err := url.Parse(a.wsURL)
-	if err != nil {
-		return a.wsURL
-	}
-	u.Path = "/ws/remote"
-	u.RawQuery = "session=" + url.QueryEscape(sessionID) + "&role=agent"
-	return u.String()
+	return a.remoteRelayURL(url.Values{"role": {"agent"}, "session": {sessionID}})
 }
 
 func (a *agent) legacyRelayURL(ticket string) string {
-	u, err := url.Parse(a.wsURL)
-	if err != nil {
-		return a.wsURL
+	return a.remoteRelayURL(url.Values{"role": {"agent"}, "token": {ticket}})
+}
+
+// remoteRelayURL builds the relay address using the configured control origin.
+// Start messages supply handshake values. They do not select the destination.
+func (a *agent) remoteRelayURL(query url.Values) string {
+	origin, err := url.Parse(a.wsURL)
+	if err != nil || origin.Hostname() == "" || origin.User != nil ||
+		(origin.Scheme != "ws" && origin.Scheme != "wss") {
+		return ""
 	}
-	u.Path = "/ws/remote"
-	u.RawQuery = "role=agent&token=" + url.QueryEscape(ticket)
-	return u.String()
+	relay := url.URL{Scheme: origin.Scheme, Host: origin.Host, Path: "/ws/remote", RawQuery: query.Encode()}
+	return relay.String()
 }
 
 func sidecarSupportsTicket(path string) bool {

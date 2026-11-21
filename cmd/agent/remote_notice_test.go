@@ -9,19 +9,20 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/p1ngu/rmm/internal/protocol"
 )
 
 // A sidecar that cannot be prepared never reaches the relay, so the viewer has
 // only a black canvas to go on. The agent takes its place for one message.
 func TestReportRemoteFailureReachesTheViewer(t *testing.T) {
 	type received struct {
-		auth string
-		body []byte
+		request *http.Request
+		body    []byte
 	}
 	got := make(chan received, 1)
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -31,18 +32,21 @@ func TestReportRemoteFailureReachesTheViewer(t *testing.T) {
 		if err != nil {
 			return
 		}
-		got <- received{auth: auth, body: raw}
+		got <- received{request: r, body: raw}
 	}))
 	defer server.Close()
 
-	a := &agent{}
-	a.reportRemoteFailure("ws"+strings.TrimPrefix(server.URL, "http")+"/ws/remote?role=agent", "ticket-1",
+	a := &agent{wsURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/agent"}
+	a.reportRemoteFailure(protocol.RemoteStartMsg{SessionID: "s", AgentTicket: "ticket-1"},
 		"this endpoint could not prepare the remote module: no such file")
 
 	select {
 	case r := <-got:
-		if r.auth != "Remote-Agent ticket-1" {
-			t.Fatalf("authorization = %q", r.auth)
+		if r.request.URL.RequestURI() != "/ws/remote?role=agent&session=s" {
+			t.Fatalf("notice route = %q", r.request.URL.RequestURI())
+		}
+		if auth := r.request.Header.Get("Authorization"); auth != "Remote-Agent ticket-1" {
+			t.Fatalf("authorization = %q", auth)
 		}
 		var notice struct{ T, Text string }
 		if err := json.Unmarshal(r.body, &notice); err != nil {
@@ -65,9 +69,10 @@ func TestReportRemoteFailureToleratesAnUnreachableRelay(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		a := &agent{}
-		a.reportRemoteFailure("ws://127.0.0.1:1/ws/remote?role=agent", "", "unreachable")
-		a.reportRemoteFailure("", "", "no relay")
+		a := &agent{wsURL: "ws://127.0.0.1:1/ws/agent"}
+		a.reportRemoteFailure(protocol.RemoteStartMsg{}, "unreachable")
+		a.wsURL = ""
+		a.reportRemoteFailure(protocol.RemoteStartMsg{}, "no relay")
 	}()
 	select {
 	case <-done:

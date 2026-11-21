@@ -37,6 +37,10 @@ type termSession interface {
 //	                  text   = JSON {"t":"hello",...} on connect, {"t":"exit"} at end
 func (a *agent) startTerminalSession(rs protocol.RemoteStartMsg) {
 	relay, ticket := a.relayForStart(rs)
+	if relay == "" {
+		log.Print("terminal: invalid configured relay origin")
+		return
+	}
 	log.Printf("terminal: opening elevated shell for session %s", rs.SessionID)
 
 	var headers http.Header

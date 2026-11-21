@@ -1,6 +1,6 @@
 // Package notify delivers outbound email for alerts and password resets.
 //
-// It deliberately uses only net/smtp from the standard library: this server runs
+// It deliberately uses only the standard library: this server runs
 // with SYSTEM-level reach over the whole fleet, so every dependency added here is
 // a dependency in that blast radius.
 package notify
@@ -9,8 +9,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
+	"mime/quotedprintable"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"syscall"
@@ -121,6 +124,17 @@ func Send(cfg Config, msg Message) error {
 	if strings.TrimSpace(msg.To) == "" {
 		return errors.New("recipient is required")
 	}
+	from, err := parseMailbox(cfg.From)
+	if err != nil {
+		return fmt.Errorf("sender: %w", err)
+	}
+	to, err := parseMailbox(msg.To)
+	if err != nil {
+		return fmt.Errorf("recipient: %w", err)
+	}
+	if cfg.FromName != "" {
+		from.Name = sanitizeHeader(cfg.FromName)
+	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = 20 * time.Second
@@ -129,7 +143,6 @@ func Send(cfg Config, msg Message) error {
 	tlsCfg := &tls.Config{ServerName: cfg.Host, InsecureSkipVerify: cfg.SkipVerify} //nolint:gosec // opt-in for private CAs
 
 	var conn net.Conn
-	var err error
 	dialer := &net.Dialer{Timeout: timeout}
 	if cfg.PublicOnly {
 		dialer.Control = refuseNonPublic
@@ -169,18 +182,18 @@ func Send(cfg Config, msg Message) error {
 			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
-	if err := client.Mail(cfg.From); err != nil {
+	if err := client.Mail(envelopeMailbox(from)); err != nil {
 		return fmt.Errorf("MAIL FROM: %w", err)
 	}
-	if err := client.Rcpt(msg.To); err != nil {
-		return fmt.Errorf("RCPT TO %s: %w", msg.To, err)
+	if err := client.Rcpt(envelopeMailbox(to)); err != nil {
+		return fmt.Errorf("RCPT TO %s: %w", to.Address, err)
 	}
 	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("DATA: %w", err)
 	}
-	if _, err := w.Write([]byte(render(cfg, msg))); err != nil {
-		return fmt.Errorf("write body: %w", err)
+	if err := writeMessage(w, from, to, msg); err != nil {
+		return fmt.Errorf("write message: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("close body: %w", err)
@@ -188,49 +201,47 @@ func Send(cfg Config, msg Message) error {
 	return client.Quit()
 }
 
-// render builds the RFC 5322 message. Headers are sanitised because subjects
-// carry hostnames and check names that ultimately come from an endpoint: a
-// newline smuggled into one of them would let an attacker inject headers and
-// redirect the mail.
-func render(cfg Config, msg Message) string {
-	from := cfg.From
-	if cfg.FromName != "" {
-		from = fmt.Sprintf("%s <%s>", mime.QEncoding.Encode("utf-8", sanitizeHeader(cfg.FromName)), cfg.From)
+func parseMailbox(raw string) (*mail.Address, error) {
+	if strings.ContainsAny(raw, "\r\n") {
+		return nil, errors.New("invalid mailbox address")
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", from)
-	fmt.Fprintf(&b, "To: %s\r\n", sanitizeHeader(msg.To))
-	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("utf-8", sanitizeHeader(msg.Subject)))
-	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("Auto-Submitted: auto-generated\r\n") // keeps vacation responders quiet
-	b.WriteString("\r\n")
-	b.WriteString(normalizeBody(msg.Body))
-	return b.String()
+	addr, err := mail.ParseAddress(raw)
+	if err != nil {
+		return nil, errors.New("invalid mailbox address")
+	}
+	addr.Name = sanitizeHeader(addr.Name)
+	return addr, nil
+}
+
+func envelopeMailbox(addr *mail.Address) string {
+	// Format without a display name, restoring any required local-part quoting.
+	// net/smtp supplies the surrounding angle brackets.
+	address := (&mail.Address{Address: addr.Address}).String()
+	return address[1 : len(address)-1]
+}
+
+// writeMessage writes typed addresses and a MIME text body. The SMTP DATA
+// writer handles dot-stuffing on the wire.
+func writeMessage(w io.Writer, from, to *mail.Address, msg Message) error {
+	const headers = "From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n" +
+		"MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n" +
+		"Content-Transfer-Encoding: quoted-printable\r\nAuto-Submitted: auto-generated\r\n\r\n"
+	subject := mime.QEncoding.Encode("utf-8", sanitizeHeader(msg.Subject))
+	if _, err := fmt.Fprintf(w, headers, from.String(), to.String(), subject, time.Now().Format(time.RFC1123Z)); err != nil {
+		return err
+	}
+	body := msg.Body
+	if !strings.HasSuffix(body, "\n") && !strings.HasSuffix(body, "\r") {
+		body += "\n"
+	}
+	// The text-mode encoder canonicalizes LF, CRLF and bare CR to CRLF.
+	encoder := quotedprintable.NewWriter(w)
+	if _, err := io.WriteString(encoder, body); err != nil {
+		return err
+	}
+	return encoder.Close()
 }
 
 func sanitizeHeader(v string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
-}
-
-// normalizeBody applies CRLF line endings and dot-stuffing, so a body line that
-// happens to be "." cannot terminate the DATA command early. A bare CR counts
-// as a line break too: left in place, "\r.\r\n" in text an endpoint reported
-// (a hostname, check output) reaches the relay, and a server that ends lines
-// on a lone CR would read it as the end of the message ("SMTP smuggling").
-func normalizeBody(body string) string {
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "\n")
-	lines := strings.Split(body, "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(line, ".") {
-			lines[i] = "." + line
-		}
-	}
-	out := strings.Join(lines, "\r\n")
-	if !strings.HasSuffix(out, "\r\n") {
-		out += "\r\n"
-	}
-	return out
+	return strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(v)
 }

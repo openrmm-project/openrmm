@@ -5,7 +5,8 @@ import vm from 'node:vm';
 import { transformSync } from 'esbuild';
 
 const source = await readFile(new URL('../src/screens-patches.jsx', import.meta.url), 'utf8');
-const code = source.slice(source.indexOf('function complianceRows('), source.indexOf('function CatalogTab('));
+const code = source.slice(source.indexOf('function patchScanVerified('), source.indexOf('const PATCH_CLASSES')) +
+  source.slice(source.indexOf('function complianceRows('), source.indexOf('function CatalogTab('));
 function harness(rows) {
   const states = [], calls = []; let cursor = 0, tree;
   const sandbox = {
@@ -15,7 +16,10 @@ function harness(rows) {
     useToast: () => ({ info() {}, error() {} }),
     t: (key) => key, timeAgo: (v) => v, cx: (...values) => values.filter(Boolean).join(' '),
     window: { dataBus: { emit() {} } },
-    api: Object.fromEntries(['scanDevicePatches', 'installDevicePatches', 'rebootDevice'].map((name) => [name, async (...args) => calls.push({ name, args })])),
+    api: Object.fromEntries(['scanDevicePatches', 'scanFleetPatches', 'installDevicePatches', 'rebootDevice'].map((name) => [name, async (...args) => {
+      calls.push({ name, args });
+      return { dispatched: 1 };
+    }])),
     ...Object.fromEntries(['Card', 'Icon', 'Input', 'Button', 'Skeleton', 'EmptyState', 'OsIcon', 'ComplianceBadge', 'ConfirmDialog'].map((v) => [v, v])),
   };
   vm.createContext(sandbox);
@@ -42,11 +46,12 @@ const rows = [
 test('all data headers sort with natural text, numeric counts, actual time and stable ties; missing values stay last', () => {
   const before = JSON.stringify(rows), ui = harness(rows);
   assert.equal(ui.find((n) => n.type === 'th' && n.props['aria-sort']).length, 10);
-  for (const key of ['description', 'os', 'status', 'missing_total', 'missing_security', 'approved', 'failed', 'reboot_pending', 'last_scan']) {
+  for (const key of ['description', 'os', 'missing_total', 'missing_security', 'approved', 'failed', 'reboot_pending', 'last_scan']) {
     assert.deepEqual(ui.sorted(key, 'asc'), ['two', 'tie', 'ten', 'empty'], key);
     assert.deepEqual(ui.sorted(key, 'desc'), ['ten', 'two', 'tie', 'empty'], key);
   }
   assert.deepEqual(ui.sorted('hostname', 'asc'), ['two', 'tie', 'ten', 'empty']);
+  assert.deepEqual(ui.sorted('status', 'asc'), ['ten', 'two', 'tie', 'empty'], 'matching displayed statuses keep their original order');
   assert.equal(JSON.stringify(rows), before, 'query cache is not mutated');
   ui.sort('patches.col.missing');
   assert.equal(ui.header('patches.col.missing').props['aria-sort'], 'ascending');
@@ -76,8 +81,8 @@ test('sorted and filtered rows keep scan/install/reboot and bulk scan targets at
   await ui.find((n) => n.type === 'ConfirmDialog')[0].props.onConfirm();
   await ui.find((n) => n.type === 'Button' && n.children.includes('patches.scanAll'))[0].props.onClick();
   assert.deepEqual(JSON.parse(JSON.stringify(ui.calls)), [
-    { name: 'scanDevicePatches', args: ['ten'] }, { name: 'installDevicePatches', args: ['ten', []] },
-    { name: 'rebootDevice', args: ['ten'] }, { name: 'scanDevicePatches', args: ['ten'] },
+    { name: 'scanDevicePatches', args: ['ten', { refresh_metadata: false }] }, { name: 'installDevicePatches', args: ['ten', []] },
+    { name: 'rebootDevice', args: ['ten'] }, { name: 'scanFleetPatches', args: [['ten'], { refresh_metadata: false }] },
   ]);
 });
 

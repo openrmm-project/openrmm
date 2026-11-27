@@ -249,7 +249,7 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 	due, _ := s.store.PatchScanDue(ctx, patchScanInterval)
 	for _, id := range due {
 		if s.hub.IsOnline(id) {
-			s.patches.DispatchScan(id)
+			_, _ = s.patches.DispatchScan(ctx, id, false)
 		}
 	}
 	pendingReboot := map[string]bool{}

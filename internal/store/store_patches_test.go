@@ -19,7 +19,9 @@ func TestComplianceStatus(t *testing.T) {
 		{"failed install -> critical", models.ComplianceRow{LastScan: &now, Failed: 1}, "critical"},
 		{"missing non-security -> at_risk", models.ComplianceRow{LastScan: &now, MissingTotal: 2}, "at_risk"},
 		{"reboot pending -> at_risk", models.ComplianceRow{LastScan: &now, RebootPending: true}, "at_risk"},
-		{"clean -> compliant", models.ComplianceRow{LastScan: &now}, "compliant"},
+		{"clean legacy -> unknown", models.ComplianceRow{LastScan: &now}, "unknown"},
+		{"clean verified -> compliant", models.ComplianceRow{LastScan: &now, ScanState: &models.PatchScanState{Freshness: "verified"}}, "compliant"},
+		{"known security without successful scan -> critical", models.ComplianceRow{MissingSec: 1}, "critical"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,8 +41,24 @@ func (s *Service) send(agentID, typ string, payload any) error {
 }
 
 // DispatchScan asks an online agent to scan for missing patches.
-func (s *Service) DispatchScan(agentID string) error {
-	return s.send(agentID, protocol.MsgPatchScan, protocol.PatchScanMsg{})
+func (s *Service) DispatchScan(ctx context.Context, agentID string, refresh bool) (string, error) {
+	id := uuid.NewString()
+	if err := s.store.ReservePatchScan(ctx, agentID, id, refresh); err != nil {
+		return "", err
+	}
+	if sendErr := s.send(agentID, protocol.MsgPatchScan, protocol.PatchScanMsg{RequestID: id, RefreshMetadata: refresh}); sendErr != nil {
+		code := "scan_failed"
+		if errors.Is(sendErr, ErrOffline) {
+			code = "offline"
+		}
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := s.store.FailPatchScan(releaseCtx, agentID, id, code); err != nil {
+			return "", errors.Join(sendErr, err)
+		}
+		return "", sendErr
+	}
+	return id, nil
 }
 
 // DispatchInstall claims approved patches before delivery and always sends their

@@ -496,7 +496,10 @@ func (a *agent) handleFrame(raw []byte) {
 			go a.handleRemoteQuery(q)
 		}
 	case protocol.MsgPatchScan:
-		go a.runPatchScan()
+		var m protocol.PatchScanMsg
+		if len(env.Data) == 0 || json.Unmarshal(env.Data, &m) == nil {
+			go a.runPatchScan(m)
+		}
 	case protocol.MsgPatchInstall:
 		var m protocol.PatchInstallMsg
 		if json.Unmarshal(env.Data, &m) == nil {

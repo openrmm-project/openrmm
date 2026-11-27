@@ -113,6 +113,13 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+// Patch scan freshness fixture: known security plus an old API's clean row.
+const patchScanTime = new Date().toISOString();
+let patchScanState = { status: 'failed', scan_mode: 'cached', error_code: 'refresh_failed', last_attempt: patchScanTime, last_success: patchScanTime, last_metadata_refresh: patchScanTime, freshness: 'unverified' };
+let patchScanCalls = 0;
+let patchScanScenario = false;
+const patchFindings = [{ patch_id: 'patch-openssl', identifier: 'openssl', title: 'OpenSSL security update', classification: 'security', status: 'missing' }];
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
@@ -130,6 +137,22 @@ const server = createServer(async (req, res) => {
       if (!token) return json(res, 401, { error: 'missing bearer token' });
       if (token === 'expire-token') return json(res, 401, { error: 'expired token' });
       if (pathname === '/api/me') return json(res, 200, user);
+      if (patchScanScenario) {
+        if (pathname === '/api/reports/compliance') return json(res, 200, { rows: [
+          { agent_id: 'dev-1', hostname: 'SMOKE-PC', os: 'linux', status: 'critical', missing_total: 1, missing_security: 1, failed: 0, scan_state: patchScanState },
+          { agent_id: 'dev-2', hostname: 'LEGACY-CLEAN', os: 'windows', status: 'compliant', missing_total: 0, missing_security: 0, failed: 0 },
+        ] });
+        if (pathname === '/api/devices/dev-1/patches' && req.method === 'GET') return json(res, 200, { patches: patchFindings, scan_state: patchScanState });
+        if (pathname === '/api/devices/dev-1/patches/scan' && req.method === 'POST') {
+          patchScanCalls++;
+          if (patchScanCalls === 1) return json(res, 409, { error: 'patch scan already pending', dispatched: 0, busy: 1, offline: 0 });
+          patchScanState = { ...patchScanState, status: 'pending', request_id: 'scan-e2e', refresh_metadata: !!payload?.refresh_metadata, error_code: '', deadline: new Date(Date.now() + 60000).toISOString() };
+          setTimeout(() => { patchScanState = { ...patchScanState, status: 'failed', error_code: 'refresh_failed', deadline: null }; }, 500);
+          return json(res, 202, { status: 'scanning', request_id: 'scan-e2e', dispatched: 1, busy: 0, offline: 0 });
+        }
+        if (pathname === '/api/patches/scan' && req.method === 'POST') return json(res, 202, { dispatched: 0, busy: 1, offline: 1, failed: 0 });
+      }
+
       if (pathname === '/api/script-variables') {
         if (req.method === 'POST') {
           const item = { id: 'variable-e2e', ...payload, values: [] }; scriptVariables.push(item);
@@ -834,6 +857,40 @@ async function patchComplianceBrowserFlow() {
   return true;
 }
 
+async function patchScanFreshnessBrowserFlow() {
+  const wait = async (fn) => { for (let i = 0; i < 180; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); } throw new Error('Patch scan E2E timed out: ' + fn.toString()); };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const row = (name) => [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes(name));
+  (await wait(() => button('Patches'))).click();
+  await wait(() => row('SMOKE-PC') && row('LEGACY-CLEAN'));
+  if (!row('SMOKE-PC').textContent.includes('Critical')) throw new Error('Known security finding hidden');
+  if (row('LEGACY-CLEAN').textContent.includes('Compliant')) throw new Error('Legacy clean report claimed compliance');
+  if (!row('LEGACY-CLEAN').querySelector('[data-patch-freshness="unverified"]')) throw new Error('Legacy freshness missing');
+  const refresh = [...document.querySelectorAll('label')].find((el) => el.textContent.includes('Refresh package metadata'))?.querySelector('input');
+  if (!refresh) throw new Error('Fresh scan option missing'); refresh.click();
+  (await wait(() => button('Scan', row('SMOKE-PC')))).click();
+  await wait(() => document.body.textContent.includes('patch scan already pending'));
+  if (document.body.textContent.includes('Scan requested')) throw new Error('Conflict announced success');
+  (await wait(() => button('Scan', row('SMOKE-PC')))).click();
+  await wait(() => row('SMOKE-PC')?.querySelector('[data-patch-freshness="pending"]'));
+  if (!button('Scan', row('SMOKE-PC')).disabled) throw new Error('Pending scan can be dispatched twice');
+  // The per-device view reads the same failure and preserves the known finding.
+  await new Promise((r) => setTimeout(r, 650));
+  (await wait(() => button('Devices'))).click();
+  (await wait(() => row('SMOKE-PC')?.textContent.includes('zoe') && row('SMOKE-PC'))).click();
+  (await wait(() => { const tabs = [...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === 'Patches'); return tabs.length > 1 && tabs.at(-1); })).click();
+  await wait(() => document.querySelector('[data-patch-freshness="failed"]'));
+  if (!document.body.textContent.includes('OpenSSL security update')) throw new Error('Failure erased known findings');
+  if (!document.body.textContent.includes('Catalog refresh failed. No cached fallback was used.')) throw new Error('Failure category missing');
+  if (!document.body.textContent.includes('Last verified catalog refresh')) throw new Error('Historical refresh date missing');
+  // Navigate back to fleet and verify a zero-dispatch response is not success.
+  (await wait(() => button('Patches'))).click();
+  (await wait(() => button('Scan all'))).click();
+  await wait(() => document.body.textContent.includes('Dispatched: 0. Busy: 1. Offline: 1. Failed: 0.'));
+  if (document.body.textContent.includes('Scan requested for online devices')) throw new Error('Fleet announced unconditional success');
+  document.documentElement.dataset.patchScanE2e = 'passed'; return true;
+}
+
 async function patchPolicyPickersBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -1349,6 +1406,14 @@ try {
     assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/policies/pol-ai/exclusions')?.payload, { agent_id: 'dev-1' });
     assert.ok(apiRequests.some((r) => r.method === 'DELETE' && r.pathname === '/api/policies/pol-ai/exclusions/dev-1'), 'the device was put back');
     assert.equal(policyExclusions.length, 0);
+    patchScanScenario = true;
+    const patchScanFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: patchScanFreshnessBrowserFlow });
+    patchScanScenario = false;
+    assertBrowser(patchScanFlow, /data-patch-scan-e2e="passed"/);
+    const scanRequests = apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/devices/dev-1/patches/scan');
+    assert.equal(scanRequests.length, 2);
+    assert.ok(scanRequests.every((r) => r.payload?.refresh_metadata === true), 'fresh request option reached the endpoint');
+    assert.equal(apiRequests.filter((r) => r.method === 'POST' && r.pathname === '/api/patches/scan').length, 1);
     const patchPickersFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: patchPolicyPickersBrowserFlow });
     assertBrowser(patchPickersFlow, /data-patch-pickers-e2e="passed"/);
     assert.deepEqual(apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/patch-policies/patch-ai/assignments')?.payload,

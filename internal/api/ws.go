@@ -228,6 +228,7 @@ func (s *Server) detachAgentConnection(ctx context.Context, agentID string, ch c
 	defer unlock()
 	if s.hub.Remove(agentID, ch) {
 		_ = s.store.SetAgentStatus(ctx, agentID, models.AgentOffline)
+		_ = s.store.ReleaseOfflinePatchScan(ctx, agentID)
 	}
 }
 

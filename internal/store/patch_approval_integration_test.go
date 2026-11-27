@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/protocol"
 )
@@ -62,7 +64,13 @@ func (f patchApprovalFixture) agent(t *testing.T, host, siteID string) string {
 // report is one scan: the agent says these packages are missing.
 func (f patchApprovalFixture) report(t *testing.T, agentID string, identifiers ...string) {
 	t.Helper()
-	rep := &protocol.PatchReportMsg{OS: "linux"}
+	// These fixtures model authoritative endpoint scans. Legacy reports now
+	// merge conservatively and cannot clear or reopen previously resolved work.
+	requestID := uuid.NewString()
+	if err := f.st.ReservePatchScan(f.ctx, agentID, requestID, true); err != nil {
+		t.Fatal(err)
+	}
+	rep := &protocol.PatchReportMsg{OS: "linux", RequestID: requestID, ScanMode: protocol.PatchScanRefreshed}
 	for _, id := range identifiers {
 		rep.Patches = append(rep.Patches, protocol.PatchItem{Identifier: id, Title: id, Classification: protocol.PatchSecurity})
 	}

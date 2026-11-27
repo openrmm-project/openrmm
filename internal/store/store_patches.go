@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -55,18 +56,64 @@ const decisionStatusSQL = `COALESCE((
 // UpsertPatchReport stores an agent's current set of missing patches: it upserts
 // the catalog, puts each newly reported patch in the state its recorded decision
 // calls for (approved, excluded, or missing when undecided), keeps the approved/
-// excluded/failed state of patches already known, and clears patches no longer
-// reported (treated as resolved/installed). It also stamps last_patch_scan.
+// excluded/failed state of patches already known. Only a correlated refreshed
+// or native report clears patches no longer reported. Successful reconciliation
+// and its attempt state commit together; failed/stale reports never erase rows.
 func (s *Store) UpsertPatchReport(ctx context.Context, agentID string, rep *protocol.PatchReportMsg) error {
-	if rep.Error != "" {
-		// A failed scan is not an empty scan. Preserve the last trusted snapshot.
-		return fmt.Errorf("patch scan failed: %s", rep.Error)
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// Insert before locking also serializes a first legacy report and reservation.
+	if _, err = tx.Exec(ctx, `INSERT INTO agent_patch_scan_state(agent_id) VALUES($1) ON CONFLICT DO NOTHING`, agentID); err != nil {
+		return err
+	}
+	state, err := readPatchScanState(tx.QueryRow(ctx, `SELECT `+patchScanStateCols+` FROM agent_patch_scan_state WHERE agent_id=$1 FOR UPDATE`, agentID))
+	if err != nil {
+		return err
+	}
+	if rep.RequestID != "" {
+		if state.RequestID != rep.RequestID || state.Status != "pending" {
+			return nil
+		}
+		if state.Deadline == nil || !time.Now().Before(*state.Deadline) {
+			if _, err = tx.Exec(ctx, `UPDATE agent_patch_scan_state SET status='timed_out',error_code='timeout',deadline=NULL,consecutive_failures=consecutive_failures+1 WHERE agent_id=$1`, agentID); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+	} else if state.Status == "pending" {
+		// Old agents cannot correlate a report, so they cannot complete tracked work.
+		return nil
+	}
+	mode := rep.ScanMode
+	if rep.RequestID == "" {
+		mode = protocol.PatchScanLegacy
+	}
+	switch mode {
+	case protocol.PatchScanCached, protocol.PatchScanNative, protocol.PatchScanRefreshed:
+	default:
+		mode = protocol.PatchScanLegacy
+	}
+	code := protocol.SafePatchScanError(rep.ErrorCode)
+	if code == "" && rep.Error != "" {
+		code = protocol.SafePatchScanError(rep.Error)
+	}
+	if code == "" && state.RefreshMetadata && rep.RequestID != "" && mode != protocol.PatchScanRefreshed && mode != protocol.PatchScanNative {
+		code = "refresh_unverified"
+	}
+	if mode == protocol.PatchScanRefreshed && (!state.RefreshMetadata || rep.RequestID == "") {
+		mode = protocol.PatchScanCached
+	}
+	if code != "" {
+		if _, err = tx.Exec(ctx, `UPDATE agent_patch_scan_state SET status='failed',deadline=NULL,error_code=$2,scan_mode=$3,
+   last_attempt=CASE WHEN $4='' THEN now() ELSE last_attempt END,consecutive_failures=consecutive_failures+1 WHERE agent_id=$1`, agentID, code, mode, rep.RequestID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	authoritative := mode == protocol.PatchScanRefreshed || mode == protocol.PatchScanNative
 
 	seen := make([]string, 0, len(rep.Patches))
 	for _, p := range rep.Patches {
@@ -76,10 +123,14 @@ func (s *Store) UpsertPatchReport(ctx context.Context, agentID string, rep *prot
 			INSERT INTO patches (id, os, identifier, title, classification, kb, cves, reboot_required, first_seen, last_seen)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now(), now())
 			ON CONFLICT (os, identifier) DO UPDATE SET
-			    title=EXCLUDED.title, classification=EXCLUDED.classification, kb=EXCLUDED.kb,
-			    cves=EXCLUDED.cves, reboot_required=EXCLUDED.reboot_required, last_seen=now()
+			    title=CASE WHEN $9 OR patches.title='' THEN EXCLUDED.title ELSE patches.title END,
+                classification=CASE WHEN NOT $9 AND patches.classification IN ('security','critical') THEN patches.classification ELSE EXCLUDED.classification END,
+                kb=CASE WHEN $9 OR patches.kb='' THEN EXCLUDED.kb ELSE patches.kb END,
+                cves=CASE WHEN $9 THEN EXCLUDED.cves ELSE ARRAY(SELECT DISTINCT unnest(patches.cves || EXCLUDED.cves)) END,
+                reboot_required=CASE WHEN $9 THEN EXCLUDED.reboot_required ELSE patches.reboot_required OR EXCLUDED.reboot_required END,
+                last_seen=now()
 			RETURNING id`,
-			newID(), rep.OS, p.Identifier, p.Title, class, p.KB, emptyToArr(p.CVEs), p.RebootRequired).Scan(&patchID)
+			newID(), rep.OS, p.Identifier, p.Title, class, p.KB, emptyToArr(p.CVEs), p.RebootRequired, authoritative).Scan(&patchID)
 		if err != nil {
 			return err
 		}
@@ -92,25 +143,41 @@ func (s *Store) UpsertPatchReport(ctx context.Context, agentID string, rep *prot
 			INSERT INTO agent_patches (agent_id, patch_id, status, available_version, detected_at)
 			VALUES ($1,$2,`+decisionStatusSQL+`,$3, now())
 			ON CONFLICT (agent_id, patch_id) DO UPDATE SET
-			    available_version=EXCLUDED.available_version,
-			    status = CASE WHEN agent_patches.status IN ('missing','installed','installing') THEN EXCLUDED.status
+			    available_version=CASE WHEN $4 OR agent_patches.available_version='' THEN EXCLUDED.available_version ELSE agent_patches.available_version END,
+                status = CASE WHEN agent_patches.status='missing' OR ($4 AND agent_patches.status IN ('installed','installing')) THEN EXCLUDED.status
 			                  ELSE agent_patches.status END,
-			    detected_at = now(), error=''`,
-			agentID, patchID, p.Version); err != nil {
+			    detected_at = now(), error=CASE WHEN agent_patches.status='failed' THEN agent_patches.error ELSE '' END
+            WHERE NOT $4 OR (
+              (agent_patches.install_claimed_at IS NULL OR agent_patches.install_claimed_at < $5)
+              AND (agent_patches.install_result_at IS NULL OR agent_patches.install_result_at < $5)
+              AND (agent_patches.installed_at IS NULL OR agent_patches.installed_at < $5))`,
+			agentID, patchID, p.Version, authoritative, state.LastAttempt); err != nil {
 			return err
 		}
 	}
-	// Patches the device no longer reports are gone (installed elsewhere / removed).
-	if len(seen) > 0 {
-		if _, err := tx.Exec(ctx, `DELETE FROM agent_patches WHERE agent_id=$1 AND patch_id <> ALL($2)`, agentID, seen); err != nil {
+	// Only authoritative scans can establish that an omitted patch is resolved.
+	if authoritative && len(seen) > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_patches WHERE agent_id=$1 AND patch_id <> ALL($2)
+ AND (install_claimed_at IS NULL OR install_claimed_at < $3)
+ AND (installed_at IS NULL OR installed_at < $3)
+ AND (install_result_at IS NULL OR install_result_at < $3)`, agentID, seen, state.LastAttempt); err != nil {
 			return err
 		}
-	} else {
-		if _, err := tx.Exec(ctx, `DELETE FROM agent_patches WHERE agent_id=$1`, agentID); err != nil {
+	} else if authoritative {
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_patches WHERE agent_id=$1
+ AND (install_claimed_at IS NULL OR install_claimed_at < $2)
+ AND (installed_at IS NULL OR installed_at < $2)
+ AND (install_result_at IS NULL OR install_result_at < $2)`, agentID, state.LastAttempt); err != nil {
 			return err
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE agents SET last_patch_scan=now() WHERE id=$1`, agentID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE agent_patch_scan_state SET status='succeeded',deadline=NULL,error_code='',scan_mode=$2,
+ last_attempt=CASE WHEN $3='' THEN now() ELSE last_attempt END,last_success=now(),
+ last_metadata_refresh=CASE WHEN $2='refreshed' THEN now() ELSE last_metadata_refresh END,
+ consecutive_failures=0 WHERE agent_id=$1`, agentID, mode, rep.RequestID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -411,7 +478,7 @@ func (s *Store) ApprovedIdentifiers(ctx context.Context, agentID string) ([]stri
 // returns the exact identifiers claimed. Callers must dispatch only this list;
 // never pass an empty list to an endpoint package manager as "install all".
 func (s *Store) ClaimApprovedPatches(ctx context.Context, agentID string, identifiers []string) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `UPDATE agent_patches ap SET status='installing', error=''
+	rows, err := s.pool.Query(ctx, `UPDATE agent_patches ap SET status='installing', error='', install_claimed_at=now()
 		FROM patches p WHERE p.id=ap.patch_id AND ap.agent_id=$1 AND ap.status='approved'
 		AND ($2::text[] IS NULL OR p.identifier = ANY($2))
 		RETURNING p.identifier`, agentID, nilIfEmpty(identifiers))
@@ -455,7 +522,7 @@ func (s *Store) ApplyPatchResult(ctx context.Context, agentID string, res *proto
 		if !r.Success {
 			status, installedAt = models.PatchStatusFailed, nil
 		}
-		if _, err := tx.Exec(ctx, `UPDATE agent_patches ap SET status=$3, installed_at=$4, error=$5
+		if _, err := tx.Exec(ctx, `UPDATE agent_patches ap SET status=$3, installed_at=$4, error=$5, install_result_at=now()
 			FROM patches p WHERE p.id=ap.patch_id AND ap.agent_id=$1 AND p.identifier=$2`,
 			agentID, r.Identifier, status, installedAt, r.Error); err != nil {
 			return err
@@ -482,8 +549,14 @@ func (s *Store) SetRebootPending(ctx context.Context, agentID string, v bool) er
 // PatchScanDue returns agent ids that have never scanned or scanned longer ago
 // than interval (the scheduler filters these to online agents).
 func (s *Store) PatchScanDue(ctx context.Context, interval time.Duration) ([]string, error) {
-	cutoff := time.Now().Add(-interval)
-	rows, err := s.pool.Query(ctx, `SELECT id FROM agents WHERE last_patch_scan IS NULL OR last_patch_scan < $1`, cutoff)
+	if err := s.ExpirePatchScans(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT a.id FROM agents a LEFT JOIN agent_patch_scan_state ps ON ps.agent_id=a.id
+ WHERE (ps.status IS NULL OR ps.status<>'pending') AND
+ (ps.last_attempt IS NULL OR ps.last_attempt < now()- CASE WHEN ps.consecutive_failures>0
+ THEN make_interval(secs => LEAST(21600,900*power(2,LEAST(ps.consecutive_failures-1,5)))::double precision)
+ ELSE $1::interval END)`, interval.String())
 	if err != nil {
 		return nil, err
 	}
@@ -779,18 +852,22 @@ func emptyToIntArr(s []int) []int {
 
 // ComplianceReport summarizes patch state per in-scope device.
 func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.ComplianceRow, error) {
+	if err := s.ExpirePatchScans(ctx); err != nil {
+		return nil, err
+	}
 	where, args := f.where()
 	q := `
 		SELECT a.id, a.hostname, a.description, a.os, COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing')),
-		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing') AND pt.classification='security'),
+		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing') AND pt.classification IN ('security','critical')),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status='approved'),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status='failed'),
-		       a.reboot_pending, a.last_patch_scan
+		       a.reboot_pending, a.last_patch_scan, to_jsonb(ps)
 		FROM agents a` + reportJoins + `
+		LEFT JOIN agent_patch_scan_state ps ON ps.agent_id=a.id
 		LEFT JOIN agent_patches ap ON ap.agent_id = a.id
 		LEFT JOIN patches pt ON pt.id = ap.patch_id` + where + `
-		GROUP BY a.id, cl.name, s.name, g.name
+		GROUP BY a.id, cl.name, s.name, g.name, ps.agent_id
 		ORDER BY a.hostname`
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -800,9 +877,16 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 	var out []models.ComplianceRow
 	for rows.Next() {
 		var r models.ComplianceRow
+		var stateJSON []byte
 		if err := rows.Scan(&r.AgentID, &r.Hostname, &r.Description, &r.OS, &r.Client, &r.Site, &r.Department,
-			&r.MissingTotal, &r.MissingSec, &r.Approved, &r.Failed, &r.RebootPending, &r.LastScan); err != nil {
+			&r.MissingTotal, &r.MissingSec, &r.Approved, &r.Failed, &r.RebootPending, &r.LastScan, &stateJSON); err != nil {
 			return nil, err
+		}
+		if len(stateJSON) > 0 {
+			if err := json.Unmarshal(stateJSON, &r.ScanState); err != nil {
+				return nil, err
+			}
+			r.ScanState.Freshness = models.PatchFreshness(r.ScanState, time.Now())
 		}
 		r.Status = complianceStatus(r)
 		out = append(out, r)
@@ -812,12 +896,12 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 
 func complianceStatus(r models.ComplianceRow) string {
 	switch {
-	case r.LastScan == nil:
-		return "unknown"
 	case r.MissingSec > 0 || r.Failed > 0:
 		return "critical"
 	case r.MissingTotal > 0 || r.RebootPending:
 		return "at_risk"
+	case r.ScanState == nil || (r.ScanState.Freshness != "verified" && r.ScanState.Freshness != "native"):
+		return "unknown"
 	default:
 		return "compliant"
 	}

@@ -622,18 +622,61 @@ type PatchPolicyAssignment struct {
 
 // ComplianceRow is a per-device patch-compliance summary.
 type ComplianceRow struct {
-	AgentID       string     `json:"agent_id"`
-	Hostname      string     `json:"hostname"`
-	Description   string     `json:"description"`
-	OS            string     `json:"os"`
-	Client        string     `json:"client"`
-	Site          string     `json:"site"`
-	Department    string     `json:"department"`
-	MissingTotal  int        `json:"missing_total"`
-	MissingSec    int        `json:"missing_security"`
-	Approved      int        `json:"approved"`
-	Failed        int        `json:"failed"`
-	RebootPending bool       `json:"reboot_pending"`
-	LastScan      *time.Time `json:"last_scan,omitempty"`
-	Status        string     `json:"status"` // compliant|at_risk|critical|unknown
+	ScanState     *PatchScanState `json:"scan_state,omitempty"`
+	AgentID       string          `json:"agent_id"`
+	Hostname      string          `json:"hostname"`
+	Description   string          `json:"description"`
+	OS            string          `json:"os"`
+	Client        string          `json:"client"`
+	Site          string          `json:"site"`
+	Department    string          `json:"department"`
+	MissingTotal  int             `json:"missing_total"`
+	MissingSec    int             `json:"missing_security"`
+	Approved      int             `json:"approved"`
+	Failed        int             `json:"failed"`
+	RebootPending bool            `json:"reboot_pending"`
+	LastScan      *time.Time      `json:"last_scan,omitempty"`
+	Status        string          `json:"status"` // compliant|at_risk|critical|unknown
+}
+
+// PatchScanState retains attempt outcomes separately from the last successful inventory.
+type PatchScanState struct {
+	RequestID           string     `json:"request_id,omitempty"`
+	RefreshMetadata     bool       `json:"refresh_metadata"`
+	Status              string     `json:"status"`
+	LastAttempt         *time.Time `json:"last_attempt,omitempty"`
+	Deadline            *time.Time `json:"deadline,omitempty"`
+	LastSuccess         *time.Time `json:"last_success,omitempty"`
+	LastMetadataRefresh *time.Time `json:"last_metadata_refresh,omitempty"`
+	ScanMode            string     `json:"scan_mode"`
+	ErrorCode           string     `json:"error_code,omitempty"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	Freshness           string     `json:"freshness"`
+}
+
+// PatchFreshness applies to the current report. An older verified refresh does
+// not confer freshness on a subsequent cached or legacy report.
+func PatchFreshness(s *PatchScanState, now time.Time) string {
+	if s == nil {
+		return "unknown"
+	}
+	if s.Status == "pending" && s.Deadline != nil && now.Before(*s.Deadline) {
+		return "pending"
+	}
+	if s.Status != "succeeded" {
+		return "unverified"
+	}
+	if s.LastSuccess == nil {
+		return "unknown"
+	}
+	if now.Sub(*s.LastSuccess) > 24*time.Hour {
+		return "stale"
+	}
+	if s.ScanMode == "native" {
+		return "native"
+	}
+	if s.ScanMode == "refreshed" && s.LastMetadataRefresh != nil && s.LastMetadataRefresh.Equal(*s.LastSuccess) {
+		return "verified"
+	}
+	return "unverified"
 }

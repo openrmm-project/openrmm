@@ -2646,6 +2646,7 @@ function DevicePatches({ id, hostname }) {
   const toast = useToast();
   // A reboot takes the machine away from whoever is using it: asked, not fired.
   const [confirmReboot, setConfirmReboot] = useState(false);
+  const [refreshMetadata, setRefreshMetadata] = useState(false);
   const q = useQuery([id, 'dpatches'], () => api.devicePatches(id), { invalidateOn: ['patches'], poll: 5000 });
   const patches = q.data?.patches || [];
   const approved = patches.filter((p) => p.status === 'approved').length;
@@ -2653,14 +2654,17 @@ function DevicePatches({ id, hostname }) {
   const act = async (fn, msg) => { try { await fn(); toast.info(msg); window.dataBus.emit('patches'); } catch (e) { toast.error(t('common.failed'), e.message); } };
   return (
     <div>
+      <p className="text-[12px] text-muted mb-2">{t('pscan.scope')}</p>
+      <div className="mb-3"><PatchScanSummary state={q.data?.scan_state} /></div>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <div className="text-[12.5px] text-muted flex-1">{approved ? t('dpatch.summary', { items: tn('viewer.items', patches.length), approved }) : tn('viewer.items', patches.length)}</div>
-        {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={() => act(() => api.scanDevicePatches(id), t('dpatch.scanRequested'))}>{t('dpatch.scan')}</Button>}
+        {can('patches.manage') && <label className="text-[12px] text-muted flex items-center gap-1.5"><input type="checkbox" checked={refreshMetadata} onChange={(e) => setRefreshMetadata(e.target.checked)} />{t('pscan.refresh')}</label>}
+        {can('patches.manage') && <Button disabled={q.data?.scan_state?.status === 'pending'} size="sm" variant="secondary" icon="refresh" onClick={() => act(() => api.scanDevicePatches(id, { refresh_metadata: refreshMetadata }), t('dpatch.scanRequested'))}>{t('dpatch.scan')}</Button>}
         {can('patches.manage') && <Button size="sm" variant="primary" icon="download" disabled={!approved} onClick={() => act(() => api.installDevicePatches(id, []), t('dpatch.installing'))}>{t('dpatch.installApproved')}</Button>}
         {can('patches.manage') && <Button size="sm" variant="ghost" icon="refresh" onClick={() => setConfirmReboot(true)}>{t('reboot.button')}</Button>}
       </div>
       {q.loading ? <Skeleton className="h-20 w-full" />
-        : !patches.length ? <EmptyState icon="shield" title={t('dpatch.none')} msg={t('dpatch.noneMsg')} />
+        : !patches.length ? <EmptyState icon="shield" title={t(patchScanVerified(q.data?.scan_state) ? 'dpatch.none' : 'pscan.noneRecorded')} msg={t(patchScanVerified(q.data?.scan_state) ? 'dpatch.noneMsg' : 'pscan.unverified')} />
           : <div className="space-y-1.5">{patches.map((p) => (
             <div key={p.patch_id} className="flex items-center gap-2.5 rounded-lg border border-line bg-card px-3 py-2 text-[12.5px]">
               <span className={cx('text-[10.5px] font-semibold uppercase tracking-wide w-16 shrink-0', classColor(p.classification))}>{tEnum('patch.class', p.classification)}</span>

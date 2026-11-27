@@ -562,7 +562,8 @@ const api = {
 
   /* ---- patch management ---- */
   devicePatches(id) { return GET('/api/devices/' + id + '/patches'); },
-  scanDevicePatches(id) { return POST('/api/devices/' + id + '/patches/scan'); },
+  scanDevicePatches(id, options = {}) { return POST('/api/devices/' + id + '/patches/scan', options); },
+  scanFleetPatches(agentIDs, options = {}) { return POST('/api/patches/scan', { agent_ids: agentIDs, ...options }); },
   installDevicePatches(id, identifiers) { return POST('/api/devices/' + id + '/patches/install', { identifiers: identifiers || [] }); },
   rebootDevice(id) { return POST('/api/devices/' + id + '/reboot'); },
   patchCatalog() { return GET('/api/patches'); },

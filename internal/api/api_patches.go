@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -25,7 +26,12 @@ func (s *Server) listDevicePatches(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"patches": ps})
+	state, err := s.store.GetPatchScanState(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "unable to read scan state")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"patches": ps, "scan_state": state})
 }
 
 func (s *Server) scanDevicePatches(w http.ResponseWriter, r *http.Request) {
@@ -33,16 +39,28 @@ func (s *Server) scanDevicePatches(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgent(w, r, id) {
 		return
 	}
-	if err := s.patches.DispatchScan(id); err != nil {
-		if errors.Is(err, patches.ErrOffline) {
-			writeCodedErr(w, http.StatusServiceUnavailable, "device_offline", "device is offline")
-		} else {
-			writeErr(w, http.StatusServiceUnavailable, err.Error())
+	var in struct {
+		RefreshMetadata bool `json:"refresh_metadata"`
+	}
+	if err := decode(r, &in); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, "invalid scan options")
+		return
+	}
+	requestID, err := s.patches.DispatchScan(r.Context(), id, in.RefreshMetadata)
+	if err != nil {
+		if errors.Is(err, store.ErrPatchScanBusy) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "patch scan already pending", "dispatched": 0, "busy": 1, "offline": 0})
+			return
 		}
+		if errors.Is(err, patches.ErrOffline) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "device is offline", "code": "device_offline", "dispatched": 0, "busy": 0, "offline": 1})
+			return
+		}
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.scan", id, s.deviceAuditLabel(r, id))
-	writeJSON(w, http.StatusAccepted, map[string]any{"status": "scanning"})
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "scanning", "request_id": requestID, "dispatched": 1, "busy": 0, "offline": 0})
 }
 
 func (s *Server) installDevicePatches(w http.ResponseWriter, r *http.Request) {
@@ -476,4 +494,62 @@ func (s *Server) deletePatchPolicyAssignment(w http.ResponseWriter, r *http.Requ
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.policy.unassign", a.PolicyID,
 		targetAuditDetail("", assignmentTarget{ScopeType: a.ScopeType, ScopeID: a.ScopeID, OS: a.OS, Role: a.Role}))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// scanFleetPatches dispatches only to authorized devices and reports each outcome.
+func (s *Server) scanFleetPatches(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AgentIDs        []string `json:"agent_ids"`
+		RefreshMetadata bool     `json:"refresh_metadata"`
+	}
+	if err := decode(r, &in); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, "invalid scan options")
+		return
+	}
+	f, ok := s.checkedReportFilter(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.store.ComplianceReport(r.Context(), f)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "unable to list devices")
+		return
+	}
+	allowed := map[string]bool{}
+	for _, row := range rows {
+		allowed[row.AgentID] = true
+	}
+	ids := in.AgentIDs
+	if len(ids) == 0 {
+		for _, row := range rows {
+			ids = append(ids, row.AgentID)
+		}
+	}
+	for _, id := range ids {
+		if !allowed[id] {
+			writeErr(w, http.StatusForbidden, "device is outside your access scope")
+			return
+		}
+	}
+	counts := map[string]int{"dispatched": 0, "busy": 0, "offline": 0, "failed": 0}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		_, err := s.patches.DispatchScan(r.Context(), id, in.RefreshMetadata)
+		switch {
+		case err == nil:
+			counts["dispatched"]++
+			_ = s.store.AddAudit(r.Context(), actorOf(r), "patch.scan", id, s.deviceAuditLabel(r, id))
+		case errors.Is(err, store.ErrPatchScanBusy):
+			counts["busy"]++
+		case errors.Is(err, patches.ErrOffline):
+			counts["offline"]++
+		default:
+			counts["failed"]++
+		}
+	}
+	writeJSON(w, http.StatusAccepted, counts)
 }

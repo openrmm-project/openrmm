@@ -22,8 +22,8 @@ import (
 // scanPatches returns the OS patches currently missing on this host. Each OS
 // scanner shells out to the native tool (WUA / apt / dnf / softwareupdate) — all
 // CGO-free. NOTE: validate the exact parsing on real endpoints per OS.
-func scanPatches() (protocol.PatchReportMsg, error) {
-	rep := protocol.PatchReportMsg{OS: runtime.GOOS}
+func scanPatches(options protocol.PatchScanMsg) (protocol.PatchReportMsg, error) {
+	rep := protocol.PatchReportMsg{OS: runtime.GOOS, RequestID: options.RequestID, ScanMode: protocol.PatchScanNative}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	switch runtime.GOOS {
@@ -33,7 +33,15 @@ func scanPatches() (protocol.PatchReportMsg, error) {
 		return rep, err
 	case "linux":
 		var err error
-		rep.Patches, err = scanLinuxPatches(ctx)
+		if hasCmd("apt-get") {
+			rep.ScanMode = protocol.PatchScanCached
+			rep.Patches, err = scanAptWithRunner(ctx, options.RefreshMetadata, runPatchCommand, "")
+			if err == nil && options.RefreshMetadata {
+				rep.ScanMode = protocol.PatchScanRefreshed
+			}
+		} else {
+			rep.Patches, err = scanLinuxPatches(ctx)
+		}
 		return rep, err
 	case "darwin":
 		var err error
@@ -142,11 +150,7 @@ func hasCmd(name string) bool {
 // scanAptPatches parses `apt-get -s upgrade`'s "Inst" lines. Security is inferred
 // from the package origin suite (…-security).
 func scanAptPatches(ctx context.Context) ([]protocol.PatchItem, error) {
-	out, err := exec.CommandContext(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=true", "upgrade").Output()
-	if err != nil {
-		return nil, fmt.Errorf("apt patch scan: %w", err)
-	}
-	return parseAptUpgrade(string(out)), nil
+	return scanAptWithRunner(ctx, false, runPatchCommand, "")
 }
 
 func parseAptUpgrade(out string) []protocol.PatchItem {
@@ -473,12 +477,16 @@ func (a *agent) handlePatchInstall(m protocol.PatchInstallMsg) {
 	})
 }
 
-func (a *agent) runPatchScan() {
-	a.patchMu.Lock()
+func (a *agent) runPatchScan(options protocol.PatchScanMsg) {
+	if !a.patchMu.TryLock() {
+		a.queue(protocol.MsgPatchReport, protocol.PatchReportMsg{OS: runtime.GOOS, RequestID: options.RequestID, Error: "busy", ErrorCode: "busy"})
+		return
+	}
 	defer a.patchMu.Unlock()
-	report, err := scanPatches()
+	report, err := scanPatches(options)
 	if err != nil {
-		report.Error = err.Error()
+		report.ErrorCode = protocol.SafePatchScanError(patchScanError(err, "scan_failed").Error())
+		report.Error = report.ErrorCode
 	}
 	a.queue(protocol.MsgPatchReport, report)
 }

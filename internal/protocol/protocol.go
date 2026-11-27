@@ -51,7 +51,30 @@ const (
 
 // PatchScanMsg asks the agent to scan for missing OS patches and reply with a
 // PatchReportMsg.
-type PatchScanMsg struct{}
+type PatchScanMsg struct {
+	RequestID       string `json:"request_id,omitempty"`
+	RefreshMetadata bool   `json:"refresh_metadata,omitempty"`
+}
+
+// Scan modes describe how this report was obtained, not the age of host files.
+const (
+	PatchScanCached    = "cached"
+	PatchScanRefreshed = "refreshed"
+	PatchScanNative    = "native"
+	PatchScanLegacy    = "legacy"
+)
+
+// SafePatchScanError discards untrusted command output, repository URLs and secrets.
+func SafePatchScanError(code string) string {
+	switch code {
+	case "busy", "timeout", "permission", "output_limit", "refresh_failed", "scan_failed", "unsupported", "offline", "refresh_unverified":
+		return code
+	case "":
+		return ""
+	default:
+		return "scan_failed"
+	}
+}
 
 // PatchItem is one missing patch reported by the agent.
 type PatchItem struct {
@@ -66,9 +89,12 @@ type PatchItem struct {
 
 // PatchReportMsg is the agent's current set of missing patches.
 type PatchReportMsg struct {
-	OS      string      `json:"os"`
-	Patches []PatchItem `json:"patches"`
-	Error   string      `json:"error,omitempty"`
+	RequestID string      `json:"request_id,omitempty"`
+	ScanMode  string      `json:"scan_mode,omitempty"`
+	ErrorCode string      `json:"error_code,omitempty"`
+	OS        string      `json:"os"`
+	Patches   []PatchItem `json:"patches"`
+	Error     string      `json:"error,omitempty"`
 }
 
 // PatchInstallMsg tells the agent to install explicitly approved patch

@@ -65,6 +65,37 @@ function ComplianceBadge({ s }) {
   return <span className={cx('inline-flex items-center gap-1.5 rounded-full border px-2 py-[3px] text-[11.5px] font-medium', COMPLIANCE_STYLE[key])}>{t('comp.' + key)}</span>;
 }
 
+// Freshness belongs to this successful report, never to an earlier catalog.
+function patchScanVerified(state) {
+  if (state?.status !== 'succeeded' || !state.last_success) return false;
+  const age = Date.now() - Date.parse(state.last_success);
+  if (!Number.isFinite(age) || age < 0 || age > 24 * 3600000) return false;
+  return state.scan_mode === 'native' || (state.scan_mode === 'refreshed' && state.last_metadata_refresh === state.last_success);
+}
+function patchComplianceStatus(row) {
+  if (row.missing_security > 0 || row.failed > 0 || row.status === 'critical') return 'critical';
+  if (row.missing_total > 0 || row.reboot_pending || row.status === 'at_risk') return 'at_risk';
+  if (row.status === 'unknown') return 'unknown';
+  return patchScanVerified(row.scan_state) ? 'compliant' : 'unknown';
+}
+function PatchScanSummary({ state, lastScan }) {
+  const mode = ['cached', 'refreshed', 'native'].includes(state?.scan_mode) ? state.scan_mode : 'legacy';
+  const pending = state?.status === 'pending' && (!state.deadline || Date.parse(state.deadline) > Date.now());
+  const failed = ['failed', 'offline', 'timed_out'].includes(state?.status) || (state?.status === 'pending' && !pending);
+  const freshness = pending ? 'pending' : failed ? 'failed' : patchScanVerified(state) ? 'verified' : state?.last_success && Date.now() - Date.parse(state.last_success) > 24 * 3600000 ? 'stale' : 'unverified';
+  const scanError = ['busy', 'timeout', 'permission', 'output_limit', 'refresh_failed', 'scan_failed', 'unsupported', 'offline', 'refresh_unverified'].includes(state?.error_code) ? state.error_code : failed ? 'scan_failed' : '';
+  const date = (v) => v ? timeAgo(v) : t('patches.never');
+  return <div className="text-[11.5px] space-y-0.5" data-patch-freshness={freshness}>
+    <div className={freshness === 'verified' ? 'text-ok' : failed ? 'text-bad' : 'text-warn'}>{t('pscan.' + freshness)} · {t('pscan.mode.' + mode)}</div>
+    {scanError && <div className="text-bad">{t('pscan.error.' + scanError)}</div>}
+    <div>{t('pscan.attempt')}: {date(state?.last_attempt)}</div>
+    <div>{t('pscan.success')}: {date(state?.last_success || lastScan)}</div>
+    <div>{t('pscan.catalog')}: {date(state?.last_metadata_refresh)}</div>
+  </div>;
+}
+window.PatchScanSummary = PatchScanSummary;
+window.patchScanVerified = patchScanVerified;
+
 const PATCH_CLASSES = ['security', 'critical', 'important', 'moderate', 'optional', 'other'];
 // Sunday first, the index the server stores; names come from weekdayShort().
 const WEEKDAY_INDEXES = [0, 1, 2, 3, 4, 5, 6];
@@ -97,7 +128,7 @@ function complianceRows(data, search, sort) {
   const needle = search.toLowerCase();
   const values = {
     hostname: (r) => r.hostname, description: (r) => r.description, os: (r) => r.os,
-    status: (r) => r.status ? t('comp.' + r.status) : null,
+    status: (r) => r.status ? t('comp.' + patchComplianceStatus(r)) : null,
     missing_total: (r) => r.missing_total, missing_security: (r) => r.missing_security,
     approved: (r) => r.approved, failed: (r) => r.failed,
     reboot_pending: (r) => r.reboot_pending == null ? null : Number(r.reboot_pending),
@@ -119,6 +150,8 @@ function ComplianceTab() {
   const { can } = useAuth();
   const q = useQuery(['compliance'], () => api.compliance(), { invalidateOn: ['devices', 'patches'], poll: 15000 });
   const [search, setSearch] = useState('');
+  const [refreshMetadata, setRefreshMetadata] = useState(false);
+  const [dispatching, setDispatching] = useState(false);
   const [sort, setSort] = useState({ key: 'hostname', dir: 'asc' });
   const rows = complianceRows(q.data?.rows || [], search, sort);
   const sortBy = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
@@ -129,8 +162,17 @@ function ComplianceTab() {
       </button>
     </th>
   );
-  const scan = async (id) => { try { await api.scanDevicePatches(id); toast.info(t('dpatch.scanRequested'), t('patches.scanRequestedMsg')); } catch (e) { toast.error(t('patches.scanFailed'), e.message); } };
-  const scanAll = async () => { for (const r of rows) { try { await api.scanDevicePatches(r.agent_id); } catch (e) { /* offline */ } } toast.info(t('patches.scanAllRequested')); };
+  const scan = async (id) => { try { await api.scanDevicePatches(id, { refresh_metadata: refreshMetadata }); toast.info(t('dpatch.scanRequested'), t('patches.scanRequestedMsg')); window.dataBus.emit('patches'); } catch (e) { toast.error(t('patches.scanFailed'), e.message); } };
+  const scanAll = async () => {
+    setDispatching(true);
+    try {
+      const result = await api.scanFleetPatches(rows.map((r) => r.agent_id), { refresh_metadata: refreshMetadata });
+      const message = t('pscan.outcomes', { dispatched: result.dispatched || 0, busy: result.busy || 0, offline: result.offline || 0, failed: result.failed || 0 });
+      if (result.dispatched > 0) toast.info(message); else toast.error(t('patches.scanFailed'), message);
+      window.dataBus.emit('patches');
+    } catch (e) { toast.error(t('patches.scanFailed'), e.message); }
+    finally { setDispatching(false); }
+  };
   const install = async (r) => { try { await api.installDevicePatches(r.agent_id, []); toast.info(t('dpatch.installing'), t('patches.installingOn', { host: r.hostname })); window.dataBus.emit('patches'); } catch (e) { toast.error(t('patches.installFailed'), e.message); } };
   // A reboot takes the machine away from whoever is using it, so it is asked
   // for, not fired on the first click.
@@ -138,13 +180,15 @@ function ComplianceTab() {
   const reboot = async (r) => { try { await api.rebootDevice(r.agent_id); toast.info(t('reboot.requested'), t('reboot.requestedOn', { host: r.hostname })); window.dataBus.emit('patches'); } catch (e) { toast.error(t('reboot.failed'), e.message); } };
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
+      <div className="px-4 py-2 text-[12px] text-muted border-b border-line">{t('pscan.scope')}</div>
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-line">
         <div className="relative flex-1 max-w-xs">
           <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('patches.filterDevices')} className="pl-9 h-8" />
         </div>
         <div className="flex-1" />
-        {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={scanAll}>{t('patches.scanAll')}</Button>}
+        {can('patches.manage') && <label className="text-[12px] text-muted flex items-center gap-1.5"><input type="checkbox" checked={refreshMetadata} onChange={(e) => setRefreshMetadata(e.target.checked)} />{t('pscan.refresh')}</label>}
+        {can('patches.manage') && <Button disabled={dispatching || !rows.length} size="sm" variant="secondary" icon="refresh" onClick={scanAll}>{t('patches.scanAll')}</Button>}
       </div>
       {q.loading ? <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
         : !rows.length ? <EmptyState icon="shield" title={t('patches.noDevices')} msg={t('patches.noDevicesMsg')} />
@@ -172,16 +216,16 @@ function ComplianceTab() {
                       <td className="px-4 py-2 text-ink font-medium">{r.hostname}</td>
                       <td className="px-4 py-2 truncate max-w-[220px]" title={r.description || undefined}>{r.description?.trim() ? <span className="text-ink">{r.description}</span> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2"><span className="inline-flex items-center gap-1.5"><OsIcon os={r.os} />{r.os}</span></td>
-                      <td className="px-4 py-2"><ComplianceBadge s={r.status} /></td>
+                      <td className="px-4 py-2"><ComplianceBadge s={patchComplianceStatus(r)} /></td>
                       <td className="px-4 py-2 tabular">{r.missing_total}</td>
                       <td className={cx('px-4 py-2 tabular', r.missing_security > 0 && 'text-bad font-semibold')}>{r.missing_security}</td>
                       <td className={cx('px-4 py-2 tabular', r.approved > 0 && 'text-ok font-semibold')}>{r.approved || '—'}</td>
                       <td className={cx('px-4 py-2 tabular', r.failed > 0 && 'text-bad')}>{r.failed}</td>
                       <td className="px-4 py-2">{r.reboot_pending ? <span className="text-warn inline-flex items-center gap-1"><Icon name="refresh" size={12} />{t('patches.pending')}</span> : <span className="text-faint">—</span>}</td>
-                      <td className="px-4 py-2 text-faint whitespace-nowrap">{r.last_scan ? timeAgo(r.last_scan) : t('patches.never')}</td>
+                      <td className="px-4 py-2 text-faint whitespace-nowrap"><PatchScanSummary state={r.scan_state} lastScan={r.last_scan} /></td>
                       <td className="px-4 py-2 text-right whitespace-nowrap">{can('patches.manage') && (
                         <span className="inline-flex gap-1.5 justify-end">
-                          <Button size="sm" variant="ghost" icon="refresh" onClick={() => scan(r.agent_id)}>{t('dpatch.scan')}</Button>
+                          <Button size="sm" variant="ghost" icon="refresh" disabled={r.scan_state?.status === 'pending'} onClick={() => scan(r.agent_id)}>{t('dpatch.scan')}</Button>
                           <Button size="sm" variant="primary" icon="download" disabled={!r.approved} title={r.approved ? '' : t('patches.approveFirst')} onClick={() => install(r)}>{r.approved ? t('patches.installN', { n: r.approved }) : t('patches.install')}</Button>
                           {r.reboot_pending && <Button size="sm" variant="secondary" icon="refresh" onClick={() => setRebootRow(r)}>{t('reboot.button')}</Button>}
                         </span>

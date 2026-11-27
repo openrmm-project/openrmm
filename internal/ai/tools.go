@@ -102,7 +102,7 @@ func Tools() []Tool {
 		}},
 		{Type: "function", Function: FunctionDef{
 			Name:        "list_patches",
-			Description: "List the OS patches/updates currently missing on a device (Windows KBs, Linux advisories) with their classification (security/critical/...), status and whether a reboot is needed. Read-only — installing patches is a human/policy action.",
+			Description: "List the OS patches/updates currently missing on a device (Windows KBs, Linux advisories) with their classification (security/critical/...), status, reboot requirement and scan_state freshness/last attempt/error. Cached, legacy, failed or stale scans do not prove compliance; OS packages exclude Docker images and locally installed applications. Read-only — installing patches is a human/policy action.",
 			Parameters:  json.RawMessage(`{"type":"object","properties":{"agent_id":{"type":"string","description":"target device id"}},"required":["agent_id"],"additionalProperties":false}`),
 		}},
 		{Type: "function", Function: FunctionDef{
@@ -555,7 +555,11 @@ func listPatches(ctx context.Context, tc ToolContext, args json.RawMessage) (any
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"patches": ps}, nil
+	state, err := tc.Store.GetPatchScanState(ctx, in.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"patches": ps, "scan_state": state}, nil
 }
 
 func proposeScript(ctx context.Context, tc ToolContext, args json.RawMessage) ToolResult {

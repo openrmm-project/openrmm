@@ -407,6 +407,7 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermPatchesView)).Get("/devices/{id}/patches", s.listDevicePatches)
 		r.With(s.requirePermission(models.PermPatchesView)).Get("/patches", s.listPatchCatalog)
 		r.With(s.requirePermission(models.PermPatchesManage)).Post("/devices/{id}/patches/scan", s.scanDevicePatches)
+		r.With(s.requirePermission(models.PermPatchesManage)).Post("/patches/scan", s.scanFleetPatches)
 		r.With(s.requirePermission(models.PermPatchesManage)).Post("/devices/{id}/patches/install", s.installDevicePatches)
 		r.With(s.requirePermission(models.PermPatchesManage)).Post("/devices/{id}/reboot", s.rebootDevice)
 		r.With(s.requirePermission(models.PermPatchesManage)).Post("/patches/{id}/approve", s.approvePatch)

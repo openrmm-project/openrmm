@@ -21,15 +21,14 @@ func TestQueueSkipsWhenNoTransportIsConfigured(t *testing.T) {
 	}
 }
 
-// A settings read error is not "off": the event must still be queued so the
-// worker can deliver it once the database answers. With a nil store that shows
-// up as the attempt to reach it.
+// A settings read error is not off: keep the event for later delivery. A nil
+// store demonstrates that the queue path was reached rather than skipped.
 func TestQueueStillQueuesWhenSettingsCannotBeRead(t *testing.T) {
 	s := New(nil, func(context.Context) (Config, string, error) { return Config{}, "", errors.New("db down") })
 	defer func() {
 		if recover() == nil {
-			t.Error("a settings read error skipped the queue instead of queuing")
+			t.Error("config read error skipped queuing")
 		}
 	}()
-	_ = s.Queue(context.Background(), Event{Type: "alert_opened", AgentID: "a1"})
+	_ = s.Queue(context.Background(), Event{Type: "agent_offline", AgentID: "a1"})
 }

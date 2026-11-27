@@ -3,7 +3,6 @@ package notify
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -53,6 +52,8 @@ type Event struct {
 	Body         string
 	DedupeKey    string
 	TemplateData *AlertTemplateData
+	// AlertSnapshot is the exact durable model used to render this transition.
+	AlertSnapshot *models.Alert
 }
 
 // Queue fans an event out to every in-scope subscriber.
@@ -63,20 +64,14 @@ func (s *Service) Queue(ctx context.Context, ev Event) error {
 	if s == nil || ev.AgentID == "" {
 		return nil
 	}
-	// No alerts transport means alert mail is off — the default on a hosted
-	// tenant until they configure their own relay. Queuing anyway would bank up
-	// to a retention period of stale alerts and send them all the moment a
-	// relay appears. The alert itself is still in the console. A settings read
-	// error is not "off": queue, and let the worker retry.
-	operator := false
+	operator, disabled := false, false
 	if s.config != nil {
 		cfg, _, err := s.config(ctx)
-		if err == nil && !cfg.Enabled() {
-			return nil
-		}
-		operator = err == nil && cfg.Operator
+		// A read failure is not off: preserve the event in the outbox. The
+		// actual transport requirements are checked again before every send.
+		operator, disabled = err == nil && cfg.Operator, err == nil && !cfg.Enabled()
 	}
-	if ev.TemplateData != nil {
+	if !disabled && ev.TemplateData != nil {
 		message, err := s.renderAlertMail(ctx, ev)
 		if err != nil {
 			// A saved template that cannot be loaded or rendered (a setting saved
@@ -90,48 +85,20 @@ func (s *Service) Queue(ctx context.Context, ev Event) error {
 			ev.Subject, ev.Body = message.Subject, message.Body
 		}
 	}
-	var recipients []store.NotificationRecipient
-	var err error
 	if ev.AlertID != "" {
-		recipients, err = s.store.RecipientsForAlertEvent(ctx, ev.AlertID, ev.Type, store.DefaultSubscribed(ev.Type))
-	} else {
-		recipients, err = s.store.RecipientsForAgentEvent(ctx, ev.AgentID, ev.Type, store.DefaultSubscribed(ev.Type))
+		if ev.AlertSnapshot == nil || ev.AlertSnapshot.ID != ev.AlertID {
+			return fmt.Errorf("missing rendered alert snapshot")
+		}
+		return s.store.QueueAlertNotifications(ctx, ev.AlertSnapshot, ev.Type, ev.Subject, ev.Body, operator, disabled)
 	}
-	if err != nil {
-		log.Printf("notify: recipients for %s: %v", ev.Type, err)
-		return err
+	if disabled {
+		return nil
 	}
 	dedupeKey := ev.DedupeKey
 	if dedupeKey == "" {
 		dedupeKey = eventDedupeKey(ev.Type, ev.AlertID, ev.Subject, ev.Body)
 	}
-	var queueErr error
-	for _, r := range recipients {
-		// Through the operator's shared service, only confirmed addresses:
-		// otherwise a tenant administrator could point alerts, signed with
-		// the operator's domain, at anyone.
-		if operator && !r.Verified {
-			continue
-		}
-		userID, alertID := r.UserID, ev.AlertID
-		n := &models.Notification{
-			EventType: ev.Type,
-			AgentID:   &ev.AgentID,
-			UserID:    &userID,
-			Recipient: r.Email,
-			Subject:   ev.Subject,
-			Body:      ev.Body,
-			DedupeKey: dedupeKey + ":" + r.UserID,
-		}
-		if alertID != "" {
-			n.AlertID = &alertID
-		}
-		if err := s.store.EnqueueNotification(ctx, n); err != nil {
-			log.Printf("notify: enqueue for %s: %v", r.Email, err)
-			queueErr = errors.Join(queueErr, err)
-		}
-	}
-	return queueErr
+	return s.store.QueueAgentNotifications(ctx, ev.AgentID, ev.Type, ev.Subject, ev.Body, dedupeKey, operator)
 }
 
 // RunWorker drains the outbox until ctx is done.
@@ -187,25 +154,20 @@ func (s *Service) drain(ctx context.Context) {
 			log.Printf("notify: claimed message %s without a lease token", n.ID)
 			continue
 		}
+		ok, deniedReason, err := s.store.NotificationDeliveryAllowed(ctx, &n, cfg.Operator)
+		if err != nil {
+			log.Printf("notify: recipient check for %s: %v", n.ID, err)
+			// The lease expires for a retry. Never send when authorization could not be read.
+			continue
+		}
+		if !ok {
+			if err := s.store.MarkNotificationFailedLeased(ctx, n.ID, *n.LeaseToken, maxAttempts, maxAttempts, deniedReason, 0); err != nil {
+				log.Printf("notify: mark failed %s: %v", n.ID, err)
+			}
+			continue
+		}
 		body := n.Body
 		if cfg.Operator {
-			// Checked again at delivery: the address may have changed, or
-			// lost its confirmation, since the message was queued.
-			ok, err := false, error(nil)
-			if n.UserID != nil {
-				ok, err = s.recipientConfirmed(ctx, *n.UserID, n.Recipient)
-			}
-			if err != nil {
-				log.Printf("notify: recipient check for %s: %v", n.ID, err)
-				continue
-			}
-			if !ok {
-				if err := s.store.MarkNotificationFailedLeased(ctx, n.ID, *n.LeaseToken, maxAttempts, maxAttempts,
-					"recipient has not confirmed this address", 0); err != nil {
-					log.Printf("notify: mark failed %s: %v", n.ID, err)
-				}
-				continue
-			}
 			body += OperatorAlertFooter(publicURL)
 		}
 		sendErr := Send(cfg, Message{To: n.Recipient, Subject: n.Subject, Body: body})
@@ -545,15 +507,6 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// recipientConfirmed wraps the store check so a nil store (unit tests of the
-// rest of drain) reads as "not confirmed" rather than a panic.
-func (s *Service) recipientConfirmed(ctx context.Context, userID, email string) (bool, error) {
-	if s.store == nil {
-		return false, nil
-	}
-	return s.store.RecipientConfirmed(ctx, userID, email)
 }
 
 // OperatorAlertFooter says, under mail sent through the operator's shared

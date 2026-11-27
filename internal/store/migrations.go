@@ -159,6 +159,12 @@ var migrationV42SQL string
 //go:embed migrations/043_remote_e2e_key_review.sql
 var migrationV43SQL string
 
+//go:embed migrations/044_notification_delivery_context.sql
+var migrationV44SQL string
+
+//go:embed migrations/045_client_site_notification_routing.sql
+var migrationV45SQL string
+
 var migrations = []migration{
 	{version: 1, name: "baseline", sql: migrationV1SQL},
 	{version: 2, name: "pending_totp_secret", sql: migrationV2SQL},
@@ -203,6 +209,8 @@ var migrations = []migration{
 	{version: 41, name: "alert_email_safety", sql: migrationV41SQL},
 	{version: 42, name: "remote_e2e", sql: migrationV42SQL},
 	{version: 43, name: "remote_e2e_key_review", sql: migrationV43SQL},
+	{version: 44, name: "notification_delivery_context", sql: migrationV44SQL},
+	{version: 45, name: "client_site_notification_routing", sql: migrationV45SQL},
 }
 
 // Migrate applies pending migrations atomically. The transaction-scoped lock

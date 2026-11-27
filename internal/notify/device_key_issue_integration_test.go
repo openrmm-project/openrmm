@@ -21,7 +21,10 @@ func TestDeviceKeyIssueAlertIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newRecipient(t, ctx, st, "oncall@example.test", true)
+	recipientID := newRecipient(t, ctx, st, "oncall@example.test", true)
+	if err := st.SetNotificationRuleFilter(ctx, recipientID, store.NotificationRuleFilter{Mode: "selected"}); err != nil {
+		t.Fatal(err)
+	}
 	relay := Config{Host: "127.0.0.1", Port: 1, From: "alerts@notify.test", TLSMode: "none"}
 	svc := New(st, func(context.Context) (Config, string, error) { return relay, "https://rmm.example.test", nil })
 
@@ -48,5 +51,15 @@ func TestDeviceKeyIssueAlertIntegration(t *testing.T) {
 	}
 	if !store.ValidNotificationEvent(store.NotifyDeviceKeyIssue) || !store.DefaultSubscribed(store.NotifyDeviceKeyIssue) {
 		t.Fatal("device key issues are not a subscribable, default-on event")
+	}
+	if len(n.DeliveryContext) == 0 {
+		t.Fatal("a queued device key alert lacks delivery provenance")
+	}
+	if ok, reason, err := st.NotificationDeliveryAllowed(ctx, &n, relay.Operator); err != nil || !ok {
+		t.Fatalf("fresh device key notification authorized=%v, reason=%q, error=%v", ok, reason, err)
+	}
+	n.DeliveryContext = nil // Existing rows predate the delivery context migration.
+	if ok, reason, err := st.NotificationDeliveryAllowed(ctx, &n, relay.Operator); err != nil || !ok {
+		t.Fatalf("legacy device key notification authorized=%v, reason=%q, error=%v", ok, reason, err)
 	}
 }

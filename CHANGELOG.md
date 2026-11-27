@@ -6,7 +6,22 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- Client/Site alert email recipient settings with explicit inheritance or
+  replacement, scoped existing-account selection and conflict-safe audited saves.
+  New incidents capture their route for consistent recovery notifications; current
+  recipient rights are still enforced before delivery. Migration 045 preserves
+  automatic behavior for existing incidents. Upgrade all server/worker instances
+  together before configuring routes.
+
 ### Fixed
+
+- **Recheck queued alert recipients before delivery.** Before each SMTP attempt,
+  verify the current account, address, access, and subscriptions against the
+  device scope and rule recorded when the message was queued. Queue all
+  recipients and consume the pending incident transition in one transaction.
+  Migration 044 adds optional delivery context and keeps old outbox rows.
 
 - **A refused database password now says what usually causes it.** When
   PostgreSQL refuses the server's password (SQLSTATE 28P01), the server log

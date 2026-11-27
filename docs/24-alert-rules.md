@@ -176,6 +176,116 @@ Agent-owned and directly owned check silences are bound to the same scope revisi
 
 Migration 028 ships in 0.10.0. A test database that applied an earlier pre-release draft of it must be recreated: an applied migration is never edited, so a changed checksum is refused.
 
+## Client and Site email recipients
+
+In **Clients & Sites**, open a Client or Site action menu and choose **Alert email
+recipients**. Client and Site are the existing organization levels; no new device
+group hierarchy is added. The default is **Inherit from parent**: a Site inherits
+its Client selection, and a Client without a selection uses the existing automatic
+subscriber behavior. **Choose accounts** replaces the inherited selection at that
+level. A Site selection does not add to its Client's selection. Returning to
+inheritance is an explicit mode change.
+
+Selections contain existing active OpenRMM accounts with an address, `alerts.view`
+and a scope intersecting the target. They never grant access or bypass event
+subscriptions, selected-rule filters or transport-specific email verification.
+A recipient limited to one device can be selected for its Client, but receives
+only incidents it is authorized to read. Structural scopes work before devices
+are enrolled, including empty Sites and departments. External email addresses
+without an OpenRMM account are not accepted.
+
+The editor requires `clients.manage` and control of the complete target Client or
+Site. Its recipient search is scoped and limited to 200 results per query. An
+inherited selection can contain accounts from sibling Sites: their names, email
+addresses and IDs are not returned to a Site-limited editor. Only an unavailable
+count is shown. Unavailable selections are explicitly removed when an editor
+saves the remaining valid accounts. At most 200 unique accounts can be selected;
+a selected mode cannot be saved empty. Removing the last account later leaves an
+empty explicit selection; it does **not** restore automatic delivery. Choose
+inheritance or select another account to resume notifications deliberately.
+
+Changes apply to **new incidents**. Opening an incident captures the effective
+route, origin, version and recipient IDs. Recovery messages keep that original
+route, intersected with current recipient eligibility. Reopening creates a new
+incident with the current route. Moving a device preserves the existing historical
+scope rules and retires old incidents without a recovery email solely for the
+move. Nonincident job/AI notifications capture the effective route when queued.
+Device key warnings keep automatic routing and are subject to their own event
+subscriptions and access checks.
+
+Writes use `expected_version`, keep a versioned row even when returning to
+inheritance, and commit the route and audit event together. A concurrent change
+returns 409; the editor retains unsaved edits and offers explicit reload. Opening
+another Client/Site creates a separate editor. Access errors clear recipient data.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET/PUT | `/api/clients/{id}/notification-routing` | `clients.manage`, complete Client scope |
+| GET/PUT | `/api/sites/{id}/notification-routing` | `clients.manage`, complete Site scope |
+| GET | Either path plus `/recipients?q=...` | Same target access, scoped account options |
+
+PUT accepts only `expected_version`, `mode` (`inherit` or `selected`) and `user_ids`.
+GET returns local configuration, effective origin and authorized recipient labels.
+Recipient searches accept up to 200 Unicode characters. No route changes are
+available to AI tools in this feature.
+
+Migration 045 adds routing configuration and private incident route snapshots.
+Existing incidents are explicitly marked automatic, so upgrading does not rewrite
+their recipient policy. Audit ordering uses the existing upstream migration 039;
+this feature does not replace its function or rewrite old audit history.
+Append-only protections remain.
+
+Upgrade and restart **all server and notification worker instances together before
+configuring routes**. Older binaries do not understand route snapshots; mixed
+version rolling operation is not supported for this change. Back up the database
+and follow the normal deployment procedure. These development tests do not deploy
+the feature or change production recipient settings.
+
+## Queued email authorization
+
+Each new queued message records a private, versioned delivery context: event type,
+original device and organization IDs, incident sequence, and the rule that produced
+the message. The SMTP worker checks the recipient again before every attempt in
+both tenant and operator transport modes. The account must remain active, retain
+`alerts.view` and access to the recorded scope, keep the same address, and still
+subscribe to the event and (for incidents) the recorded rule. Address comparison is
+case-insensitive. Operator SMTP additionally requires a confirmed address; tenant
+SMTP keeps its existing confirmation behavior. A deterministic denial permanently
+fails that outbox item with a neutral reason. A database read failure prevents the
+send and leaves it retryable after the worker lease expires.
+
+Incident fanout is one database transaction. It locks the incident, checks the
+sequence, decision version and content used to compose the message, selects the
+recipients, inserts all outbox rows and consumes the pending transition together.
+An observation can change a message without changing the incident's decision
+version, so both are checked. A stale model is retried by the scheduler. Concurrent
+retries keep the existing `alert:<id>:<sequence>:<user>` deduplication identity.
+A deliberately disabled transport consumes the matching transition without
+banking stale mail; a settings read error is not treated as disabled.
+
+Changing the live device's location or the incident's governing rule does not
+rewrite queued provenance. Deleting those live rows does not erase the snapshot.
+An old queued message is still checked against current recipient rights over its
+original scope. A move continues to retire old incidents without generating a
+recovery email solely for that move. Nonincident failed-job, AI-release and device-key-review events capture
+membership when queued and use their event subscriptions independently of incident
+rule filters.
+
+Migration 044 adds nullable `notifications.delivery_context`. It does not invent
+provenance for old messages. For an old incident message, the historical incident
+scope can still authorize delivery, but the incident's current rule cannot prove
+the old message's rule. Accounts using selected-rule filters therefore cannot
+receive such legacy incident mail. Without a surviving historical incident, only
+unrestricted recipients without an incident-rule restriction can qualify. All
+other eligibility checks still apply. Anonymous, invalid or unsupported contexts
+fail closed. Password reset, email verification and explicit SMTP test messages
+use their existing direct-send paths and are unaffected.
+
+Authorization is checked immediately before SMTP. This cannot recall a message
+already accepted by an SMTP server, and it does not promise exactly-once delivery
+across a network failure after acceptance. Existing worker lease fencing remains
+in place.
+
 ## Validation
 
 Local validation covers config bounds and malformed input, rule version handling, restricted global writes, notification selection validation, all nine locale tables and console interaction flows. PostgreSQL-backed tests exercise migration upgrades/reapplication, scope precedence, agent result rejection, proposal review, incident continuity, notification scope and moved-device isolation. The router E2E test uses real authentication and persistence without an HTTP listener. Browser smoke flows run in CI only; no services are started by the local unit suite.

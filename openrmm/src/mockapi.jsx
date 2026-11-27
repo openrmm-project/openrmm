@@ -440,6 +440,9 @@ const api = {
   deleteRole(key) { return DELETE('/api/roles/' + encodeURIComponent(key)); },
 
   /* ---- org ---- */
+  getNotificationRouting(scope, id) { return GET('/api/' + (scope === 'client' ? 'clients' : 'sites') + '/' + encodeURIComponent(id) + '/notification-routing'); },
+  updateNotificationRouting(scope, id, body) { return PUT('/api/' + (scope === 'client' ? 'clients' : 'sites') + '/' + encodeURIComponent(id) + '/notification-routing', body); },
+  notificationRouteRecipients(scope, id, query = '') { return GET('/api/' + (scope === 'client' ? 'clients' : 'sites') + '/' + encodeURIComponent(id) + '/notification-routing/recipients?q=' + encodeURIComponent(query)); },
   listClients() { return GET('/api/clients'); },
   createClient(name) { return POST('/api/clients', { name }); },
   updateClient(id, name) { return PATCH('/api/clients/' + id, { name }); },

@@ -989,6 +989,7 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
   const { can } = useAuth();
   const toast = useToast();
   const [open, setOpen] = useState(true);
+  const [routing, setRouting] = useState(false);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -999,6 +1000,7 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
   const delClient = async () => { try { await api.deleteClient(client.id); window.dataBus.emit('org'); window.dataBus.emit('devices'); window.dataBus.emit('groups'); toast.info(t('clients.deleted')); } catch (e) { toast.error(t('common.failed'), e.message); } };
   return (
     <Card className="overflow-hidden">
+      <Modal open={routing} onClose={() => setRouting(false)} width="max-w-xl"><div className="p-5 space-y-4"><div className="flex items-center justify-between"><h2 className="font-semibold">{t('routing.title')} · {client.name}</h2><Button variant="ghost" onClick={() => setRouting(false)}>{t('action.close')}</Button></div>{routing && <window.NotificationRoutingPanel key={'client:' + client.id} scopeType="client" scopeId={client.id} />}</div></Modal>
       <div className="flex items-center gap-2 px-3.5 py-3">
         <button onClick={() => setOpen((o) => !o)} className="text-faint hover:text-ink"><Icon name={open ? 'chevdown' : 'chevright'} size={15} /></button>
         <Icon name="building" size={16} className="text-muted" />
@@ -1009,7 +1011,8 @@ function ClientNode({ client, sites, groups, devices, sel, setSel, selDept, setS
         </div>
         {!renaming && <span className="text-[11px] text-faint">{t('clients.devices', { n: clientCount(client.id) })}</span>}
         {can('clients.manage') && !renaming && (
-          <Dropdown align="right" width="w-48" trigger={<button className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={16} fill /></button>}>
+          <Dropdown align="right" width="w-48" trigger={<button data-routing-actions={'client:' + client.id} className="text-faint hover:text-ink p-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={16} fill /></button>}>
+            <MenuItem icon="mail" onClick={() => setRouting(true)}>{t('routing.title')}</MenuItem>
             <MenuItem icon="edit" onClick={() => { setRename(client.name); setRenaming(true); }}>{t('clients.rename')}</MenuItem>
             <div className="my-1 border-t border-line" />
             <MenuItem icon="trash" onClick={() => setConfirmDel(true)}>{t('clients.delete')}</MenuItem>
@@ -1181,6 +1184,7 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   const { can } = useAuth();
   const toast = useToast();
   const [enrollToken, setEnrollToken] = useState(null);
+  const [routing, setRouting] = useState(false);
   const [busy, setBusy] = useState(false);
   const groupsQ = useQuery(['groups'], () => api.listGroups(), { invalidateOn: ['groups'] });
   const depts = (groupsQ.data?.groups || []).filter((g) => g.site_id === site.id);
@@ -1283,6 +1287,7 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
   );
   return (
     <>
+    <Modal open={routing} onClose={() => setRouting(false)} width="max-w-xl"><div className="p-5 space-y-4"><div className="flex items-center justify-between"><h2 className="font-semibold">{t('routing.title')} · {site.name}</h2><Button variant="ghost" onClick={() => setRouting(false)}>{t('action.close')}</Button></div>{routing && <window.NotificationRoutingPanel key={'site:' + site.id} scopeType="site" scopeId={site.id} />}</div></Modal>
     <Card className="p-5">
       <div className="flex items-start gap-3 mb-4">
         <div className="h-10 w-10 rounded-xl bg-elevated border border-line flex items-center justify-center text-muted"><Icon name="pin" size={19} /></div>
@@ -1293,7 +1298,8 @@ function SiteDetail({ site, client, devices, siteDeviceTotal, clients, sites, qu
           <div className="text-[12px] text-muted">{t('site.summary', { client: client?.name || '—', n: devices.length })}</div>
         </div>
         {can('clients.manage') && !renaming && (
-          <Dropdown align="right" width="w-52" trigger={<button className="text-faint hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={18} fill /></button>}>
+          <Dropdown align="right" width="w-52" trigger={<button data-routing-actions={'site:' + site.id} className="text-faint hover:text-ink p-1.5 -mr-1 rounded-lg hover:bg-elevated"><Icon name="dots" size={18} fill /></button>}>
+            <MenuItem icon="mail" onClick={() => setRouting(true)}>{t('routing.title')}</MenuItem>
             <MenuItem icon="edit" onClick={() => { setRename(site.name); setRenaming(true); }}>{t('site.rename')}</MenuItem>
             <MenuItem icon="building" onClick={() => setCreatingDept(true)}>{t('site.createDept')}</MenuItem>
             <div className="my-1 border-t border-line" />

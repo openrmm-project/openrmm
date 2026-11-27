@@ -10,6 +10,16 @@ import WebSocket from 'ws';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.woff2': 'font/woff2' };
 const permissions = ['ai_chat.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'scripts.variables', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'];
+let routingBrowserMode = false;
+const routingUsers = [{ id: 'routing-alice', username: 'Alice', email: 'alice@example.test' }, { id: 'routing-bob', username: 'Bob', email: 'bob@example.test' }];
+const routingSettings = { client: { mode: 'inherit', user_ids: [], version: 0 }, site: { mode: 'inherit', user_ids: [], version: 0 } };
+let routingConflict = true;
+function routingResponse(scope) {
+  const local = routingSettings[scope];
+  const origin = local.mode === 'selected' ? scope : scope === 'site' && routingSettings.client.mode === 'selected' ? 'client' : null;
+  const route = origin ? routingSettings[origin] : { mode: 'automatic', user_ids: [], version: 0 };
+  return { local: { ...local, recipients: routingUsers.filter((u) => local.user_ids.includes(u.id)), unavailable_count: 0 }, effective: { mode: route.mode, version: route.version, scope_type: origin || '', scope_id: origin === 'client' ? 'routing-client' : origin ? 'routing-site' : '', source_name: origin === 'client' ? 'Routing client' : origin ? 'Routing office' : '', recipients: routingUsers.filter((u) => route.user_ids.includes(u.id)), unavailable_count: 0 } };
+}
 const user = { id: 'user-1', username: 'smoke-admin', role: 'admin', permissions, created_at: '2026-01-01T00:00:00Z' };
 const apiRequests = [];
 // A pre-existing direct check to edit and then share through a policy.
@@ -129,6 +139,19 @@ const server = createServer(async (req, res) => {
       apiRequests.push({ method: req.method, pathname, token, payload });
       if (!token) return json(res, 401, { error: 'missing bearer token' });
       if (token === 'expire-token') return json(res, 401, { error: 'expired token' });
+      const routingMatch = /^\/api\/(clients|sites)\/routing-(client|site)\/notification-routing(\/recipients)?$/.exec(pathname);
+      if (routingMatch && routingBrowserMode) {
+        const scope = routingMatch[1] === 'clients' ? 'client' : 'site';
+        if (routingMatch[3]) return json(res, 200, { recipients: routingUsers, has_more: false });
+        if (req.method === 'PUT') {
+          if (scope === 'site' && routingConflict) { routingConflict = false; routingSettings.site.version++; return json(res, 409, { error: 'concurrent fixture edit' }); }
+          if (payload.expected_version !== routingSettings[scope].version) return json(res, 409, { error: 'version conflict' });
+          routingSettings[scope] = { mode: payload.mode, user_ids: payload.user_ids, version: payload.expected_version + 1 };
+        }
+        return json(res, 200, routingResponse(scope));
+      }
+      if (routingBrowserMode && pathname === '/api/clients') return json(res, 200, { clients: [{ id: 'routing-client', name: 'Routing client' }] });
+      if (routingBrowserMode && pathname === '/api/sites') return json(res, 200, { sites: [{ id: 'routing-site', client_id: 'routing-client', name: 'Routing office' }] });
       if (pathname === '/api/me') return json(res, 200, user);
       if (pathname === '/api/script-variables') {
         if (req.method === 'POST') {
@@ -834,6 +857,33 @@ async function patchComplianceBrowserFlow() {
   return true;
 }
 
+async function notificationRoutingBrowserFlow() {
+  const wait = async (fn) => { for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); } throw new Error('Routing E2E timed out: ' + fn.toString()); };
+  const button = (text, root = document) => [...root.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const panel = () => document.querySelector('[data-notification-routing]');
+  const effective = () => panel()?.querySelector('[data-routing-effective]')?.textContent || '';
+  const choose = (value) => { const select = panel().querySelector('select'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, value); select.dispatchEvent(new Event('change', { bubbles: true })); };
+  const pick = (name) => [...panel().querySelectorAll('label')].find((el) => el.textContent.includes(name)).querySelector('input').click();
+  const open = async (scope) => { (await wait(() => document.querySelector('[data-routing-actions="' + scope + '"]'))).click(); (await wait(() => button('Alert email recipients'))).click(); await wait(panel); };
+  (await wait(() => button('Clients & Sites'))).click();
+  await open('client:routing-client');
+  choose('selected'); await wait(() => panel().querySelector('input[type="checkbox"]')); pick('Alice');
+  button('Save', panel()).click(); await wait(() => effective().includes('Selection from Routing client'));
+  button('Close').click(); await wait(() => !panel());
+  (await wait(() => [...document.querySelectorAll('button')].find((el) => el.textContent.trim().startsWith('Routing office')))).click();
+  await open('site:routing-site');
+  if (panel().querySelector('select').value !== 'inherit' || !effective().includes('alice@example.test')) throw new Error('Site did not inherit Client selection');
+  choose('selected'); await wait(() => panel().querySelector('input[type="checkbox"]')); pick('Bob');
+  button('Save', panel()).click(); await wait(() => panel().querySelector('[role="alert"]')?.textContent.includes('Someone changed'));
+  if (![...panel().querySelectorAll('label')].find((el) => el.textContent.includes('Bob')).querySelector('input').checked) throw new Error('Conflict lost selected recipient');
+  button('Reload saved configuration', panel()).click(); await wait(() => panel()?.querySelector('select')?.value === 'inherit');
+  choose('selected'); await wait(() => panel().querySelector('input[type="checkbox"]')); pick('Bob');
+  button('Save', panel()).click(); await wait(() => effective().includes('Selection from Routing office') && effective().includes('bob@example.test'));
+  if (effective().includes('alice@example.test')) throw new Error('Site selection added to rather than replaced Client');
+  choose('inherit'); button('Save', panel()).click(); await wait(() => effective().includes('Selection from Routing client') && effective().includes('alice@example.test'));
+  document.documentElement.dataset.notificationRoutingE2e = 'passed'; return true;
+}
+
 async function patchPolicyPickersBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -1342,6 +1392,13 @@ try {
       '/api/devices/dev-2/patches/scan',
       '/api/devices/dev-3/patches/scan',
     ], 'each filtered row scans only its own device');
+    routingBrowserMode = true;
+    const routingFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: notificationRoutingBrowserFlow });
+    assertBrowser(routingFlow, /data-notification-routing-e2e="passed"/);
+    routingBrowserMode = false;
+    assert.deepEqual(routingSettings.client.user_ids, ['routing-alice']);
+    assert.deepEqual(routingSettings.site, { mode: 'inherit', user_ids: [], version: 3 });
+    assert.equal(apiRequests.filter((r) => r.method === 'PUT' && /notification-routing$/.test(r.pathname)).length, 4);
     const targetingFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: policyTargetingBrowserFlow });
     assertBrowser(targetingFlow, /data-policy-targeting-e2e="passed"/);
     assert.deepEqual(apiRequests.filter((r) => r.method === 'PUT' && r.pathname === '/api/devices/dev-1/role').map((r) => r.payload), [{ role: 'server' }, { role: '' }]);

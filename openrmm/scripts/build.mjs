@@ -39,6 +39,7 @@ const sources = [
   'src/screens-jobs.jsx',
   'src/screens-chat.jsx',
   'src/screens-rmm.jsx',
+  'src/notification-routing.jsx',
   'src/screens-rmm2.jsx',
   'src/screens-reports.jsx',
   'src/screens-patches.jsx',

@@ -680,13 +680,14 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('checks.view') ? [{ value: 'checks', label: t('device.tab.checks') }] : []), ...(can('tasks.view') ? [{ value: 'tasks', label: t('device.tab.tasks') }] : []), ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : [])]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('checks.view') ? [{ value: 'checks', label: t('device.tab.checks') }] : []), ...(can('tasks.view') ? [{ value: 'tasks', label: t('device.tab.tasks') }] : []), { value: 'operations', label: t('operations.title') }, ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : [])]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
             {tab === 'jobs' && can('jobs.view') && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'checks' && can('checks.view') && <DeviceChecks id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'tasks' && can('tasks.view') && <DeviceTasks id={id} navigate={navigate} onClose={onClose} />}
+            {tab === 'operations' && <DeviceOperations key={id} id={id} />}
             {tab === 'patches' && can('patches.view') && <DevicePatches id={id} hostname={d.hostname} />}
             {tab === 'run' && can('jobs.create') && <RunScriptForm device={d} onCreated={() => setTab('jobs')} />}
             {tab === 'notes' && can('devices.manage') && <DeviceNotes device={d} />}
@@ -2681,3 +2682,58 @@ window.DevicesScreen = DevicesScreen;
 window.DeviceDetail = DeviceDetail;
 window.DevicePatches = DevicePatches;
 window.RemoteViewer = RemoteViewer;
+
+
+// Keyed by device: a rejected scoped request cannot retain another device's form.
+function DeviceOperations({ id }) {
+  const { can } = useAuth();
+  const editable = can('devices.manage');
+  const q = useQuery([id, 'operations-profile'], () => api.getDeviceOperationsProfile(id), {});
+  const [draft, setDraft] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState('');
+  const busy = useRef(false);
+  // Background query invalidations never replace an operator's working copy.
+  useEffect(() => { if (!draft && q.data && !q.error) setDraft(q.data); }, [q.data, q.error, draft]);
+  const change = (key, value) => { setDraft((p) => ({ ...p, [key]: value })); setDirty(true); setMessage(''); };
+  const reload = async () => {
+    if (busy.current) return;
+    busy.current = true; setPending(true);
+    try { const fresh = await api.getDeviceOperationsProfile(id); setDraft(fresh); setDirty(false); setMessage(''); await q.refetch(); }
+    catch (e) { setMessage('loadError'); }
+    finally { busy.current = false; setPending(false); }
+  };
+  const save = async (event) => {
+    event.preventDefault();
+    if (!editable || !dirty || busy.current) return;
+    busy.current = true; setPending(true); setMessage('');
+    const { version, updated_at, updated_by, ...fields } = draft;
+    try { const saved = await api.putDeviceOperationsProfile(id, { ...fields, expected_version: version }); setDraft(saved); setDirty(false); setMessage('saved'); }
+    catch (e) { setMessage(e.status === 409 ? 'conflict' : e.status === 400 ? 'invalid' : e.status === 403 ? 'forbidden' : 'saveError'); }
+    finally { busy.current = false; setPending(false); }
+  };
+  if (q.error) return <div role="alert">{t('operations.loadError')} <Button onClick={reload} disabled={pending}>{t('operations.reload')}</Button></div>;
+  if (!draft) return <Spinner />;
+  const disabled = !editable || pending;
+  return <form onSubmit={save} className="space-y-4" data-operations-device={id}>
+    <p className="text-[12px] text-muted">{t('operations.reference')}</p>
+    <span className="inline-block rounded-sm bg-elevated px-2 py-1 text-[12px]">{t('operations.criticality.' + draft.criticality)}</span>
+    {['purpose', 'applications', 'dependencies', 'maintenance_window', 'backup_notes'].map((field) => <Field key={field} label={t('operations.' + field)} hint={t('operations.limit', { n: field === 'purpose' ? 2000 : field === 'maintenance_window' ? 1000 : 8000 })}>
+      <Textarea aria-label={t('operations.' + field)} value={draft[field]} onChange={(e) => change(field, e.target.value)} disabled={disabled} rows={field === 'purpose' || field === 'maintenance_window' ? 2 : 3} />
+    </Field>)}
+    <Field label={t('operations.criticality')}><Select aria-label={t('operations.criticality')} value={draft.criticality} onChange={(e) => change('criticality', e.target.value)} disabled={disabled}>
+      {['unknown', 'low', 'normal', 'high', 'critical'].map((value) => <option key={value} value={value}>{t('operations.criticality.' + value)}</option>)}
+    </Select></Field>
+    <Field label={t('operations.maintenance_timezone')}><Input aria-label={t('operations.maintenance_timezone')} value={draft.maintenance_timezone} onChange={(e) => change('maintenance_timezone', e.target.value)} disabled={disabled} maxLength={100} /></Field>
+    <Field label={t('operations.backup_verified_on')} hint={t('operations.backupHint')}><Input aria-label={t('operations.backup_verified_on')} type="date" value={draft.backup_verified_on || ''} onChange={(e) => change('backup_verified_on', e.target.value || null)} disabled={disabled} />
+      {!draft.backup_verified_on && <span className="text-[12px] text-muted">{t('operations.unverified')}</span>}
+    </Field>
+    {draft.updated_at && <p className="text-[12px] text-muted">{t('operations.updated', { actor: draft.updated_by, when: fmtTime(draft.updated_at) })}</p>}
+    {message && <p role="status">{t('operations.' + message)}</p>}
+    <div className="flex gap-2">
+      {editable ? <Button type="submit" variant="primary" disabled={!dirty || pending} loading={pending}>{t('operations.save')}</Button> : <p className="text-[12px] text-muted">{t('operations.readonly')}</p>}
+      <Button type="button" onClick={reload} disabled={pending}>{t('operations.reload')}</Button>
+    </div>
+  </form>;
+}

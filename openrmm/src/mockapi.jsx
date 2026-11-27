@@ -277,6 +277,8 @@ const api = {
   setSupportKey(key) { return PUT('/api/support', { key }); },
   removeSupportKey() { return DELETE('/api/support'); },
   getDevice(id) { return GET('/api/devices/' + id); },
+  getDeviceOperationsProfile(id) { return GET('/api/devices/' + id + '/operations-profile'); },
+  putDeviceOperationsProfile(id, fields) { return PUT('/api/devices/' + id + '/operations-profile', fields); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider, opts) { return POST('/api/devices/' + id + '/remote', { provider, ...(opts || {}) }); },
   approveDeviceKey(id, pendingKey, reason) { return POST('/api/devices/' + id + '/device-key/approve', { pending_device_public_key: pendingKey, reason }); },

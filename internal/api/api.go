@@ -267,6 +267,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermSettingsManage)).Delete("/support", s.removeSupportKey)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}", s.getDevice)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/inventory", s.getInventory)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/operations-profile", s.getDeviceOperationsProfile)
+		r.With(s.requirePermission(models.PermDevicesManage)).Put("/devices/{id}/operations-profile", s.putDeviceOperationsProfile)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/remote-capabilities", s.getRemoteCapabilities)
 		// What runs on this device: direct and policy-inherited (api_device_monitoring.go).
 		r.With(s.requirePermission(models.PermChecksView)).Get("/devices/{id}/checks", s.listDeviceChecks)

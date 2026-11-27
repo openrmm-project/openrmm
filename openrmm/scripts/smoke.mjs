@@ -11,6 +11,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'd
 const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.woff2': 'font/woff2' };
 const permissions = ['ai_chat.use', 'alerts.view', 'alerts.manage', 'jobs.view', 'jobs.create', 'jobs.manage', 'checks.view', 'checks.manage', 'tasks.view', 'tasks.manage', 'policies.view', 'policies.manage', 'scripts.view', 'scripts.manage', 'scripts.variables', 'patches.view', 'patches.manage', 'patches.policies.manage', 'devices.view', 'devices.manage', 'devices.delete', 'devices.remote', 'devices.files', 'devices.terminal', 'clients.view', 'clients.manage', 'reports.view', 'audit.view', 'settings.manage', 'enrollment.manage', 'api_tokens.manage', 'users.manage', 'roles.manage'];
 const user = { id: 'user-1', username: 'smoke-admin', role: 'admin', permissions, created_at: '2026-01-01T00:00:00Z' };
+const operationsProfile = { purpose: '', applications: '', dependencies: '', criticality: 'unknown', maintenance_window: '', maintenance_timezone: '', backup_notes: '', backup_verified_on: null, version: 0, updated_at: null, updated_by: '' };
+let operationsConflict = true;
+let operationsViewer = false;
 const apiRequests = [];
 // A pre-existing direct check to edit and then share through a policy.
 const sharedPolicy = { id: 'pol-shared-e2e', name: 'Backup coverage', enabled: true, description: '' };
@@ -129,7 +132,7 @@ const server = createServer(async (req, res) => {
       apiRequests.push({ method: req.method, pathname, token, payload });
       if (!token) return json(res, 401, { error: 'missing bearer token' });
       if (token === 'expire-token') return json(res, 401, { error: 'expired token' });
-      if (pathname === '/api/me') return json(res, 200, user);
+      if (pathname === '/api/me') return json(res, 200, operationsViewer ? { ...user, role: 'readonly', permissions: ['devices.view'] } : user);
       if (pathname === '/api/script-variables') {
         if (req.method === 'POST') {
           const item = { id: 'variable-e2e', ...payload, values: [] }; scriptVariables.push(item);
@@ -153,6 +156,19 @@ const server = createServer(async (req, res) => {
       if (pathname === '/api/scripts/script-e2e' && req.method === 'PUT') {
         Object.assign(libraryScripts[0], payload); return json(res, 200, libraryScripts[0]);
       }
+      if (pathname === '/api/devices/dev-1/operations-profile') {
+        if (req.method === 'PUT') {
+          if (operationsViewer) return json(res, 403, { error: 'read only' });
+          if (operationsConflict) { operationsConflict = false; operationsProfile.purpose = 'Concurrent operator edit'; operationsProfile.version++; return json(res, 409, { error: 'conflict' }); }
+          if (payload.expected_version !== operationsProfile.version) return json(res, 409, { error: 'conflict' });
+          const { expected_version, ...fields } = payload;
+          Object.assign(operationsProfile, fields, { version: expected_version + 1, updated_at: '2026-11-20T10:00:00Z', updated_by: 'smoke-admin' });
+          await delay(150);
+        }
+        return json(res, 200, operationsProfile);
+      }
+      if (pathname === '/api/devices/dev-2/operations-profile') return json(res, 403, { error: 'outside scope' });
+      if (pathname === '/api/devices/dev-2') return json(res, 200, fleet[1]);
       if (pathname === '/api/devices/dev-1' && req.method === 'GET') return json(res, 200, smokeDevice());
       if (pathname === '/api/devices/dev-1/role' && req.method === 'PUT') {
         if (!['', 'workstation', 'server'].includes(payload?.role)) return json(res, 400, { error: 'invalid role' });
@@ -439,6 +455,52 @@ async function runMobileChrome(chrome, url, { width = 375, flow } = {}) {
     await new Promise((resolve) => child.once('close', resolve));
     await rm(profile, { recursive: true, force: true });
   }
+}
+
+async function operationsProfileBrowserFlow() {
+  const wait = async (fn) => { for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 40)); } throw new Error('Operations timed out: ' + fn); };
+  const button = (text) => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const input = (label) => document.querySelector('[aria-label="' + label + '"]');
+  const change = (el, value) => { Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+  (await wait(() => button('Devices'))).click();
+  (await wait(() => [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('SMOKE-PC')))).click();
+  (await wait(() => button('Operations'))).click();
+  await wait(() => input('Purpose'));
+  if (!document.body.textContent.includes('Backup not verified')) throw new Error('Default backup must be unverified');
+  change(input('Purpose'), 'My unsaved edit');
+  window.dataBus.emit('*');
+  await new Promise((r) => setTimeout(r, 200));
+  if (input('Purpose').value !== 'My unsaved edit') throw new Error('Refresh destroyed edits');
+  (await wait(() => button('Save profile') && !button('Save profile').disabled && button('Save profile'))).click();
+  await wait(() => document.body.textContent.includes('Someone else changed this profile'));
+  if (input('Purpose').value !== 'My unsaved edit') throw new Error('Conflict destroyed edits');
+  button('Reload saved profile').click();
+  await wait(() => input('Purpose').value === 'Concurrent operator edit' && !button('Reload saved profile').disabled);
+  change(input('Purpose'), 'Verified browser save');
+  change(input('Backup verification date'), '2026-11-19');
+  const save = await wait(() => button('Save profile') && !button('Save profile').disabled && button('Save profile'));
+  save.click(); save.click();
+  await wait(() => document.body.textContent.includes('Profile saved.'));
+  if (input('Backup verification date').value !== '2026-11-19') throw new Error('Calendar date shifted');
+  // Switch the selected device while its drawer is mounted.
+  [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('ALPHA-WS')).click();
+  await wait(() => document.querySelector('h2')?.textContent === 'ALPHA-WS');
+  (await wait(() => button('Operations'))).click();
+  await wait(() => document.body.textContent.includes('Unable to load this device’s profile.'));
+  if (document.querySelector('[data-operations-device="dev-1"]') || input('Purpose')) throw new Error('Previous device profile leaked on scoped failure');
+  document.documentElement.dataset.operationsProfileE2e = 'passed'; return true;
+}
+
+async function operationsViewerBrowserFlow() {
+  const wait = async (fn) => { for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 40)); } throw new Error('Operations viewer timed out: ' + fn); };
+  const button = (text) => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  (await wait(() => button('Devices'))).click();
+  (await wait(() => [...document.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('SMOKE-PC')))).click();
+  (await wait(() => button('Operations'))).click();
+  const form = await wait(() => document.querySelector('[data-operations-device="dev-1"]'));
+  if (button('Save profile') || [...form.querySelectorAll('input,textarea,select')].some((el) => !el.disabled)) throw new Error('Viewer can edit operations');
+  if (!form.textContent.includes('Read-only:') || form.querySelector('textarea').value !== 'Verified browser save') throw new Error('Viewer missing saved profile');
+  document.documentElement.dataset.operationsViewerE2e = 'passed'; return true;
 }
 
 // Actual browser interactions against the bundled console and HTTP fixture.
@@ -1286,6 +1348,18 @@ try {
     assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=AI%20Chat'), /Start a conversation/);
 
     assertBrowser(await runChrome(chrome, baseURL + '/expired/'), /Sign in to your instance/);
+    const operationsFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: operationsProfileBrowserFlow });
+    assertBrowser(operationsFlow, /data-operations-profile-e2e="passed"/);
+    const writes = apiRequests.filter((r) => r.method === 'PUT' && r.pathname.endsWith('/operations-profile'));
+    assert.equal(writes.length, 2, 'conflict and one save; duplicate submit is suppressed');
+    assert.equal(writes[1].payload.expected_version, 1);
+    assert.equal(writes[1].payload.backup_verified_on, '2026-11-19');
+    assert.equal('updated_by' in writes[1].payload, false);
+    assert.equal('version' in writes[1].payload, false);
+    operationsViewer = true;
+    const operationsViewerFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: operationsViewerBrowserFlow });
+    assertBrowser(operationsViewerFlow, /data-operations-viewer-e2e="passed"/);
+    operationsViewer = false;
     const rules = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: alertRulesBrowserFlow });
     assertBrowser(rules, /data-alert-rules-e2e="passed"/);
     const created = apiRequests.find((r) => r.method === 'POST' && r.pathname === '/api/checks');

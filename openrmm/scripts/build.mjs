@@ -36,6 +36,7 @@ const sources = [
   'src/ui.jsx',
   'src/screens-core.jsx',
   'src/screens-devices.jsx',
+  'src/screens-docker.jsx',
   'src/screens-jobs.jsx',
   'src/screens-chat.jsx',
   'src/screens-rmm.jsx',

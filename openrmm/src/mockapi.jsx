@@ -276,6 +276,8 @@ const api = {
   support() { return GET('/api/support'); },
   setSupportKey(key) { return PUT('/api/support', { key }); },
   removeSupportKey() { return DELETE('/api/support'); },
+  listDocker(params) { return GET('/api/docker' + qs(params || {})); },
+  getDeviceDocker(id) { return GET('/api/devices/' + id + '/docker'); },
   getDevice(id) { return GET('/api/devices/' + id); },
   async getInventory(id) { return adaptInventory(await GET('/api/devices/' + id + '/inventory')); },
   startRemote(id, provider, opts) { return POST('/api/devices/' + id + '/remote', { provider, ...(opts || {}) }); },

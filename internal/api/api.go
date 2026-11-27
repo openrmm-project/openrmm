@@ -261,6 +261,8 @@ func (s *Server) Router() http.Handler {
 		r.With(s.requirePermission(models.PermClientsManage)).Delete("/sites/{id}", s.deleteSite)
 
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices", s.listDevices)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/docker", s.listDocker)
+		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/{id}/docker", s.getDeviceDocker)
 		r.With(s.requirePermission(models.PermDevicesView)).Get("/devices/limit", s.deviceLimitInfo)
 		r.With(s.requirePermission(models.PermSettingsManage)).Get("/support", s.supportInfo)
 		r.With(s.requirePermission(models.PermSettingsManage)).Put("/support", s.setSupportKey)

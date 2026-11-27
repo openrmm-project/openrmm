@@ -16,14 +16,15 @@ const (
 
 // Check types.
 const (
-	CheckDiskSpace    = "diskspace"
-	CheckMemory       = "memory"
-	CheckCPULoad      = "cpuload"
-	CheckPing         = "ping"
-	CheckWinService   = "winservice"
-	CheckLinuxService = protocol.CheckLinuxService
-	CheckMacService   = protocol.CheckMacService
-	CheckScript       = "script"
+	CheckDiskSpace       = "diskspace"
+	CheckMemory          = "memory"
+	CheckCPULoad         = "cpuload"
+	CheckPing            = "ping"
+	CheckWinService      = "winservice"
+	CheckLinuxService    = protocol.CheckLinuxService
+	CheckMacService      = protocol.CheckMacService
+	CheckDockerContainer = protocol.CheckDockerContainer
+	CheckScript          = "script"
 )
 
 // Check / result statuses.

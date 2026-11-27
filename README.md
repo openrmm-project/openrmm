@@ -171,6 +171,7 @@ topic. The site is built from the files below on every change to them.
 | [08-remote-access](docs/08-remote-access.md) | The native (desktop + file transfer), terminal, and MeshCentral providers |
 | [09-roadmap](docs/09-roadmap.md) | Phased plan toward a complete RMM |
 | [10-monitoring-policies](docs/10-monitoring-policies.md) | Org hierarchy, RBAC, scripts, checks, tasks, policies, alerts |
+| [26-docker-monitoring](docs/26-docker-monitoring.md) | Local Docker inventory, current resource samples and optional container checks |
 | [24-alert-rules](docs/24-alert-rules.md) | Server alert rules, policy precedence, fleet defaults, per-rule email |
 | [11-mcp](docs/11-mcp.md) | MCP server — connect external AI (Claude, ChatGPT) securely |
 | [12-native-remote-fork](docs/12-native-remote-fork.md) | Historical: the abandoned RustDesk-fork plan (superseded by the homegrown engine in 08) |

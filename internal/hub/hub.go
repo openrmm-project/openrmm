@@ -19,8 +19,9 @@ type Hub struct {
 }
 
 type client struct {
-	ch      chan []byte
-	closeFn func()
+	dockerSupport bool
+	ch            chan []byte
+	closeFn       func()
 }
 
 // New creates an empty hub.
@@ -151,4 +152,41 @@ func (h *Hub) IsOnline(agentID string) bool {
 	_, ok := h.clients[agentID]
 	h.mu.RUnlock()
 	return ok
+}
+
+// SetDockerSupport is bound to the reporting transport. Reconnects start without
+// this capability, so a downgraded agent cannot inherit its predecessor's checks.
+func (h *Hub) SetDockerSupport(agentID string, ch chan []byte, supported bool) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c, ok := h.clients[agentID]
+	if !ok || c.ch != ch {
+		return false
+	}
+	c.dockerSupport = supported
+	h.clients[agentID] = c
+	return true
+}
+func (h *Hub) SupportsDocker(agentID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	c, ok := h.clients[agentID]
+	return ok && c.dockerSupport
+}
+
+// SendDockerCheck checks capability and sends under one lock: replacement between
+// an earlier eligibility check and dispatch cannot hand the new type to old code.
+func (h *Hub) SendDockerCheck(agentID string, msg []byte) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c, ok := h.clients[agentID]
+	if !ok || !c.dockerSupport {
+		return false
+	}
+	select {
+	case c.ch <- msg:
+		return true
+	default:
+		return false
+	}
 }

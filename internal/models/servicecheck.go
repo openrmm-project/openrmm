@@ -12,7 +12,7 @@ func IsPlatformServiceCheck(kind string) bool {
 // Policy checks on mixed fleets apply only to their service manager's OS.
 func ServiceCheckMatchesOS(kind, goos string) bool {
 	switch kind {
-	case CheckLinuxService:
+	case CheckLinuxService, CheckDockerContainer:
 		return strings.EqualFold(goos, "linux")
 	case CheckMacService:
 		return strings.EqualFold(goos, "darwin") || strings.EqualFold(goos, "macos")

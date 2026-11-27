@@ -288,6 +288,7 @@ type RunCheckMsg struct {
 
 // CheckResultMsg is the raw outcome of a check on the endpoint.
 type CheckResultMsg struct {
+	Unknown     bool     `json:"unknown,omitempty"` // Docker observations can be unavailable without a healthy recovery.
 	CheckID     string   `json:"check_id"`
 	ExecutionID string   `json:"execution_id,omitempty"`
 	Value       *float64 `json:"value,omitempty"` // numeric checks: free %, load %, or exit code

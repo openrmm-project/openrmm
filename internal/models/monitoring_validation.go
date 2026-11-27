@@ -19,7 +19,7 @@ import (
 func SupportedCheckType(checkType string) bool {
 	switch checkType {
 	case CheckDiskSpace, CheckMemory, CheckCPULoad,
-		CheckPing, CheckWinService, CheckLinuxService, CheckMacService, CheckScript:
+		CheckPing, CheckWinService, CheckLinuxService, CheckMacService, CheckDockerContainer, CheckScript:
 		return true
 	default:
 		return IsServerRule(checkType)
@@ -129,6 +129,13 @@ func ValidateCheck(c *Check) error {
 		c.WarnThreshold, c.ErrThreshold = nil, nil
 	case CheckLinuxService, CheckMacService:
 		cfg, err := protocol.NormalizeServiceCheck(c.Type, c.Config)
+		if err != nil {
+			return err
+		}
+		c.Config, _ = json.Marshal(cfg)
+		c.WarnThreshold, c.ErrThreshold = nil, nil
+	case CheckDockerContainer:
+		cfg, err := protocol.NormalizeDockerCheck(c.Config)
 		if err != nil {
 			return err
 		}

@@ -75,6 +75,13 @@ const complianceRows = [
   { agent_id: 'dev-3', hostname: 'BETA-SRV', description: '', os: 'windows', status: 'unknown', missing_total: 0, missing_security: 0, approved: 0, failed: 0, reboot_pending: false },
 ];
 
+// Docker fixtures use receipt times generated per request, so long browser suites
+// do not age a deliberately fresh sample while testing unrelated screens.
+let dockerFailure = false;
+const dockerContainer = { id: 'a'.repeat(64), name: 'web', image: 'example/web:v1', state: 'running', health: 'healthy', cpu_percent: 125.5, memory_used_bytes: 2097152, memory_limit_bytes: 1073741824, restart_count: 2, compose_project: 'demo', compose_service: 'web' };
+const dockerHost = () => ({ agent_id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', agent_status: 'online', status: dockerFailure ? 'unavailable' : 'available', error_code: dockerFailure ? 'engine_unavailable' : '', stale: dockerFailure, last_attempt_at: new Date().toISOString(), last_success_at: new Date(Date.now() - (dockerFailure ? 180000 : 0)).toISOString() });
+const dockerContainers = () => [dockerContainer, { ...dockerContainer, id: 'b'.repeat(64), name: 'worker', state: 'exited', health: 'none', cpu_percent: null, memory_used_bytes: null, memory_limit_bytes: null }];
+
 // Reports ▸ Hardware & System: the last logged-in user, kept after logoff; one
 // is endpoint text that would be a formula in a spreadsheet.
 const hardwareRows = [
@@ -153,6 +160,14 @@ const server = createServer(async (req, res) => {
       if (pathname === '/api/scripts/script-e2e' && req.method === 'PUT') {
         Object.assign(libraryScripts[0], payload); return json(res, 200, libraryScripts[0]);
       }
+      if (pathname === '/api/docker') {
+        const q = (url.searchParams.get('q') || '').toLowerCase();
+        if (q === 'http-error') return json(res, 403, { error: 'Forbidden' });
+        dockerFailure = q === 'engine-error';
+        const rows = dockerContainers().filter((c) => (dockerFailure || !q || (c.name + c.image).includes(q)) && (!url.searchParams.get('state') || c.state === url.searchParams.get('state')) && (!url.searchParams.get('health') || c.health === url.searchParams.get('health'))).map((c) => ({ ...c, ...dockerHost() }));
+        return json(res, 200, { hosts: [dockerHost(), { agent_id:'dev-2', hostname:'ALPHA-WS', status:'unsupported', stale:true, error_code:'platform_unsupported' }, { agent_id:'dev-3', hostname:'BETA-SRV', status:'unknown', stale:true }], containers: rows, total:rows.length, limit:100, offset:0 });
+      }
+      if (pathname === '/api/devices/dev-1/docker') return json(res, 200, { ...dockerHost(), containers:dockerContainers() });
       if (pathname === '/api/devices/dev-1' && req.method === 'GET') return json(res, 200, smokeDevice());
       if (pathname === '/api/devices/dev-1/role' && req.method === 'PUT') {
         if (!['', 'workstation', 'server'].includes(payload?.role)) return json(res, 400, { error: 'invalid role' });
@@ -679,6 +694,50 @@ async function deviceLibraryRunBrowserFlow() {
   (await wait(() => button(create) && !button(create).disabled && button(create))).click();
   await wait(() => !bound());
   document.documentElement.dataset.deviceLibraryRunE2e = 'passed'; return true;
+}
+
+async function dockerBrowserFlow() {
+  const wait = async (fn) => { for (let i=0;i<150;i++) { const v=fn(); if(v)return v; await new Promise(r=>setTimeout(r,50)); } throw new Error('Docker E2E timed out: '+fn.toString()); };
+  const button = (text) => [...document.querySelectorAll('button')].find(el=>el.textContent.trim()===text);
+  const change = (el,value) => { Object.getOwnPropertyDescriptor(el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype,'value').set.call(el,value); el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); };
+  const rows = () => document.querySelectorAll('[data-docker-name]');
+  const search = () => document.querySelector('input[aria-label="Search containers or images"]');
+  (await wait(()=>button('Docker'))).click();
+  await wait(()=>rows().length===2);
+  if (!document.querySelector('[data-docker-name="worker"]').textContent.includes('Not sampled')) throw new Error('Stopped metrics must be absent');
+  change(document.querySelector('select[aria-label="State"]'),'running');
+  await wait(()=>rows().length===1);
+  change(document.querySelector('select[aria-label="State"]'),'');
+  await wait(()=>rows().length===2);
+  change(document.querySelector('select[aria-label="Health"]'),'none');
+  await wait(()=>rows().length===1 && rows()[0].dataset.dockerName==='worker');
+  change(document.querySelector('select[aria-label="Health"]'),'');
+  await wait(()=>rows().length===2);
+  change(search(),'http-error');
+  await wait(()=>document.body.textContent.includes('Unable to load Docker inventory') && rows().length===0);
+  change(search(),'engine-error');
+  await wait(()=>rows().length===2 && rows()[0].dataset.stale==='true');
+  document.querySelector('details summary').click();
+  await wait(()=>document.body.textContent.includes('The local Docker engine could not be read.'));
+  if (!document.querySelector('[data-docker-collection="unsupported"]') || !document.querySelector('[data-docker-collection="unknown"]')) throw new Error('Missing legacy/platform status');
+  (await wait(()=>button('Smoke device'))).click();
+  await wait(()=>[...document.querySelectorAll('h2')].some(el=>el.textContent.trim()==='SMOKE-PC'));
+  const tab = await wait(()=>[...document.querySelectorAll('button')].find(el=>el.textContent.trim()==='Docker' && el.parentElement.classList.contains('border-b')));
+  tab.click();
+  await wait(()=>rows().length===2 && rows()[0].dataset.stale==='true');
+  if (!document.querySelector('[data-docker-collection="unavailable"]')) throw new Error('Device collection failure hidden');
+  change(search(),'worker');
+  await wait(()=>rows().length===1 && rows()[0].dataset.dockerName==='worker');
+  (await wait(()=>button('Checks'))).click();
+  (await wait(()=>button('New check'))).click();
+  change(await wait(()=>[...document.querySelectorAll('select')].find(el=>[...el.options].some(o=>o.value==='dockercontainer'))),'dockercontainer');
+  change(await wait(()=>document.querySelector('input[placeholder="web"]')),'web');
+  change(await wait(()=>[...document.querySelectorAll('select')].find(el=>[...el.options].some(o=>o.value==='healthy'))),'healthy');
+  (await wait(()=>button('Add a policy or device…'))).click();
+  (await wait(()=>button('SMOKE-PC'))).click();
+  (await wait(()=>button('Create check') && !button('Create check').disabled && button('Create check'))).click();
+  await wait(()=>!button('Create check'));
+  document.documentElement.dataset.dockerE2e='passed'; return true;
 }
 
 async function servicesAndRemoteSettingsBrowserFlow() {
@@ -1315,6 +1374,13 @@ try {
     assert.equal(remoteConfig.remote.rustdesk_enabled, true);
     assert.equal(remoteConfig.remote.e2e_policy, 'required');
     assert.equal('meshcentral_token_key' in remoteConfig.remote, false, 'GET config stays write-only');
+    const dockerFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width:1280, flow:dockerBrowserFlow });
+    assertBrowser(dockerFlow, /data-docker-e2e="passed"/);
+    const dockerCheck = apiRequests.find(r=>r.method==='POST' && r.pathname==='/api/checks' && r.payload?.type==='dockercontainer')?.payload;
+    assert.deepEqual(dockerCheck?.config, {container:'web',mode:'healthy'});
+    assert.deepEqual(dockerCheck?.attachments, [{agent_id:'dev-1'}]);
+    dockerFailure = false;
+    assertMobile(await runMobileChrome(chrome, baseURL + '/authenticated/?route=Docker'), /Docker containers/);
     const variablesFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: scriptVariablesBrowserFlow });
     assertBrowser(variablesFlow, /data-script-variables-e2e="passed"/);
     assert.equal(scriptVariables[0]?.name, 'customerKey');

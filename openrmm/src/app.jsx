@@ -313,6 +313,7 @@ const NAV = [
   ] },
   { section: 'nav.section.fleet', items: [
     { id: 'devices', label: 'nav.devices', icon: 'devices', min: 'devices.view' },
+    { id: 'docker', label: 'nav.docker', icon: 'devices', min: 'devices.view' },
     { id: 'jobs', label: 'nav.jobs', icon: 'flash', badge: 'jobs', min: 'jobs.view' },
     { id: 'checks', label: 'nav.checks', icon: 'check', min: 'checks.view' },
     { id: 'tasks', label: 'nav.tasks', icon: 'tasks', min: 'tasks.view' },
@@ -408,7 +409,7 @@ function Topbar({ route, navigate, onToggleTheme, theme, onOpenNav }) {
     alerts: t('title.alerts'), checks: t('title.checks'), tasks: t('title.tasks'),
     policies: t('title.policies'), scripts: t('title.scripts'), chat: t('title.chat'),
     clients: t('title.clients'), audit: t('title.audit'), settings: t('title.settings'),
-    reports: t('title.reports'), patches: t('title.patches'),
+    reports: t('title.reports'), patches: t('title.patches'), docker: t('title.docker'),
   };
   return (
     <header className="h-14 shrink-0 border-b border-line bg-panel/70 backdrop-blur-sm flex items-center gap-3 px-3 sm:px-5">
@@ -496,9 +497,9 @@ function Shell() {
     alerts: window.AlertsScreen, checks: window.ChecksScreen, tasks: window.TasksScreen,
     policies: window.PoliciesScreen, scripts: window.ScriptsScreen, chat: window.ChatScreen,
     clients: window.ClientsScreen, audit: window.AuditScreen, settings: window.SettingsScreen,
-    reports: window.ReportsScreen, patches: window.PatchesScreen,
+    reports: window.ReportsScreen, patches: window.PatchesScreen, docker: window.DockerScreen,
   };
-  const screenMin = { devices: 'devices.view', clients: 'clients.view', chat: 'ai_chat.use', alerts: 'alerts.view', jobs: 'jobs.view', checks: 'checks.view', tasks: 'tasks.view', policies: 'policies.view', scripts: 'scripts.view', patches: 'patches.view', reports: 'reports.view', audit: 'audit.view' };
+  const screenMin = { docker: 'devices.view', devices: 'devices.view', clients: 'clients.view', chat: 'ai_chat.use', alerts: 'alerts.view', jobs: 'jobs.view', checks: 'checks.view', tasks: 'tasks.view', policies: 'policies.view', scripts: 'scripts.view', patches: 'patches.view', reports: 'reports.view', audit: 'audit.view' };
   const denied = screenMin[route.name] && !can(screenMin[route.name]);
   const Screen = denied
     ? (() => <Page><EmptyState icon="shield" title={t('app.denied')} msg={t('app.deniedMsg')} /></Page>)

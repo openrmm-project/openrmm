@@ -92,7 +92,7 @@ function LastBoot({ device }) {
   return <span className="text-muted tabular" title={fmtTime(device.last_boot_at)}>{timeAgo(device.last_boot_at)}</span>;
 }
 
-function DevicesScreen({ navigate }) {
+function DevicesScreen({ navigate, route }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
   const { can } = useAuth();
   const sitesQ = useQuery(['sites-all'], () => can('clients.view') ? api.listSites() : Promise.resolve({ sites: [] }), { invalidateOn: ['org'] });
@@ -116,7 +116,8 @@ function DevicesScreen({ navigate }) {
     return next;
   });
   const shows = (key) => !hiddenCols.includes(key);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(route?.params?.id || null);
+  useEffect(() => { if (route?.params?.id) setSelected(route.params.id); }, [route?.params?.id]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const presence = useRemotePresence();
   // Department names for the list's Department column and the pending-operations
@@ -680,10 +681,11 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
-          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('checks.view') ? [{ value: 'checks', label: t('device.tab.checks') }] : []), ...(can('tasks.view') ? [{ value: 'tasks', label: t('device.tab.tasks') }] : []), ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : [])]} />
+          <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('checks.view') ? [{ value: 'checks', label: t('device.tab.checks') }] : []), ...(can('tasks.view') ? [{ value: 'tasks', label: t('device.tab.tasks') }] : []), ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : []), { value: 'docker', label: t('nav.docker') }]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
             {tab === 'inventory' && <InventoryView id={id} />}
+            {tab === 'docker' && <window.DeviceDocker key={id} id={id} />}
             {tab === 'jobs' && can('jobs.view') && <DeviceJobs id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'checks' && can('checks.view') && <DeviceChecks id={id} navigate={navigate} onClose={onClose} />}
             {tab === 'tasks' && can('tasks.view') && <DeviceTasks id={id} navigate={navigate} onClose={onClose} />}

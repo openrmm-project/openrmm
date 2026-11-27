@@ -24,8 +24,8 @@ const (
 
 // Aliases c/a are shared by dispatch, coverage, and inbound result checks.
 // Keep in sync with models.ServiceCheckMatchesOS; integration tests cover both.
-const serviceCheckPlatformSQL = `(c.type NOT IN ('linuxservice','macservice')
- OR (c.type='linuxservice' AND lower(a.os)='linux')
+const serviceCheckPlatformSQL = `(c.type NOT IN ('linuxservice','macservice','dockercontainer')
+ OR (c.type IN ('linuxservice','dockercontainer') AND lower(a.os)='linux')
  OR (c.type='macservice' AND lower(a.os) IN ('darwin','macos')))`
 
 // CheckAppliesToAgent is the server-side trust boundary for inbound results.

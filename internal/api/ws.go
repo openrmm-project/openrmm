@@ -254,6 +254,16 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, ch chan [
 			hb.LoggedInUser = &clean
 		}
 		_ = s.store.TouchAgentSession(ctx, agentID, hb.LoggedInUser)
+	case protocol.MsgDockerSnapshot:
+		var snapshot protocol.DockerSnapshot
+		if len(env.Data) > protocol.MaxDockerSnapshotBytes || json.Unmarshal(env.Data, &snapshot) != nil || snapshot.Validate() != nil {
+			return
+		}
+		if err := s.store.RecordDockerSnapshot(ctx, agentID, snapshot); err != nil {
+			log.Printf("docker snapshot: persistence failed agent=%s error_type=%T", agentID, err)
+			return
+		}
+		s.hub.SetDockerSupport(agentID, ch, snapshot.Status != protocol.DockerUnsupported)
 	case protocol.MsgInventory:
 		var inv protocol.InventoryMsg
 		if json.Unmarshal(env.Data, &inv) != nil || len(inv.Data) == 0 || string(inv.Data) == "null" {

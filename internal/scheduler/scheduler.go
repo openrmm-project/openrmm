@@ -419,7 +419,7 @@ func (s *Scheduler) dispatchChecks(ctx context.Context, agentID string, siteID, 
 		if models.IsServerRule(c.Type) {
 			continue // evaluated by the server, never sent to the agent
 		}
-		if models.IsPlatformServiceCheck(c.Type) {
+		if models.IsPlatformServiceCheck(c.Type) || c.Type == models.CheckDockerContainer {
 			if endpoint == nil {
 				endpoint, err = s.store.GetAgent(ctx, agentID)
 				if err != nil {
@@ -430,12 +430,22 @@ func (s *Scheduler) dispatchChecks(ctx context.Context, agentID string, siteID, 
 			if !models.ServiceCheckMatchesOS(c.Type, endpoint.OS) {
 				continue
 			}
-			if !models.AgentVersionAtLeast(endpoint.Version, models.MinAgentVersionServiceChecks) {
+			if models.IsPlatformServiceCheck(c.Type) && !models.AgentVersionAtLeast(endpoint.Version, models.MinAgentVersionServiceChecks) {
 				if _, err := s.store.MarkCheckUnknown(ctx, c.ID, agentID, "Requires agent "+models.MinAgentVersionServiceChecks+" or later.", now); err != nil {
 					s.recordError("mark unsupported service check "+c.ID, err)
 				}
 				continue
 			}
+		}
+		if c.Type == models.CheckDockerContainer && !s.hub.SupportsDocker(agentID) {
+			if _, err := s.store.CancelPendingCheckExecutions(ctx, c.ID, &agentID); err != nil {
+				s.recordError("cancel unsupported Docker check "+c.ID, err)
+				continue
+			}
+			if _, err := s.store.MarkCheckUnknown(ctx, c.ID, agentID, "Requires a Docker-capable agent on this connection.", now); err != nil {
+				s.recordError("mark unsupported Docker check "+c.ID, err)
+			}
+			continue
 		}
 		last, err := s.store.LastCheckActivity(ctx, c.ID, agentID)
 		if err != nil {
@@ -459,7 +469,11 @@ func (s *Scheduler) dispatchChecks(ctx context.Context, agentID string, siteID, 
 			Config: c.Config, TimeoutSec: c.TimeoutSec,
 		}
 		if frame, err := encode(protocol.MsgRunCheck, msg); err == nil {
-			if !s.hub.Send(agentID, frame) {
+			send := s.hub.Send
+			if c.Type == models.CheckDockerContainer {
+				send = s.hub.SendDockerCheck
+			}
+			if !send(agentID, frame) {
 				s.dispatchFailures.Add(1)
 				log.Printf("scheduler: dispatch check %s to %s: agent queue unavailable", c.ID, agentID)
 				if _, cancelErr := s.store.CancelPendingCheckExecutions(ctx, c.ID, &agentID); cancelErr != nil {
@@ -925,6 +939,14 @@ func computeStatus(c *models.Check, res protocol.CheckResultMsg) string {
 
 func computeStatusWithPrevious(c *models.Check, res protocol.CheckResultMsg, previous string) string {
 	switch c.Type {
+	case models.CheckDockerContainer:
+		if res.Unknown {
+			return models.CheckUnknown
+		}
+		if res.Success {
+			return models.CheckPassing
+		}
+		return models.CheckFailing
 	case models.CheckScript:
 		if res.Value == nil || math.IsNaN(*res.Value) || math.IsInf(*res.Value, 0) || math.Trunc(*res.Value) != *res.Value {
 			return models.CheckFailing

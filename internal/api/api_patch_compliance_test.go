@@ -69,6 +69,12 @@ func TestPatchComplianceDescriptionsAndScopeIntegration(t *testing.T) {
 			t.Fatalf("row %d: %+v", i, r)
 		}
 	}
+	if rows[0].ClientID != "" || rows[0].SiteID != "" || rows[1].ClientID != "" || rows[1].SiteID != "" {
+		t.Fatalf("unassigned devices acquired organization IDs: %+v", rows)
+	}
+	if rows[2].ClientID != client.ID || rows[2].SiteID != site.ID || rows[2].Client != client.Name || rows[2].Site != site.Name {
+		t.Fatalf("stable organization IDs and labels: %+v", rows[2])
+	}
 	// A device-scoped role sees its own description, even when the other
 	// devices have the same patch. Filtering another site cannot widen access.
 	restore := f.asUser(t, "", []string{models.PermPatchesView}, []models.UserScope{{ScopeType: models.ScopeAgent, ScopeID: ids[0]}})
@@ -84,7 +90,61 @@ func TestPatchComplianceDescriptionsAndScopeIntegration(t *testing.T) {
 	restore = f.asUser(t, "", []string{models.PermPatchesView}, []models.UserScope{{ScopeType: models.ScopeClient, ScopeID: client.ID}})
 	defer restore()
 	rows = read("/api/reports/compliance")
-	if len(rows) != 1 || rows[0].AgentID != ids[2] || rows[0].Description != "Private finance server" {
+	if len(rows) != 1 || rows[0].AgentID != ids[2] || rows[0].Description != "Private finance server" || rows[0].ClientID != client.ID || rows[0].SiteID != site.ID {
 		t.Fatalf("client-scoped rows: %+v", rows)
+	}
+}
+
+// Labels are not identities: identically named clients and sites must remain
+// separate in the tree, and a scope cannot pull the other one's device rows.
+func TestPatchComplianceOrganizationIDsWithDuplicateNamesIntegration(t *testing.T) {
+	f := newScriptFixture(t)
+	ctx := context.Background()
+	clients, sites, agents := []string{}, []string{}, []string{}
+	for i := 0; i < 2; i++ {
+		client, err := f.store.CreateClient(ctx, "Same name")
+		if err != nil {
+			t.Fatal(err)
+		}
+		site, err := f.store.CreateSite(ctx, client.ID, "Same site")
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent, err := f.store.CreateAgent(ctx, "server-"+string(rune('A'+i)), "linux", "amd64", "1.0", "token-"+string(rune('A'+i)), &site.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients = append(clients, client.ID)
+		sites = append(sites, site.ID)
+		agents = append(agents, agent.ID)
+	}
+	read := func() []models.ComplianceRow {
+		t.Helper()
+		rec := f.do(http.MethodGet, "/api/reports/compliance", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("report: %d %s", rec.Code, rec.Body)
+		}
+		var body struct {
+			Rows []models.ComplianceRow `json:"rows"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Rows
+	}
+	rows := read()
+	if len(rows) != 2 {
+		t.Fatalf("rows: %+v", rows)
+	}
+	for i, row := range rows {
+		if row.AgentID != agents[i] || row.ClientID != clients[i] || row.SiteID != sites[i] || row.Client != "Same name" || row.Site != "Same site" {
+			t.Fatalf("row %d: %+v", i, row)
+		}
+	}
+	restore := f.asUser(t, "", []string{models.PermPatchesView}, []models.UserScope{{ScopeType: models.ScopeSite, ScopeID: sites[1]}})
+	defer restore()
+	rows = read()
+	if len(rows) != 1 || rows[0].ClientID != clients[1] || rows[0].SiteID != sites[1] || rows[0].AgentID != agents[1] {
+		t.Fatalf("duplicate labels crossed access scope: %+v", rows)
 	}
 }

@@ -23,6 +23,14 @@
   "mailtpl.sharedTestLimit": "Достигнут лимит тестовых писем через общий сервис. Повторите попытку в следующем часу.",
   "mailtpl.example": "Только пример данных. Предпросмотр не сохраняет изменения и не отправляет письма.",
 
+  'fleetTree.view': 'Вид',
+  'fleetTree.flat': 'Список',
+  'fleetTree.tree': 'Клиенты и площадки',
+  'fleetTree.noClient': 'Без клиента',
+  'fleetTree.noSite': 'Без площадки',
+  'fleetTree.unknownClient': 'Клиент недоступен',
+  'fleetTree.unknownSite': 'Площадка недоступна',
+
   'nav.dashboard': "Панель управления",
   'nav.chat': "Чат с ИИ",
   'nav.alerts': "Оповещения",

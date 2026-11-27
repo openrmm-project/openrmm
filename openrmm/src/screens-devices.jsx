@@ -124,9 +124,11 @@ function DevicesScreen({ navigate }) {
   const groupsQ = useQuery(['groups'], () => can('clients.view') ? api.listGroups() : Promise.resolve({ groups: [] }), { invalidateOn: ['groups', 'org'] });
 
   const devices = devicesQ.data?.devices || [];
-  const groups = groupsQ.data?.groups || [];
-  const sites = sitesQ.data?.sites || [];
-  const clients = clientsQ.data?.clients || [];
+  const canSeeOrg = can('clients.view');
+  // Do not expose cached organization labels after a permission change.
+  const groups = canSeeOrg ? groupsQ.data?.groups || [] : [];
+  const sites = canSeeOrg ? sitesQ.data?.sites || [] : [];
+  const clients = canSeeOrg ? clientsQ.data?.clients || [] : [];
   const siteName = (id) => sites.find((s) => s.id === id)?.name || '—';
   const clientOfSite = (id) => sites.find((s) => s.id === id)?.client_id || '';
   // A device belongs to a client (company) through its site; unassigned devices
@@ -137,7 +139,7 @@ function DevicesScreen({ navigate }) {
 
   const needle = q.toLowerCase();
   const filtered = devices.filter((d) => {
-    if (q && !(d.hostname.toLowerCase().includes(needle) || (d.description || '').toLowerCase().includes(needle) || (d.logged_in_user || '').toLowerCase().includes(needle) || d.tags.some((tag) => tag.includes(needle)))) return false;
+    if (q && !(d.hostname.toLowerCase().includes(needle) || (d.description || '').toLowerCase().includes(needle) || (canSeeOrg && [clientName(d.site_id), siteName(d.site_id)].some((name) => name !== '—' && name.toLowerCase().includes(needle))) || (d.logged_in_user || '').toLowerCase().includes(needle) || d.tags.some((tag) => tag.includes(needle)))) return false;
     if (userF === 'with' && !d.logged_in_user) return false;
     if (userF === 'none' && d.logged_in_user) return false;
     if (osF !== 'all' && window.osFamily(d.os) !== osF) return false;
@@ -145,7 +147,7 @@ function DevicesScreen({ navigate }) {
     // The role policy assignments filter on; "none" finds the devices that
     // still need one (Linux, until an administrator sets it).
     if (roleF !== 'all' && (d.role || 'none') !== roleF) return false;
-    if (clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
+    if (canSeeOrg && clientF !== 'all' && clientOfSite(d.site_id) !== clientF) return false;
     return true;
   });
   const sortValue = {
@@ -159,6 +161,11 @@ function DevicesScreen({ navigate }) {
   const sortBy = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
   const optionalCols = DEVICE_OPTIONAL_COLUMNS.map((key) => ({ key }));
   const visibleCount = 3 + DEVICE_OPTIONAL_COLUMNS.filter(shows).length;
+  const tree = window.FleetTree.use('devices', canSeeOrg && sites.length > 0, q);
+  const entries = tree.mode === 'tree' ? window.FleetTree.project(filtered, (d) => ({
+    site_id: d.site_id, site: sites.find((site) => site.id === d.site_id)?.name,
+    client_id: clientOfSite(d.site_id), client: clients.find((client) => client.id === clientOfSite(d.site_id))?.name,
+  }), (d) => d.id, tree.closed) : filtered.map((row) => ({ kind: 'agent', key: 'agent:' + row.id, row }));
   // A sortable header cell (a render helper, not a component, so the header
   // keeps its focus across renders).
   const sortTh = (k, label, className = 'px-3') => (
@@ -201,6 +208,7 @@ function DevicesScreen({ navigate }) {
             <option value="all">{t('devices.filter.allClients')}</option>
             {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </Select>
+          <window.FleetTree.Choice tree={tree} />
           <window.ColumnPicker columns={optionalCols} hidden={hiddenCols} onToggle={toggleCol} labelOf={(c) => t(DEVICE_COLUMN_LABELS[c.key])} />
         </div>
       </Card>
@@ -228,9 +236,11 @@ function DevicesScreen({ navigate }) {
             {devicesQ.loading && Array.from({ length: 6 }).map((_, i) => (
               <tr key={i}><td className="px-4 py-3" colSpan={visibleCount}><Skeleton className="h-5 w-full" /></td></tr>
             ))}
-            {!devicesQ.loading && filtered.map((d) => (
-              <tr key={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
-                <td className="px-4 py-3">
+            {!devicesQ.loading && entries.map((entry) => {
+              if (entry.kind !== 'agent') return <window.FleetTree.GroupRow key={entry.key} node={entry} colSpan={visibleCount} onToggle={tree.toggle} />;
+              const d = entry.row;
+              return <tr key={entry.key} data-agent-id={d.id} onClick={() => setSelected(d.id)} className="cursor-pointer hover:bg-elevated/50 transition group">
+                <td className={tree.mode === 'tree' ? 'ps-12 pe-4 py-3' : 'px-4 py-3'}>
                   <div className="flex items-center gap-2.5">
                     <span className={cx('h-2 w-2 rounded-full shrink-0', d.status === 'online' ? 'bg-ok' : 'bg-bad')} />
                     <div className="text-[13px] font-medium text-ink truncate group-hover:text-brandhi transition-colors">{d.hostname}</div>
@@ -249,7 +259,7 @@ function DevicesScreen({ navigate }) {
                 <td className="px-3 py-3"><StatusPill status={d.status} size="sm" /></td>
                 <td className="px-4 py-3 text-right text-[12px] text-muted tabular">{timeAgo(d.last_seen)}</td>
               </tr>
-            ))}
+            })}
           </tbody>
         </table>
         {!devicesQ.loading && filtered.length === 0 && <EmptyState icon="devices" title={t('devices.empty.title')} msg={t('devices.empty.msg')} />}

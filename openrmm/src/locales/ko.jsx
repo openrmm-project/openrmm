@@ -23,6 +23,14 @@
   "mailtpl.sharedTestLimit": "공유 서비스의 테스트 이메일 한도에 도달했습니다. 다음 시간대에 다시 시도하세요.",
   "mailtpl.example": "예시 데이터만 표시합니다. 미리 보기는 변경 사항을 저장하거나 메일을 보내지 않습니다.",
 
+  'fleetTree.view': '보기',
+  'fleetTree.flat': '목록',
+  'fleetTree.tree': '고객 및 사이트',
+  'fleetTree.noClient': '고객 없음',
+  'fleetTree.noSite': '사이트 없음',
+  'fleetTree.unknownClient': '고객 정보 없음',
+  'fleetTree.unknownSite': '사이트 정보 없음',
+
   'nav.dashboard': "대시보드",
   'nav.chat': "AI 채팅",
   'nav.alerts': "알림",

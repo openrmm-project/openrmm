@@ -23,6 +23,14 @@
   "mailtpl.sharedTestLimit": "Had e-mel ujian bagi perkhidmatan dikongsi telah dicapai. Cuba lagi pada jam berikutnya.",
   "mailtpl.example": "Data contoh sahaja. Pratonton tidak menyimpan perubahan atau menghantar e-mel.",
 
+  'fleetTree.view': 'Paparan',
+  'fleetTree.flat': 'Senarai',
+  'fleetTree.tree': 'Pelanggan dan tapak',
+  'fleetTree.noClient': 'Tiada pelanggan',
+  'fleetTree.noSite': 'Tiada tapak',
+  'fleetTree.unknownClient': 'Pelanggan tidak tersedia',
+  'fleetTree.unknownSite': 'Tapak tidak tersedia',
+
   'nav.dashboard': "Papan pemuka",
   'nav.chat': "Sembang AI",
   'nav.alerts': "Amaran",

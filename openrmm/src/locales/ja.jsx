@@ -23,6 +23,14 @@
   "mailtpl.sharedTestLimit": "共有サービスのテストメール送信上限に達しました。次の時間帯にもう一度お試しください。",
   "mailtpl.example": "サンプルデータのみです。プレビューは変更を保存せず、メールも送信しません。",
 
+  'fleetTree.view': '表示',
+  'fleetTree.flat': '一覧',
+  'fleetTree.tree': 'クライアントとサイト',
+  'fleetTree.noClient': 'クライアントなし',
+  'fleetTree.noSite': 'サイトなし',
+  'fleetTree.unknownClient': 'クライアント情報なし',
+  'fleetTree.unknownSite': 'サイト情報なし',
+
   'nav.dashboard': 'ダッシュボード',
   'nav.chat': 'AI チャット',
   'nav.alerts': 'アラート',

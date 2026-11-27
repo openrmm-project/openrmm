@@ -626,6 +626,8 @@ type ComplianceRow struct {
 	Hostname      string     `json:"hostname"`
 	Description   string     `json:"description"`
 	OS            string     `json:"os"`
+	ClientID      string     `json:"client_id"`
+	SiteID        string     `json:"site_id"`
 	Client        string     `json:"client"`
 	Site          string     `json:"site"`
 	Department    string     `json:"department"`

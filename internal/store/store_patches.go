@@ -781,7 +781,7 @@ func emptyToIntArr(s []int) []int {
 func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.ComplianceRow, error) {
 	where, args := f.where()
 	q := `
-		SELECT a.id, a.hostname, a.description, a.os, COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
+		SELECT a.id, a.hostname, a.description, a.os, COALESCE(cl.id::text,''), COALESCE(s.id::text,''), COALESCE(cl.name,''), COALESCE(s.name,''), COALESCE(g.name,''),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing')),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing') AND pt.classification='security'),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status='approved'),
@@ -790,7 +790,7 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 		FROM agents a` + reportJoins + `
 		LEFT JOIN agent_patches ap ON ap.agent_id = a.id
 		LEFT JOIN patches pt ON pt.id = ap.patch_id` + where + `
-		GROUP BY a.id, cl.name, s.name, g.name
+		GROUP BY a.id, cl.id, s.id, cl.name, s.name, g.name
 		ORDER BY a.hostname`
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -800,7 +800,7 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 	var out []models.ComplianceRow
 	for rows.Next() {
 		var r models.ComplianceRow
-		if err := rows.Scan(&r.AgentID, &r.Hostname, &r.Description, &r.OS, &r.Client, &r.Site, &r.Department,
+		if err := rows.Scan(&r.AgentID, &r.Hostname, &r.Description, &r.OS, &r.ClientID, &r.SiteID, &r.Client, &r.Site, &r.Department,
 			&r.MissingTotal, &r.MissingSec, &r.Approved, &r.Failed, &r.RebootPending, &r.LastScan); err != nil {
 			return nil, err
 		}

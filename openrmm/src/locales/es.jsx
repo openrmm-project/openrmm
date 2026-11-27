@@ -23,6 +23,14 @@
   "mailtpl.sharedTestLimit": "Se alcanzó el límite de correos de prueba del servicio compartido. Vuelve a intentarlo la próxima hora.",
   "mailtpl.example": "Solo datos de ejemplo. La vista previa no guarda cambios ni envía correos.",
 
+  'fleetTree.view': 'Vista',
+  'fleetTree.flat': 'Lista',
+  'fleetTree.tree': 'Clientes y sitios',
+  'fleetTree.noClient': 'Sin cliente',
+  'fleetTree.noSite': 'Sin sitio',
+  'fleetTree.unknownClient': 'Cliente no disponible',
+  'fleetTree.unknownSite': 'Sitio no disponible',
+
   'nav.dashboard': 'Panel',
   'nav.chat': 'Chat con IA',
   'nav.alerts': 'Alertas',

@@ -11,7 +11,7 @@ export const SCREENS = [
   'src/app.jsx', 'src/ui.jsx', 'src/device-bulk.jsx', 'src/labels.jsx', 'src/screens-core.jsx',
   'src/screens-devices.jsx', 'src/screens-jobs.jsx', 'src/screens-chat.jsx',
   'src/screens-rmm.jsx', 'src/screens-rmm2.jsx', 'src/screens-reports.jsx',
-  'src/screens-patches.jsx',
+  'src/screens-patches.jsx', 'src/fleet-tree.jsx',
 ];
 
 // Proper names and technical tokens: identical in every locale by nature.

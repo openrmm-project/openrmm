@@ -6,6 +6,12 @@ tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Group devices and patch compliance by client and site.** Both tables
+  offer expandable groups and remember the chosen view. Search opens matching
+  branches, and bulk scans include every matching device in collapsed groups.
+
 ### Fixed
 
 - **A refused database password now says what usually causes it.** When

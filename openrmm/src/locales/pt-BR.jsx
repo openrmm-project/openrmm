@@ -29,6 +29,14 @@
   "mailtpl.sharedTestLimit": "O limite de e-mails de teste do serviço compartilhado foi atingido. Tente novamente na próxima hora.",
   "mailtpl.example": "Apenas dados de exemplo. A prévia não salva alterações nem envia e-mails.",
 
+  'fleetTree.view': 'Visualização',
+  'fleetTree.flat': 'Lista',
+  'fleetTree.tree': 'Clientes e locais',
+  'fleetTree.noClient': 'Sem cliente',
+  'fleetTree.noSite': 'Sem local',
+  'fleetTree.unknownClient': 'Cliente indisponível',
+  'fleetTree.unknownSite': 'Local indisponível',
+
   'nav.dashboard': 'Painel',
   'nav.chat': 'Chat com IA',
   'nav.alerts': 'Alertas',

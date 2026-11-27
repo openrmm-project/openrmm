@@ -5,12 +5,13 @@ import vm from 'node:vm';
 import { transformSync } from 'esbuild';
 
 const source = await readFile(new URL('../src/screens-patches.jsx', import.meta.url), 'utf8');
+const treeSource = await readFile(new URL('../src/fleet-tree.jsx', import.meta.url), 'utf8');
 const code = source.slice(source.indexOf('function complianceRows('), source.indexOf('function CatalogTab('));
 function harness(rows) {
   const states = [], calls = []; let cursor = 0, tree;
   const sandbox = {
     React: { createElement(type, props, ...children) { return { type, props: props || {}, children }; } },
-    useState(initial) { const i = cursor++; if (!(i in states)) states[i] = initial; return [states[i], (v) => { states[i] = typeof v === 'function' ? v(states[i]) : v; }]; },
+    useState(initial) { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial; return [states[i], (v) => { states[i] = typeof v === 'function' ? v(states[i]) : v; }]; },
     useAuth: () => ({ can: () => true }), useQuery: () => ({ data: { rows } }),
     useToast: () => ({ info() {}, error() {} }),
     t: (key) => key, timeAgo: (v) => v, cx: (...values) => values.filter(Boolean).join(' '),
@@ -19,6 +20,7 @@ function harness(rows) {
     ...Object.fromEntries(['Card', 'Icon', 'Input', 'Button', 'Skeleton', 'EmptyState', 'OsIcon', 'ComplianceBadge', 'ConfirmDialog'].map((v) => [v, v])),
   };
   vm.createContext(sandbox);
+  vm.runInContext(transformSync(treeSource, { loader: 'jsx' }).code, sandbox);
   vm.runInContext(transformSync(code, { loader: 'jsx' }).code, sandbox);
   const walk = (node, predicate) => !node || typeof node !== 'object' ? [] : [...(predicate(node) ? [node] : []), ...(node.children || []).flat(Infinity).flatMap((n) => walk(n, predicate))];
   const render = () => { cursor = 0; tree = sandbox.ComplianceTab(); };
@@ -28,7 +30,7 @@ function harness(rows) {
   return { calls, render, find, header,
     sort: (label) => { header(label).children.flat(Infinity)[0].props.onClick(); render(); },
     search: (value) => { find((n) => n.type === 'Input')[0].props.onChange({ target: { value } }); render(); },
-    rows: () => find((n) => n.type === 'tr' && n.props.key != null),
+    rows: () => find((n) => n.type === 'tr' && n.props['data-agent-id'] != null),
     sorted: (key, dir) => [...sandbox.complianceRows(rows, '', { key, dir })].map((r) => r.agent_id),
   };
 }
@@ -58,17 +60,17 @@ test('all data headers sort with natural text, numeric counts, actual time and s
 test('descriptions render with tooltip and fallback; search matches hostname or description', () => {
   const ui = harness(rows);
   assert.ok(ui.find((n) => n.type === 'td' && n.props.title === 'Room 10' && n.props.className.includes('truncate')).length);
-  const emptyRow = ui.rows().find((r) => r.props.key === 'empty');
+  const emptyRow = ui.rows().find((r) => r.props['data-agent-id'] === 'empty');
   assert.equal(emptyRow.children.flat(Infinity)[1].children[0].children[0], '—');
-  ui.search('ROOM 10'); assert.deepEqual(ui.rows().map((r) => r.props.key), ['ten']);
-  ui.search('SERVER 2'); assert.deepEqual(ui.rows().map((r) => r.props.key), ['two', 'tie']);
+  ui.search('ROOM 10'); assert.deepEqual(ui.rows().map((r) => r.props['data-agent-id']), ['ten']);
+  ui.search('SERVER 2'); assert.deepEqual(ui.rows().map((r) => r.props['data-agent-id']), ['two', 'tie']);
   ui.search('not present'); assert.equal(ui.find((n) => n.type === 'EmptyState').length, 1);
 });
 
 test('sorted and filtered rows keep scan/install/reboot and bulk scan targets attached', async () => {
   const ui = harness(rows);
   ui.sort('patches.col.missing'); ui.sort('patches.col.missing');
-  assert.equal(ui.rows()[0].props.key, 'ten');
+  assert.equal(ui.rows()[0].props['data-agent-id'], 'ten');
   ui.search('ROOM 10');
   await ui.find((n) => n.type === 'Button' && n.children.includes('dpatch.scan'))[0].props.onClick();
   await ui.find((n) => n.type === 'Button' && n.children.includes('patches.installN'))[0].props.onClick();

@@ -23,6 +23,14 @@
   "mailtpl.sharedTestLimit": "Das Limit für Test-E-Mails über den gemeinsamen Dienst ist erreicht. Versuche es in der nächsten Stunde erneut.",
   "mailtpl.example": "Nur Beispieldaten. Die Vorschau speichert nichts und sendet keine E-Mail.",
 
+  'fleetTree.view': 'Ansicht',
+  'fleetTree.flat': 'Liste',
+  'fleetTree.tree': 'Kunden und Standorte',
+  'fleetTree.noClient': 'Kein Kunde',
+  'fleetTree.noSite': 'Kein Standort',
+  'fleetTree.unknownClient': 'Kunde nicht verfügbar',
+  'fleetTree.unknownSite': 'Standort nicht verfügbar',
+
   'nav.dashboard': 'Übersicht',
   'nav.chat': 'KI-Chat',
   'nav.alerts': 'Warnungen',

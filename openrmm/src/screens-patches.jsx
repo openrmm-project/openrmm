@@ -105,7 +105,7 @@ function complianceRows(data, search, sort) {
   };
   const value = values[sort.key] || values.hostname;
   const empty = (v) => v == null || (typeof v === 'string' && !v.trim()) || (typeof v === 'number' && !Number.isFinite(v));
-  return data.filter((r) => !needle || [r.hostname, r.description].some((v) => (v || '').toLowerCase().includes(needle)))
+  return data.filter((r) => !needle || [r.hostname, r.description, r.client, r.site].some((v) => (v || '').toLowerCase().includes(needle)))
     .sort((a, b) => {
       const x = value(a), y = value(b);
       if (empty(x) || empty(y)) return empty(x) === empty(y) ? 0 : empty(x) ? 1 : -1;
@@ -121,6 +121,8 @@ function ComplianceTab() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState({ key: 'hostname', dir: 'asc' });
   const rows = complianceRows(q.data?.rows || [], search, sort);
+  const tree = window.FleetTree.use('compliance', (q.data?.rows || []).some((r) => r.client_id || r.site_id), search);
+  const entries = tree.mode === 'tree' ? window.FleetTree.project(rows, (r) => r, (r) => r.agent_id, tree.closed) : rows.map((row) => ({ kind: 'agent', key: 'agent:' + row.agent_id, row }));
   const sortBy = (key) => setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
   const sortTh = (key, label) => (
     <th key={key} className="font-medium px-4 py-2.5 whitespace-nowrap border-b border-line" aria-sort={sort.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
@@ -138,12 +140,13 @@ function ComplianceTab() {
   const reboot = async (r) => { try { await api.rebootDevice(r.agent_id); toast.info(t('reboot.requested'), t('reboot.requestedOn', { host: r.hostname })); window.dataBus.emit('patches'); } catch (e) { toast.error(t('reboot.failed'), e.message); } };
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center gap-2 px-4 h-12 border-b border-line">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-line">
         <div className="relative flex-1 max-w-xs">
           <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('patches.filterDevices')} className="pl-9 h-8" />
         </div>
         <div className="flex-1" />
+        <window.FleetTree.Choice tree={tree} />
         {can('patches.manage') && <Button size="sm" variant="secondary" icon="refresh" onClick={scanAll}>{t('patches.scanAll')}</Button>}
       </div>
       {q.loading ? <div className="p-4 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
@@ -167,9 +170,11 @@ function ComplianceTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.agent_id} className="border-b border-line/60 hover:bg-white/[0.02]">
-                      <td className="px-4 py-2 text-ink font-medium">{r.hostname}</td>
+                  {entries.map((entry) => {
+                    if (entry.kind !== 'agent') return <window.FleetTree.GroupRow key={entry.key} node={entry} colSpan={11} onToggle={tree.toggle} />;
+                    const r = entry.row;
+                    return <tr key={entry.key} data-agent-id={r.agent_id} className="border-b border-line/60 hover:bg-white/[0.02]">
+                      <td className={cx('py-2 text-ink font-medium', tree.mode === 'tree' ? 'ps-12 pe-4' : 'px-4')}>{r.hostname}</td>
                       <td className="px-4 py-2 truncate max-w-[220px]" title={r.description || undefined}>{r.description?.trim() ? <span className="text-ink">{r.description}</span> : <span className="text-faint">—</span>}</td>
                       <td className="px-4 py-2"><span className="inline-flex items-center gap-1.5"><OsIcon os={r.os} />{r.os}</span></td>
                       <td className="px-4 py-2"><ComplianceBadge s={r.status} /></td>
@@ -187,7 +192,7 @@ function ComplianceTab() {
                         </span>
                       )}</td>
                     </tr>
-                  ))}
+                  })}
                 </tbody>
               </table>
             </div>

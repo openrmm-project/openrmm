@@ -34,6 +34,7 @@ const sources = [
   'src/device-bulk.jsx',
   'src/labels.jsx',
   'src/ui.jsx',
+  'src/fleet-tree.jsx',
   'src/screens-core.jsx',
   'src/screens-devices.jsx',
   'src/screens-jobs.jsx',

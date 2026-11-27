@@ -26,6 +26,14 @@
   "mailtpl.sharedTestLimit": "The shared email test limit has been reached. Try again next hour.",
   "mailtpl.example": "Sample data only. Previewing does not save changes or send email.",
 
+  'fleetTree.view': 'View',
+  'fleetTree.flat': 'List',
+  'fleetTree.tree': 'Clients and sites',
+  'fleetTree.noClient': 'No client',
+  'fleetTree.noSite': 'No site',
+  'fleetTree.unknownClient': 'Client unavailable',
+  'fleetTree.unknownSite': 'Site unavailable',
+
   // ---- navigation
   'nav.dashboard': 'Dashboard',
   'nav.chat': 'AI Chat',

@@ -177,3 +177,17 @@ click it again to reverse the order. Counts sort numerically and last scans
 chronologically; empty values stay last in either direction. Row actions stay
 attached to the displayed device. The report API adds `description` to each
 row without changing existing fields or the caller’s access scope.
+
+The Clients and sites view groups devices by their existing Client and Site IDs.
+It starts expanded when authorized organization metadata is available. List view
+remains available; the choice is stored per signed-in user and screen in this
+browser. No organization hierarchy or department assignment is changed.
+
+Column sorts apply within each site in the tree; client and site branches sort
+by name, then ID. Counts reflect only authorized devices matching the current
+filters. Searching a hostname, description, client or site temporarily opens
+matching branches; clearing search restores manual expansion. Polling keeps the
+current expansion and selected device. Scan all includes every filtered device,
+even inside collapsed branches. The report adds `client_id` and `site_id` without
+changing its access scope. Devices uses a neutral list when the viewer lacks
+`clients.view` or organization metadata is unavailable.

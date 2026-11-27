@@ -17,7 +17,7 @@ async function loadHelpers() {
   assert.ok(start > 0 && end > start, 'osFamily and osLabel must stay above OsIcon in icons.jsx');
   const sandbox = {};
   vm.createContext(sandbox);
-  vm.runInContext(source.slice(start, end) + '\nthis.osFamily = osFamily; this.osLabel = osLabel;', sandbox);
+  vm.runInContext(source.slice(start, end) + '\nthis.osFamily = osFamily; this.osLabel = osLabel; this.osProductName = osProductName;', sandbox);
   return sandbox;
 }
 
@@ -47,6 +47,28 @@ test('the label reads as a product, not a kernel', async () => {
   assert.equal(osLabel('darwin'), 'macOS', 'the kernel name means nothing to an operator');
   assert.equal(osLabel('windows'), 'Windows');
   assert.equal(osLabel('linux'), 'Linux');
+});
+
+test('the platform column names the product, not the kernel', async () => {
+  const { osProductName } = await loadHelpers();
+  // The bug this guards: the inventory and fleet report printed "<platform>
+  // <version>" straight from the agent, so every Mac read "darwin 27.2.1".
+  assert.equal(osProductName('darwin'), 'macOS', 'the inventory row must not read "darwin 27.2.1"');
+  assert.equal(osProductName('linux'), 'Linux');
+  assert.equal(osProductName('windows'), 'Windows');
+  assert.equal(osProductName('ubuntu'), 'Ubuntu', 'a distro reported in lower case still reads as a product');
+  assert.equal(osProductName('Microsoft Windows 11 Pro'), 'Microsoft Windows 11 Pro');
+  assert.equal(osProductName(''), '');
+  assert.equal(osProductName(null), '');
+});
+
+test('platform plus version reads as one product label', async () => {
+  const { osProductName } = await loadHelpers();
+  const row = (platform, version) => [osProductName(platform), version].filter(Boolean).join(' ');
+  assert.equal(row('darwin', '27.2.1'), 'macOS 27.2.1');
+  assert.equal(row('darwin', ''), 'macOS');
+  assert.equal(row('ubuntu', '26.04'), 'Ubuntu 26.04');
+  assert.equal(row('Microsoft Windows 11 Pro', '10.0.26200'), 'Microsoft Windows 11 Pro 10.0.26200');
 });
 
 test('a more specific report survives instead of being flattened', async () => {

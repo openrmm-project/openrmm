@@ -165,7 +165,7 @@ function adaptInventory(inv) {
     agent_id: inv && inv.agent_id,
     collected_at: inv && inv.collected_at,
     data: {
-      system: { hostname: d.hostname, os: d.platform ? d.platform + ' ' + (d.platform_version || '') : d.os, arch: d.arch, uptime_hours: d.uptime_sec ? Math.round(d.uptime_sec / 3600) : undefined, kernel: d.kernel_version },
+      system: { hostname: d.hostname, os: d.platform ? [window.osProductName(d.platform), d.platform_version].filter(Boolean).join(' ') : window.osLabel(d.os), arch: d.arch, uptime_hours: d.uptime_sec ? Math.round(d.uptime_sec / 3600) : undefined, kernel: d.kernel_version },
       cpu: { model: d.cpu_model, cores: d.cpu_cores || d.num_cpu },
       memory: { total_gb: d.mem_total_bytes ? Math.round(d.mem_total_bytes / 1e9) : undefined, used_pct: d.mem_used_percent != null ? Math.round(d.mem_used_percent) : undefined },
       disks,

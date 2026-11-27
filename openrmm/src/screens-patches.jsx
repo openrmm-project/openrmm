@@ -177,7 +177,7 @@ function ComplianceTab() {
                       <td className={cx('px-4 py-2 tabular', r.missing_security > 0 && 'text-bad font-semibold')}>{r.missing_security}</td>
                       <td className={cx('px-4 py-2 tabular', r.approved > 0 && 'text-ok font-semibold')}>{r.approved || '—'}</td>
                       <td className={cx('px-4 py-2 tabular', r.failed > 0 && 'text-bad')}>{r.failed}</td>
-                      <td className="px-4 py-2">{r.reboot_pending ? <span className="text-warn inline-flex items-center gap-1"><Icon name="refresh" size={12} />{t('patches.pending')}</span> : <span className="text-faint">—</span>}</td>
+                      <td className="px-4 py-2"><window.RebootStatusBadge device={r} /></td>
                       <td className="px-4 py-2 text-faint whitespace-nowrap">{r.last_scan ? timeAgo(r.last_scan) : t('patches.never')}</td>
                       <td className="px-4 py-2 text-right whitespace-nowrap">{can('patches.manage') && (
                         <span className="inline-flex gap-1.5 justify-end">

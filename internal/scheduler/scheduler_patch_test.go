@@ -82,7 +82,7 @@ func TestSchedulerPatchTickDoesNotRebootWithLiveRemoteSession(t *testing.T) {
 	if err := st.AddPatchPolicyAssignment(ctx, policy.ID, models.ScopeAgent, agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetRebootPending(ctx, agent.ID, true); err != nil {
+	if err := st.ObserveReboot(ctx, agent.ID, &protocol.RebootStatus{Status: "required", BootID: "boot-one"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.CreateRemoteSession(ctx, &models.RemoteSession{
@@ -156,4 +156,73 @@ func newSchedulerTestStore(t *testing.T, databaseURL string) *store.Store {
 		admin.Close()
 	})
 	return st
+}
+
+func TestSchedulerRebootRequiresFreshObservationAndDoesNotRepeat(t *testing.T) {
+	databaseURL := os.Getenv("RMM_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	st := newSchedulerTestStore(t, databaseURL)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateAgent(ctx, "reboot-scheduler", "linux", "amd64", "test", "hash", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.CreatePatchPolicy(ctx, &models.PatchPolicy{Name: "always-open", Enabled: true, WindowStartMin: 0, WindowEndMin: 1439, Reboot: models.RebootAlways})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.AddPatchPolicyAssignment(ctx, p.ID, models.ScopeAgent, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	h := hub.New()
+	out := h.Add(a.ID, nil)
+	s := New(st, h, nil, patches.New(st, h))
+	tick := func() int {
+		t.Helper()
+		s.patchTick(ctx, []models.Agent{*a}, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC))
+		count := 0
+		for len(out) > 0 {
+			var e protocol.Envelope
+			if err := json.Unmarshal(<-out, &e); err != nil {
+				t.Fatal(err)
+			}
+			if e.Type == protocol.MsgReboot {
+				count++
+			}
+		}
+		return count
+	}
+	if err = st.SetRebootPending(ctx, a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if n := tick(); n != 0 {
+		t.Fatalf("legacy flag triggered %d reboots", n)
+	}
+	if err = st.ObserveReboot(ctx, a.ID, &protocol.RebootStatus{Status: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := tick(); n != 0 {
+		t.Fatalf("unknown triggered %d reboots", n)
+	}
+	if err = st.ObserveReboot(ctx, a.ID, &protocol.RebootStatus{Status: "required", BootID: "boot-one"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := tick(); n != 1 {
+		t.Fatalf("fresh positive triggered %d reboots", n)
+	}
+	if n := tick(); n != 0 {
+		t.Fatalf("duplicate tick triggered %d reboots", n)
+	}
+	current, err := st.GetAgent(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !current.RebootPending || current.RebootRequestedAt == nil || current.RebootObservedAt != nil {
+		t.Fatalf("request treated as confirmation: %+v", current)
+	}
 }

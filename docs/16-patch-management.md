@@ -177,3 +177,60 @@ click it again to reverse the order. Counts sort numerically and last scans
 chronologically; empty values stay last in either direction. Row actions stay
 attached to the displayed device. The report API adds `description` to each
 row without changing existing fields or the caller’s access scope.
+
+## OS reboot observations
+
+Building on the patch/reboot workflow in PR #35 and pending-reboot alerts in
+PR #242, upgraded agents include an optional `reboot` observation in their
+20-second heartbeat. It contains `status` (`required`, `not_required`, or
+`unknown`), a bounded reason (2048 bytes), and an optional boot identity (128
+bytes). The server timestamps receipt and preserves the first positive detection
+until a conclusive negative observation. Omitted fields from older agents leave
+state unchanged. An unknown observation records the failed check but retains
+any previous positive flag and its first-detected time.
+
+Linux checks `/var/run/reboot-required`. An absent marker is conclusive only on
+Debian/Ubuntu-family systems; other distributions and macOS report unknown.
+Windows checks Component Based Servicing, Windows Update, and pending file
+renames. Registry access failures are unknown unless another check positively
+requires a restart. These are OS indicators, not a guarantee that every installed
+application has no outstanding restart requirement.
+
+The Devices list has a sortable restart-status column and filters; its detail
+shows the reason, first detection, last check, and request and observed boot-change times.
+An observation older than two minutes, an offline device, or an unknown check
+cannot display a healthy status. A retained positive flag remains visible as
+last known required. Compliance uses the same observation freshness threshold;
+otherwise clean devices that are offline or have legacy or unknown reboot telemetry are unknown.
+
+Sending a reboot command records a request and never clears `reboot_pending`.
+Concurrent or repeated manual requests are rejected for 15 minutes (HTTP 409).
+A failed queue delivery restores the previous request state so it can be retried.
+Automatic policy reboots require either a positive OS observation received within
+the last two minutes or an explicit patch-installation result requiring reboot.
+This patch source preserves support for macOS, DNF and older agents without
+inventing an OS observation or freshness timestamp. Migration 044 preserves
+existing patch-derived pending flags; unknown observations retain that source,
+while a conclusive `not_required` observation clears it.
+
+Automatic delivery is limited to one request per OS pending episode or distinct
+patch-installation result, even after 15 minutes or a changed boot identity. A persistent marker cannot cause an
+endless automatic reboot cycle. An operator may explicitly retry after the
+15-minute cooldown. A conclusive clear followed by a new requirement starts a
+new OS episode. A new patch-installation request ID also starts a new eligible
+generation, without resetting the original first-detected pending time. This
+allows later patch cycles on platforms that cannot report an OS clear. Result
+identities are retained per agent, so duplicate or delayed A-B-A results cannot
+reopen eligibility or resurrect a cleared flag. Empty or oversized IDs share one
+conservative lifetime slot per agent; they never produce a new generation on
+each replay. The existing window, cooldown and active-session guards still apply.
+Reboot-pending alerts continue using the retained flag and first-detected time.
+
+A changed reliable boot identity records a boot change observed by the server,
+independently of any reboot request. It does not confirm that a particular
+request caused the boot: a report can arrive after an unrelated restart.
+Currently Linux supplies `/proc/sys/kernel/random/boot_id`; Windows and macOS do
+not report a boot identity. A new heartbeat or cleared reboot indicator alone
+is not proof that a boot occurred. An observed boot change can still leave an
+outstanding restart requirement. API access remains device-scoped; boot identity,
+patch source and dispatch reservation metadata are not exposed to console users.

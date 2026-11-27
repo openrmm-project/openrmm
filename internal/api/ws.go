@@ -248,12 +248,16 @@ func (s *Server) handleAgentFrame(ctx context.Context, agentID string, ch chan [
 	case protocol.MsgHeartbeat:
 		// The logged-in user is device data: cleaned before it is stored.
 		var hb protocol.HeartbeatMsg
-		_ = json.Unmarshal(env.Data, &hb)
+		if len(env.Data) > 0 && json.Unmarshal(env.Data, &hb) != nil {
+			_ = s.store.TouchAgent(ctx, agentID)
+			return
+		}
 		if hb.LoggedInUser != nil {
 			clean := models.CleanLoggedInUser(*hb.LoggedInUser)
 			hb.LoggedInUser = &clean
 		}
 		_ = s.store.TouchAgentSession(ctx, agentID, hb.LoggedInUser)
+		_ = s.store.ObserveReboot(ctx, agentID, hb.Reboot)
 	case protocol.MsgInventory:
 		var inv protocol.InventoryMsg
 		if json.Unmarshal(env.Data, &inv) != nil || len(inv.Data) == 0 || string(inv.Data) == "null" {

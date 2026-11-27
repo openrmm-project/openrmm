@@ -19,7 +19,10 @@ func TestComplianceStatus(t *testing.T) {
 		{"failed install -> critical", models.ComplianceRow{LastScan: &now, Failed: 1}, "critical"},
 		{"missing non-security -> at_risk", models.ComplianceRow{LastScan: &now, MissingTotal: 2}, "at_risk"},
 		{"reboot pending -> at_risk", models.ComplianceRow{LastScan: &now, RebootPending: true}, "at_risk"},
-		{"clean -> compliant", models.ComplianceRow{LastScan: &now}, "compliant"},
+		{"legacy reboot unknown", models.ComplianceRow{LastScan: &now}, "unknown"},
+		{"failed reboot observation", models.ComplianceRow{LastScan: &now, RebootStatus: "unknown", RebootCheckedAt: &now}, "unknown"},
+		{"offline freshly clear", models.ComplianceRow{AgentStatus: "offline", LastScan: &now, RebootStatus: "not_required", RebootCheckedAt: &now}, "unknown"},
+		{"clean -> compliant", models.ComplianceRow{AgentStatus: "online", LastScan: &now, RebootStatus: "not_required", RebootCheckedAt: &now}, "compliant"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

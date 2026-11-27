@@ -844,7 +844,7 @@ func (a *agent) telemetryLoop(done <-chan struct{}) {
 			return
 		case <-hb.C:
 			user := loggedInUser()
-			a.queue(protocol.MsgHeartbeat, protocol.HeartbeatMsg{LoggedInUser: &user})
+			a.queue(protocol.MsgHeartbeat, protocol.HeartbeatMsg{LoggedInUser: &user, Reboot: collectRebootStatus()})
 			a.flushOutbox() // retry any results still waiting for an ack
 			a.flushCredentialRotationCancellation()
 		case <-inv.C:

@@ -622,18 +622,25 @@ type PatchPolicyAssignment struct {
 
 // ComplianceRow is a per-device patch-compliance summary.
 type ComplianceRow struct {
-	AgentID       string     `json:"agent_id"`
-	Hostname      string     `json:"hostname"`
-	Description   string     `json:"description"`
-	OS            string     `json:"os"`
-	Client        string     `json:"client"`
-	Site          string     `json:"site"`
-	Department    string     `json:"department"`
-	MissingTotal  int        `json:"missing_total"`
-	MissingSec    int        `json:"missing_security"`
-	Approved      int        `json:"approved"`
-	Failed        int        `json:"failed"`
-	RebootPending bool       `json:"reboot_pending"`
-	LastScan      *time.Time `json:"last_scan,omitempty"`
-	Status        string     `json:"status"` // compliant|at_risk|critical|unknown
+	AgentStatus        string     `json:"agent_status"`
+	AgentID            string     `json:"agent_id"`
+	Hostname           string     `json:"hostname"`
+	Description        string     `json:"description"`
+	OS                 string     `json:"os"`
+	Client             string     `json:"client"`
+	Site               string     `json:"site"`
+	Department         string     `json:"department"`
+	MissingTotal       int        `json:"missing_total"`
+	MissingSec         int        `json:"missing_security"`
+	Approved           int        `json:"approved"`
+	Failed             int        `json:"failed"`
+	RebootPending      bool       `json:"reboot_pending"`
+	RebootStatus       string     `json:"reboot_status"`
+	RebootReason       string     `json:"reboot_reason"`
+	RebootCheckedAt    *time.Time `json:"reboot_checked_at,omitempty"`
+	RebootPendingSince *time.Time `json:"reboot_pending_since,omitempty"`
+	RebootRequestedAt  *time.Time `json:"reboot_requested_at,omitempty"`
+	RebootObservedAt   *time.Time `json:"reboot_observed_at,omitempty"`
+	LastScan           *time.Time `json:"last_scan,omitempty"`
+	Status             string     `json:"status"` // compliant|at_risk|critical|unknown
 }

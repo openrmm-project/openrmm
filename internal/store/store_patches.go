@@ -462,15 +462,29 @@ func (s *Store) ApplyPatchResult(ctx context.Context, agentID string, res *proto
 		}
 	}
 	if res.RebootRequired {
-		if _, err := tx.Exec(ctx, `UPDATE agents SET reboot_pending=TRUE,
-			reboot_pending_since=COALESCE(reboot_pending_since, now()) WHERE id=$1`, agentID); err != nil {
+		// A distinct install run can require another reboot without an OS clear
+		// (macOS/DNF/older agents cannot report one). Retain identities even after
+		// clearing pending so a delayed duplicate never resurrects the requirement.
+		// Missing or oversized identities share one bounded, conservative slot.
+		requestID := res.RequestID
+		if len(requestID) > 128 {
+			requestID = ""
+		}
+		if _, err := tx.Exec(ctx, `WITH first_result AS (
+            INSERT INTO agent_reboot_patch_results(agent_id,request_id)
+            SELECT id,$2 FROM agents WHERE id=$1 AND revoked_at IS NULL
+            ON CONFLICT DO NOTHING RETURNING agent_id
+        ) UPDATE agents SET reboot_pending=TRUE, reboot_patch_required=TRUE,
+            reboot_patch_required_at=clock_timestamp(),
+            reboot_pending_since=COALESCE(reboot_pending_since, now())
+            WHERE id IN (SELECT agent_id FROM first_result)`, agentID, requestID); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-// SetRebootPending toggles the reboot flag (cleared after a reboot is dispatched).
+// SetRebootPending toggles a legacy flag; dispatch must never clear it.
 func (s *Store) SetRebootPending(ctx context.Context, agentID string, v bool) error {
 	// reboot_pending_since dates the start of a pending reboot, for the
 	// reboot_pending rule's delay: kept while it stays pending, cleared after.
@@ -786,7 +800,7 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status IN ('missing','approved','installing') AND pt.classification='security'),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status='approved'),
 		       COUNT(ap.patch_id) FILTER (WHERE ap.status='failed'),
-		       a.reboot_pending, a.last_patch_scan
+		       a.status, a.reboot_pending, a.last_patch_scan, a.reboot_status, a.reboot_reason, a.reboot_checked_at, a.reboot_pending_since, a.reboot_requested_at, a.reboot_observed_at
 		FROM agents a` + reportJoins + `
 		LEFT JOIN agent_patches ap ON ap.agent_id = a.id
 		LEFT JOIN patches pt ON pt.id = ap.patch_id` + where + `
@@ -801,7 +815,8 @@ func (s *Store) ComplianceReport(ctx context.Context, f ReportFilter) ([]models.
 	for rows.Next() {
 		var r models.ComplianceRow
 		if err := rows.Scan(&r.AgentID, &r.Hostname, &r.Description, &r.OS, &r.Client, &r.Site, &r.Department,
-			&r.MissingTotal, &r.MissingSec, &r.Approved, &r.Failed, &r.RebootPending, &r.LastScan); err != nil {
+			&r.MissingTotal, &r.MissingSec, &r.Approved, &r.Failed, &r.AgentStatus, &r.RebootPending, &r.LastScan,
+			&r.RebootStatus, &r.RebootReason, &r.RebootCheckedAt, &r.RebootPendingSince, &r.RebootRequestedAt, &r.RebootObservedAt); err != nil {
 			return nil, err
 		}
 		r.Status = complianceStatus(r)
@@ -818,6 +833,8 @@ func complianceStatus(r models.ComplianceRow) string {
 		return "critical"
 	case r.MissingTotal > 0 || r.RebootPending:
 		return "at_risk"
+	case r.AgentStatus != "online" || r.RebootStatus != protocol.RebootNotRequired || r.RebootCheckedAt == nil || time.Since(*r.RebootCheckedAt) > 2*time.Minute:
+		return "unknown"
 	default:
 		return "compliant"
 	}

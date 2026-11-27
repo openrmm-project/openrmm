@@ -104,7 +104,8 @@ type RebootMsg struct {
 // agent older than 0.11 sends no field at all, which leaves the stored value
 // alone.
 type HeartbeatMsg struct {
-	LoggedInUser *string `json:"logged_in_user,omitempty"`
+	LoggedInUser *string       `json:"logged_in_user,omitempty"`
+	Reboot       *RebootStatus `json:"reboot,omitempty"`
 }
 
 type Envelope struct {

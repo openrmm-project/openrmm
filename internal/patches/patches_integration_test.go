@@ -151,3 +151,65 @@ func newPatchTestStore(t *testing.T, databaseURL string) *store.Store {
 	})
 	return st
 }
+
+func TestDispatchRebootKeepsPendingAndGuardsDuplicates(t *testing.T) {
+	databaseURL := os.Getenv("RMM_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("RMM_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	st := newPatchTestStore(t, databaseURL)
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.CreateAgent(ctx, "reboot-host", "linux", "amd64", "test", "hash", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.ObserveReboot(ctx, a.ID, &protocol.RebootStatus{Status: "required", BootID: "boot-one"}); err != nil {
+		t.Fatal(err)
+	}
+	h := hub.New()
+	svc := New(st, h)
+	assertState := func(requested bool) {
+		t.Helper()
+		a, err = st.GetAgent(ctx, a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !a.RebootPending || a.RebootPendingSince == nil || a.RebootObservedAt != nil || (a.RebootRequestedAt != nil) != requested {
+			t.Fatalf("dispatch must not clear/confirm: %+v", a)
+		}
+	}
+	if err = svc.DispatchReboot(ctx, a.ID, 60); !errors.Is(err, ErrOffline) {
+		t.Fatal(err)
+	}
+	assertState(false)
+	outbound := h.Add(a.ID, nil)
+	for h.Send(a.ID, []byte(`{}`)) {
+	}
+	if err = svc.DispatchReboot(ctx, a.ID, 60); !errors.Is(err, hub.ErrQueueFull) {
+		t.Fatalf("full queue: %v", err)
+	}
+	assertState(false)
+	for len(outbound) > 0 {
+		<-outbound
+	}
+	if err = svc.DispatchReboot(ctx, a.ID, 60); err != nil {
+		t.Fatal(err)
+	}
+	assertState(true)
+	if err = svc.DispatchReboot(ctx, a.ID, 60); !errors.Is(err, ErrRebootRequested) {
+		t.Fatalf("duplicate: %v", err)
+	}
+	if len(outbound) != 1 {
+		t.Fatalf("got %d reboot frames", len(outbound))
+	}
+	var frame protocol.Envelope
+	if err = json.Unmarshal(<-outbound, &frame); err != nil {
+		t.Fatal(err)
+	}
+	if frame.Type != protocol.MsgReboot {
+		t.Fatalf("type: %s", frame.Type)
+	}
+}

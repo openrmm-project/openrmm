@@ -253,7 +253,7 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 		}
 	}
 	pendingReboot := map[string]bool{}
-	if ids, err := s.store.RebootPendingAgents(ctx); err == nil {
+	if ids, err := s.store.RebootEligibleAgents(ctx); err == nil {
 		for _, id := range ids {
 			pendingReboot[id] = true
 		}
@@ -284,12 +284,12 @@ func (s *Scheduler) patchTick(ctx context.Context, agents []models.Agent, now ti
 				log.Printf("patch install %s: %v", a.ID, err)
 			}
 		} else if rebootAllowed && pendingReboot[a.ID] {
-			// Nothing left to install; clear a pending reboot inside the window.
+			// Nothing left to install; request a freshly observed pending reboot.
 			live, err := s.store.HasLiveNativeRemoteSession(ctx, a.ID)
 			if err != nil || live {
 				continue // never interrupt an operator's active remote session automatically
 			}
-			if err := s.patches.DispatchReboot(ctx, a.ID, 60); err != nil {
+			if err := s.patches.DispatchAutomaticReboot(ctx, a.ID, 60); err != nil {
 				log.Printf("patch reboot %s: %v", a.ID, err)
 			}
 		}

@@ -55,9 +55,10 @@ const aiTask = { id: 'task-ai', agent_id: 'dev-1', name: 'AI cleanup task', shel
 
 // The fleet: who is logged in where (Devices ▸ Logged-in user), with a device
 // no one is logged in to and one offline with its last report.
+const rebootTime = new Date().toISOString();
 const fleet = [
-  { id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z', logged_in_user: 'ACME\\zoe', logged_in_user_since: '2026-01-01T00:00:00Z', last_boot_at: '2026-01-01T00:00:00Z' },
-  { id: 'dev-2', hostname: 'ALPHA-WS', description: '', os: 'windows', arch: 'amd64', version: '0.11.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z', logged_in_user: 'AzureAD\\Ana', last_boot_at: '2025-12-01T00:00:00Z' },
+  { reboot_pending: true, reboot_status: 'required', reboot_reason: 'Kernel update requires restart', reboot_checked_at: rebootTime, reboot_pending_since: rebootTime, reboot_requested_at: rebootTime, reboot_observed_at: rebootTime, id: 'dev-1', hostname: 'SMOKE-PC', description: 'Smoke device', os: 'Linux', arch: 'amd64', version: '1.0.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z', logged_in_user: 'ACME\\zoe', logged_in_user_since: '2026-01-01T00:00:00Z', last_boot_at: '2026-01-01T00:00:00Z' },
+  { reboot_status: 'not_required', reboot_checked_at: rebootTime, id: 'dev-2', hostname: 'ALPHA-WS', description: '', os: 'windows', arch: 'amd64', version: '0.11.0', status: 'online', tags: [], last_seen: '2026-01-01T00:00:00Z', logged_in_user: 'AzureAD\\Ana', last_boot_at: '2025-12-01T00:00:00Z' },
   { id: 'dev-3', hostname: 'BETA-SRV', description: '', os: 'windows', arch: 'amd64', version: '0.11.0', status: 'offline', tags: [], last_seen: '2025-12-31T00:00:00Z', logged_in_user: '' },
 ];
 
@@ -86,7 +87,8 @@ const hardwareRows = [
 // Policy targeting (RFC #258): the device's role, and the assistant policy's
 // assignments and exceptions as the console changes them.
 const smokeRole = { os_role: '', role_override: '' };
-const smokeDevice = () => ({ ...fleet[0], os: 'linux', ...smokeRole, role: smokeRole.role_override || smokeRole.os_role });
+const freshReboot = (d) => d.reboot_checked_at ? { ...d, reboot_checked_at: new Date().toISOString() } : d;
+const smokeDevice = () => ({ ...freshReboot(fleet[0]), os: 'linux', ...smokeRole, role: smokeRole.role_override || smokeRole.os_role });
 const policyAssignments = [{ id: 'asg-1', policy_id: 'pol-ai', scope_type: 'agent', scope_id: 'dev-1', os: '', role: '' }];
 const policyExclusions = [];
 // The assistant's patch policy, as its searchable pickers change it.
@@ -270,7 +272,7 @@ const server = createServer(async (req, res) => {
         }
         return json(res, 200, remoteConfig);
       }
-      if (pathname === '/api/devices') return json(res, 200, { devices: fleet });
+      if (pathname === '/api/devices') return json(res, 200, { devices: fleet.map(freshReboot) });
       if (pathname === '/api/reports/compliance') return json(res, 200, { rows: complianceRows });
       if (pathname === '/api/devices/dev-3/patches/scan' && req.method === 'POST') {
         return json(res, 503, { error: 'device is offline', code: 'device_offline' });
@@ -1086,6 +1088,31 @@ async function devicesUserBrowserFlow() {
   return true;
 }
 
+async function rebootBrowserFlow() {
+  const wait = async (fn) => { for (let i = 0; i < 150; i++) { const v = fn(); if (v) return v; await new Promise((r) => setTimeout(r, 50)); } throw new Error('Reboot E2E timed out: ' + fn.toString()); };
+  const button = (text) => [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === text);
+  const rows = () => [...document.querySelectorAll('tbody tr')].filter((tr) => tr.querySelector('td') && !tr.querySelector('[colspan]'));
+  (await wait(() => button('Devices'))).click();
+  await wait(() => rows().length === 3);
+  const filter = await wait(() => document.querySelector('select[aria-label="Restart status"]'));
+  const choose = (value) => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(filter, value); filter.dispatchEvent(new Event('change', { bubbles: true })); };
+  choose('required');
+  await wait(() => rows().length === 1 && rows()[0].textContent.includes('SMOKE-PC'));
+  if (!rows()[0].textContent.includes('Restart required')) throw new Error('Missing reboot badge');
+  choose('not_required');
+  await wait(() => rows().length === 1 && rows()[0].textContent.includes('ALPHA-WS'));
+  choose('unknown');
+  await wait(() => rows().length === 1 && rows()[0].textContent.includes('BETA-SRV'));
+  if (!rows()[0].textContent.includes('Unknown')) throw new Error('Legacy device must show unknown');
+  choose('required');
+  await wait(() => rows().length === 1 && rows()[0].textContent.includes('SMOKE-PC'));
+  rows()[0].click();
+  await wait(() => document.body.textContent.includes('Kernel update requires restart'));
+  for (const text of ['Checked', 'First detected', 'Last request', 'not a confirmation', 'Boot change observed']) if (!document.body.textContent.includes(text)) throw new Error('Missing reboot detail: ' + text);
+  document.documentElement.dataset.rebootE2e = 'passed';
+  return true;
+}
+
 async function hardwareLastUserBrowserFlow() {
   const wait = async (fn) => {
     for (let i = 0; i < 150; i++) { const value = fn(); if (value) return value; await new Promise((r) => setTimeout(r, 50)); }
@@ -1382,6 +1409,8 @@ try {
     assert.equal(sharedCheck.attachments.length, 2, 'sharing preserves the direct device attachment');
     const usersFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: devicesUserBrowserFlow });
     assertBrowser(usersFlow, /data-devices-user-e2e="passed"/);
+    const rebootFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: rebootBrowserFlow });
+    assertBrowser(rebootFlow, /data-reboot-e2e="passed"/);
     const hardwareFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: hardwareLastUserBrowserFlow });
     assertBrowser(hardwareFlow, /data-hardware-user-e2e="passed"/);
     const csvFlow = await runMobileChrome(chrome, baseURL + '/authenticated/', { width: 1280, flow: auditCsvBrowserFlow });

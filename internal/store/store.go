@@ -108,7 +108,9 @@ func scanAgent(row pgx.Row) (*models.Agent, error) {
 		&a.SiteID, &a.GroupID, &a.Tags, &a.MeshID, &a.LastSeen, &a.RevokedAt, &a.CreatedAt, &a.EnrollTokenID, &a.MonitoringScopeSince,
 		&a.OSRole, &a.RoleOverride, &a.LoggedInUser, &a.LoggedInUserSince, &a.LastLoggedInUser, &a.LastLoggedInUserAt, &a.LastBootAt,
 		&a.DevicePublicKey, &a.DeviceKeyIssue, &a.PendingDevicePublicKey, &a.DeviceKeyIssueSince, &a.DeviceKeyIssueSeenAt,
-		&a.DeviceKeyIssueIP, &a.DeviceKeyIssueVersion, &a.DeviceKeyIssueCount, &a.DeviceKeyChangedAt, &a.DeviceKeyChangedBy)
+		&a.DeviceKeyIssueIP, &a.DeviceKeyIssueVersion, &a.DeviceKeyIssueCount, &a.DeviceKeyChangedAt, &a.DeviceKeyChangedBy,
+		&a.RebootPending, &a.RebootStatus, &a.RebootReason, &a.RebootCheckedAt, &a.RebootPendingSince,
+		&a.RebootRequestedAt, &a.RebootObservedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -119,7 +121,7 @@ func scanAgent(row pgx.Row) (*models.Agent, error) {
 	return &a, nil
 }
 
-const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since, os_role, role_override, logged_in_user, logged_in_user_since, last_logged_in_user, last_logged_in_user_at, last_boot_at, device_public_key, device_key_issue, pending_device_public_key, device_key_issue_since, device_key_issue_seen_at, device_key_issue_ip, device_key_issue_version, device_key_issue_count, device_key_changed_at, device_key_changed_by`
+const agentCols = `id, hostname, description, note, os, arch, version, status, site_id, group_id, tags, mesh_id, last_seen, revoked_at, created_at, enroll_token_id, monitoring_scope_since, os_role, role_override, logged_in_user, logged_in_user_since, last_logged_in_user, last_logged_in_user_at, last_boot_at, device_public_key, device_key_issue, pending_device_public_key, device_key_issue_since, device_key_issue_seen_at, device_key_issue_ip, device_key_issue_version, device_key_issue_count, device_key_changed_at, device_key_changed_by, reboot_pending, reboot_status, reboot_reason, reboot_checked_at, reboot_pending_since, reboot_requested_at, reboot_observed_at`
 
 // SetAgentMeta updates the operator-editable identification fields: description
 // (shown in the device list) and note (a private observation, detail-only).

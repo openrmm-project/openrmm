@@ -31,8 +31,8 @@ function presenceSummary(viewers) {
 // The Devices grid's optional columns (shown or hidden per viewer) and the
 // localStorage key that remembers the choice.
 const DEVICE_COLUMNS_KEY = 'rmm-devices-hidden-columns';
-const DEVICE_OPTIONAL_COLUMNS = ['description', 'os', 'user', 'client', 'site', 'department', 'tags', 'last_boot'];
-const DEVICE_COLUMN_LABELS = { description: 'common.description', os: 'devices.col.os', user: 'devices.col.user', client: 'devices.col.client', site: 'devices.col.site', department: 'devices.col.department', tags: 'devices.col.tags', last_boot: 'devices.col.lastBoot' };
+const DEVICE_OPTIONAL_COLUMNS = ['description', 'os', 'user', 'reboot', 'client', 'site', 'department', 'tags', 'last_boot'];
+const DEVICE_COLUMN_LABELS = { description: 'common.description', os: 'devices.col.os', user: 'devices.col.user', reboot: 'reboot.col', client: 'devices.col.client', site: 'devices.col.site', department: 'devices.col.department', tags: 'devices.col.tags', last_boot: 'devices.col.lastBoot' };
 // Columns that start hidden, so they do not appear unasked in a list someone
 // has already arranged. Showing one is remembered under its own key: the hidden
 // key only lists what a viewer turned off.
@@ -92,6 +92,43 @@ function LastBoot({ device }) {
   return <span className="text-muted tabular" title={fmtTime(device.last_boot_at)}>{timeAgo(device.last_boot_at)}</span>;
 }
 
+// A retained positive flag is not lost when the next observation is unknown.
+// Conversely, stale or legacy false flags must never look freshly healthy.
+function rebootPresentation(device, now = Date.now()) {
+  const checked = Date.parse(device.reboot_checked_at || '');
+  const stale = !Number.isFinite(checked) || now - checked > 120000 || (device.agent_status || device.status) === 'offline';
+  const unknown = !['required', 'not_required'].includes(device.reboot_status);
+  const state = device.reboot_pending ? 'required' : (unknown || stale ? 'unknown' : device.reboot_status);
+  const lastKnown = state === 'required' && (unknown || stale);
+  return { state, stale, unknown, lastKnown };
+}
+
+function matchesRebootFilter(device, filter, now = Date.now()) {
+  const view = rebootPresentation(device, now);
+  if (filter === 'required') return view.state === 'required';
+  if (filter === 'unknown') return view.unknown || view.stale;
+  if (filter === 'not_required') return view.state === 'not_required';
+  return true;
+}
+
+function RebootStatusBadge({ device }) {
+  const view = rebootPresentation(device);
+  const label = view.lastKnown ? 'reboot.lastKnownRequired' : 'reboot.state.' + view.state;
+  const tooltip = [device.reboot_reason, device.reboot_checked_at ? t('reboot.checked', { when: timeAgo(device.reboot_checked_at) }) : t('reboot.neverChecked')].filter(Boolean).join(' · ');
+  return <span title={tooltip} className={cx('inline-flex rounded-md border px-2 py-0.5 text-[11px]', view.state === 'required' ? 'text-warn border-warn/25 bg-warnsoft' : view.state === 'not_required' ? 'text-ok border-ok/25 bg-oksoft' : 'text-faint border-line bg-elevated')}>{t(label)}</span>;
+}
+
+function RebootDetails({ device }) {
+  return <div className="mt-3 rounded-lg border border-line bg-elevated/30 p-3 text-[12px] space-y-1">
+    <div className="flex items-center gap-2"><span className="font-medium">{t('reboot.col')}</span><RebootStatusBadge device={device} /></div>
+    {device.reboot_reason && <p className="text-muted">{device.reboot_reason}</p>}
+    <p className="text-faint">{device.reboot_checked_at ? t('reboot.checked', { when: timeAgo(device.reboot_checked_at) }) : t('reboot.neverChecked')}</p>
+    {device.reboot_pending && device.reboot_pending_since && <p className="text-faint">{t('reboot.detectedSince', { when: timeAgo(device.reboot_pending_since) })}</p>}
+    {device.reboot_requested_at && <p className="text-faint">{t('reboot.lastRequest', { when: timeAgo(device.reboot_requested_at) })}</p>}
+    {device.reboot_observed_at && <p className="text-faint">{t('reboot.observed', { when: timeAgo(device.reboot_observed_at) })}</p>}
+  </div>;
+}
+
 function DevicesScreen({ navigate }) {
   const devicesQ = useQuery(['devices'], () => api.listDevices(), { invalidateOn: ['devices'], poll: 10000 });
   const { can } = useAuth();
@@ -103,6 +140,7 @@ function DevicesScreen({ navigate }) {
   const [statusF, setStatusF] = useState('all');
   const [roleF, setRoleF] = useState('all');
   const [userF, setUserF] = useState('all');
+  const [rebootF, setRebootF] = useState('all');
   const [clientF, setClientF] = useState('all');
   // Sorting by any column, and optional columns each viewer shows or hides
   // (kept in this browser only).
@@ -140,6 +178,7 @@ function DevicesScreen({ navigate }) {
     if (q && !(d.hostname.toLowerCase().includes(needle) || (d.description || '').toLowerCase().includes(needle) || (d.logged_in_user || '').toLowerCase().includes(needle) || d.tags.some((tag) => tag.includes(needle)))) return false;
     if (userF === 'with' && !d.logged_in_user) return false;
     if (userF === 'none' && d.logged_in_user) return false;
+    if (!matchesRebootFilter(d, rebootF)) return false;
     if (osF !== 'all' && window.osFamily(d.os) !== osF) return false;
     if (statusF !== 'all' && d.status !== statusF) return false;
     // The role policy assignments filter on; "none" finds the devices that
@@ -152,7 +191,7 @@ function DevicesScreen({ navigate }) {
     hostname: (d) => d.hostname, description: (d) => d.description || '', os: (d) => window.osLabel(d.os),
     client: (d) => clientName(d.site_id).replace('—', ''), site: (d) => siteName(d.site_id).replace('—', ''),
     department: (d) => departmentName(d.group_id).replace('—', ''),
-    user: (d) => d.logged_in_user || '', status: (d) => d.status, last_seen: (d) => d.last_seen || '',
+    user: (d) => d.logged_in_user || '', reboot: (d) => rebootPresentation(d).state, status: (d) => d.status, last_seen: (d) => d.last_seen || '',
     last_boot: (d) => d.last_boot_at || '',
   };
   sortDevices(filtered, sortValue[sort.key] || sortValue.hostname, sort.dir);
@@ -197,6 +236,12 @@ function DevicesScreen({ navigate }) {
             <option value="with">{t('devices.filter.withUser')}</option>
             <option value="none">{t('devices.noUser')}</option>
           </Select>
+          <Select aria-label={t('reboot.col')} value={rebootF} onChange={(e) => setRebootF(e.target.value)} className="w-auto min-w-[150px]">
+            <option value="all">{t('reboot.filter.all')}</option>
+            <option value="required">{t('reboot.state.required')}</option>
+            <option value="not_required">{t('reboot.state.not_required')}</option>
+            <option value="unknown">{t('reboot.filter.unknown')}</option>
+          </Select>
           <Select value={clientF} onChange={(e) => setClientF(e.target.value)} className="w-auto min-w-[150px]">
             <option value="all">{t('devices.filter.allClients')}</option>
             {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -215,6 +260,7 @@ function DevicesScreen({ navigate }) {
               {shows('description') && sortTh('description', t('common.description'))}
               {shows('os') && sortTh('os', t('devices.col.os'))}
               {shows('user') && sortTh('user', t('devices.col.user'), 'px-3 hidden sm:table-cell')}
+              {shows('reboot') && sortTh('reboot', t('reboot.col'))}
               {shows('client') && sortTh('client', t('devices.col.client'), 'px-3 hidden md:table-cell')}
               {shows('site') && sortTh('site', t('devices.col.site'), 'px-3 hidden md:table-cell')}
               {shows('department') && sortTh('department', t('devices.col.department'), 'px-3 hidden md:table-cell')}
@@ -239,6 +285,7 @@ function DevicesScreen({ navigate }) {
                 {shows('description') && <td className="px-3 py-3 text-[12.5px] truncate max-w-[220px]">{d.description ? <span className="text-ink">{d.description}</span> : <span className="text-faint">—</span>}</td>}
                 {shows('os') && <td className="px-3 py-3"><div className="flex items-center gap-2 text-[12.5px] text-muted"><OsIcon os={d.os} size={15} /><span className="truncate max-w-[170px]" title={d.os}>{window.osLabel(d.os)}</span><span className="text-faint text-[11px] mono">{d.arch}</span>{d.role && <span className="text-faint text-[11px]">{t('target.role.' + d.role)}</span>}{presence[d.id]?.length ? <Tip label={presenceSummary(presence[d.id])}><span className="inline-flex items-center gap-1 text-[11px] text-brandhi border border-brandhi/40 rounded-sm px-1.5 py-0.5"><Icon name="remote" size={11} />{presence[d.id].length > 1 ? presence[d.id].length : t('presence.inUse')}</span></Tip> : null}</div></td>}
                 {shows('user') && <td className="px-3 py-3 hidden sm:table-cell text-[12.5px] truncate max-w-[200px]"><LoggedInUser device={d} /></td>}
+                {shows('reboot') && <td className="px-3 py-3"><RebootStatusBadge device={d} /></td>}
                 {shows('client') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{clientName(d.site_id)}</td>}
                 {shows('site') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted">{siteName(d.site_id)}</td>}
                 {shows('department') && <td className="px-3 py-3 hidden md:table-cell text-[12.5px] text-muted truncate max-w-[180px]">{departmentName(d.group_id)}</td>}
@@ -680,6 +727,7 @@ function DeviceDetail({ id, onClose, navigate, sites, clients }) {
             </div>
           </div>
 
+          <div className="px-5 pb-3"><RebootDetails device={d} /></div>
           <Tabs className="px-5" value={tab} onChange={setTab} tabs={[{ value: 'inventory', label: t('device.tab.inventory') }, ...(can('jobs.view') ? [{ value: 'jobs', label: t('nav.jobs') }] : []), ...(can('checks.view') ? [{ value: 'checks', label: t('device.tab.checks') }] : []), ...(can('tasks.view') ? [{ value: 'tasks', label: t('device.tab.tasks') }] : []), ...(can('patches.view') ? [{ value: 'patches', label: t('nav.patches') }] : []), ...(can('jobs.create') ? [{ value: 'run', label: t('device.runScript') }] : []), ...(can('devices.manage') ? [{ value: 'notes', label: t('device.tab.notes') }] : [])]} />
 
           <div className="flex-1 overflow-y-auto scroll-area p-5">
@@ -2681,3 +2729,5 @@ window.DevicesScreen = DevicesScreen;
 window.DeviceDetail = DeviceDetail;
 window.DevicePatches = DevicePatches;
 window.RemoteViewer = RemoteViewer;
+
+window.RebootStatusBadge = RebootStatusBadge;

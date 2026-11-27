@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -633,19 +632,6 @@ func querySystem(ctx context.Context) (any, error) {
 		out["pending_reboot_reason"] = why
 	}
 	return out, nil
-}
-
-// pendingRebootFile is where Debian-family systems flag a needed restart.
-const pendingRebootFile = "/var/run/reboot-required"
-
-func pendingRebootUnix() (any, string) {
-	if runtime.GOOS != "linux" {
-		return "unknown", ""
-	}
-	if _, err := os.Stat(pendingRebootFile); err == nil {
-		return true, pendingRebootFile
-	}
-	return false, ""
 }
 
 // ---- software ----

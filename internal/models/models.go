@@ -136,6 +136,16 @@ func parseVersion(v string) ([3]int, bool) {
 
 // Agent is a managed endpoint.
 type Agent struct {
+	// RebootStatus is the last OS observation; pending is retained across unknown
+	// reports. CheckedAt makes stale/legacy data visible rather than healthy.
+	RebootPending      bool       `json:"reboot_pending"`
+	RebootStatus       string     `json:"reboot_status"`
+	RebootReason       string     `json:"reboot_reason"`
+	RebootCheckedAt    *time.Time `json:"reboot_checked_at,omitempty"`
+	RebootPendingSince *time.Time `json:"reboot_pending_since,omitempty"`
+	RebootRequestedAt  *time.Time `json:"reboot_requested_at,omitempty"`
+	RebootObservedAt   *time.Time `json:"reboot_observed_at,omitempty"`
+
 	// MonitoringScopeSince is a server-side provenance marker, never client input.
 	MonitoringScopeSince time.Time  `json:"-"`
 	ID                   string     `json:"id"`

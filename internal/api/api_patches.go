@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/p1ngu/rmm/internal/hub"
 	"github.com/p1ngu/rmm/internal/models"
 	"github.com/p1ngu/rmm/internal/patches"
 	"github.com/p1ngu/rmm/internal/store"
@@ -91,15 +92,23 @@ func (s *Server) rebootDevice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.patches.DispatchReboot(r.Context(), id, 60); err != nil {
+		if errors.Is(err, patches.ErrRebootRequested) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, patches.ErrOffline) {
 			writeErr(w, http.StatusServiceUnavailable, "device is offline")
+			return
+		}
+		if errors.Is(err, hub.ErrQueueFull) {
+			writeErr(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	_ = s.store.AddAudit(r.Context(), actorOf(r), "reboot", id, s.deviceAuditLabel(r, id))
-	writeJSON(w, http.StatusAccepted, map[string]any{"status": "rebooting"})
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "requested"})
 }
 
 // ---- catalog + approval ----

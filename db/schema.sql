@@ -828,7 +828,9 @@ CREATE TABLE IF NOT EXISTS notifications (
     dedupe_key      TEXT        NOT NULL DEFAULT '',
     lease_token     UUID,
     lease_until     TIMESTAMPTZ,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    delivery_context JSONB CONSTRAINT notifications_delivery_context_object
+        CHECK (delivery_context IS NULL OR jsonb_typeof(delivery_context) = 'object')
 );
 
 -- Drives the worker's claim query; partial so it stays small as sent rows pile up.

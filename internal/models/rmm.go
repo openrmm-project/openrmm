@@ -426,17 +426,18 @@ type Task struct {
 // in-process job so a server restart — which tends to happen exactly when
 // things are going wrong — does not drop the alert nobody has read yet.
 type Notification struct {
-	ID         string  `json:"id"`
-	EventType  string  `json:"event_type"`
-	AlertID    *string `json:"alert_id,omitempty"`
-	AgentID    *string `json:"agent_id,omitempty"`
-	UserID     *string `json:"user_id,omitempty"`
-	Recipient  string  `json:"recipient"`
-	Subject    string  `json:"subject"`
-	Body       string  `json:"body"`
-	Attempts   int     `json:"attempts"`
-	DedupeKey  string  `json:"dedupe_key,omitempty"`
-	LeaseToken *string `json:"lease_token,omitempty"`
+	DeliveryContext json.RawMessage `json:"-"`
+	ID              string          `json:"id"`
+	EventType       string          `json:"event_type"`
+	AlertID         *string         `json:"alert_id,omitempty"`
+	AgentID         *string         `json:"agent_id,omitempty"`
+	UserID          *string         `json:"user_id,omitempty"`
+	Recipient       string          `json:"recipient"`
+	Subject         string          `json:"subject"`
+	Body            string          `json:"body"`
+	Attempts        int             `json:"attempts"`
+	DedupeKey       string          `json:"dedupe_key,omitempty"`
+	LeaseToken      *string         `json:"lease_token,omitempty"`
 }
 
 // Alert is a notification raised by a failing check/task or an offline agent.

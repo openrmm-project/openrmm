@@ -85,8 +85,9 @@ func captureDrainLog(t *testing.T) *bytes.Buffer {
 
 func enqueue(t *testing.T, ctx context.Context, st *store.Store, to string) {
 	t.Helper()
+	userID := newRecipient(t, ctx, st, to, false)
 	if err := st.EnqueueNotification(ctx, &models.Notification{
-		EventType: store.NotifyAgentOffline, Recipient: to, Subject: "s", Body: "b",
+		UserID: &userID, EventType: store.NotifyAgentOffline, Recipient: to, Subject: "s", Body: "b",
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -190,13 +190,17 @@ func (s *Store) RecipientsForAlertEvent(ctx context.Context, alertID, eventType 
 
 // EnqueueNotification adds one message to the outbox.
 func (s *Store) EnqueueNotification(ctx context.Context, n *models.Notification) error {
-	_, err := s.pool.Exec(ctx,
+	return enqueueNotification(ctx, s.pool, n)
+}
+
+func enqueueNotification(ctx context.Context, q dbQuerier, n *models.Notification) error {
+	_, err := q.Exec(ctx,
 		`INSERT INTO notifications
-		 (id, event_type, alert_id, agent_id, user_id, recipient, subject, body, dedupe_key)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		 (id, event_type, alert_id, agent_id, user_id, recipient, subject, body, dedupe_key, delivery_context)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		 ON CONFLICT (dedupe_key) WHERE dedupe_key <> '' DO NOTHING`,
 		newID(), n.EventType, n.AlertID, n.AgentID, n.UserID, n.Recipient,
-		n.Subject, n.Body, n.DedupeKey)
+		n.Subject, n.Body, n.DedupeKey, nullableDeliveryContext(n.DeliveryContext))
 	return err
 }
 
@@ -233,7 +237,7 @@ func (s *Store) ClaimPendingNotificationsLeased(ctx context.Context, limit int, 
 			updated_at=now()
 		FROM due WHERE n.id = due.id
 		RETURNING n.id, n.event_type, n.alert_id, n.agent_id, n.user_id, n.recipient,
-		          n.subject, n.body, n.attempts, n.dedupe_key, n.lease_token`, limit, lease.String())
+		          n.subject, n.body, n.attempts, n.dedupe_key, n.lease_token, n.delivery_context`, limit, lease.String())
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +246,7 @@ func (s *Store) ClaimPendingNotificationsLeased(ctx context.Context, limit int, 
 	for rows.Next() {
 		var n models.Notification
 		if err := rows.Scan(&n.ID, &n.EventType, &n.AlertID, &n.AgentID, &n.UserID,
-			&n.Recipient, &n.Subject, &n.Body, &n.Attempts, &n.DedupeKey, &n.LeaseToken); err != nil {
+			&n.Recipient, &n.Subject, &n.Body, &n.Attempts, &n.DedupeKey, &n.LeaseToken, &n.DeliveryContext); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

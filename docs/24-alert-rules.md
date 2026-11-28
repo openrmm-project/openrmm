@@ -176,6 +176,51 @@ Agent-owned and directly owned check silences are bound to the same scope revisi
 
 Migration 028 ships in 0.10.0. A test database that applied an earlier pre-release draft of it must be recreated: an applied migration is never edited, so a changed checksum is refused.
 
+## Queued email authorization
+
+Each new queued message records a private, versioned delivery context: event type,
+original device and organization IDs, incident sequence, and the rule that produced
+the message. The SMTP worker checks the recipient again before every attempt in
+both tenant and operator transport modes. The account must remain active, retain
+`alerts.view` and access to the recorded scope, keep the same address, and still
+subscribe to the event and (for incidents) the recorded rule. Address comparison is
+case-insensitive. Operator SMTP additionally requires a confirmed address; tenant
+SMTP keeps its existing confirmation behavior. A deterministic denial permanently
+fails that outbox item with a neutral reason. A database read failure prevents the
+send and leaves it retryable after the worker lease expires.
+
+Incident fanout is one database transaction. It locks the incident, checks the
+sequence, decision version and content used to compose the message, selects the
+recipients, inserts all outbox rows and consumes the pending transition together.
+An observation can change a message without changing the incident's decision
+version, so both are checked. A stale model is retried by the scheduler. Concurrent
+retries keep the existing `alert:<id>:<sequence>:<user>` deduplication identity.
+A deliberately disabled transport consumes the matching transition without
+banking stale mail; a settings read error is not treated as disabled.
+
+Changing the live device's location or the incident's governing rule does not
+rewrite queued provenance. Deleting those live rows does not erase the snapshot.
+An old queued message is still checked against current recipient rights over its
+original scope. A move continues to retire old incidents without generating a
+recovery email solely for that move. Nonincident failed-job, AI-release and device-key-review events capture
+membership when queued and use their event subscriptions independently of incident
+rule filters.
+
+Migration 044 adds nullable `notifications.delivery_context`. It does not invent
+provenance for old messages. For an old incident message, the historical incident
+scope can still authorize delivery, but the incident's current rule cannot prove
+the old message's rule. Accounts using selected-rule filters therefore cannot
+receive such legacy incident mail. Without a surviving historical incident, only
+unrestricted recipients without an incident-rule restriction can qualify. All
+other eligibility checks still apply. Anonymous, invalid or unsupported contexts
+fail closed. Password reset, email verification and explicit SMTP test messages
+use their existing direct-send paths and are unaffected.
+
+Authorization is checked immediately before SMTP. This cannot recall a message
+already accepted by an SMTP server, and it does not promise exactly-once delivery
+across a network failure after acceptance. Existing worker lease fencing remains
+in place.
+
 ## Validation
 
 Local validation covers config bounds and malformed input, rule version handling, restricted global writes, notification selection validation, all nine locale tables and console interaction flows. PostgreSQL-backed tests exercise migration upgrades/reapplication, scope precedence, agent result rejection, proposal review, incident continuity, notification scope and moved-device isolation. The router E2E test uses real authentication and persistence without an HTTP listener. Browser smoke flows run in CI only; no services are started by the local unit suite.

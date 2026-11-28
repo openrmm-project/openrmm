@@ -8,6 +8,12 @@ tag.
 
 ### Fixed
 
+- **Recheck queued alert recipients before delivery.** Before each SMTP attempt,
+  verify the current account, address, access, and subscriptions against the
+  device scope and rule recorded when the message was queued. Queue all
+  recipients and consume the pending incident transition in one transaction.
+  Migration 044 adds optional delivery context and keeps old outbox rows.
+
 - **A refused database password now says what usually causes it.** When
   PostgreSQL refuses the server's password (SQLSTATE 28P01), the server log
   adds that the bundled postgres container sets the password only when it

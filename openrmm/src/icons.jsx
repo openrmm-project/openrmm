@@ -108,6 +108,21 @@ function osLabel(os) {
   return family;
 }
 
+// The inventory and report rows print "<platform> <version>", and `platform` is
+// the Go GOOS value the agent reports — so a Mac read "darwin 27.2.1" and an
+// Ubuntu box read "ubuntu 26.04". The version next to it is already the product
+// version (macOS reports 27.2.1, not the Darwin kernel), so only the name needs
+// translating; the kernel is shown in its own column.
+function osProductName(platform) {
+  const p = String(platform || '').trim();
+  if (!p) return '';
+  const o = p.toLowerCase();
+  if (o === 'darwin' || o === 'macos' || o === 'osx' || o.includes('mac os')) return 'macOS';
+  if (o === 'windows' || o === 'win32') return 'Windows';
+  if (o === 'linux') return 'Linux';
+  return p.charAt(0).toUpperCase() + p.slice(1);
+}
+
 function OsIcon({ os, size = 15, className = '' }) {
   const family = osFamily(os);
   const name = family === 'Windows' ? 'windows' : family === 'macOS' ? 'apple' : family === 'Linux' ? 'linux' : 'devices';
@@ -118,3 +133,4 @@ window.Icon = Icon;
 window.OsIcon = OsIcon;
 window.osFamily = osFamily;
 window.osLabel = osLabel;
+window.osProductName = osProductName;

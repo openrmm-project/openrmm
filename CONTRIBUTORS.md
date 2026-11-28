@@ -16,3 +16,5 @@ e-mail address out: this file is public.
 - Miquéias Gonçalves (GitHub: @P1N-GU) — project owner
 
 - Kevin Zimmermann (GitHub: @Kevin-Nexio) — signed 2026-11-20
+
+- Ryan Grimes (GitHub: @ryantgrimes) — signed 2026-11-27
